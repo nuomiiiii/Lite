@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Multi-Client Monitor</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .header {
+            margin-bottom: 20px;
+        }
+        #uptime {
+            font-size: 18px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        #clientSelector {
+            margin-bottom: 10px;
+        }
+        select {
+            padding: 8px;
+            font-size: 16px;
+        }
+        .controls {
+            margin-bottom: 20px;
+        }
+        input {
+            padding: 8px;
+            width: 300px;
+            margin-right: 10px;
+        }
+        button {
+            padding: 8px 16px;
+            cursor: pointer;
+        }
+        .charts {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+        }
+        canvas {
+            max-width: 400px;
+            max-height: 300px;
+            width: 100%;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div id="clientSelector">
+                <select id="clientSelect" onchange="switchClient(this.value)" disabled>
+                    <option value="">No clients available</option>
+                </select>
+            </div>
+            <div id="uptime">Uptime: N/A</div>
+        </div>
+        <div class="controls">
+            <input type="text" id="wsUrl" placeholder="WebSocket URL (e.g., ws://example.com)" value="./api/clients">
+            <button onclick="connectWebSocket()">Start Connection</button>
+        </div>
+        <div class="charts">
+            <canvas id="cpuChart"></canvas>
+            <canvas id="ramChart"></canvas>
+            <canvas id="diskChart"></canvas>
+            <canvas id="swapChart"></canvas>
+            <canvas id="loadChart"></canvas>
+            <canvas id="connectionsChart"></canvas>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        let ws = null;
+        let intervalId = null;
+        const charts = {};
+        let clientsData = {};
+        let currentClient = null;
+
+        // Initialize charts
+        function initCharts() {
+            const chartOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true, max: 100, title: { display: true, text: 'Percentage (%)' } },
+                    x: { display: true }
+                }
+            };
+
+            charts.cpu = new Chart(document.getElementById('cpuChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'CPU Usage (%)',
+                        data: [],
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        fill: false
+                    }]
+                },
+                options: chartOptions
+            });
+
+            charts.ram = new Chart(document.getElementById('ramChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'RAM Usage (%)',
+                        data: [],
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        fill: false
+                    }]
+                },
+                options: chartOptions
+            });
+
+            charts.disk = new Chart(document.getElementById('diskChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Disk Usage (%)',
+                        data: [],
+                        borderColor: 'rgba(255, 206, 86, 1)',
+                        fill: false
+                    }]
+                },
+                options: chartOptions
+            });
+
+            charts.swap = new Chart(document.getElementById('swapChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Swap Usage (%)',
+                        data: [],
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        fill: false
+                    }]
+                },
+                options: chartOptions
+            });
+
+            charts.load = new Chart(document.getElementById('loadChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'Load 1m (%)', data: [], borderColor: 'rgba(255, 99, 132, 1)', fill: false },
+                        { label: 'Load 5m (%)', data: [], borderColor: 'rgba(54, 162, 235, 1)', fill: false },
+                        { label: 'Load 15m (%)', data: [], borderColor: 'rgba(75, 192, 192, 1)', fill: false }
+                    ]
+                },
+                options: { ...chartOptions, scales: { ...chartOptions.scales, y: { beginAtZero: true } } }
+            });
+
+            charts.connections = new Chart(document.getElementById('connectionsChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'TCP Connections', data: [], borderColor: 'rgba(153, 102, 255, 1)', fill: false },
+                        { label: 'UDP Connections', data: [], borderColor: 'rgba(255, 159, 64, 1)', fill: false }
+                    ]
+                },
+                options: { ...chartOptions, scales: { ...chartOptions.scales, y: { beginAtZero: true, title: { display: true, text: 'Count' } } } }
+            });
+        }
+
+        // Format uptime in seconds to a readable string
+        function formatUptime(seconds) {
+            const days = Math.floor(seconds / (3600 * 24));
+            const hours = Math.floor((seconds % (3600 * 24)) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return `Uptime: ${days}d ${hours}h ${minutes}m ${secs}s`;
+        }
+
+        // Update client selector
+        function updateClientSelector(clients) {
+            const select = document.getElementById('clientSelect');
+            select.innerHTML = '';
+            if (Object.keys(clients).length === 0) {
+                select.innerHTML = '<option value="">No clients available</option>';
+                select.disabled = true;
+                return;
+            }
+            select.disabled = false;
+            Object.keys(clients).forEach(clientId => {
+                const option = document.createElement('option');
+                option.value = clientId;
+                option.textContent = `Client ${clientId.slice(0, 8)}...`;
+                select.appendChild(option);
+            });
+            if (!currentClient || !clients[currentClient]) {
+                currentClient = Object.keys(clients)[0];
+                select.value = currentClient;
+            }
+        }
+
+        // Switch to a different client
+        function switchClient(clientId) {
+            if (!clientId || !clientsData[clientId]) return;
+            currentClient = clientId;
+            resetCharts();
+            // Replay the latest data for the selected client
+            updateCharts(clientsData[clientId]);
+        }
+
+        // Reset chart data
+        function resetCharts() {
+            Object.values(charts).forEach(chart => {
+                chart.data.labels = [];
+                chart.data.datasets.forEach(dataset => {
+                    dataset.data = [];
+                });
+                chart.update();
+            });
+            document.getElementById('uptime').textContent = 'Uptime: N/A';
+        }
+
+        // Update charts with new data
+        function updateCharts(data) {
+            const time = new Date().toLocaleTimeString();
+            const maxDataPoints = 20;
+
+            // Update uptime
+            document.getElementById('uptime').textContent = formatUptime(data.uptime);
+
+            // CPU Usage (already in percentage)
+            charts.cpu.data.labels.push(time);
+            charts.cpu.data.datasets[0].data.push(data.cpu.usage);
+            if (charts.cpu.data.labels.length > maxDataPoints) {
+                charts.cpu.data.labels.shift();
+                charts.cpu.data.datasets[0].data.shift();
+            }
+            charts.cpu.update();
+
+            // RAM Usage (%)
+            const ramPercent = (data.ram.used / data.ram.total * 100).toFixed(2);
+            charts.ram.data.labels.push(time);
+            charts.ram.data.datasets[0].data.push(ramPercent);
+            if (charts.ram.data.labels.length > maxDataPoints) {
+                charts.ram.data.labels.shift();
+                charts.ram.data.datasets[0].data.shift();
+            }
+            charts.ram.update();
+
+            // Disk Usage (%)
+            const diskPercent = (data.disk.used / data.disk.total * 100).toFixed(2);
+            charts.disk.data.labels.push(time);
+            charts.disk.data.datasets[0].data.push(diskPercent);
+            if (charts.disk.data.labels.length > maxDataPoints) {
+                charts.disk.data.labels.shift();
+                charts.disk.data.datasets[0].data.shift();
+            }
+            charts.disk.update();
+
+            // Swap Usage (%)
+            const swapPercent = (data.swap.used / data.swap.total * 100).toFixed(2);
+            charts.swap.data.labels.push(time);
+            charts.swap.data.datasets[0].data.push(swapPercent);
+            if (charts.swap.data.labels.length > maxDataPoints) {
+                charts.swap.data.labels.shift();
+                charts.swap.data.datasets[0].data.shift();
+            }
+            charts.swap.update();
+
+            // Load (normalize to percentage)
+            charts.load.data.labels.push(time);
+            charts.load.data.datasets[0].data.push((data.load.load1 * 100).toFixed(2));
+            charts.load.data.datasets[1].data.push((data.load.load5 * 100).toFixed(2));
+            charts.load.data.datasets[2].data.push((data.load.load15 * 100).toFixed(2));
+            if (charts.load.data.labels.length > maxDataPoints) {
+                charts.load.data.labels.shift();
+                charts.load.data.datasets.forEach(dataset => dataset.data.shift());
+            }
+            charts.load.update();
+
+            // Connections (raw counts)
+            charts.connections.data.labels.push(time);
+            charts.connections.data.datasets[0].data.push(data.connections.tcp);
+            charts.connections.data.datasets[1].data.push(data.connections.udp);
+            if (charts.connections.data.labels.length > maxDataPoints) {
+                charts.connections.data.labels.shift();
+                charts.connections.data.datasets.forEach(dataset => dataset.data.shift());
+            }
+            charts.connections.update();
+        }
+
+        // WebSocket connection
+        function connectWebSocket() {
+            const url = document.getElementById('wsUrl').value;
+            if (!url) {
+                alert('Please enter a WebSocket URL');
+                return;
+            }
+
+            if (ws) {
+                ws.close();
+            }
+
+            ws = new WebSocket(url);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                intervalId = setInterval(() => {
+                    if (ws.readyState === WebSocket.OPEN) {
+                        ws.send('get');
+                    }
+                }, 2000);
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const response = JSON.parse(event.data);
+                    if (response.status === 'success') {
+                        clientsData = response.data;
+                        updateClientSelector(clientsData);
+                        if (currentClient && clientsData[currentClient]) {
+                            updateCharts(clientsData[currentClient]);
+                        } else if (Object.keys(clientsData).length > 0) {
+                            currentClient = Object.keys(clientsData)[0];
+                            updateCharts(clientsData[currentClient]);
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error parsing message:', e);
+                }
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                clearInterval(intervalId);
+                clientsData = {};
+                currentClient = null;
+                updateClientSelector({});
+                resetCharts();
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                clearInterval(intervalId);
+            };
+        }
+
+        // Initialize charts on page load
+        initCharts();
+    </script>
+</body>
+</html>
