@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/akizon77/komari/database/clients"
+	"github.com/komari-monitor/komari/database/clients"
 	"gorm.io/gorm"
 
 	"github.com/gin-gonic/gin"

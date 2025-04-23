@@ -1,4 +1,4 @@
-module github.com/akizon77/komari
+module github.com/komari-monitor/komari
 
 go 1.23.2
 
@@ -6,13 +6,13 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/komari-monitor/komari_common v0.0.0
 	github.com/spf13/cobra v1.9.1
 	gorm.io/driver/sqlite v1.5.7
 	gorm.io/gorm v1.25.12
-	github.com/akizon77/komari_common v0.0.0
 )
 
-replace github.com/akizon77/komari_common => ../komari_common
+replace github.com/komari-monitor/komari_common => D:\Data\Onedrive\Dev\komari\komari_common
 
 require (
 	github.com/bytedance/sonic v1.11.6 // indirect

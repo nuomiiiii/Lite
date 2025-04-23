@@ -2,9 +2,10 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/akizon77/komari/database/accounts"
 	"io"
 	"net/http"
+
+	"github.com/komari-monitor/komari/database/accounts"
 
 	"github.com/gin-gonic/gin"
 )

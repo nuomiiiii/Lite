@@ -9,6 +9,13 @@ type Client struct {
 	UUID       string `gorm:"type:uuid;primaryKey"`
 	Token      string `gorm:"type:varchar(255);unique;not null"`
 	ClientName string `gorm:"type:varchar(100);not null"`
+	CpuName    string `gorm:"type:varchar(100)"`
+	CpuCores   uint
+	GpuName    string `gorm:"type:varchar(100)"`
+	Os         string `gorm:"type:varchar(100)"`
+	Memory     int64  `gorm:"type:bigint"`
+	IPv4       string `gorm:"type:varchar(100)"`
+	IPv6       string `gorm:"type:varchar(100)"`
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
@@ -18,7 +25,6 @@ type User struct {
 	UUID      string `gorm:"type:uuid;primaryKey"`
 	Username  string `gorm:"type:varchar(50);unique;not null"`
 	Passwd    string `gorm:"type:varchar(255);not null"` // Hashed password
-	SSOType   string `gorm:"type:varchar(20)"`           // e.g., "github", "google"
 	SSOID     string `gorm:"type:varchar(100)"`          // OAuth provider's user ID
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -62,28 +68,10 @@ type Config struct {
 	ID          uint   `gorm:"primaryKey;autoIncrement"`
 	Sitename    string `gorm:"type:varchar(100);not null"`
 	Description string `gorm:"type:text"`
+	OAuthID     string `gorm:"type:varchar(255);not null"`
+	OAuthSecret string `gorm:"type:varchar(255);not null"`
+	CustomCSS   string `gorm:"type:text"`
+	CustomJS    string `gorm:"type:text"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
-}
-
-// OAuthConfig stores OAuth provider configurations
-type OAuthConfig struct {
-	ID           uint   `gorm:"primaryKey;autoIncrement"`
-	Provider     string `gorm:"type:varchar(20);not null;unique"` // e.g., "github"
-	ClientID     string `gorm:"type:varchar(255);not null"`
-	ClientSecret string `gorm:"type:varchar(255);not null"`
-	RedirectURI  string `gorm:"type:varchar(255);not null"`
-	Enabled      bool   `gorm:"default:false"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-}
-
-// Custom stores custom configurations
-type Custom struct {
-	ID        uint   `gorm:"primaryKey;autoIncrement"`
-	CustomCSS string `gorm:"type:text"`
-	CustomJS  string `gorm:"type:text"`
-	SiteName  string `gorm:"type:varchar(100);not null"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
 }

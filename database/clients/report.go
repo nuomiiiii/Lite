@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/akizon77/komari/database/dbcore"
-	"github.com/akizon77/komari/database/models"
-	"github.com/akizon77/komari_common"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari_common"
 
 	"gorm.io/gorm"
 )
@@ -59,13 +59,13 @@ func SaveClientReport(clientUUID string, report komari_common.Report) (err error
 
 	history := models.History{
 		CPU:            float32(report.CPU.Usage),
-		GPU:            0, // Report 未提供 GPU Usage，设为 0（与原 nil 行为类似）
+		GPU:            0, // not implemented yet
 		RAM:            report.Ram.Used,
 		RAMTotal:       report.Ram.Total,
 		SWAP:           report.Swap.Used,
 		SWAPTotal:      report.Swap.Total,
-		LOAD:           float32(report.Load.Load1), // 使用 Load1 作为主要负载指标
-		TEMP:           0,                          // Report 未提供 TEMP，设为 0（与原 nil 行为类似）
+		LOAD:           float32(report.Load.Load1),
+		TEMP:           0, //  not implemented yet
 		DISK:           report.Disk.Used,
 		DISKTotal:      report.Disk.Total,
 		NETIn:          report.Network.Down,

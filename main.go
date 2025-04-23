@@ -1,12 +1,13 @@
 package main
 
 import (
-	"github.com/akizon77/komari/cmd"
-	"github.com/akizon77/komari/database/accounts"
-	"github.com/akizon77/komari/database/dbcore"
-	"github.com/akizon77/komari/database/history"
 	"log"
 	"time"
+
+	"github.com/komari-monitor/komari/cmd"
+	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/history"
 )
 
 func main() {

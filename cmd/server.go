@@ -3,11 +3,11 @@ package cmd
 import (
 	"net/http"
 
-	"github.com/akizon77/komari/api"
-	"github.com/akizon77/komari/api/admin"
-	"github.com/akizon77/komari/api/client"
-	"github.com/akizon77/komari/cmd/flags"
-	"github.com/akizon77/komari/ws"
+	"github.com/komari-monitor/komari/api"
+	"github.com/komari-monitor/komari/api/admin"
+	"github.com/komari-monitor/komari/api/client"
+	"github.com/komari-monitor/komari/cmd/flags"
+	"github.com/komari-monitor/komari/ws"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
@@ -28,7 +28,6 @@ var ServerCmd = &cobra.Command{
 
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{
-			tokenAuthrized.GET("/getRemoteConfig", client.GetRemoteConfig)
 			tokenAuthrized.GET("/report", client.WebSocketReport) // websocket
 			tokenAuthrized.POST("/uploadBasicInfo", client.UploadBasicInfo)
 			tokenAuthrized.POST("/report", client.UploadReport)

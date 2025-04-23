@@ -4,9 +4,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/akizon77/komari/database/dbcore"
-	"github.com/akizon77/komari/database/models"
-	"github.com/akizon77/komari/utils"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/utils"
 )
 
 // GetAllSessions 获取所有会话
@@ -53,6 +53,16 @@ func GetSession(session string) (uuid string, err error) {
 	}
 
 	return sessionRecord.UUID, nil
+}
+
+func GetUserBySession(session string) (models.User, error) {
+	db := dbcore.GetDBInstance()
+	var sessionRecord models.Session
+	err := db.Where("session = ?", session).First(&sessionRecord).Error
+	if err != nil {
+		return models.User{}, err
+	}
+	return GetUserByUUID(sessionRecord.UserUUID)
 }
 
 // DeleteSession 删除指定会话

@@ -3,8 +3,8 @@ package history
 import (
 	"time"
 
-	"github.com/akizon77/komari/database/dbcore"
-	"github.com/akizon77/komari/database/models"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
 )
 
 func RecordOne(rec models.History) error {

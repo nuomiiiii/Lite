@@ -1,22 +1,22 @@
-package custom
+package config
 
 import (
-	"github.com/akizon77/komari/database/dbcore"
-	"github.com/akizon77/komari/database/models"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
 )
 
-func Get() (models.Custom, error) {
+func Get() (models.Config, error) {
 	db := dbcore.GetDBInstance()
-	var custom models.Custom
+	var custom models.Config
 	if err := db.First(&custom).Error; err != nil {
 		return custom, err
 	}
 	return custom, nil
 }
 
-func Save(cst models.Custom) error {
+func Save(cst models.Config) error {
 	db := dbcore.GetDBInstance()
-	var custom models.Custom
+	var custom models.Config
 	// Only one record
 	custom.ID = 1
 	if err := db.Save(&custom).Error; err != nil {

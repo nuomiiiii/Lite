@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/akizon77/komari/cmd/flags"
+	"github.com/komari-monitor/komari/cmd/flags"
 
 	"github.com/spf13/cobra"
 )
@@ -13,7 +13,7 @@ var RootCmd = &cobra.Command{
 	Use:   "Komari",
 	Short: "Komari is a simple server monitoring tool",
 	Long: `Komari is a simple server monitoring tool. 
-Made by Akizon77 with love.`,
+Made by komari-monitor with love.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.SetArgs([]string{"server"})
 		cmd.Execute()

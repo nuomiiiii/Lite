@@ -1,53 +1,35 @@
 package admin
 
 import (
-	"database/sql"
-
-	"github.com/akizon77/komari/database/custom"
-	"github.com/akizon77/komari/database/models"
-
-	"log"
+	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
 
 	"github.com/gin-gonic/gin"
 )
 
 // GetSettings 获取自定义配置
 func GetSettings(c *gin.Context) {
-	cst, err := custom.Get()
+	cst, err := config.Get()
 	if err != nil {
-		if err == sql.ErrNoRows {
-			//override
-			cst = models.Custom{SiteName: "Komari"}
-			custom.Save(cst)
-			c.JSON(200, cst)
-			return
-		}
 		c.JSON(500, gin.H{
 			"status": "error",
-			"error":  "Internal Server Error: " + err.Error(),
+			"error":  err.Error(),
 		})
+		return
 	}
 	c.JSON(200, cst)
 }
 
 // EditSettings 更新自定义配置
 func EditSettings(c *gin.Context) {
-	var req models.Custom
-	if err := c.ShouldBindJSON(&req); err != nil {
-		log.Printf("Invalid request body: %v", err)
-		c.JSON(400, gin.H{
-			"status": "error",
-			"error":  "Invalid request body",
-		})
-		return
-	}
+	var req map[string]interface{}
 
-	if err := custom.Save(req); err != nil {
-		log.Printf("Failed to save custom config: %v", err)
-		c.JSON(500, gin.H{
-			"status": "error",
-			"error":  "Internal Server Error" + err.Error(),
-		})
+	db := dbcore.GetDBInstance()
+
+	err := db.Model(&models.Client{}).Updates(req).Error
+	if err != nil {
+		c.JSON(500, gin.H{"status": "error", "error": err})
 		return
 	}
 
