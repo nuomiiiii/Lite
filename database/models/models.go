@@ -6,8 +6,8 @@ import (
 
 // Client represents a registered client device
 type Client struct {
-	UUID       string `gorm:"type:uuid;primaryKey"`
-	Token      string `gorm:"type:varchar(255);unique;not null"`
+	UUID       string `gorm:"type:uuid;primaryKey" json:"uuid,omitempty"`
+	Token      string `gorm:"type:varchar(255);unique;not null" json:"token,omitempty"`
 	ClientName string `gorm:"type:varchar(100);not null"`
 	CpuName    string `gorm:"type:varchar(100)"`
 	CpuCores   uint
@@ -24,8 +24,8 @@ type Client struct {
 type User struct {
 	UUID      string `gorm:"type:uuid;primaryKey"`
 	Username  string `gorm:"type:varchar(50);unique;not null"`
-	Passwd    string `gorm:"type:varchar(255);not null"` // Hashed password
-	SSOID     string `gorm:"type:varchar(100)"`          // OAuth provider's user ID
+	Passwd    string `gorm:"type:varchar(255);not null" json:"password,omitempty"` // Hashed password
+	SSOID     string `gorm:"type:varchar(100)"  json:"ssoid,omitempty"`            // OAuth provider's user ID
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

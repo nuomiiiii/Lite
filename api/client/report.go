@@ -24,12 +24,6 @@ func UploadReport(c *gin.Context) {
 		return
 	}
 
-	var data map[string]interface{}
-	err = json.Unmarshal(bodyBytes, &data)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
-		return
-	}
 	// Save report to database
 	var report komari_common.Report
 	err = json.Unmarshal(bodyBytes, &report)
@@ -42,9 +36,8 @@ func UploadReport(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%v", err)})
 		return
 	}
-	// Update report with method and token
-	report.Token = ""
-	ws.LatestReport[report.UUID] = report
+
+	saveToLastReport(report)
 
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Restore the body for further use
 	c.JSON(200, gin.H{"status": "success"})
@@ -136,12 +129,20 @@ func WebSocketReport(c *gin.Context) {
 			conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
 		}
 
-		uuid, err := clients.GetClientUUIDByToken(token)
-		if err != nil {
-			conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
-			return
-		}
-		report.Token = ""
-		ws.LatestReport[uuid] = report
+		saveToLastReport(report)
 	}
+}
+
+func saveToLastReport(report komari_common.Report) {
+	client, err := clients.GetClientByToken(report.Token)
+	if err != nil {
+		return
+	}
+	var resp struct {
+		Name string               `json:"name"`
+		Data komari_common.Report `json:"data"`
+	}
+	resp.Data.Token = ""
+	resp.Data.UUID = ""
+	ws.LatestReport[client.UUID] = resp
 }

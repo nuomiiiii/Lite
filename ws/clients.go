@@ -38,7 +38,19 @@ func GetClients(c *gin.Context) {
 			conn.WriteJSON(gin.H{"status": "error", "error": "Invalid message"})
 			continue
 		}
-		err = conn.WriteJSON(gin.H{"status": "success", "data": LatestReport})
+
+		var resp = map[string]interface{}{
+			"status": "success",
+			"last":   LatestReport,
+			"online": func() []string {
+				keys := make([]string, 0, len(ConnectedClients))
+				for key := range ConnectedClients {
+					keys = append(keys, key)
+				}
+				return keys
+			}(),
+		}
+		err = conn.WriteJSON(gin.H{"status": "success", "data": resp})
 		if err != nil {
 			return
 		}
