@@ -4,15 +4,15 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/akizon77/komari/common"
 	"github.com/akizon77/komari/database/clients"
 	"github.com/akizon77/komari/database/history"
-	"github.com/akizon77/komari_common"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 func AddClient(c *gin.Context) {
-	var config komari_common.ClientConfig
+	var config common.ClientConfig
 	if err := c.ShouldBindJSON(&config); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
 		return
@@ -29,10 +29,10 @@ func AddClient(c *gin.Context) {
 
 func EditClient(c *gin.Context) {
 	var req struct {
-		UUID       string                     `json:"uuid" binding:"required"`
-		ClientName string                     `json:"client_name,omitempty"`
-		Token      string                     `json:"token,omitempty"`
-		Config     komari_common.ClientConfig `json:"config,omitempty"`
+		UUID       string              `json:"uuid" binding:"required"`
+		ClientName string              `json:"client_name,omitempty"`
+		Token      string              `json:"token,omitempty"`
+		Config     common.ClientConfig `json:"config,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {

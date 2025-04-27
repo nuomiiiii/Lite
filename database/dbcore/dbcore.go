@@ -7,8 +7,8 @@ import (
 	"sync"
 
 	"github.com/akizon77/komari/cmd/flags"
+	"github.com/akizon77/komari/common"
 	"github.com/akizon77/komari/database/models"
-	"github.com/akizon77/komari_common"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -52,12 +52,12 @@ func GetDBInstance() *gorm.DB {
 			log.Fatalf("Failed to connect to SQLite3 database: %v", err)
 		}
 		err = instance.AutoMigrate(
-			&komari_common.ClientConfig{},
+			&common.ClientConfig{},
 			&models.User{},
 			&models.Client{},
 			&models.Session{},
 			&models.History{},
-			&komari_common.ClientInfo{},
+			&common.ClientInfo{},
 			&models.Config{},
 			&models.Custom{},
 		)

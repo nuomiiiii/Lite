@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/akizon77/komari/common"
 	"github.com/akizon77/komari/database/dbcore"
 	"github.com/akizon77/komari/database/models"
-	"github.com/akizon77/komari_common"
 
 	"gorm.io/gorm"
 )
@@ -41,20 +41,20 @@ func GetClientUUIDByToken(token string) (clientUUID string, err error) {
 	return clientUUID, nil
 }
 
-func ParseReport(data map[string]interface{}) (report komari_common.Report, err error) {
+func ParseReport(data map[string]interface{}) (report common.Report, err error) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		return komari_common.Report{}, err
+		return common.Report{}, err
 	}
 	err = json.Unmarshal(jsonData, &report)
 	if err != nil {
-		return komari_common.Report{}, err
+		return common.Report{}, err
 	}
 	return report, nil
 }
 
 // SaveClientReport 保存客户端报告到 History 表
-func SaveClientReport(clientUUID string, report komari_common.Report) (err error) {
+func SaveClientReport(clientUUID string, report common.Report) (err error) {
 	db := dbcore.GetDBInstance()
 
 	history := models.History{

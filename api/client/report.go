@@ -9,9 +9,9 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/akizon77/komari/common"
 	"github.com/akizon77/komari/database/clients"
 	"github.com/akizon77/komari/ws"
-	"github.com/akizon77/komari_common"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
@@ -31,7 +31,7 @@ func UploadReport(c *gin.Context) {
 		return
 	}
 	// Save report to database
-	var report komari_common.Report
+	var report common.Report
 	err = json.Unmarshal(bodyBytes, &report)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
@@ -125,7 +125,7 @@ func WebSocketReport(c *gin.Context) {
 			break
 		}
 
-		report := komari_common.Report{}
+		report := common.Report{}
 		err = json.Unmarshal(message, &report)
 		if err != nil {
 			break
