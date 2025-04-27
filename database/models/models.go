@@ -6,22 +6,21 @@ import (
 
 // Client represents a registered client device
 type Client struct {
-	UUID       string `gorm:"type:uuid;primaryKey"`
-	Token      string `gorm:"type:varchar(255);unique;not null"`
-	ClientName string `gorm:"type:varchar(100);not null"`
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	UUID      string    `json:"uuid,omitempty" gorm:"type:uuid;primaryKey"`
+	Token     string    `json:"token,omitempty" gorm:"type:varchar(255);unique;not null"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // User represents an authenticated user
 type User struct {
-	UUID      string `gorm:"type:uuid;primaryKey"`
-	Username  string `gorm:"type:varchar(50);unique;not null"`
-	Passwd    string `gorm:"type:varchar(255);not null"` // Hashed password
-	SSOType   string `gorm:"type:varchar(20)"`           // e.g., "github", "google"
-	SSOID     string `gorm:"type:varchar(100)"`          // OAuth provider's user ID
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	UUID      string    `json:"uuid,omitempty" gorm:"type:uuid;primaryKey"`
+	Username  string    `json:"username" gorm:"type:varchar(50);unique;not null"`
+	Passwd    string    `json:"passwd,omitempty" gorm:"type:varchar(255);not null"` // Hashed password
+	SSOType   string    `json:"sso_type" gorm:"type:varchar(20)"`                   // e.g., "github", "google"
+	SSOID     string    `json:"sso_id" gorm:"type:varchar(100)"`                    // OAuth provider's user ID
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Session manages user sessions

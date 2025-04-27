@@ -25,10 +25,10 @@ var ServerCmd = &cobra.Command{
 		r.POST("/api/login", api.Login)
 		r.GET("/api/me", api.GetMe)
 		r.GET("/api/clients", ws.GetClients)
+		r.GET("/api/nodes", api.GetNodesInformation)
 
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{
-			tokenAuthrized.GET("/getRemoteConfig", client.GetRemoteConfig)
 			tokenAuthrized.GET("/report", client.WebSocketReport) // websocket
 			tokenAuthrized.POST("/uploadBasicInfo", client.UploadBasicInfo)
 			tokenAuthrized.POST("/report", client.UploadReport)

@@ -52,7 +52,6 @@ func GetDBInstance() *gorm.DB {
 			log.Fatalf("Failed to connect to SQLite3 database: %v", err)
 		}
 		err = instance.AutoMigrate(
-			&common.ClientConfig{},
 			&models.User{},
 			&models.Client{},
 			&models.Session{},

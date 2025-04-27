@@ -3,12 +3,14 @@ package ws
 import (
 	"net/http"
 
+	"github.com/akizon77/komari/common"
 	"github.com/gorilla/websocket"
 
 	"github.com/gin-gonic/gin"
 )
 
 func GetClients(c *gin.Context) {
+	// 升级到ws
 	if !websocket.IsWebSocketUpgrade(c.Request) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Require WebSocket upgrade"})
 		return
@@ -26,7 +28,13 @@ func GetClients(c *gin.Context) {
 	}
 	defer conn.Close()
 
+	// 请求
 	for {
+		var resp struct {
+			Online []string                  `json:"online"` // 已建立连接的客户端uuid列表
+			Data   map[string]*common.Report `json:"data"`   // 最后上报的数据
+		}
+
 		_, data, err := conn.ReadMessage()
 		if err != nil {
 			//log.Println("Error reading message:", err)
@@ -38,7 +46,18 @@ func GetClients(c *gin.Context) {
 			conn.WriteJSON(gin.H{"status": "error", "error": "Invalid message"})
 			continue
 		}
-		err = conn.WriteJSON(gin.H{"status": "success", "data": LatestReport})
+		// 已建立连接的客户端uuid列表
+		for key := range ConnectedClients {
+			resp.Online = append(resp.Online, key)
+		}
+		// 清除UUID和Token，简化报告单
+		for _, report := range LatestReport {
+			report.Token = ""
+			report.UUID = ""
+		}
+		resp.Data = LatestReport
+
+		err = conn.WriteJSON(gin.H{"status": "success", "data": resp})
 		if err != nil {
 			return
 		}

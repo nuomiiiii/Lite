@@ -23,7 +23,7 @@ func DeleteClientConfig(clientUuid string) error {
 }
 
 // 更新或插入客户端基本信息
-func UpdateOrInsertBasicInfo(cbi ClientBasicInfo) error {
+func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 	db := dbcore.GetDBInstance()
 	err := db.Save(&cbi).Error
 	if err != nil {
@@ -74,7 +74,7 @@ func EditClientToken(clientUUID, token string) error {
 }
 
 // CreateClient 创建新客户端
-func CreateClient(config common.ClientConfig) (clientUUID, token string, err error) {
+func CreateClient() (clientUUID, token string, err error) {
 	db := dbcore.GetDBInstance()
 	token = utils.GenerateToken()
 	clientUUID = uuid.New().String()
@@ -86,13 +86,15 @@ func CreateClient(config common.ClientConfig) (clientUUID, token string, err err
 		UpdatedAt: time.Now(),
 	}
 
-	config.ClientUUID = clientUUID
-
 	err = db.Create(&client).Error
 	if err != nil {
 		return "", "", err
 	}
-	err = db.Create(&config).Error
+	clientInfo := common.ClientInfo{
+		ClientUUID: clientUUID,
+		ClientName: "client_" + clientUUID[0:8],
+	}
+	err = db.Create(&clientInfo).Error
 	if err != nil {
 		return "", "", err
 	}
@@ -100,7 +102,7 @@ func CreateClient(config common.ClientConfig) (clientUUID, token string, err err
 }
 
 // GetAllClients 获取所有客户端配置
-func GetAllClients() (clients []models.Client, err error) {
+func getAllClients() (clients []models.Client, err error) {
 	db := dbcore.GetDBInstance()
 	err = db.Find(&clients).Error
 	if err != nil {
@@ -118,45 +120,22 @@ func GetClientByUUID(uuid string) (client models.Client, err error) {
 	return client, nil
 }
 
-// GetClientConfig 获取指定 UUID 的客户端配置
-func GetClientConfig(uuid string) (client common.ClientConfig, err error) {
+// GetClientBasicInfo 获取指定 UUID 的客户端基本信息
+func GetClientBasicInfo(uuid string) (client common.ClientInfo, err error) {
 	db := dbcore.GetDBInstance()
 	err = db.Where("client_uuid = ?", uuid).First(&client).Error
-	if err != nil {
-		return common.ClientConfig{}, err
-	}
-	return client, nil
-}
-
-// ClientBasicInfo 客户端基本信息（假设的结构体，需根据实际定义调整）
-type ClientBasicInfo struct {
-	CPU       common.CPUReport `json:"cpu"`
-	GPU       common.GPUReport `json:"gpu"`
-	IpAddress common.IPAddress `json:"ip"`
-	OS        string           `json:"os"`
-}
-
-// GetClientBasicInfo 获取指定 UUID 的客户端基本信息
-func GetClientBasicInfo(uuid string) (client ClientBasicInfo, err error) {
-	db := dbcore.GetDBInstance()
-	var clientInfo common.ClientInfo
-	err = db.Where("client_uuid = ?", uuid).First(&clientInfo).Error
 	if err != nil {
 		return client, err
 	}
 
-	client = ClientBasicInfo{
-		CPU: common.CPUReport{
-			Name:  clientInfo.CPUNAME,
-			Arch:  clientInfo.CPUARCH,
-			Cores: clientInfo.CPUCORES,
-		},
-		GPU: common.GPUReport{
-			Name: clientInfo.GPUNAME,
-		},
-		OS: clientInfo.OS,
-		// IpAddress: 未在数据库中找到对应字段，需确认
-	}
-
 	return client, nil
+}
+
+func GetAllClientBasicInfo() (clients []common.ClientInfo, err error) {
+	db := dbcore.GetDBInstance()
+	err = db.Find(&clients).Error
+	if err != nil {
+		return nil, err
+	}
+	return clients, nil
 }

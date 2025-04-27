@@ -44,13 +44,14 @@ func UploadReport(c *gin.Context) {
 	}
 	// Update report with method and token
 	report.Token = ""
-	ws.LatestReport[report.UUID] = report
+	ws.LatestReport[report.UUID] = &report
 
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Restore the body for further use
 	c.JSON(200, gin.H{"status": "success"})
 }
 
 func WebSocketReport(c *gin.Context) {
+	// 升级ws
 	if !websocket.IsWebSocketUpgrade(c.Request) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Require WebSocket upgrade"})
 		return
@@ -74,6 +75,7 @@ func WebSocketReport(c *gin.Context) {
 		return
 	}
 
+	// 第一次数据拿token
 	data := map[string]interface{}{}
 	err = json.Unmarshal(message, &data)
 	if err != nil {
@@ -103,21 +105,22 @@ func WebSocketReport(c *gin.Context) {
 		return
 	}
 
-	// Check if a connection with the same token already exists
-	if _, exists := ws.ConnectedClients[token]; exists {
+	uuid, err := clients.GetClientUUIDByToken(token)
+	if err != nil {
+		conn.WriteJSON(gin.H{"status": "error", "error": errMsg})
+		return
+	}
+
+	// 只允许一个客户端的连接
+	if _, exists := ws.ConnectedClients[uuid]; exists {
 		conn.WriteJSON(gin.H{"status": "error", "error": "Token already in use"})
 		return
 	}
-	ws.ConnectedClients[token] = conn
-	defer func() {
-		delete(ws.ConnectedClients, token)
-	}()
 
-	clientUUID, err := clients.GetClientUUIDByToken(token)
-	if err != nil {
-		conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
-		return
-	}
+	ws.ConnectedClients[uuid] = conn
+	defer func() {
+		delete(ws.ConnectedClients, uuid)
+	}()
 
 	for {
 		_, message, err := conn.ReadMessage()
@@ -131,17 +134,12 @@ func WebSocketReport(c *gin.Context) {
 			break
 		}
 
-		err = clients.SaveClientReport(clientUUID, report)
+		err = clients.SaveClientReport(uuid, report)
 		if err != nil {
 			conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
 		}
 
-		uuid, err := clients.GetClientUUIDByToken(token)
-		if err != nil {
-			conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
-			return
-		}
 		report.Token = ""
-		ws.LatestReport[uuid] = report
+		ws.LatestReport[uuid] = &report
 	}
 }

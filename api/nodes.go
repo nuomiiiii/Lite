@@ -1,0 +1,23 @@
+package api
+
+import (
+	"github.com/akizon77/komari/database/clients"
+	"github.com/gin-gonic/gin"
+)
+
+func GetNodesInformation(c *gin.Context) {
+	clientList, err := clients.GetAllClientBasicInfo()
+	if err != nil {
+		c.JSON(500, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+
+	count := len(clientList)
+	// 公开信息不展示IP地址
+	for i := 0; i < count; i++ {
+		clientList[i].IPv4 = ""
+		clientList[i].IPv6 = ""
+	}
+
+	c.JSON(200, gin.H{"status": "success", "data": clientList})
+}

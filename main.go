@@ -1,12 +1,13 @@
 package main
 
 import (
+	"log"
+	"time"
+
 	"github.com/akizon77/komari/cmd"
 	"github.com/akizon77/komari/database/accounts"
 	"github.com/akizon77/komari/database/dbcore"
 	"github.com/akizon77/komari/database/history"
-	"log"
-	"time"
 )
 
 func main() {
@@ -26,6 +27,7 @@ func main() {
 		select {
 		case <-ticker.C:
 			history.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 7))
+			history.CompactHistory()
 		}
 	}()
 

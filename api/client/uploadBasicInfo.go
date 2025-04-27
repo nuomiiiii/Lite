@@ -1,13 +1,14 @@
 package client
 
 import (
+	"github.com/akizon77/komari/common"
 	"github.com/akizon77/komari/database/clients"
 
 	"github.com/gin-gonic/gin"
 )
 
 func UploadBasicInfo(c *gin.Context) {
-	var cbi = &clients.ClientBasicInfo{}
+	var cbi = &common.ClientInfo{}
 	err := c.ShouldBindJSON(&cbi)
 	if err != nil {
 		c.JSON(400, gin.H{"status": "error", "error": err.Error()})
