@@ -6,8 +6,8 @@ import (
 
 	"github.com/akizon77/komari/database/clients"
 	"github.com/akizon77/komari/database/dbcore"
-	"github.com/akizon77/komari/database/history"
 	"github.com/akizon77/komari/database/models"
+	"github.com/akizon77/komari/database/records"
 	"github.com/gin-gonic/gin"
 )
 
@@ -71,11 +71,11 @@ func RemoveClient(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "success"})
 }
 
-func ClearHistory(c *gin.Context) {
-	if err := history.DeleteAll(); err != nil {
+func ClearRecord(c *gin.Context) {
+	if err := records.DeleteAll(); err != nil {
 		c.JSON(500, gin.H{
 			"status": "error",
-			"error":  "Failed to delete history" + err.Error(),
+			"error":  "Failed to delete Record" + err.Error(),
 		})
 		return
 	}

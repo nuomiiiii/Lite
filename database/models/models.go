@@ -25,15 +25,14 @@ type User struct {
 
 // Session manages user sessions
 type Session struct {
-	UUID      string    `gorm:"type:uuid;primaryKey"`
-	UserUUID  string    `gorm:"type:uuid;foreignKey:UserUUID;references:UUID;constraint:OnDelete:CASCADE"`
+	UUID      string    `gorm:"type:uuid;foreignKey:UserUUID;references:UUID;constraint:OnDelete:CASCADE"`
 	Session   string    `gorm:"type:varchar(255);unique;not null"`
 	Expires   time.Time `gorm:"not null"`
 	CreatedAt time.Time
 }
 
-// History logs client metrics over time
-type History struct {
+// Record logs client metrics over time
+type Record struct {
 	ID             uint64    `gorm:"primaryKey;autoIncrement"`
 	ClientUUID     string    `gorm:"type:uuid;index;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
 	Time           time.Time `gorm:"index;default:CURRENT_TIMESTAMP"`
@@ -58,31 +57,17 @@ type History struct {
 
 // Config stores site-wide settings
 type Config struct {
-	ID          uint   `gorm:"primaryKey;autoIncrement"`
-	Sitename    string `gorm:"type:varchar(100);not null"`
-	Description string `gorm:"type:text"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-}
-
-// OAuthConfig stores OAuth provider configurations
-type OAuthConfig struct {
-	ID           uint   `gorm:"primaryKey;autoIncrement"`
-	Provider     string `gorm:"type:varchar(20);not null;unique"` // e.g., "github"
-	ClientID     string `gorm:"type:varchar(255);not null"`
-	ClientSecret string `gorm:"type:varchar(255);not null"`
-	RedirectURI  string `gorm:"type:varchar(255);not null"`
-	Enabled      bool   `gorm:"default:false"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-}
-
-// Custom stores custom configurations
-type Custom struct {
-	ID        uint   `gorm:"primaryKey;autoIncrement"`
-	CustomCSS string `gorm:"type:text"`
-	CustomJS  string `gorm:"type:text"`
-	SiteName  string `gorm:"type:varchar(100);not null"`
+	ID          uint   `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
+	Sitename    string `json:"sitename,omitempty" gorm:"type:varchar(100);not null"`
+	Description string `json:"desc,omitempty" gorm:"type:text"`
+	// OAuth 配置
+	OAuthClientID     string `json:"oauth_id" gorm:"type:varchar(255);not null"`
+	OAuthClientSecret string `json:"oauth_secret" gorm:"type:varchar(255);not null"`
+	OAuthRedirectURI  string `json:"oauth_redirect_uri" gorm:"type:varchar(255);not null"`
+	OAuthEnabled      bool   `json:"oauth_enable" gorm:"default:false"`
+	// 自定义美化
+	CustomCSS string `json:"custom_css" gorm:"type:longtext"`
+	CustomJS  string `json:"custom_js" gorm:"type:longtext"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

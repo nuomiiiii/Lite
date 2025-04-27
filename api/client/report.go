@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"log"
 	"net/http"
@@ -44,6 +45,7 @@ func UploadReport(c *gin.Context) {
 	}
 	// Update report with method and token
 	report.Token = ""
+	report.UpdatedAt = time.Now()
 	ws.LatestReport[report.UUID] = &report
 
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Restore the body for further use
@@ -140,6 +142,7 @@ func WebSocketReport(c *gin.Context) {
 		}
 
 		report.Token = ""
+		report.UpdatedAt = time.Now()
 		ws.LatestReport[uuid] = &report
 	}
 }

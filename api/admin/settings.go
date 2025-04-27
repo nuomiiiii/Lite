@@ -3,22 +3,21 @@ package admin
 import (
 	"database/sql"
 
-	"github.com/akizon77/komari/database/custom"
+	"github.com/akizon77/komari/database/config"
 	"github.com/akizon77/komari/database/models"
-
-	"log"
 
 	"github.com/gin-gonic/gin"
 )
 
 // GetSettings 获取自定义配置
 func GetSettings(c *gin.Context) {
-	cst, err := custom.Get()
+	cst, err := config.Get()
 	if err != nil {
 		if err == sql.ErrNoRows {
 			//override
-			cst = models.Custom{SiteName: "Komari"}
-			custom.Save(cst)
+			cst = models.Config{Sitename: "Komari"}
+			cst.ID = 1
+			config.Save(cst)
 			c.JSON(200, cst)
 			return
 		}
@@ -31,25 +30,24 @@ func GetSettings(c *gin.Context) {
 }
 
 // EditSettings 更新自定义配置
+// 务必传全数据
 func EditSettings(c *gin.Context) {
-	var req models.Custom
-	if err := c.ShouldBindJSON(&req); err != nil {
-		log.Printf("Invalid request body: %v", err)
+	cfg := models.Config{}
+	if err := c.ShouldBindJSON(&cfg); err != nil {
 		c.JSON(400, gin.H{
 			"status": "error",
-			"error":  "Invalid request body",
+			"error":  "Bad Request: " + err.Error(),
 		})
 		return
 	}
 
-	if err := custom.Save(req); err != nil {
-		log.Printf("Failed to save custom config: %v", err)
+	cfg.ID = 1 // Only one record
+	if err := config.Save(cfg); err != nil {
 		c.JSON(500, gin.H{
 			"status": "error",
-			"error":  "Internal Server Error" + err.Error(),
+			"error":  "Internal Server Error: " + err.Error(),
 		})
 		return
 	}
-
 	c.JSON(200, gin.H{"status": "success"})
 }

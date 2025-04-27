@@ -28,6 +28,5 @@ func Execute() {
 }
 
 func init() {
-	RootCmd.PersistentFlags().StringVarP(&flags.DatabaseFile, "database", "d", "komari.db", "Database file")
-	RootCmd.PersistentFlags().StringVarP(&flags.Listen, "listen", "l", "0.0.0.0:5000", "Listen address")
+	RootCmd.PersistentFlags().StringVarP(&flags.DatabaseFile, "database", "d", "./data/komari.db", "Database file")
 }

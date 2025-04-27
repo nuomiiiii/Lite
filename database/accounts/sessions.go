@@ -64,3 +64,12 @@ func DeleteSession(session string) (err error) {
 	}
 	return nil
 }
+
+func DeleteAllSessions() error {
+	db := dbcore.GetDBInstance()
+	result := db.Where("1 = 1").Delete(&models.Session{})
+	if result.Error != nil {
+		return result.Error
+	}
+	return nil
+}

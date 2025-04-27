@@ -9,10 +9,8 @@ require (
 	github.com/spf13/cobra v1.9.1
 	gorm.io/driver/sqlite v1.5.7
 	gorm.io/gorm v1.25.12
-	github.com/akizon77/common v0.0.0
-)
 
-replace github.com/akizon77/common => ../common
+)
 
 require (
 	github.com/bytedance/sonic v1.11.6 // indirect

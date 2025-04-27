@@ -1,4 +1,4 @@
-package history
+package records
 
 import (
 	"time"
@@ -9,25 +9,25 @@ import (
 	"github.com/akizon77/komari/database/models"
 )
 
-func RecordOne(rec models.History) error {
+func RecordOne(rec models.Record) error {
 	db := dbcore.GetDBInstance()
 	return db.Create(&rec).Error
 }
 
 func DeleteAll() error {
 	db := dbcore.GetDBInstance()
-	return db.Exec("DELETE FROM history").Error
+	return db.Exec("DELETE FROM Record").Error
 }
 
-func GetLatestHistory(uuid string) (history []models.History, err error) {
+func GetLatestRecord(uuid string) (Record []models.Record, err error) {
 	db := dbcore.GetDBInstance()
-	err = db.Where("ClientUUID = ?", uuid).Order("time DESC").Limit(1).Find(&history).Error
+	err = db.Where("ClientUUID = ?", uuid).Order("time DESC").Limit(1).Find(&Record).Error
 	return
 }
 
 func DeleteRecordBefore(before time.Time) error {
 	db := dbcore.GetDBInstance()
-	return db.Where("time < ?", before).Delete(&models.History{}).Error
+	return db.Where("time < ?", before).Delete(&models.Record{}).Error
 }
 
 // 计算区间 [0.02, 0.98] 的平均值
@@ -65,11 +65,11 @@ func QuantileMean(values []float32) float32 {
 }
 
 // 压缩数据库，针对每个ClientUUID，3小时内的数据不动，24小时内的数据精简为每分钟一条，3天为每15分钟一条，7天为每1小时一条，30天为每12小时一条。所有精简的数据是取 [0.02,0.98] 区间内的平均值
-func CompactHistory() error {
+func CompactRecord() error {
 	db := dbcore.GetDBInstance()
 
 	var clientUUIDs []string
-	if err := db.Model(&models.History{}).Distinct("ClientUUID").Pluck("ClientUUID", &clientUUIDs).Error; err != nil {
+	if err := db.Model(&models.Record{}).Distinct("ClientUUID").Pluck("ClientUUID", &clientUUIDs).Error; err != nil {
 		return err
 	}
 
@@ -84,29 +84,29 @@ func CompactHistory() error {
 		// Process each time window
 		if err := db.Transaction(func(tx *gorm.DB) error {
 			// 24 hours to 3 hours: compact to 1-minute intervals
-			if err := compactTimeWindow(tx, clientUUID, oneDayAgo, threeHoursAgo, time.Minute, func(records []models.History) models.History {
-				return aggregateRecords(records, time.Minute)
+			if err := compactTimeWindow(tx, clientUUID, oneDayAgo, threeHoursAgo, time.Minute, func(recordss []models.Record) models.Record {
+				return aggregateRecords(recordss, time.Minute)
 			}); err != nil {
 				return err
 			}
 
 			// 3 days to 24 hours: compact to 15-minute intervals
-			if err := compactTimeWindow(tx, clientUUID, threeDaysAgo, oneDayAgo, 15*time.Minute, func(records []models.History) models.History {
-				return aggregateRecords(records, 15*time.Minute)
+			if err := compactTimeWindow(tx, clientUUID, threeDaysAgo, oneDayAgo, 15*time.Minute, func(recordss []models.Record) models.Record {
+				return aggregateRecords(recordss, 15*time.Minute)
 			}); err != nil {
 				return err
 			}
 
 			// 7 days to 3 days: compact to 1-hour intervals
-			if err := compactTimeWindow(tx, clientUUID, sevenDaysAgo, threeDaysAgo, time.Hour, func(records []models.History) models.History {
-				return aggregateRecords(records, time.Hour)
+			if err := compactTimeWindow(tx, clientUUID, sevenDaysAgo, threeDaysAgo, time.Hour, func(recordss []models.Record) models.Record {
+				return aggregateRecords(recordss, time.Hour)
 			}); err != nil {
 				return err
 			}
 
 			// 30 days to 7 days: compact to 12-hour intervals
-			if err := compactTimeWindow(tx, clientUUID, thirtyDaysAgo, sevenDaysAgo, 12*time.Hour, func(records []models.History) models.History {
-				return aggregateRecords(records, 12*time.Hour)
+			if err := compactTimeWindow(tx, clientUUID, thirtyDaysAgo, sevenDaysAgo, 12*time.Hour, func(recordss []models.Record) models.Record {
+				return aggregateRecords(recordss, 12*time.Hour)
 			}); err != nil {
 				return err
 			}
@@ -120,43 +120,43 @@ func CompactHistory() error {
 	return nil
 }
 
-// compactTimeWindow compacts records within a specific time window
-func compactTimeWindow(db *gorm.DB, clientUUID string, startTime, endTime time.Time, interval time.Duration, aggregator func([]models.History) models.History) error {
-	var records []models.History
+// compactTimeWindow compacts recordss within a specific time window
+func compactTimeWindow(db *gorm.DB, clientUUID string, startTime, endTime time.Time, interval time.Duration, aggregator func([]models.Record) models.Record) error {
+	var recordss []models.Record
 	if err := db.Where("ClientUUID = ? AND Time >= ? AND Time < ?", clientUUID, startTime, endTime).
-		Order("Time ASC").Find(&records).Error; err != nil {
+		Order("Time ASC").Find(&recordss).Error; err != nil {
 		return err
 	}
 
-	if len(records) == 0 {
+	if len(recordss) == 0 {
 		return nil
 	}
 
-	// Group records by interval
-	groups := make(map[int64][]models.History)
-	for _, record := range records {
+	// Group recordss by interval
+	groups := make(map[int64][]models.Record)
+	for _, records := range recordss {
 		// Truncate time to the start of the interval
-		intervalStart := record.Time.Truncate(interval).Unix()
-		groups[intervalStart] = append(groups[intervalStart], record)
+		intervalStart := records.Time.Truncate(interval).Unix()
+		groups[intervalStart] = append(groups[intervalStart], records)
 	}
 
 	// Process each group
 	for intervalStart, group := range groups {
 		if len(group) <= 1 {
-			continue // Skip groups with single record
+			continue // Skip groups with single records
 		}
 
-		// Aggregate records
+		// Aggregate recordss
 		aggregated := aggregator(group)
 
-		// Delete original records
+		// Delete original recordss
 		if err := db.Where("ClientUUID = ? AND Time >= ? AND Time < ?",
 			clientUUID, time.Unix(intervalStart, 0), time.Unix(intervalStart, 0).Add(interval)).
-			Delete(&models.History{}).Error; err != nil {
+			Delete(&models.Record{}).Error; err != nil {
 			return err
 		}
 
-		// Insert aggregated record
+		// Insert aggregated records
 		if err := db.Create(&aggregated).Error; err != nil {
 			return err
 		}
@@ -165,16 +165,16 @@ func compactTimeWindow(db *gorm.DB, clientUUID string, startTime, endTime time.T
 	return nil
 }
 
-// aggregateRecords aggregates a group of records into a single record
-func aggregateRecords(records []models.History, interval time.Duration) models.History {
-	if len(records) == 0 {
-		return models.History{}
+// aggregateRecords aggregates a group of recordss into a single records
+func aggregateRecords(recordss []models.Record, interval time.Duration) models.Record {
+	if len(recordss) == 0 {
+		return models.Record{}
 	}
 
-	// Initialize result with first record's metadata
-	result := models.History{
-		ClientUUID: records[0].ClientUUID,
-		Time:       records[0].Time.Truncate(interval),
+	// Initialize result with first records's metadata
+	result := models.Record{
+		ClientUUID: recordss[0].ClientUUID,
+		Time:       recordss[0].Time.Truncate(interval),
 	}
 
 	// Collect values for quantile mean calculation
@@ -182,7 +182,7 @@ func aggregateRecords(records []models.History, interval time.Duration) models.H
 	var ram, ramTotal, swap, swapTotal, disk, diskTotal, netIn, netOut, netTotalUp, netTotalDown []int64
 	var process, connections, connectionsUDP []int
 
-	for _, r := range records {
+	for _, r := range recordss {
 		cpuValues = append(cpuValues, r.CPU)
 
 		gpuValues = append(gpuValues, r.GPU)

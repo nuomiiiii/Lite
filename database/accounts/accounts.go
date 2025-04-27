@@ -3,6 +3,7 @@ package accounts
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"os"
 
 	"github.com/akizon77/komari/database/dbcore"
@@ -10,7 +11,6 @@ import (
 	"github.com/akizon77/komari/utils"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 const constantSalt = "06Wm4Jv1Hkxx"
@@ -39,7 +39,7 @@ func ForceResetPassword(username, passwd string) (err error) {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
+		return fmt.Errorf("无法找到用户名")
 	}
 	return nil
 }
@@ -53,7 +53,7 @@ func hashPasswd(passwd string) string {
 	return hashedPassword
 }
 
-// CreateDefaultAdminAccount 创建默认管理员账户
+// 创建默认管理员账户，使用环境变量 ADMIN_USERNAME 作为用户名，环境变量 ADMIN_PASSWORD 作为密码
 func CreateDefaultAdminAccount() (username, passwd string, err error) {
 	db := dbcore.GetDBInstance()
 
@@ -116,20 +116,4 @@ func GetOrCreateUserBySSO(ssoType, ssoID, username string) (user models.User, er
 	}
 
 	return user, nil
-}
-
-// GetOAuthConfig 获取 OAuth 配置
-func GetOAuthConfig(provider string) (config models.OAuthConfig, err error) {
-	db := dbcore.GetDBInstance()
-	err = db.Where("provider = ? AND enabled = ?", provider, true).First(&config).Error
-	if err != nil {
-		return models.OAuthConfig{}, err
-	}
-	return config, nil
-}
-
-// UpdateOAuthConfig 更新 OAuth 配置
-func UpdateOAuthConfig(config models.OAuthConfig) error {
-	db := dbcore.GetDBInstance()
-	return db.Save(&config).Error
 }

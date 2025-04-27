@@ -34,7 +34,7 @@ func GetClients(c *gin.Context) {
 			Online []string                  `json:"online"` // 已建立连接的客户端uuid列表
 			Data   map[string]*common.Report `json:"data"`   // 最后上报的数据
 		}
-
+		resp.Online = []string{}
 		_, data, err := conn.ReadMessage()
 		if err != nil {
 			//log.Println("Error reading message:", err)

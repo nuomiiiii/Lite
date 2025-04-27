@@ -53,11 +53,11 @@ func ParseReport(data map[string]interface{}) (report common.Report, err error) 
 	return report, nil
 }
 
-// SaveClientReport 保存客户端报告到 History 表
+// SaveClientReport 保存客户端报告到 Record 表
 func SaveClientReport(clientUUID string, report common.Report) (err error) {
 	db := dbcore.GetDBInstance()
 
-	history := models.History{
+	Record := models.Record{
 		CPU:            float32(report.CPU.Usage),
 		GPU:            0, // Report 未提供 GPU Usage，设为 0（与原 nil 行为类似）
 		RAM:            report.Ram.Used,
@@ -77,11 +77,11 @@ func SaveClientReport(clientUUID string, report common.Report) (err error) {
 		ConnectionsUDP: report.Connections.UDP,
 	}
 
-	// 使用事务确保 History 和 ClientsInfo 一致性
+	// 使用事务确保 Record 和 ClientsInfo 一致性
 	err = db.Transaction(func(tx *gorm.DB) error {
-		// 保存 History
-		if err := tx.Create(&history).Error; err != nil {
-			return fmt.Errorf("failed to save history: %v", err)
+		// 保存 Record
+		if err := tx.Create(&Record).Error; err != nil {
+			return fmt.Errorf("failed to save Record: %v", err)
 		}
 		return nil
 	})
