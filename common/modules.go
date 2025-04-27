@@ -37,8 +37,8 @@ type ClientInfo struct {
 	CPUCORES   int    `json:"cpu_cores" gorm:"type:int"`
 	OS         string `json:"os" gorm:"type:varchar(100)"`
 	GPUNAME    string `json:"gpu_name" gorm:"type:varchar(100)"`
-	IPv4       string `json:"ipv4" gorm:"type:varchar(100)"`
-	IPv6       string `json:"ipv6" gorm:"type:varchar(100)"`
+	IPv4       string `json:"ipv4,omitempty" gorm:"type:varchar(100)"`
+	IPv6       string `json:"ipv6,omitempty" gorm:"type:varchar(100)"`
 	Country    string `json:"country" gorm:"type:varchar(100)"`
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
