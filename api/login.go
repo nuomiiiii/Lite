@@ -28,6 +28,10 @@ func Login(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid request body"})
 		return
 	}
+	if data.Username == "" || data.Password == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid request body"})
+		return
+	}
 
 	if uuid, success := accounts.CheckPassword(data.Username, data.Password); success {
 

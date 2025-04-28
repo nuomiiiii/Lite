@@ -1,8 +1,9 @@
 package admin
 
 import (
+	"database/sql"
+
 	"github.com/komari-monitor/komari/database/config"
-	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 
 	"github.com/gin-gonic/gin"
@@ -12,26 +13,41 @@ import (
 func GetSettings(c *gin.Context) {
 	cst, err := config.Get()
 	if err != nil {
+		if err == sql.ErrNoRows {
+			//override
+			cst = models.Config{Sitename: "Komari"}
+			cst.ID = 1
+			config.Save(cst)
+			c.JSON(200, cst)
+			return
+		}
 		c.JSON(500, gin.H{
 			"status": "error",
-			"error":  err.Error(),
+			"error":  "Internal Server Error: " + err.Error(),
 		})
-		return
 	}
 	c.JSON(200, cst)
 }
 
 // EditSettings 更新自定义配置
+// 务必传全数据
 func EditSettings(c *gin.Context) {
-	var req map[string]interface{}
-
-	db := dbcore.GetDBInstance()
-
-	err := db.Model(&models.Client{}).Updates(req).Error
-	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "error": err})
+	cfg := models.Config{}
+	if err := c.ShouldBindJSON(&cfg); err != nil {
+		c.JSON(400, gin.H{
+			"status": "error",
+			"error":  "Bad Request: " + err.Error(),
+		})
 		return
 	}
 
+	cfg.ID = 1 // Only one record
+	if err := config.Save(cfg); err != nil {
+		c.JSON(500, gin.H{
+			"status": "error",
+			"error":  "Internal Server Error: " + err.Error(),
+		})
+		return
+	}
 	c.JSON(200, gin.H{"status": "success"})
 }

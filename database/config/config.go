@@ -7,19 +7,19 @@ import (
 
 func Get() (models.Config, error) {
 	db := dbcore.GetDBInstance()
-	var custom models.Config
-	if err := db.First(&custom).Error; err != nil {
-		return custom, err
+	var config models.Config
+	if err := db.First(&config).Error; err != nil {
+		return config, err
 	}
-	return custom, nil
+	return config, nil
 }
 
 func Save(cst models.Config) error {
 	db := dbcore.GetDBInstance()
-	var custom models.Config
-	// Only one record
-	custom.ID = 1
-	if err := db.Save(&custom).Error; err != nil {
+	var config models.Config
+	// Only one records
+	config.ID = 1
+	if err := db.Save(&config).Error; err != nil {
 		return err
 	}
 	return nil

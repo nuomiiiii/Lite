@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/komari-monitor/komari/cmd/flags"
+	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -54,7 +55,8 @@ func GetDBInstance() *gorm.DB {
 			&models.User{},
 			&models.Client{},
 			&models.Session{},
-			&models.History{},
+			&models.Record{},
+			&common.ClientInfo{},
 			&models.Config{},
 		)
 		if err != nil {

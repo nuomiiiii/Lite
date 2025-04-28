@@ -1,12 +1,17 @@
 package cmd
 
 import (
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/api/admin"
 	"github.com/komari-monitor/komari/api/client"
 	"github.com/komari-monitor/komari/cmd/flags"
+	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/ws"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +23,10 @@ var ServerCmd = &cobra.Command{
 	Short: "Start the server",
 	Long:  `Start the server`,
 	Run: func(cmd *cobra.Command, args []string) {
+		InitDatabase()
+
+		go DoRecordsWork()
+
 		r := gin.Default()
 
 		r.NoRoute(gin.WrapH(http.FileServer(gin.Dir("public", false))))
@@ -25,6 +34,7 @@ var ServerCmd = &cobra.Command{
 		r.POST("/api/login", api.Login)
 		r.GET("/api/me", api.GetMe)
 		r.GET("/api/clients", ws.GetClients)
+		r.GET("/api/nodes", api.GetNodesInformation)
 
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{
@@ -40,7 +50,7 @@ var ServerCmd = &cobra.Command{
 			adminAuthrized.POST("/editClient", admin.EditClient)
 			adminAuthrized.GET("/listClients", admin.ListClients)
 			adminAuthrized.GET("/getClient", admin.GetClient)
-			adminAuthrized.POST("/clearHistory", admin.ClearHistory)
+			adminAuthrized.POST("/clearRecord", admin.ClearRecord)
 			adminAuthrized.POST("/removeClient", admin.RemoveClient)
 
 			// settings
@@ -55,5 +65,24 @@ var ServerCmd = &cobra.Command{
 }
 
 func init() {
+	ServerCmd.PersistentFlags().StringVarP(&flags.Listen, "listen", "l", "0.0.0.0:25774", "Listen address")
 	RootCmd.AddCommand(ServerCmd)
+}
+
+func InitDatabase() {
+	if !dbcore.InitDatabase() {
+		user, passwd, err := accounts.CreateDefaultAdminAccount()
+		if err != nil {
+			panic(err)
+		}
+		log.Println("Default admin account created. Username:", user, ", Password:", passwd)
+	}
+}
+
+func DoRecordsWork() {
+	ticker := time.NewTicker(time.Hour * 1)
+	for range ticker.C {
+		records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
+		records.CompactRecord()
+	}
 }

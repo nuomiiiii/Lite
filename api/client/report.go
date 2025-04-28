@@ -5,15 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
 	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/ws"
-	"github.com/komari-monitor/komari_common"
 )
 
 func UploadReport(c *gin.Context) {
@@ -24,8 +25,14 @@ func UploadReport(c *gin.Context) {
 		return
 	}
 
+	var data map[string]interface{}
+	err = json.Unmarshal(bodyBytes, &data)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
 	// Save report to database
-	var report komari_common.Report
+	var report common.Report
 	err = json.Unmarshal(bodyBytes, &report)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
@@ -36,14 +43,17 @@ func UploadReport(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%v", err)})
 		return
 	}
-
-	saveToLastReport(report)
+	// Update report with method and token
+	report.Token = ""
+	report.UpdatedAt = time.Now()
+	ws.LatestReport[report.UUID] = &report
 
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Restore the body for further use
 	c.JSON(200, gin.H{"status": "success"})
 }
 
 func WebSocketReport(c *gin.Context) {
+	// 升级ws
 	if !websocket.IsWebSocketUpgrade(c.Request) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Require WebSocket upgrade"})
 		return
@@ -67,6 +77,7 @@ func WebSocketReport(c *gin.Context) {
 		return
 	}
 
+	// 第一次数据拿token
 	data := map[string]interface{}{}
 	err = json.Unmarshal(message, &data)
 	if err != nil {
@@ -96,21 +107,22 @@ func WebSocketReport(c *gin.Context) {
 		return
 	}
 
-	// Check if a connection with the same token already exists
-	if _, exists := ws.ConnectedClients[token]; exists {
+	uuid, err := clients.GetClientUUIDByToken(token)
+	if err != nil {
+		conn.WriteJSON(gin.H{"status": "error", "error": errMsg})
+		return
+	}
+
+	// 只允许一个客户端的连接
+	if _, exists := ws.ConnectedClients[uuid]; exists {
 		conn.WriteJSON(gin.H{"status": "error", "error": "Token already in use"})
 		return
 	}
-	ws.ConnectedClients[token] = conn
-	defer func() {
-		delete(ws.ConnectedClients, token)
-	}()
 
-	clientUUID, err := clients.GetClientUUIDByToken(token)
-	if err != nil {
-		conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
-		return
-	}
+	ws.ConnectedClients[uuid] = conn
+	defer func() {
+		delete(ws.ConnectedClients, uuid)
+	}()
 
 	for {
 		_, message, err := conn.ReadMessage()
@@ -118,31 +130,19 @@ func WebSocketReport(c *gin.Context) {
 			break
 		}
 
-		report := komari_common.Report{}
+		report := common.Report{}
 		err = json.Unmarshal(message, &report)
 		if err != nil {
 			break
 		}
 
-		err = clients.SaveClientReport(clientUUID, report)
+		err = clients.SaveClientReport(uuid, report)
 		if err != nil {
 			conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
 		}
 
-		saveToLastReport(report)
+		report.Token = ""
+		report.UpdatedAt = time.Now()
+		ws.LatestReport[uuid] = &report
 	}
-}
-
-func saveToLastReport(report komari_common.Report) {
-	client, err := clients.GetClientByToken(report.Token)
-	if err != nil {
-		return
-	}
-	var resp struct {
-		Name string               `json:"name"`
-		Data komari_common.Report `json:"data"`
-	}
-	resp.Data.Token = ""
-	resp.Data.UUID = ""
-	ws.LatestReport[client.UUID] = resp
 }

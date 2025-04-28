@@ -6,41 +6,33 @@ import (
 
 // Client represents a registered client device
 type Client struct {
-	UUID       string `gorm:"type:uuid;primaryKey" json:"uuid,omitempty"`
-	Token      string `gorm:"type:varchar(255);unique;not null" json:"token,omitempty"`
-	ClientName string `gorm:"type:varchar(100);not null"`
-	CpuName    string `gorm:"type:varchar(100)"`
-	CpuCores   uint
-	GpuName    string `gorm:"type:varchar(100)"`
-	Os         string `gorm:"type:varchar(100)"`
-	Memory     int64  `gorm:"type:bigint"`
-	IPv4       string `gorm:"type:varchar(100)"`
-	IPv6       string `gorm:"type:varchar(100)"`
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	UUID      string    `json:"uuid,omitempty" gorm:"type:uuid;primaryKey"`
+	Token     string    `json:"token,omitempty" gorm:"type:varchar(255);unique;not null"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // User represents an authenticated user
 type User struct {
-	UUID      string `gorm:"type:uuid;primaryKey"`
-	Username  string `gorm:"type:varchar(50);unique;not null"`
-	Passwd    string `gorm:"type:varchar(255);not null" json:"password,omitempty"` // Hashed password
-	SSOID     string `gorm:"type:varchar(100)"  json:"ssoid,omitempty"`            // OAuth provider's user ID
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	UUID      string    `json:"uuid,omitempty" gorm:"type:uuid;primaryKey"`
+	Username  string    `json:"username" gorm:"type:varchar(50);unique;not null"`
+	Passwd    string    `json:"passwd,omitempty" gorm:"type:varchar(255);not null"` // Hashed password
+	SSOType   string    `json:"sso_type" gorm:"type:varchar(20)"`                   // e.g., "github", "google"
+	SSOID     string    `json:"sso_id" gorm:"type:varchar(100)"`                    // OAuth provider's user ID
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // Session manages user sessions
 type Session struct {
-	UUID      string    `gorm:"type:uuid;primaryKey"`
-	UserUUID  string    `gorm:"type:uuid;foreignKey:UserUUID;references:UUID;constraint:OnDelete:CASCADE"`
+	UUID      string    `gorm:"type:uuid;foreignKey:UserUUID;references:UUID;constraint:OnDelete:CASCADE"`
 	Session   string    `gorm:"type:varchar(255);unique;not null"`
 	Expires   time.Time `gorm:"not null"`
 	CreatedAt time.Time
 }
 
-// History logs client metrics over time
-type History struct {
+// Record logs client metrics over time
+type Record struct {
 	ID             uint64    `gorm:"primaryKey;autoIncrement"`
 	ClientUUID     string    `gorm:"type:uuid;index;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
 	Time           time.Time `gorm:"index;default:CURRENT_TIMESTAMP"`
@@ -65,13 +57,17 @@ type History struct {
 
 // Config stores site-wide settings
 type Config struct {
-	ID          uint   `gorm:"primaryKey;autoIncrement"`
-	Sitename    string `gorm:"type:varchar(100);not null"`
-	Description string `gorm:"type:text"`
-	OAuthID     string `gorm:"type:varchar(255);not null"`
-	OAuthSecret string `gorm:"type:varchar(255);not null"`
-	CustomCSS   string `gorm:"type:text"`
-	CustomJS    string `gorm:"type:text"`
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID          uint   `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
+	Sitename    string `json:"sitename,omitempty" gorm:"type:varchar(100);not null"`
+	Description string `json:"desc,omitempty" gorm:"type:text"`
+	// OAuth 配置
+	OAuthClientID     string `json:"oauth_id" gorm:"type:varchar(255);not null"`
+	OAuthClientSecret string `json:"oauth_secret" gorm:"type:varchar(255);not null"`
+	OAuthRedirectURI  string `json:"oauth_redirect_uri" gorm:"type:varchar(255);not null"`
+	OAuthEnabled      bool   `json:"oauth_enable" gorm:"default:false"`
+	// 自定义美化
+	CustomCSS string `json:"custom_css" gorm:"type:longtext"`
+	CustomJS  string `json:"custom_js" gorm:"type:longtext"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

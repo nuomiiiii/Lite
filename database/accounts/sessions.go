@@ -62,13 +62,22 @@ func GetUserBySession(session string) (models.User, error) {
 	if err != nil {
 		return models.User{}, err
 	}
-	return GetUserByUUID(sessionRecord.UserUUID)
+	return GetUserByUUID(sessionRecord.UUID)
 }
 
 // DeleteSession 删除指定会话
 func DeleteSession(session string) (err error) {
 	db := dbcore.GetDBInstance()
 	result := db.Where("session = ?", session).Delete(&models.Session{})
+	if result.Error != nil {
+		return result.Error
+	}
+	return nil
+}
+
+func DeleteAllSessions() error {
+	db := dbcore.GetDBInstance()
+	result := db.Where("1 = 1").Delete(&models.Session{})
 	if result.Error != nil {
 		return result.Error
 	}

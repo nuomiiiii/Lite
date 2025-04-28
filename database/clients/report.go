@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari_common"
 
 	"gorm.io/gorm"
 )
@@ -41,31 +41,31 @@ func GetClientUUIDByToken(token string) (clientUUID string, err error) {
 	return clientUUID, nil
 }
 
-func ParseReport(data map[string]interface{}) (report komari_common.Report, err error) {
+func ParseReport(data map[string]interface{}) (report common.Report, err error) {
 	jsonData, err := json.Marshal(data)
 	if err != nil {
-		return komari_common.Report{}, err
+		return common.Report{}, err
 	}
 	err = json.Unmarshal(jsonData, &report)
 	if err != nil {
-		return komari_common.Report{}, err
+		return common.Report{}, err
 	}
 	return report, nil
 }
 
-// SaveClientReport 保存客户端报告到 History 表
-func SaveClientReport(clientUUID string, report komari_common.Report) (err error) {
+// SaveClientReport 保存客户端报告到 Record 表
+func SaveClientReport(clientUUID string, report common.Report) (err error) {
 	db := dbcore.GetDBInstance()
 
-	history := models.History{
+	Record := models.Record{
 		CPU:            float32(report.CPU.Usage),
-		GPU:            0, // not implemented yet
+		GPU:            0, // Report 未提供 GPU Usage，设为 0（与原 nil 行为类似）
 		RAM:            report.Ram.Used,
 		RAMTotal:       report.Ram.Total,
 		SWAP:           report.Swap.Used,
 		SWAPTotal:      report.Swap.Total,
-		LOAD:           float32(report.Load.Load1),
-		TEMP:           0, //  not implemented yet
+		LOAD:           float32(report.Load.Load1), // 使用 Load1 作为主要负载指标
+		TEMP:           0,                          // Report 未提供 TEMP，设为 0（与原 nil 行为类似）
 		DISK:           report.Disk.Used,
 		DISKTotal:      report.Disk.Total,
 		NETIn:          report.Network.Down,
@@ -77,11 +77,11 @@ func SaveClientReport(clientUUID string, report komari_common.Report) (err error
 		ConnectionsUDP: report.Connections.UDP,
 	}
 
-	// 使用事务确保 History 和 ClientsInfo 一致性
+	// 使用事务确保 Record 和 ClientsInfo 一致性
 	err = db.Transaction(func(tx *gorm.DB) error {
-		// 保存 History
-		if err := tx.Create(&history).Error; err != nil {
-			return fmt.Errorf("failed to save history: %v", err)
+		// 保存 Record
+		if err := tx.Create(&Record).Error; err != nil {
+			return fmt.Errorf("failed to save Record: %v", err)
 		}
 		return nil
 	})

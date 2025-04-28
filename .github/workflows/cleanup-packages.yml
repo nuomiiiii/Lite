@@ -1,0 +1,41 @@
+name: Cleanup Old Packages
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # 每周日运行
+  workflow_dispatch:      # 允许手动触发
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cleanup old packages
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: packages } = await github.rest.packages.getAllPackageVersionsForPackageOwnedByAuthenticatedUser({
+              package_type: 'container',
+              package_name: process.env.GITHUB_REPOSITORY.split('/')[1]
+            });
+            
+            // 保留最近的 10 个版本和 dev 标签
+            const keepVersions = packages
+              .filter(pkg => pkg.metadata.container.tags.includes('dev'))
+              .concat(packages.filter(pkg => !pkg.metadata.container.tags.includes('dev')).slice(0, 10));
+            
+            const deleteVersions = packages.filter(pkg => !keepVersions.includes(pkg));
+            
+            for (const version of deleteVersions) {
+              await github.rest.packages.deletePackageVersionForAuthenticatedUser({
+                package_type: 'container',
+                package_name: process.env.GITHUB_REPOSITORY.split('/')[1],
+                package_version_id: version.id
+              });
+            } 
