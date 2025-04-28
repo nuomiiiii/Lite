@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"log"
-	"net/http"
 	"time"
 
 	"github.com/komari-monitor/komari/api"
@@ -10,8 +9,10 @@ import (
 	"github.com/komari-monitor/komari/api/client"
 	"github.com/komari-monitor/komari/cmd/flags"
 	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/records"
+	"github.com/komari-monitor/komari/public"
 	"github.com/komari-monitor/komari/ws"
 
 	"github.com/gin-gonic/gin"
@@ -28,8 +29,9 @@ var ServerCmd = &cobra.Command{
 		go DoRecordsWork()
 
 		r := gin.Default()
-
-		r.NoRoute(gin.WrapH(http.FileServer(gin.Dir("public", false))))
+		r.Any("/ping", func(c *gin.Context) {
+			c.String(200, "pong")
+		})
 
 		r.POST("/api/login", api.Login)
 		r.GET("/api/me", api.GetMe)
@@ -58,6 +60,18 @@ var ServerCmd = &cobra.Command{
 			adminAuthrized.POST("/settings", admin.EditSettings)
 
 		}
+
+		public.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
+			r.NoRoute(handlers...)
+		})
+
+		go func() {
+			cfg, err := config.Get()
+			if err != nil {
+				log.Fatalln("Failed to get config:", err)
+			}
+			public.UpdateIndex(cfg)
+		}()
 
 		r.Run(flags.Listen)
 
