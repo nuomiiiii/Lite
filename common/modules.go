@@ -30,19 +30,19 @@ type ClientConfig struct {
 
 // ClientInfo stores static client information
 type ClientInfo struct {
-	ClientUUID string `json:"uuid,omitempty" gorm:"type:uuid;primaryKey;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
-	ClientName string `json:"name" gorm:"type:varchar(100);not null"`
-	CPUNAME    string `json:"cpu_name" gorm:"type:varchar(100)"`
-	CPUARCH    string `json:"arch" gorm:"type:varchar(50)"`
-	CPUCORES   int    `json:"cpu_cores" gorm:"type:int"`
-	OS         string `json:"os" gorm:"type:varchar(100)"`
-	GPUNAME    string `json:"gpu_name" gorm:"type:varchar(100)"`
-	IPv4       string `json:"ipv4,omitempty" gorm:"type:varchar(100)"`
-	IPv6       string `json:"ipv6,omitempty" gorm:"type:varchar(100)"`
-	Country    string `json:"country" gorm:"type:varchar(100)"`
-	Remark     string `json:"remark,omitempty" gorm:"type:longtext"`
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	UUID      string `json:"uuid,omitempty" gorm:"type:uuid;primaryKey;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
+	Name      string `json:"name" gorm:"type:varchar(100);not null"`
+	CpuName   string `json:"cpu_name" gorm:"type:varchar(100)"`
+	Arch      string `json:"arch" gorm:"type:varchar(50)"`
+	CpuCores  int    `json:"cpu_cores" gorm:"type:int"`
+	OS        string `json:"os" gorm:"type:varchar(100)"`
+	GpuName   string `json:"gpu_name" gorm:"type:varchar(100)"`
+	IPv4      string `json:"ipv4,omitempty" gorm:"type:varchar(100)"`
+	IPv6      string `json:"ipv6,omitempty" gorm:"type:varchar(100)"`
+	Country   string `json:"country" gorm:"type:varchar(100)"`
+	Remark    string `json:"remark,omitempty" gorm:"type:longtext"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type IPAddress struct {

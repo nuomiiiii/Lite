@@ -33,8 +33,7 @@ type Session struct {
 
 // Record logs client metrics over time
 type Record struct {
-	ID             uint64    `gorm:"primaryKey;autoIncrement"`
-	ClientUUID     string    `gorm:"type:uuid;index;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
+	Client         string    `gorm:"type:uuid;index;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
 	Time           time.Time `gorm:"index;default:CURRENT_TIMESTAMP"`
 	CPU            float32   `gorm:"type:decimal(5,2)"` // e.g., 75.50%
 	GPU            float32   `gorm:"type:decimal(5,2)"`

@@ -7,6 +7,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils"
+	"gorm.io/gorm/clause"
 
 	"github.com/google/uuid"
 )
@@ -26,23 +27,23 @@ func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 	db := dbcore.GetDBInstance()
 	updates := make(map[string]interface{})
 
-	if cbi.ClientName != "" {
-		updates["client_name"] = cbi.ClientName
+	if cbi.Name != "" {
+		updates["name"] = cbi.Name
 	}
-	if cbi.CPUNAME != "" {
-		updates["cpu_name"] = cbi.CPUNAME
+	if cbi.CpuName != "" {
+		updates["cpu_name"] = cbi.CpuName
 	}
-	if cbi.CPUARCH != "" {
-		updates["arch"] = cbi.CPUARCH
+	if cbi.Arch != "" {
+		updates["arch"] = cbi.Arch
 	}
-	if cbi.CPUCORES != 0 {
-		updates["cpu_cores"] = cbi.CPUCORES
+	if cbi.CpuCores != 0 {
+		updates["cpu_cores"] = cbi.CpuCores
 	}
 	if cbi.OS != "" {
 		updates["os"] = cbi.OS
 	}
-	if cbi.GPUNAME != "" {
-		updates["gpu_name"] = cbi.GPUNAME
+	if cbi.GpuName != "" {
+		updates["gpu_name"] = cbi.GpuName
 	}
 	if cbi.IPv4 != "" {
 		updates["ipv4"] = cbi.IPv4
@@ -58,7 +59,10 @@ func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 	}
 	updates["updated_at"] = time.Now()
 
-	err := db.Model(&common.ClientInfo{}).Where("client_uuid = ?", cbi.ClientUUID).Updates(updates).Error
+	err := db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "uuid"}},
+		DoUpdates: clause.Assignments(updates),
+	}).Create(&cbi).Error
 	if err != nil {
 		return err
 	}
@@ -126,8 +130,8 @@ func CreateClient() (clientUUID, token string, err error) {
 		return "", "", err
 	}
 	clientInfo := common.ClientInfo{
-		ClientUUID: clientUUID,
-		ClientName: "client_" + clientUUID[0:8],
+		UUID: clientUUID,
+		Name: "client_" + clientUUID[0:8],
 	}
 	err = db.Create(&clientInfo).Error
 	if err != nil {

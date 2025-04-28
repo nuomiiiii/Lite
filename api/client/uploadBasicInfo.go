@@ -15,15 +15,15 @@ func UploadBasicInfo(c *gin.Context) {
 	}
 
 	token := c.Query("token")
-	client, err := clients.GetClientByUUID(token)
-	if client.UUID == "" || err != nil {
+	uuid, err := clients.GetClientUUIDByToken(token)
+	if uuid == "" || err != nil {
 		c.JSON(400, gin.H{"status": "error", "error": "Invalid token"})
 		return
 	}
 
-	cbi.ClientUUID = client.UUID
+	cbi.UUID = uuid
 	if err := clients.UpdateOrInsertBasicInfo(cbi); err != nil {
-		c.JSON(500, gin.H{"status": "error", "error": "Failed to update client info"})
+		c.JSON(500, gin.H{"status": "error", "error": err})
 		return
 	}
 

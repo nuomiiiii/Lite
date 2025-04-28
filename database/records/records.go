@@ -173,8 +173,8 @@ func aggregateRecords(recordss []models.Record, interval time.Duration) models.R
 
 	// Initialize result with first records's metadata
 	result := models.Record{
-		ClientUUID: recordss[0].ClientUUID,
-		Time:       recordss[0].Time.Truncate(interval),
+		Client: recordss[0].Client,
+		Time:   recordss[0].Time.Truncate(interval),
 	}
 
 	// Collect values for quantile mean calculation

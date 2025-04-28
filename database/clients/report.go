@@ -30,11 +30,12 @@ func SaveReport(uuid string, data map[string]interface{}) (err error) {
 
 func GetClientUUIDByToken(token string) (clientUUID string, err error) {
 	db := dbcore.GetDBInstance()
-	err = db.Model(&models.Client{}).Where("token = ?", token).First(&clientUUID).Error
+	var client models.Client
+	err = db.Where("token = ?", token).First(&client).Error
 	if err != nil {
 		return "", err
 	}
-	return clientUUID, nil
+	return client.UUID, nil
 }
 
 func ParseReport(data map[string]interface{}) (report common.Report, err error) {
@@ -54,6 +55,7 @@ func SaveClientReport(clientUUID string, report common.Report) (err error) {
 	db := dbcore.GetDBInstance()
 
 	Record := models.Record{
+		Client:         clientUUID,
 		CPU:            float32(report.CPU.Usage),
 		GPU:            0, // Report 未提供 GPU Usage，设为 0（与原 nil 行为类似）
 		RAM:            report.Ram.Used,
