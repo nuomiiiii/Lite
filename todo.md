@@ -30,7 +30,7 @@
 
 - [ ] DDNS
 
-- [ ] Agent 备注
+- [x] Agent 备注
 
 ## Agent
 

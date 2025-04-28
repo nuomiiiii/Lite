@@ -25,7 +25,41 @@ func DeleteClientConfig(clientUuid string) error {
 // 更新或插入客户端基本信息
 func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 	db := dbcore.GetDBInstance()
-	err := db.Save(&cbi).Error
+	updates := make(map[string]interface{})
+
+	if cbi.ClientName != "" {
+		updates["client_name"] = cbi.ClientName
+	}
+	if cbi.CPUNAME != "" {
+		updates["cpu_name"] = cbi.CPUNAME
+	}
+	if cbi.CPUARCH != "" {
+		updates["arch"] = cbi.CPUARCH
+	}
+	if cbi.CPUCORES != 0 {
+		updates["cpu_cores"] = cbi.CPUCORES
+	}
+	if cbi.OS != "" {
+		updates["os"] = cbi.OS
+	}
+	if cbi.GPUNAME != "" {
+		updates["gpu_name"] = cbi.GPUNAME
+	}
+	if cbi.IPv4 != "" {
+		updates["ipv4"] = cbi.IPv4
+	}
+	if cbi.IPv6 != "" {
+		updates["ipv6"] = cbi.IPv6
+	}
+	if cbi.Country != "" {
+		updates["country"] = cbi.Country
+	}
+	if cbi.Remark != "" {
+		updates["remark"] = cbi.Remark
+	}
+	updates["updated_at"] = time.Now()
+
+	err := db.Model(&common.ClientInfo{}).Where("client_uuid = ?", cbi.ClientUUID).Updates(updates).Error
 	if err != nil {
 		return err
 	}
