@@ -16,7 +16,7 @@
         .header {
             margin-bottom: 20px;
         }
-        #uptime {
+        #uptime, #networkTotal {
             font-size: 18px;
             margin: 10px 0;
             font-weight: bold;
@@ -51,6 +51,19 @@
             width: 100%;
             height: 100%;
         }
+        #clientInfo {
+            margin: 15px 0;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+        }
+        #clientInfo div {
+            margin: 5px 0;
+        }
+        #clientInfo span {
+            font-weight: bold;
+            color: #333;
+        }
     </style>
 </head>
 <body>
@@ -62,6 +75,13 @@
                 </select>
             </div>
             <div id="uptime">Uptime: N/A</div>
+            <div id="networkTotal">Network Total: N/A</div>
+            <div id="clientInfo">
+                <div>CPU: <span id="cpuInfo">N/A</span></div>
+                <div>OS: <span id="osInfo">N/A</span></div>
+                <div>GPU: <span id="gpuInfo">N/A</span></div>
+                <div>Country: <span id="countryInfo">N/A</span></div>
+            </div>
         </div>
         <div class="controls">
             <input type="text" id="wsUrl" placeholder="WebSocket URL (e.g., ws://example.com)" value="./api/clients">
@@ -74,6 +94,7 @@
             <canvas id="swapChart"></canvas>
             <canvas id="loadChart"></canvas>
             <canvas id="connectionsChart"></canvas>
+            <canvas id="networkChart"></canvas>
         </div>
     </div>
 
@@ -84,6 +105,16 @@
         const charts = {};
         let clientsData = {};
         let currentClient = null;
+        let clientInfo = {};
+
+        // Format bytes to human readable format
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
 
         // Initialize charts
         function initCharts() {
@@ -176,6 +207,18 @@
                 },
                 options: { ...chartOptions, scales: { ...chartOptions.scales, y: { beginAtZero: true, title: { display: true, text: 'Count' } } } }
             });
+
+            charts.network = new Chart(document.getElementById('networkChart').getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'Upload Speed (KB/s)', data: [], borderColor: 'rgba(75, 192, 192, 1)', fill: false },
+                        { label: 'Download Speed (KB/s)', data: [], borderColor: 'rgba(255, 99, 132, 1)', fill: false }
+                    ]
+                },
+                options: { ...chartOptions, scales: { ...chartOptions.scales, y: { beginAtZero: true, title: { display: true, text: 'Speed (KB/s)' } } } }
+            });
         }
 
         // Format uptime in seconds to a readable string
@@ -188,7 +231,7 @@
         }
 
         // Update client selector
-        function updateClientSelector(clients) {
+        function updateClientSelector(clients, onlineClients) {
             const select = document.getElementById('clientSelect');
             select.innerHTML = '';
             if (Object.keys(clients).length === 0) {
@@ -200,7 +243,8 @@
             Object.keys(clients).forEach(clientId => {
                 const option = document.createElement('option');
                 option.value = clientId;
-                option.textContent = `Client ${clientId.slice(0, 8)}...`;
+                const status = onlineClients.includes(clientId) ? '🟢' : '🔴';
+                option.textContent = `${status} Client ${clientId.slice(0, 8)}...`;
                 select.appendChild(option);
             });
             if (!currentClient || !clients[currentClient]) {
@@ -209,13 +253,38 @@
             }
         }
 
+        // Fetch client info
+        async function fetchClientInfo(clientId) {
+            try {
+                const response = await fetch(`/api/nodes`);
+                const data = await response.json();
+                if (data.status === 'success') {
+                    const client = data.data.find(c => c.uuid === clientId);
+                    if (client) {
+                        clientInfo[clientId] = client;
+                        updateClientInfo(client);
+                    }
+                }
+            } catch (e) {
+                console.error('Error fetching client info:', e);
+            }
+        }
+
+        // Update client info display
+        function updateClientInfo(client) {
+            document.getElementById('cpuInfo').textContent = `${client.cpu_name} (${client.cpu_cores} cores)`;
+            document.getElementById('osInfo').textContent = client.os;
+            document.getElementById('gpuInfo').textContent = client.gpu_name;
+            document.getElementById('countryInfo').textContent = client.country || 'Unknown';
+        }
+
         // Switch to a different client
         function switchClient(clientId) {
             if (!clientId || !clientsData[clientId]) return;
             currentClient = clientId;
             resetCharts();
-            // Replay the latest data for the selected client
             updateCharts(clientsData[clientId]);
+            fetchClientInfo(clientId);
         }
 
         // Reset chart data
@@ -237,6 +306,11 @@
 
             // Update uptime
             document.getElementById('uptime').textContent = formatUptime(data.uptime);
+
+            // Update network total
+            const totalUp = formatBytes(data.network.totalUp);
+            const totalDown = formatBytes(data.network.totalDown);
+            document.getElementById('networkTotal').textContent = `Network Total: ↑${totalUp} ↓${totalDown}`;
 
             // CPU Usage (already in percentage)
             charts.cpu.data.labels.push(time);
@@ -297,6 +371,16 @@
                 charts.connections.data.datasets.forEach(dataset => dataset.data.shift());
             }
             charts.connections.update();
+
+            // Network speed (convert to KB/s)
+            charts.network.data.labels.push(time);
+            charts.network.data.datasets[0].data.push(data.network.up / 1024);
+            charts.network.data.datasets[1].data.push(data.network.down / 1024);
+            if (charts.network.data.labels.length > maxDataPoints) {
+                charts.network.data.labels.shift();
+                charts.network.data.datasets.forEach(dataset => dataset.data.shift());
+            }
+            charts.network.update();
         }
 
         // WebSocket connection
@@ -326,13 +410,14 @@
                 try {
                     const response = JSON.parse(event.data);
                     if (response.status === 'success') {
-                        clientsData = response.data;
-                        updateClientSelector(clientsData);
+                        clientsData = response.data.data;
+                        updateClientSelector(clientsData, response.data.online);
                         if (currentClient && clientsData[currentClient]) {
                             updateCharts(clientsData[currentClient]);
                         } else if (Object.keys(clientsData).length > 0) {
                             currentClient = Object.keys(clientsData)[0];
                             updateCharts(clientsData[currentClient]);
+                            fetchClientInfo(currentClient);
                         }
                     }
                 } catch (e) {
@@ -355,8 +440,9 @@
             };
         }
 
-        // Initialize charts on page load
+        // Initialize charts and connect WebSocket on page load
         initCharts();
+        connectWebSocket();
     </script>
 </body>
 </html>
