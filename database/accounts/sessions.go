@@ -55,6 +55,16 @@ func GetSession(session string) (uuid string, err error) {
 	return sessionRecord.UUID, nil
 }
 
+func GetUserBySession(session string) (models.User, error) {
+	db := dbcore.GetDBInstance()
+	var sessionRecord models.Session
+	err := db.Where("session = ?", session).First(&sessionRecord).Error
+	if err != nil {
+		return models.User{}, err
+	}
+	return GetUserByUUID(sessionRecord.UserUUID)
+}
+
 // DeleteSession 删除指定会话
 func DeleteSession(session string) (err error) {
 	db := dbcore.GetDBInstance()

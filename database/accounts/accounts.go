@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
@@ -95,9 +96,12 @@ func CreateDefaultAdminAccount() (username, passwd string, err error) {
 	hashedPassword := hashPasswd(passwd)
 
 	user := models.User{
-		UUID:     uuid.New().String(),
-		Username: username,
-		Passwd:   hashedPassword,
+		UUID:      uuid.New().String(),
+		Username:  username,
+		Passwd:    hashedPassword,
+		SSOID:     "",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
 	}
 
 	err = db.Create(&user).Error
@@ -117,27 +121,14 @@ func GetUserByUUID(uuid string) (user models.User, err error) {
 	return user, nil
 }
 
-// GetOrCreateUserBySSO 通过 SSO 信息获取或创建用户
-func GetOrCreateUserBySSO(ssoType, ssoID, username string) (user models.User, err error) {
+// 通过 SSO 信息获取用户
+func GetUserBySSO(ssoID, username string) (user models.User, err error) {
 	db := dbcore.GetDBInstance()
 
 	// 首先尝试查找已存在的用户
-	err = db.Where("sso_type = ? AND sso_id = ?", ssoType, ssoID).First(&user).Error
+	err = db.Where("sso_id = ?", ssoID).First(&user).Error
 	if err == nil {
 		return user, nil
-	}
-
-	// 如果用户不存在，创建新用户
-	user = models.User{
-		UUID:     uuid.New().String(),
-		Username: username,
-		SSOType:  ssoType,
-		SSOID:    ssoID,
-	}
-
-	err = db.Create(&user).Error
-	if err != nil {
-		return models.User{}, err
 	}
 
 	return user, nil
