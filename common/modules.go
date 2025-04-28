@@ -61,20 +61,20 @@ type Report struct {
 	Uptime      int64             `json:"uptime"`
 	Process     int               `json:"process"`
 	Message     string            `json:"message"`
-	Method      string            `json:"method"`
+	Method      string            `json:"method,omitempty"`
 	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
 type CPUReport struct {
-	Name  string  `json:"name"`
-	Cores int     `json:"cores"`
-	Arch  string  `json:"arch"`
-	Usage float64 `json:"usage"`
+	Name  string  `json:"name,omitempty"`
+	Cores int     `json:"cores,omitempty"`
+	Arch  string  `json:"arch,omitempty"`
+	Usage float64 `json:"usage,omitempty"`
 }
 
 type GPUReport struct {
-	Name  string  `json:"name"`
-	Usage float64 `json:"usage"`
+	Name  string  `json:"name,omitempty"`
+	Usage float64 `json:"usage,omitempty"`
 }
 
 type RamReport struct {
