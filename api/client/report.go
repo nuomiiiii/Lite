@@ -44,7 +44,6 @@ func UploadReport(c *gin.Context) {
 		return
 	}
 	// Update report with method and token
-	report.Token = ""
 	report.UpdatedAt = time.Now()
 	ws.LatestReport[report.UUID] = &report
 
@@ -141,7 +140,6 @@ func WebSocketReport(c *gin.Context) {
 			conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
 		}
 
-		report.Token = ""
 		report.UpdatedAt = time.Now()
 		ws.LatestReport[uuid] = &report
 	}
