@@ -13,17 +13,13 @@ import (
 
 // Report 表示客户端报告数据
 // SaveReport 保存报告数据
-func SaveReport(data map[string]interface{}) (err error) {
-	token := data["token"].(string)
-	clientUUID, err := GetClientUUIDByToken(token)
-	if err != nil {
-		return err
-	}
+func SaveReport(uuid string, data map[string]interface{}) (err error) {
+
 	report, err := ParseReport(data)
 	if err != nil {
 		return err
 	}
-	err = SaveClientReport(clientUUID, report)
+	err = SaveClientReport(uuid, report)
 	if err != nil {
 
 		return err
@@ -93,6 +89,7 @@ func SaveClientReport(clientUUID string, report common.Report) (err error) {
 	return nil
 }
 
+/*
 // getString 从 map 中获取字符串
 func getString(data map[string]interface{}, key string) string {
 	if val, ok := data[key]; ok {
@@ -132,3 +129,4 @@ func getFloat(data map[string]interface{}, key string) float64 {
 	}
 	return 0.0
 }
+*/

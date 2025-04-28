@@ -9,7 +9,6 @@ import (
 	"github.com/komari-monitor/komari/utils"
 
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // 删除指定 UUID 的客户端配置
@@ -85,19 +84,21 @@ func EditClientName(clientUUID, clientName string) error {
 	return nil
 }
 
+/*
 // UpdateClientByUUID 更新指定 UUID 的客户端配置
-func UpdateClientByUUID(config common.ClientConfig) error {
-	db := dbcore.GetDBInstance()
-	result := db.Model(&common.ClientConfig{}).Where("client_uuid = ?", config.ClientUUID).Updates(config)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	return nil
-}
 
+	func UpdateClientByUUID(config common.ClientConfig) error {
+		db := dbcore.GetDBInstance()
+		result := db.Model(&common.ClientConfig{}).Where("client_uuid = ?", config.ClientUUID).Updates(config)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	}
+*/
 func EditClientToken(clientUUID, token string) error {
 	db := dbcore.GetDBInstance()
 	err := db.Model(&models.Client{}).Where("uuid = ?", clientUUID).Update("token", token).Error
@@ -135,16 +136,18 @@ func CreateClient() (clientUUID, token string, err error) {
 	return clientUUID, token, nil
 }
 
+/*
 // GetAllClients 获取所有客户端配置
-func getAllClients() (clients []models.Client, err error) {
-	db := dbcore.GetDBInstance()
-	err = db.Find(&clients).Error
-	if err != nil {
-		return nil, err
-	}
-	return clients, nil
-}
 
+	func getAllClients() (clients []models.Client, err error) {
+		db := dbcore.GetDBInstance()
+		err = db.Find(&clients).Error
+		if err != nil {
+			return nil, err
+		}
+		return clients, nil
+	}
+*/
 func GetClientByUUID(uuid string) (client models.Client, err error) {
 	db := dbcore.GetDBInstance()
 	err = db.Where("uuid = ?", uuid).First(&client).Error
