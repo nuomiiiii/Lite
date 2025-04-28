@@ -50,9 +50,8 @@ func GetClients(c *gin.Context) {
 		for key := range ConnectedClients {
 			resp.Online = append(resp.Online, key)
 		}
-		// 清除UUID和Token，简化报告单
+		// 清除UUID，简化报告单
 		for _, report := range LatestReport {
-			report.Token = ""
 			report.UUID = ""
 		}
 		resp.Data = LatestReport
