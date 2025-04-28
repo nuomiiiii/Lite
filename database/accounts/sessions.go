@@ -62,7 +62,7 @@ func GetUserBySession(session string) (models.User, error) {
 	if err != nil {
 		return models.User{}, err
 	}
-	return GetUserByUUID(sessionRecord.UserUUID)
+	return GetUserByUUID(sessionRecord.UUID)
 }
 
 // DeleteSession 删除指定会话
