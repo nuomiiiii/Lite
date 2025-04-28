@@ -3,10 +3,10 @@ package clients
 import (
 	"time"
 
-	"github.com/akizon77/komari/common"
-	"github.com/akizon77/komari/database/dbcore"
-	"github.com/akizon77/komari/database/models"
-	"github.com/akizon77/komari/utils"
+	"github.com/komari-monitor/komari/common"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/utils"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"

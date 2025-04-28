@@ -10,11 +10,11 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/akizon77/komari/common"
-	"github.com/akizon77/komari/database/clients"
-	"github.com/akizon77/komari/ws"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/komari-monitor/komari/common"
+	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/ws"
 )
 
 func UploadReport(c *gin.Context) {

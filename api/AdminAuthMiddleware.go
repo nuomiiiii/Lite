@@ -1,8 +1,9 @@
 package api
 
 import (
-	"github.com/akizon77/komari/database/accounts"
 	"net/http"
+
+	"github.com/komari-monitor/komari/database/accounts"
 
 	"github.com/gin-gonic/gin"
 )

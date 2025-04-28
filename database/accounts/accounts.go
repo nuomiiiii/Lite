@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/akizon77/komari/database/dbcore"
-	"github.com/akizon77/komari/database/models"
-	"github.com/akizon77/komari/utils"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/utils"
 
 	"github.com/google/uuid"
 )
@@ -21,8 +21,9 @@ const constantSalt = "06Wm4Jv1Hkxx"
 func CheckPassword(username, passwd string) (uuid string, success bool) {
 	db := dbcore.GetDBInstance()
 	var user models.User
-	err := db.Where("username = ?", username).First(&user).Error
-	if err != nil {
+	result := db.Where("username = ?", username).First(&user)
+	if result.Error != nil {
+		// 静默处理错误，不显示日志
 		return "", false
 	}
 	if hashPasswd(passwd) != user.Passwd {
@@ -51,6 +52,30 @@ func hashPasswd(passwd string) string {
 	hash.Write([]byte(saltedPassword))
 	hashedPassword := base64.StdEncoding.EncodeToString(hash.Sum(nil))
 	return hashedPassword
+}
+
+func CreateAccount(username, passwd string) (user models.User, err error) {
+	db := dbcore.GetDBInstance()
+	hashedPassword := hashPasswd(passwd)
+	user = models.User{
+		UUID:     uuid.New().String(),
+		Username: username,
+		Passwd:   hashedPassword,
+	}
+	err = db.Create(&user).Error
+	if err != nil {
+		return models.User{}, err
+	}
+	return user, nil
+}
+
+func DeleteAccountByUsername(username string) (err error) {
+	db := dbcore.GetDBInstance()
+	err = db.Where("username = ?", username).Delete(&models.User{}).Error
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // 创建默认管理员账户，使用环境变量 ADMIN_USERNAME 作为用户名，环境变量 ADMIN_PASSWORD 作为密码

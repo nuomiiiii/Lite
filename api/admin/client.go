@@ -4,11 +4,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/akizon77/komari/database/clients"
-	"github.com/akizon77/komari/database/dbcore"
-	"github.com/akizon77/komari/database/models"
-	"github.com/akizon77/komari/database/records"
 	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/records"
 )
 
 func AddClient(c *gin.Context) {

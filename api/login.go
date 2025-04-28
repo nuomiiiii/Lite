@@ -2,9 +2,10 @@ package api
 
 import (
 	"encoding/json"
-	"github.com/akizon77/komari/database/accounts"
 	"io"
 	"net/http"
+
+	"github.com/komari-monitor/komari/database/accounts"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,6 +25,10 @@ func Login(c *gin.Context) {
 	var data LoginRequest
 	err = json.Unmarshal(bodyBytes, &data)
 	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid request body"})
+		return
+	}
+	if data.Username == "" || data.Password == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid request body"})
 		return
 	}

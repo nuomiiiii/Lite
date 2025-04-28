@@ -1,8 +1,8 @@
 package api
 
 import (
-	"github.com/akizon77/komari/database/clients"
 	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/database/clients"
 )
 
 func GetNodesInformation(c *gin.Context) {

@@ -3,8 +3,8 @@ package ws
 import (
 	"net/http"
 
-	"github.com/akizon77/komari/common"
 	"github.com/gorilla/websocket"
+	"github.com/komari-monitor/komari/common"
 
 	"github.com/gin-gonic/gin"
 )

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/akizon77/komari/cmd"
+	"github.com/komari-monitor/komari/cmd"
 )
 
 func main() {

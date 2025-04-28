@@ -3,8 +3,8 @@ package admin
 import (
 	"database/sql"
 
-	"github.com/akizon77/komari/database/config"
-	"github.com/akizon77/komari/database/models"
+	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/models"
 
 	"github.com/gin-gonic/gin"
 )

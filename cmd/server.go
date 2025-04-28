@@ -5,14 +5,14 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/akizon77/komari/api"
-	"github.com/akizon77/komari/api/admin"
-	"github.com/akizon77/komari/api/client"
-	"github.com/akizon77/komari/cmd/flags"
-	"github.com/akizon77/komari/database/accounts"
-	"github.com/akizon77/komari/database/dbcore"
-	"github.com/akizon77/komari/database/records"
-	"github.com/akizon77/komari/ws"
+	"github.com/komari-monitor/komari/api"
+	"github.com/komari-monitor/komari/api/admin"
+	"github.com/komari-monitor/komari/api/client"
+	"github.com/komari-monitor/komari/cmd/flags"
+	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/records"
+	"github.com/komari-monitor/komari/ws"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
@@ -80,12 +80,9 @@ func InitDatabase() {
 }
 
 func DoRecordsWork() {
-
 	ticker := time.NewTicker(time.Hour * 1)
-	select {
-	case <-ticker.C:
+	for range ticker.C {
 		records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 		records.CompactRecord()
 	}
-
 }

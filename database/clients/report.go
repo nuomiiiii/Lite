@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/akizon77/komari/common"
-	"github.com/akizon77/komari/database/dbcore"
-	"github.com/akizon77/komari/database/models"
+	"github.com/komari-monitor/komari/common"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
 
 	"gorm.io/gorm"
 )

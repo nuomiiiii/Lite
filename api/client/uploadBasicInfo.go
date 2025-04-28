@@ -1,8 +1,8 @@
 package client
 
 import (
-	"github.com/akizon77/komari/common"
-	"github.com/akizon77/komari/database/clients"
+	"github.com/komari-monitor/komari/common"
+	"github.com/komari-monitor/komari/database/clients"
 
 	"github.com/gin-gonic/gin"
 )

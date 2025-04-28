@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/akizon77/komari/cmd/flags"
-	"github.com/akizon77/komari/common"
-	"github.com/akizon77/komari/database/models"
+	"github.com/komari-monitor/komari/cmd/flags"
+	"github.com/komari-monitor/komari/common"
+	"github.com/komari-monitor/komari/database/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
