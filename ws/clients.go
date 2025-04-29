@@ -55,7 +55,11 @@ func GetClients(c *gin.Context) {
 			report.UUID = ""
 		}
 		resp.Data = LatestReport
-
+		for _, report := range LatestReport {
+			if report.CPU.Usage == 0 {
+				report.CPU.Usage = 0.01
+			}
+		}
 		err = conn.WriteJSON(gin.H{"status": "success", "data": resp})
 		if err != nil {
 			return
