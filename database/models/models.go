@@ -59,6 +59,7 @@ type Config struct {
 	ID          uint   `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
 	Sitename    string `json:"sitename,omitempty" gorm:"type:varchar(100);not null"`
 	Description string `json:"desc,omitempty" gorm:"type:text"`
+	AllowCros   bool   `json:"allow_cros" gorm:"default:false"`
 	// OAuth 配置
 	OAuthClientID     string `json:"oauth_id" gorm:"type:varchar(255);not null"`
 	OAuthClientSecret string `json:"oauth_secret" gorm:"type:varchar(255);not null"`
