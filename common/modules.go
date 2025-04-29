@@ -30,18 +30,19 @@ type ClientConfig struct {
 
 // ClientInfo stores static client information
 type ClientInfo struct {
-	ClientUUID string `json:"uuid" gorm:"type:uuid;primaryKey;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
-	ClientName string `json:"name" gorm:"type:varchar(100);not null"`
-	CPUNAME    string `json:"cpu_name" gorm:"type:varchar(100)"`
-	CPUARCH    string `json:"arch" gorm:"type:varchar(50)"`
-	CPUCORES   int    `json:"cpu_cores" gorm:"type:int"`
-	OS         string `json:"os" gorm:"type:varchar(100)"`
-	GPUNAME    string `json:"gpu_name" gorm:"type:varchar(100)"`
-	IPv4       string `json:"ipv4,omitempty" gorm:"type:varchar(100)"`
-	IPv6       string `json:"ipv6,omitempty" gorm:"type:varchar(100)"`
-	Country    string `json:"country" gorm:"type:varchar(100)"`
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	UUID      string `json:"uuid,omitempty" gorm:"type:uuid;primaryKey;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
+	Name      string `json:"name" gorm:"type:varchar(100);not null"`
+	CpuName   string `json:"cpu_name" gorm:"type:varchar(100)"`
+	Arch      string `json:"arch" gorm:"type:varchar(50)"`
+	CpuCores  int    `json:"cpu_cores" gorm:"type:int"`
+	OS        string `json:"os" gorm:"type:varchar(100)"`
+	GpuName   string `json:"gpu_name" gorm:"type:varchar(100)"`
+	IPv4      string `json:"ipv4,omitempty" gorm:"type:varchar(100)"`
+	IPv6      string `json:"ipv6,omitempty" gorm:"type:varchar(100)"`
+	Country   string `json:"country" gorm:"type:varchar(100)"`
+	Remark    string `json:"remark,omitempty" gorm:"type:longtext"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type IPAddress struct {
@@ -50,9 +51,7 @@ type IPAddress struct {
 }
 type Report struct {
 	UUID        string            `json:"uuid,omitempty"`
-	Token       string            `json:"token,omitempty"`
 	CPU         CPUReport         `json:"cpu"`
-	OS          string            `json:"os"`
 	Ram         RamReport         `json:"ram"`
 	Swap        RamReport         `json:"swap"`
 	Load        LoadReport        `json:"load"`
@@ -62,20 +61,20 @@ type Report struct {
 	Uptime      int64             `json:"uptime"`
 	Process     int               `json:"process"`
 	Message     string            `json:"message"`
-	Method      string            `json:"method"`
+	Method      string            `json:"method,omitempty"`
 	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
 type CPUReport struct {
-	Name  string  `json:"name"`
-	Cores int     `json:"cores"`
-	Arch  string  `json:"arch"`
-	Usage float64 `json:"usage"`
+	Name  string  `json:"name,omitempty"`
+	Cores int     `json:"cores,omitempty"`
+	Arch  string  `json:"arch,omitempty"`
+	Usage float64 `json:"usage,omitempty"`
 }
 
 type GPUReport struct {
-	Name  string  `json:"name"`
-	Usage float64 `json:"usage"`
+	Name  string  `json:"name,omitempty"`
+	Usage float64 `json:"usage,omitempty"`
 }
 
 type RamReport struct {

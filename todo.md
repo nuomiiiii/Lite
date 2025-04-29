@@ -16,7 +16,7 @@
 
 - [ ] Web前端
 
-- [ ] Web前端嵌入二进制
+- [x] Web前端嵌入二进制
 
 - [x] 命令行指令 chpasswd 强制更换密码
 
@@ -30,7 +30,7 @@
 
 - [ ] DDNS
 
-- [ ] Agent 备注
+- [x] Agent 备注
 
 ## Agent
 

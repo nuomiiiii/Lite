@@ -13,17 +13,13 @@ import (
 
 // Report 表示客户端报告数据
 // SaveReport 保存报告数据
-func SaveReport(data map[string]interface{}) (err error) {
-	token := data["token"].(string)
-	clientUUID, err := GetClientUUIDByToken(token)
-	if err != nil {
-		return err
-	}
+func SaveReport(uuid string, data map[string]interface{}) (err error) {
+
 	report, err := ParseReport(data)
 	if err != nil {
 		return err
 	}
-	err = SaveClientReport(clientUUID, report)
+	err = SaveClientReport(uuid, report)
 	if err != nil {
 
 		return err
@@ -34,11 +30,12 @@ func SaveReport(data map[string]interface{}) (err error) {
 
 func GetClientUUIDByToken(token string) (clientUUID string, err error) {
 	db := dbcore.GetDBInstance()
-	err = db.Model(&models.Client{}).Where("token = ?", token).First(&clientUUID).Error
+	var client models.Client
+	err = db.Where("token = ?", token).First(&client).Error
 	if err != nil {
 		return "", err
 	}
-	return clientUUID, nil
+	return client.UUID, nil
 }
 
 func ParseReport(data map[string]interface{}) (report common.Report, err error) {
@@ -58,6 +55,7 @@ func SaveClientReport(clientUUID string, report common.Report) (err error) {
 	db := dbcore.GetDBInstance()
 
 	Record := models.Record{
+		Client:         clientUUID,
 		CPU:            float32(report.CPU.Usage),
 		GPU:            0, // Report 未提供 GPU Usage，设为 0（与原 nil 行为类似）
 		RAM:            report.Ram.Used,
@@ -93,6 +91,7 @@ func SaveClientReport(clientUUID string, report common.Report) (err error) {
 	return nil
 }
 
+/*
 // getString 从 map 中获取字符串
 func getString(data map[string]interface{}, key string) string {
 	if val, ok := data[key]; ok {
@@ -132,3 +131,4 @@ func getFloat(data map[string]interface{}, key string) float64 {
 	}
 	return 0.0
 }
+*/

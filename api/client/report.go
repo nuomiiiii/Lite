@@ -44,7 +44,6 @@ func UploadReport(c *gin.Context) {
 		return
 	}
 	// Update report with method and token
-	report.Token = ""
 	report.UpdatedAt = time.Now()
 	ws.LatestReport[report.UUID] = &report
 
@@ -89,17 +88,7 @@ func WebSocketReport(c *gin.Context) {
 	var errMsg string
 
 	// 优先检查查询参数中的 token
-	if token_, success := c.Params.Get("token"); success && token_ != "" {
-		token = token_
-	} else if data != nil && data["token"] != nil {
-		if t, ok := data["token"].(string); ok && t != "" {
-			token = t
-		} else {
-			errMsg = "Invalid token format in data"
-		}
-	} else {
-		errMsg = "Token not provided"
-	}
+	token = c.Query("token")
 
 	// 如果 token 为空，返回错误
 	if token == "" {
@@ -141,7 +130,6 @@ func WebSocketReport(c *gin.Context) {
 			conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
 		}
 
-		report.Token = ""
 		report.UpdatedAt = time.Now()
 		ws.LatestReport[uuid] = &report
 	}
