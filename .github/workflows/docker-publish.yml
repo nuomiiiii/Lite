@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev
+      - main
 
 env:
   REGISTRY: ghcr.io
@@ -33,7 +34,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=dev
+            type=raw,value=${{ github.ref_name }}
             type=sha,format=short
 
       - name: Build and push Docker image
@@ -42,4 +43,4 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }} 
+          labels: ${{ steps.meta.outputs.labels }}
