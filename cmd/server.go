@@ -111,7 +111,9 @@ func InitDatabase() {
 }
 
 func DoRecordsWork() {
-	ticker := time.NewTicker(time.Hour * 1)
+	ticker := time.NewTicker(time.Minute * 30)
+	records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
+	records.CompactRecord()
 	for range ticker.C {
 		records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 		records.CompactRecord()

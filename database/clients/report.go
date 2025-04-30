@@ -3,6 +3,7 @@ package clients
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/dbcore"
@@ -56,6 +57,7 @@ func SaveClientReport(clientUUID string, report common.Report) (err error) {
 
 	Record := models.Record{
 		Client:         clientUUID,
+		Time:           time.Now(),
 		CPU:            float32(report.CPU.Usage),
 		GPU:            0, // Report 未提供 GPU Usage，设为 0（与原 nil 行为类似）
 		RAM:            report.Ram.Used,
