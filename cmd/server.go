@@ -71,7 +71,7 @@ var ServerCmd = &cobra.Command{
 			adminAuthrized.GET("/getClient", admin.GetClient)
 			adminAuthrized.POST("/clearRecord", admin.ClearRecord)
 			adminAuthrized.POST("/removeClient", admin.RemoveClient)
-
+			adminAuthrized.GET("/clientToken", admin.GetClientToken)
 			// settings
 			adminAuthrized.GET("/settings", admin.GetSettings)
 			adminAuthrized.POST("/settings", admin.EditSettings)
