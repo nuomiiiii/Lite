@@ -1,6 +1,6 @@
 FROM golang:1.24 AS builder
 WORKDIR /app
-RUN apt-get update && apt-get install -y musl-tools
+# RUN apt-get update && apt-get install -y musl-tools
 
 COPY go.mod go.sum ./
 RUN go mod download
@@ -8,9 +8,11 @@ RUN go mod download
 COPY . .
 
 ENV CGO_ENABLED=1
-RUN CC=musl-gcc go build -trimpath -ldflags="-s -w -linkmode external -extldflags -static" -o komari .
+# RUN CC=musl-gcc go build -trimpath -ldflags="-s -w -linkmode external -extldflags -static" -o komari .
+RUN go build -trimpath -ldflags="-s -w -linkmode external -extldflags -static" -o komari .
 
-FROM scratch
+# FROM scratch
+FROM alpine:3.21
 WORKDIR /app
 
 COPY --from=builder /app/komari .
