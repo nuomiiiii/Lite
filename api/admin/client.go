@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
@@ -33,20 +34,25 @@ func EditClient(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
 		return
 	}
-
-	updates := make(map[string]interface{})
-	updates["updated_at"] = time.Now()
+	db := dbcore.GetDBInstance()
+	var err error
 	if req.ClientName != "" {
-		updates["client_name"] = req.ClientName
+		err = db.Model(&common.ClientInfo{}).Where("uuid = ?", req.UUID).
+			Updates(map[string]interface{}{"name": req.ClientName, "updated_at": time.Now()}).Error
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+			return
+		}
 	}
 	if req.Token != "" {
-		updates["token"] = req.Token
+		err = db.Model(&models.Client{}).Where("uuid = ?", req.UUID).
+			Updates(map[string]interface{}{"token": req.Token, "updated_at": time.Now()}).Error
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+			return
+		}
 	}
-	db := dbcore.GetDBInstance()
-	if err := db.Model(&models.Client{}).Where("uuid = ?", req.UUID).Updates(updates).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
-		return
-	}
+
 	c.JSON(http.StatusOK, gin.H{"status": "success"})
 }
 
