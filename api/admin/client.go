@@ -66,7 +66,7 @@ func RemoveClient(c *gin.Context) {
 			"error":  "Invalid or missing UUID",
 		})
 	}
-	err := clients.DeleteClientConfig(req.UUID)
+	err := clients.DeleteClient(req.UUID)
 	if err != nil {
 		c.JSON(500, gin.H{
 			"status": "error",

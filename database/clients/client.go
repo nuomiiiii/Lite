@@ -12,10 +12,22 @@ import (
 	"github.com/google/uuid"
 )
 
-// 删除指定 UUID 的客户端配置
+// Deprecated: DeleteClientConfig is deprecated and will be removed in a future release. Use DeleteClient instead.
 func DeleteClientConfig(clientUuid string) error {
 	db := dbcore.GetDBInstance()
 	err := db.Delete(&common.ClientConfig{ClientUUID: clientUuid}).Error
+	if err != nil {
+		return err
+	}
+	return nil
+}
+func DeleteClient(clientUuid string) error {
+	db := dbcore.GetDBInstance()
+	err := db.Delete(&models.Client{}, "uuid = ?", clientUuid).Error
+	if err != nil {
+		return err
+	}
+	err = db.Delete(&common.ClientInfo{}, "uuid = ?", clientUuid).Error
 	if err != nil {
 		return err
 	}
@@ -164,12 +176,22 @@ func GetClientByUUID(uuid string) (client models.Client, err error) {
 // GetClientBasicInfo 获取指定 UUID 的客户端基本信息
 func GetClientBasicInfo(uuid string) (client common.ClientInfo, err error) {
 	db := dbcore.GetDBInstance()
-	err = db.Where("client_uuid = ?", uuid).First(&client).Error
+	err = db.Where("uuid = ?", uuid).First(&client).Error
 	if err != nil {
 		return client, err
 	}
 
 	return client, nil
+}
+
+func GetClientTokenByUUID(uuid string) (token string, err error) {
+	db := dbcore.GetDBInstance()
+	var client models.Client
+	err = db.Where("uuid = ?", uuid).First(&client).Error
+	if err != nil {
+		return "", err
+	}
+	return client.Token, nil
 }
 
 func GetAllClientBasicInfo() (clients []common.ClientInfo, err error) {
