@@ -71,7 +71,7 @@ var ServerCmd = &cobra.Command{
 			adminAuthrized.GET("/getClient", admin.GetClient)
 			adminAuthrized.POST("/clearRecord", admin.ClearRecord)
 			adminAuthrized.POST("/removeClient", admin.RemoveClient)
-
+			adminAuthrized.GET("/clientToken", admin.GetClientToken)
 			// settings
 			adminAuthrized.GET("/settings", admin.GetSettings)
 			adminAuthrized.POST("/settings", admin.EditSettings)
@@ -111,7 +111,9 @@ func InitDatabase() {
 }
 
 func DoRecordsWork() {
-	ticker := time.NewTicker(time.Hour * 1)
+	ticker := time.NewTicker(time.Minute * 30)
+	records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
+	records.CompactRecord()
 	for range ticker.C {
 		records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 		records.CompactRecord()

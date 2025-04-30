@@ -66,7 +66,7 @@ func RemoveClient(c *gin.Context) {
 			"error":  "Invalid or missing UUID",
 		})
 	}
-	err := clients.DeleteClientConfig(req.UUID)
+	err := clients.DeleteClient(req.UUID)
 	if err != nil {
 		c.JSON(500, gin.H{
 			"status": "error",
@@ -115,4 +115,23 @@ func ListClients(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, cls)
+}
+
+func GetClientToken(c *gin.Context) {
+	uuid := c.Query("uuid")
+	if uuid == "" {
+		c.JSON(400, gin.H{
+			"status": "error",
+			"error":  "Invalid or missing UUID",
+		})
+		return
+	}
+
+	token, err := clients.GetClientTokenByUUID(uuid)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "success", "token": token})
 }
