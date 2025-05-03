@@ -7,6 +7,7 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
 	gorm.io/driver/sqlite v1.5.7

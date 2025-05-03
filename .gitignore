@@ -8,8 +8,10 @@
 *.so
 *.dylib
 
+# local development data
 komari.db
 /data
+/utils/geoip/data
 .vscode/
 
 # Test binary, built with `go test -c`

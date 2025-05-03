@@ -60,14 +60,15 @@ type Config struct {
 	Sitename    string `json:"sitename,omitempty" gorm:"type:varchar(100);not null"`
 	Description string `json:"desc,omitempty" gorm:"type:text"`
 	AllowCros   bool   `json:"allow_cros" gorm:"default:false"`
+	// GeoIP 配置
+	GeoIpEnabled  bool   `json:"geoip_enable" gorm:"default:true"`
+	GeoIpProvider string `json:"geoip_provider" gorm:"type:varchar(20);default:'mmdb'"` // mmdb, bilibili, ip-api. 暂时只实现了mmdb
 	// OAuth 配置
 	OAuthClientID     string `json:"oauth_id" gorm:"type:varchar(255);not null"`
 	OAuthClientSecret string `json:"oauth_secret" gorm:"type:varchar(255);not null"`
-	OAuthRedirectURI  string `json:"oauth_redirect_uri" gorm:"type:varchar(255);not null"`
 	OAuthEnabled      bool   `json:"oauth_enable" gorm:"default:false"`
 	// 自定义美化
-	CustomCSS string `json:"custom_css" gorm:"type:longtext"`
-	CustomJS  string `json:"custom_js" gorm:"type:longtext"`
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	CustomHead string `json:"custom_head" gorm:"type:longtext"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
