@@ -67,9 +67,9 @@ func InitGeoIp() {
 	if _, err := os.Stat(GeoIpFilePath); os.IsNotExist(err) {
 		err := UpdateGeoIpDatabase()
 		if err != nil {
-			fmt.Println("Error updating GeoIP database:", err)
+			log.Println("Error updating GeoIP database:", err)
 		} else {
-			fmt.Println("GeoIP database updated successfully.")
+			log.Println("GeoIP database updated successfully.")
 		}
 	}
 	var err error

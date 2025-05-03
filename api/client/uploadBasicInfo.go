@@ -27,7 +27,7 @@ func UploadBasicInfo(c *gin.Context) {
 
 	cbi.UUID = uuid
 
-	if cfg, err := config.Get(); err != nil && cfg.GeoIpEnabled {
+	if cfg, err := config.Get(); err == nil && cfg.GeoIpEnabled {
 		if cbi.IPv4 != "" {
 			ip4 := net.ParseIP(cbi.IPv4)
 			ip4_record, _ := geoip.GetGeoIpInfo(ip4)
