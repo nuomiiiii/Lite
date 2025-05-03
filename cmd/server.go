@@ -49,7 +49,12 @@ var ServerCmd = &cobra.Command{
 
 		if cfg.GeoIpEnabled {
 			geoip.InitGeoIp()
-
+			go func() {
+				ticker := time.NewTicker(time.Hour * 24)
+				for range ticker.C {
+					geoip.UpdateGeoIpDatabase()
+				}
+			}()
 		}
 
 		r.Any("/ping", func(c *gin.Context) {
