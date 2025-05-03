@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/oschwald/maxminddb-golang"
@@ -17,6 +18,7 @@ var (
 	GeoIpUrl                        = "https://gh-proxy.com/raw.githubusercontent.com/Loyalsoldier/geoip/release/GeoLite2-Country.mmdb"
 	GeoIpFilePath                   = "./data/GeoLite2-Country.mmdb"
 	geoIpDb       *maxminddb.Reader = nil
+	lock                            = &sync.RWMutex{}
 )
 
 type GeoIpRecord struct {
@@ -28,6 +30,8 @@ type GeoIpRecord struct {
 
 // 更新Geoip数据库，使用 GeoIpUrl下载最新的数据库文件，并覆盖本地的 GeoIpFilePath 文件
 func UpdateGeoIpDatabase() error {
+	lock.Lock()
+	defer lock.Unlock()
 	if geoIpDb != nil {
 		geoIpDb.Close()
 		geoIpDb = nil
@@ -63,9 +67,9 @@ func InitGeoIp() {
 	if _, err := os.Stat(GeoIpFilePath); os.IsNotExist(err) {
 		err := UpdateGeoIpDatabase()
 		if err != nil {
-			fmt.Println("Error updating GeoIP database:", err)
+			log.Println("Error updating GeoIP database:", err)
 		} else {
-			fmt.Println("GeoIP database updated successfully.")
+			log.Println("GeoIP database updated successfully.")
 		}
 	}
 	var err error
@@ -76,6 +80,8 @@ func InitGeoIp() {
 }
 
 func GetGeoIpInfo(ip net.IP) (*GeoIpRecord, error) {
+	lock.RLock()
+	defer lock.RUnlock()
 	if geoIpDb == nil {
 		InitGeoIp()
 	}

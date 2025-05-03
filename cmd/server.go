@@ -13,6 +13,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/public"
+	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/ws"
 
 	"github.com/gin-contrib/cors"
@@ -44,6 +45,16 @@ var ServerCmd = &cobra.Command{
 				AllowCredentials: true,
 				MaxAge:           12 * time.Hour,
 			}))
+		}
+
+		if cfg.GeoIpEnabled {
+			geoip.InitGeoIp()
+			go func() {
+				ticker := time.NewTicker(time.Hour * 24)
+				for range ticker.C {
+					geoip.UpdateGeoIpDatabase()
+				}
+			}()
 		}
 
 		r.Any("/ping", func(c *gin.Context) {
