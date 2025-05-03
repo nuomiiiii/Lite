@@ -49,6 +49,7 @@ var ServerCmd = &cobra.Command{
 
 		if cfg.GeoIpEnabled {
 			geoip.InitGeoIp()
+
 		}
 
 		r.Any("/ping", func(c *gin.Context) {
