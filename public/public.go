@@ -47,8 +47,7 @@ func initIndex() {
 }
 func UpdateIndex(cfg models.Config) {
 	replaceMap := map[string]string{
-		"<!-- customize css -->": cfg.CustomCSS,
-		"<!-- customize js -->":  cfg.CustomJS,
+		"<!-- customize head -->": cfg.CustomHead,
 	}
 	for k, v := range replaceMap {
 		IndexFile = strings.Replace(RawIndexFile, k, v, 1)
