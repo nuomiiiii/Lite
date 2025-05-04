@@ -58,7 +58,7 @@ func TestInitGeoIp(t *testing.T) {
 
 func TestUnicodeEmoji(t *testing.T) {
 	ISOCode := "CN"
-	emoji := geoip.GetCountryUnicodeEmoji(ISOCode)
+	emoji := geoip.GetRegionUnicodeEmoji(ISOCode)
 	if emoji != "🇨🇳" {
 		t.Errorf("Expected emoji for %s, got %s", ISOCode, emoji)
 	}

@@ -63,8 +63,8 @@ func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 	if cbi.IPv6 != "" {
 		updates["ipv6"] = cbi.IPv6
 	}
-	if cbi.Country != "" {
-		updates["country"] = cbi.Country
+	if cbi.Region != "" {
+		updates["region"] = cbi.Region
 	}
 	if cbi.Remark != "" {
 		updates["remark"] = cbi.Remark

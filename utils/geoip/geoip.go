@@ -97,7 +97,7 @@ func GetGeoIpInfo(ip net.IP) (*GeoIpRecord, error) {
 	return &record, nil
 }
 
-func GetCountryUnicodeEmoji(isoCode string) string {
+func GetRegionUnicodeEmoji(isoCode string) string {
 	if len(isoCode) != 2 {
 		return ""
 	}

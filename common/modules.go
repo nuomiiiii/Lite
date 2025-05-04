@@ -39,7 +39,7 @@ type ClientInfo struct {
 	GpuName   string `json:"gpu_name" gorm:"type:varchar(100)"`
 	IPv4      string `json:"ipv4,omitempty" gorm:"type:varchar(100)"`
 	IPv6      string `json:"ipv6,omitempty" gorm:"type:varchar(100)"`
-	Country   string `json:"country" gorm:"type:varchar(100)"`
+	Region    string `json:"region" gorm:"type:varchar(100)"`
 	Remark    string `json:"remark,omitempty" gorm:"type:longtext"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
