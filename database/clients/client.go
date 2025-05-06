@@ -69,6 +69,10 @@ func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 	if cbi.Remark != "" {
 		updates["remark"] = cbi.Remark
 	}
+	updates["mem_total"] = cbi.MemTotal
+	updates["swap_total"] = cbi.SwapTotal
+	updates["disk_total"] = cbi.DiskTotal
+	updates["version"] = cbi.Version
 	updates["updated_at"] = time.Now()
 
 	err := db.Clauses(clause.OnConflict{

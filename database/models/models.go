@@ -57,8 +57,8 @@ type Record struct {
 // Config stores site-wide settings
 type Config struct {
 	ID          uint   `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
-	Sitename    string `json:"sitename,omitempty" gorm:"type:varchar(100);not null"`
-	Description string `json:"desc,omitempty" gorm:"type:text"`
+	Sitename    string `json:"sitename" gorm:"type:varchar(100);not null"`
+	Description string `json:"desc" gorm:"type:text"`
 	AllowCros   bool   `json:"allow_cros" gorm:"default:false"`
 	// GeoIP 配置
 	GeoIpEnabled  bool   `json:"geoip_enable" gorm:"default:true"`
