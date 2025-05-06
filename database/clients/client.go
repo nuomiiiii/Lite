@@ -63,12 +63,16 @@ func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 	if cbi.IPv6 != "" {
 		updates["ipv6"] = cbi.IPv6
 	}
-	if cbi.Country != "" {
-		updates["country"] = cbi.Country
+	if cbi.Region != "" {
+		updates["region"] = cbi.Region
 	}
 	if cbi.Remark != "" {
 		updates["remark"] = cbi.Remark
 	}
+	updates["mem_total"] = cbi.MemTotal
+	updates["swap_total"] = cbi.SwapTotal
+	updates["disk_total"] = cbi.DiskTotal
+	updates["version"] = cbi.Version
 	updates["updated_at"] = time.Now()
 
 	err := db.Clauses(clause.OnConflict{

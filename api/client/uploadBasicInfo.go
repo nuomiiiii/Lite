@@ -32,13 +32,13 @@ func UploadBasicInfo(c *gin.Context) {
 			ip4 := net.ParseIP(cbi.IPv4)
 			ip4_record, _ := geoip.GetGeoIpInfo(ip4)
 			if ip4_record != nil {
-				cbi.Country = geoip.GetCountryUnicodeEmoji(ip4_record.Country.ISOCode)
+				cbi.Region = geoip.GetRegionUnicodeEmoji(ip4_record.Country.ISOCode)
 			}
 		} else if cbi.IPv6 != "" {
 			ip6 := net.ParseIP(cbi.IPv6)
 			ip6_record, _ := geoip.GetGeoIpInfo(ip6)
 			if ip6_record != nil {
-				cbi.Country = geoip.GetCountryUnicodeEmoji(ip6_record.Country.ISOCode)
+				cbi.Region = geoip.GetRegionUnicodeEmoji(ip6_record.Country.ISOCode)
 			}
 		}
 	}
