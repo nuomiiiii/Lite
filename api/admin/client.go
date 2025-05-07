@@ -28,6 +28,7 @@ func EditClient(c *gin.Context) {
 		UUID       string `json:"uuid" binding:"required"`
 		ClientName string `json:"name,omitempty"`
 		Token      string `json:"token,omitempty"`
+		Weigth     int    `json:"weight,omitempty"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -47,6 +48,14 @@ func EditClient(c *gin.Context) {
 	if req.Token != "" {
 		err = db.Model(&models.Client{}).Where("uuid = ?", req.UUID).
 			Updates(map[string]interface{}{"token": req.Token, "updated_at": time.Now()}).Error
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+			return
+		}
+	}
+	if req.Weigth != 0 {
+		err = db.Model(&common.ClientInfo{}).Where("uuid = ?", req.UUID).
+			Updates(map[string]interface{}{"weigth": req.Weigth, "updated_at": time.Now()}).Error
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
 			return
