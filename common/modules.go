@@ -45,6 +45,7 @@ type ClientInfo struct {
 	SwapTotal int64  `json:"swap_total" gorm:"type:bigint"`
 	DiskTotal int64  `json:"disk_total" gorm:"type:bigint"`
 	Version   string `json:"version" gorm:"type:varchar(100)"`
+	Weigth    int    `json:"weigth" gorm:"type:int"`
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
