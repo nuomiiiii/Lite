@@ -25,6 +25,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '23'
+
+      - name: Clone and build frontend
+        run: |
+          git clone https://github.com/komari-monitor/komari-web web
+          cd web
+          npm install
+          npm run build
+          cd ..
+          mkdir -p public/dist
+          cp -r web/dist/* public/dist/
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
