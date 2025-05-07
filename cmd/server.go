@@ -123,10 +123,19 @@ func InitDatabase() {
 
 func DoRecordsWork() {
 	ticker := time.NewTicker(time.Minute * 30)
+	ticker1 := time.NewTicker(60 * time.Second)
 	records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 	records.CompactRecord()
-	for range ticker.C {
-		records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
-		records.CompactRecord()
+	for {
+		select {
+		case <-ticker.C:
+			records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
+			records.CompactRecord()
+			break
+		case <-ticker1.C:
+			api.SaveClientReportToDB()
+			break
+		}
 	}
+
 }
