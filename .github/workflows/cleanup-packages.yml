@@ -2,8 +2,8 @@ name: Cleanup Old Packages
 
 on:
   schedule:
-    - cron: '0 0 * * 0'  # 每周日运行
-  workflow_dispatch:      # 允许手动触发
+    - cron: '0 0 * * 0'  # Run every Sunday at midnight
+  workflow_dispatch:      # Allow manual trigger
 
 jobs:
   cleanup:
@@ -24,18 +24,36 @@ jobs:
               package_type: 'container',
               package_name: process.env.GITHUB_REPOSITORY.split('/')[1]
             });
-            
-            // 保留最近的 10 个版本和 dev 标签
-            const keepVersions = packages
-              .filter(pkg => pkg.metadata.container.tags.includes('dev'))
-              .concat(packages.filter(pkg => !pkg.metadata.container.tags.includes('dev')).slice(0, 10));
-            
+
+            // Keep packages with 'dev' or 'latest' tags, plus the 10 most recent non-dev, non-latest versions
+            const keepVersions = [
+              // Keep packages with 'dev' tag
+              ...packages.filter(pkg => pkg.metadata.container.tags.includes('dev')),
+              // Keep packages with 'latest' tag, excluding those already included with 'dev'
+              ...packages.filter(
+                pkg =>
+                  pkg.metadata.container.tags.includes('latest') &&
+                  !pkg.metadata.container.tags.includes('dev')
+              ),
+              // Keep the 10 most recent non-dev, non-latest packages
+              ...packages
+                .filter(
+                  pkg =>
+                    !pkg.metadata.container.tags.includes('dev') &&
+                    !pkg.metadata.container.tags.includes('latest')
+                )
+                .slice(0, 10),
+            ];
+
+            // Identify versions to delete (not in keepVersions)
             const deleteVersions = packages.filter(pkg => !keepVersions.includes(pkg));
-            
+
+            // Delete the versions
             for (const version of deleteVersions) {
               await github.rest.packages.deletePackageVersionForAuthenticatedUser({
                 package_type: 'container',
                 package_name: process.env.GITHUB_REPOSITORY.split('/')[1],
                 package_version_id: version.id
               });
-            } 
+              console.log(`Deleted package version ${version.id}`);
+            }
