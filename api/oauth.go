@@ -26,9 +26,9 @@ func OAuth(c *gin.Context) {
 
 // /api/oauth_callback
 func OAuthCallback(c *gin.Context) {
-	defer c.SetCookie("oauth_state", "", -1, "/", "", false, true)
 	// 验证state防止CSRF攻击
 	state, _ := c.Cookie("oauth_state")
+	c.SetCookie("oauth_state", "", -1, "/", "", false, true)
 	if state == "" || state != c.Query("state") {
 		c.JSON(400, gin.H{"status": "error", "error": "Invalid state"})
 		return
@@ -53,6 +53,7 @@ func OAuthCallback(c *gin.Context) {
 	// 如果cookie中有binding_external_account，说明是绑定外部账号
 	// 否则是登录
 	uuid, _ := c.Cookie("binding_external_account")
+	c.SetCookie("binding_external_account", "", -1, "/", "", false, true)
 	if uuid != "" {
 		// 绑定外部账号
 		session, _ := c.Cookie("session_token")
@@ -66,7 +67,6 @@ func OAuthCallback(c *gin.Context) {
 			c.JSON(500, gin.H{"status": "error", "error": "Binding failed"})
 			return
 		}
-		c.SetCookie("binding_external_account", "", -1, "/", "", false, true)
 		c.Redirect(302, "/")
 		return
 	}

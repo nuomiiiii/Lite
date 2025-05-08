@@ -37,7 +37,19 @@ func Save(cst models.Config) error {
 	// Only one records
 	cst.ID = 1
 	cst.UpdatedAt = time.Now()
-	if err := db.Save(&cst).Error; err != nil {
+	// Do not update CreatedAt
+	if err := db.Model(&models.Config{}).Where("id = ?", cst.ID).
+		Select("sitename",
+			"description",
+			"allow_cros",
+			"geo_ip_enabled",
+			"geo_ip_provider",
+			"o_auth_client_id",
+			"o_auth_client_secret",
+			"o_auth_enabled",
+			"custom_head",
+			"updated_at").
+		Updates(cst).Error; err != nil {
 		return err
 	}
 	go public.UpdateIndex(config)
