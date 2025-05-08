@@ -226,3 +226,8 @@ func processTimeRange(db *gorm.DB, clientUUID string, start, end time.Time, inte
 
 	return tx.Commit().Error
 }
+
+func Save(rec models.Record) error {
+	db := dbcore.GetDBInstance()
+	return db.Create(&rec).Error
+}

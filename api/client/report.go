@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/ws"
@@ -38,13 +39,14 @@ func UploadReport(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
-	err = clients.SaveClientReport(report.UUID, report)
+	report.UpdatedAt = time.Now()
+	err = SaveClientReport(report.UUID, report)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("%v", err)})
 		return
 	}
 	// Update report with method and token
-	report.UpdatedAt = time.Now()
+
 	ws.LatestReport[report.UUID] = &report
 
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Restore the body for further use
@@ -124,13 +126,22 @@ func WebSocketReport(c *gin.Context) {
 		if err != nil {
 			break
 		}
-
-		err = clients.SaveClientReport(uuid, report)
+		report.UpdatedAt = time.Now()
+		err = SaveClientReport(uuid, report)
 		if err != nil {
 			conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
 		}
 
-		report.UpdatedAt = time.Now()
 		ws.LatestReport[uuid] = &report
 	}
+}
+
+func SaveClientReport(uuid string, report common.Report) error {
+	if api.Records[uuid] == nil {
+		api.Records[uuid] = []common.Report{}
+	}
+
+	api.Records[uuid] = append(api.Records[uuid], report)
+
+	return nil
 }
