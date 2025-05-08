@@ -25,12 +25,11 @@ func AddClient(c *gin.Context) {
 
 func EditClient(c *gin.Context) {
 	var req struct {
-		UUID       string `json:"uuid" binding:"required"`
 		ClientName string `json:"name,omitempty"`
 		Token      string `json:"token,omitempty"`
 		Weigth     int    `json:"weight,omitempty"`
 	}
-
+	uuid := c.Param("uuid")
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
 		return
@@ -38,7 +37,7 @@ func EditClient(c *gin.Context) {
 	db := dbcore.GetDBInstance()
 	var err error
 	if req.ClientName != "" {
-		err = db.Model(&common.ClientInfo{}).Where("uuid = ?", req.UUID).
+		err = db.Model(&common.ClientInfo{}).Where("uuid = ?", uuid).
 			Updates(map[string]interface{}{"name": req.ClientName, "updated_at": time.Now()}).Error
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
@@ -46,7 +45,7 @@ func EditClient(c *gin.Context) {
 		}
 	}
 	if req.Token != "" {
-		err = db.Model(&models.Client{}).Where("uuid = ?", req.UUID).
+		err = db.Model(&models.Client{}).Where("uuid = ?", uuid).
 			Updates(map[string]interface{}{"token": req.Token, "updated_at": time.Now()}).Error
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
@@ -54,7 +53,7 @@ func EditClient(c *gin.Context) {
 		}
 	}
 	if req.Weigth != 0 {
-		err = db.Model(&common.ClientInfo{}).Where("uuid = ?", req.UUID).
+		err = db.Model(&common.ClientInfo{}).Where("uuid = ?", uuid).
 			Updates(map[string]interface{}{"weigth": req.Weigth, "updated_at": time.Now()}).Error
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
@@ -66,16 +65,8 @@ func EditClient(c *gin.Context) {
 }
 
 func RemoveClient(c *gin.Context) {
-	var req struct {
-		UUID string `json:"uuid" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{
-			"status": "error",
-			"error":  "Invalid or missing UUID",
-		})
-	}
-	err := clients.DeleteClient(req.UUID)
+	uuid := c.Param("uuid")
+	err := clients.DeleteClient(uuid)
 	if err != nil {
 		c.JSON(500, gin.H{
 			"status": "error",
@@ -98,7 +89,7 @@ func ClearRecord(c *gin.Context) {
 }
 
 func GetClient(c *gin.Context) {
-	uuid := c.Query("uuid")
+	uuid := c.Param("uuid")
 	if uuid == "" {
 		c.JSON(400, gin.H{
 			"status": "error",
@@ -109,7 +100,10 @@ func GetClient(c *gin.Context) {
 
 	result, err := clients.GetClientByUUID(uuid)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  err.Error(),
+		})
 		return
 	}
 
@@ -127,7 +121,7 @@ func ListClients(c *gin.Context) {
 }
 
 func GetClientToken(c *gin.Context) {
-	uuid := c.Query("uuid")
+	uuid := c.Param("uuid")
 	if uuid == "" {
 		c.JSON(400, gin.H{
 			"status": "error",

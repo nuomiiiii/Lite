@@ -7,7 +7,10 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"fmt"
 
 	"github.com/google/uuid"
 )
@@ -182,9 +185,11 @@ func GetClientBasicInfo(uuid string) (client common.ClientInfo, err error) {
 	db := dbcore.GetDBInstance()
 	err = db.Where("uuid = ?", uuid).First(&client).Error
 	if err != nil {
-		return client, err
+		if err == gorm.ErrRecordNotFound {
+			return common.ClientInfo{}, fmt.Errorf("客户端不存在: %s", uuid)
+		}
+		return common.ClientInfo{}, err
 	}
-
 	return client, nil
 }
 

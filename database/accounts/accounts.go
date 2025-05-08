@@ -122,7 +122,7 @@ func GetUserByUUID(uuid string) (user models.User, err error) {
 }
 
 // 通过 SSO 信息获取用户
-func GetUserBySSO(ssoID, username string) (user models.User, err error) {
+func GetUserBySSO(ssoID string) (user models.User, err error) {
 	db := dbcore.GetDBInstance()
 
 	// 首先尝试查找已存在的用户
@@ -131,5 +131,24 @@ func GetUserBySSO(ssoID, username string) (user models.User, err error) {
 		return user, nil
 	}
 
-	return user, nil
+	// 如果找不到用户，返回明确的错误信息
+	return models.User{}, fmt.Errorf("用户不存在：%s", ssoID)
+}
+
+func BindingExternalAccount(uuid string, sso_id string) error {
+	db := dbcore.GetDBInstance()
+	err := db.Model(&models.User{}).Where("uuid = ?", uuid).Update("sso_id", sso_id).Error
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func UnbindExternalAccount(uuid string) error {
+	db := dbcore.GetDBInstance()
+	err := db.Model(&models.User{}).Where("uuid = ?", uuid).Update("sso_id", "").Error
+	if err != nil {
+		return err
+	}
+	return nil
 }

@@ -16,7 +16,8 @@ func GetSessions(c *gin.Context) {
 		})
 		return
 	}
-	c.JSON(200, ss)
+	current, _ := c.Cookie("session_token")
+	c.JSON(200, gin.H{"status": "success", "current": current, "data": ss})
 }
 
 func DeleteSession(c *gin.Context) {
@@ -31,6 +32,23 @@ func DeleteSession(c *gin.Context) {
 		return
 	}
 	err := accounts.DeleteSession(req.Session)
+	if err != nil {
+		c.JSON(500, gin.H{
+			"status": "error",
+			"error":  "Failed to delete session",
+		})
+		return
+	}
+
+	c.JSON(200, gin.H{
+		"status":  "success",
+		"message": "Session deleted successfully",
+	})
+}
+
+func DeleteAllSession(c *gin.Context) {
+
+	err := accounts.DeleteAllSessions()
 	if err != nil {
 		c.JSON(500, gin.H{
 			"status": "error",

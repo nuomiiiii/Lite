@@ -66,6 +66,8 @@ var ServerCmd = &cobra.Command{
 		r.GET("/api/clients", ws.GetClients)
 		r.GET("/api/nodes", api.GetNodesInformation)
 		r.GET("/api/public", api.GetPublicSettings)
+		r.GET("/api/oauth", api.OAuth)
+		r.GET("/api/oauth_callback", api.OAuthCallback)
 
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{
@@ -76,17 +78,37 @@ var ServerCmd = &cobra.Command{
 
 		adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())
 		{
-			// clients
-			adminAuthrized.POST("/addClient", admin.AddClient)
-			adminAuthrized.POST("/editClient", admin.EditClient)
-			adminAuthrized.GET("/listClients", admin.ListClients)
-			adminAuthrized.GET("/getClient", admin.GetClient)
-			adminAuthrized.POST("/clearRecord", admin.ClearRecord)
-			adminAuthrized.POST("/removeClient", admin.RemoveClient)
-			adminAuthrized.GET("/clientToken", admin.GetClientToken)
 			// settings
 			adminAuthrized.GET("/settings", admin.GetSettings)
 			adminAuthrized.POST("/settings", admin.EditSettings)
+			// clients
+			clientGroup := adminAuthrized.Group("/client")
+			{
+				clientGroup.POST("/add", admin.AddClient)
+				clientGroup.GET("/list", admin.ListClients)
+				clientGroup.GET("/:uuid", admin.GetClient)
+				clientGroup.POST("/:uuid/edit", admin.EditClient)
+				clientGroup.POST("/:uuid/remove", admin.RemoveClient)
+				clientGroup.GET("/:uuid/token", admin.GetClientToken)
+			}
+
+			// records
+			recordGroup := adminAuthrized.Group("/record")
+			{
+				recordGroup.POST("/clear", admin.ClearRecord)
+			}
+			// oauth2
+			oauth2Group := adminAuthrized.Group("/oauth2")
+			{
+				oauth2Group.GET("/bind", admin.BindingExternalAccount)
+				oauth2Group.POST("/unbind", admin.UnbindExternalAccount)
+			}
+			sessionGroup := adminAuthrized.Group("/session")
+			{
+				sessionGroup.GET("/get", admin.GetSessions)
+				sessionGroup.POST("/remove", admin.DeleteSession)
+				sessionGroup.POST("/remove/all", admin.DeleteAllSession)
+			}
 
 		}
 
