@@ -2,8 +2,8 @@ FROM node:23-alpine AS frontend
 WORKDIR /web
 RUN apk add --no-cache git
 RUN git clone https://github.com/komari-monitor/komari-web .
-RUN pnpm install
-RUN pnpm run build
+RUN npm install
+RUN npm run build
 
 FROM golang:1.24 AS builder
 WORKDIR /app

@@ -34,8 +34,8 @@ jobs:
         run: |
           git clone https://github.com/komari-monitor/komari-web web
           cd web
-          pnpm install
-          pnpm run build
+          npm install
+          npm run build
           cd ..
           mkdir -p public/dist
           cp -r web/dist/* public/dist/
