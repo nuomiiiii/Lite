@@ -24,7 +24,7 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
    docker run -d \
      -p 25774:25774 \
      -v $(pwd)/data:/app/data \
-     --name komari
+     --name komari \
      ghcr.io/komari-monitor/komari:latest
    ```
 3. 查看默认账号和密码：
