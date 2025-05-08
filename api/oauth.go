@@ -13,7 +13,7 @@ import (
 func OAuth(c *gin.Context) {
 	cfg, _ := config.Get()
 	if !cfg.OAuthEnabled {
-		c.JSON(200, gin.H{"status": "error", "error": "OAuth is not enabled"})
+		c.JSON(403, gin.H{"status": "error", "error": "OAuth is not enabled"})
 		return
 	}
 
