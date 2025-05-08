@@ -1,6 +1,8 @@
 package config
 
 import (
+	"time"
+
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/public"
@@ -13,7 +15,9 @@ func Get() (models.Config, error) {
 	if err := db.First(&config).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			config = models.Config{
-				ID: 1,
+				ID:        1,
+				UpdatedAt: time.Now(),
+				CreatedAt: time.Now(),
 			}
 			Save(config)
 			return config, nil
@@ -27,8 +31,9 @@ func Save(cst models.Config) error {
 	db := dbcore.GetDBInstance()
 	var config models.Config
 	// Only one records
-	config.ID = 1
-	if err := db.Save(&config).Error; err != nil {
+	cst.ID = 1
+	cst.UpdatedAt = time.Now()
+	if err := db.Save(&cst).Error; err != nil {
 		return err
 	}
 	go public.UpdateIndex(config)
