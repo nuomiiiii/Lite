@@ -65,6 +65,7 @@ var ServerCmd = &cobra.Command{
 		r.GET("/api/me", api.GetMe)
 		r.GET("/api/clients", ws.GetClients)
 		r.GET("/api/nodes", api.GetNodesInformation)
+		r.GET("/api/public", api.GetPublicSettings)
 
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{

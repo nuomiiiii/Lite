@@ -15,9 +15,13 @@ func Get() (models.Config, error) {
 	if err := db.First(&config).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			config = models.Config{
-				ID:        1,
-				UpdatedAt: time.Now(),
-				CreatedAt: time.Now(),
+				ID:           1,
+				Sitename:     "Komari",
+				Description:  "Komari Monitor, a simple server monitoring tool.",
+				AllowCros:    false,
+				OAuthEnabled: false,
+				UpdatedAt:    time.Now(),
+				CreatedAt:    time.Now(),
 			}
 			Save(config)
 			return config, nil
