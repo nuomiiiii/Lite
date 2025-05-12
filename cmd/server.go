@@ -57,6 +57,13 @@ var ServerCmd = &cobra.Command{
 			}()
 		}
 
+		r.Use(func(c *gin.Context) {
+			if len(c.Request.URL.Path) >= 4 && c.Request.URL.Path[:4] == "/api" {
+				c.Header("Cache-Control", "no-store")
+			}
+			c.Next()
+		})
+
 		r.Any("/ping", func(c *gin.Context) {
 			c.String(200, "pong")
 		})
