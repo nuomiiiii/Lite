@@ -30,9 +30,8 @@ func GetSettings(c *gin.Context) {
 }
 
 // EditSettings 更新自定义配置
-// 务必传全数据
 func EditSettings(c *gin.Context) {
-	cfg := models.Config{}
+	cfg := make(map[string]interface{})
 	if err := c.ShouldBindJSON(&cfg); err != nil {
 		c.JSON(400, gin.H{
 			"status": "error",
@@ -41,8 +40,8 @@ func EditSettings(c *gin.Context) {
 		return
 	}
 
-	cfg.ID = 1 // Only one record
-	if err := config.Save(cfg); err != nil {
+	cfg["id"] = 1 // Only one record
+	if err := config.Update(cfg); err != nil {
 		c.JSON(500, gin.H{
 			"status": "error",
 			"error":  "Internal Server Error: " + err.Error(),

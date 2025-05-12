@@ -58,7 +58,7 @@ type Record struct {
 type Config struct {
 	ID          uint   `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
 	Sitename    string `json:"sitename" gorm:"type:varchar(100);not null"`
-	Description string `json:"desc" gorm:"type:text"`
+	Description string `json:"description" gorm:"type:text"`
 	AllowCros   bool   `json:"allow_cros" gorm:"default:false"`
 	// GeoIP 配置
 	GeoIpEnabled  bool   `json:"geoip_enable" gorm:"default:true"`
