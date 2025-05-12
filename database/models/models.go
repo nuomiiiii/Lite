@@ -61,12 +61,12 @@ type Config struct {
 	Description string `json:"description" gorm:"type:text"`
 	AllowCros   bool   `json:"allow_cros" gorm:"default:false"`
 	// GeoIP 配置
-	GeoIpEnabled  bool   `json:"geoip_enable" gorm:"default:true"`
-	GeoIpProvider string `json:"geoip_provider" gorm:"type:varchar(20);default:'mmdb'"` // mmdb, bilibili, ip-api. 暂时只实现了mmdb
+	GeoIpEnabled  bool   `json:"geo_ip_enabled" gorm:"default:true"`
+	GeoIpProvider string `json:"geo_ip_provider" gorm:"type:varchar(20);default:'mmdb'"` // mmdb, bilibili, ip-api. 暂时只实现了mmdb
 	// OAuth 配置
-	OAuthClientID     string `json:"oauth_id" gorm:"type:varchar(255);not null"`
-	OAuthClientSecret string `json:"oauth_secret" gorm:"type:varchar(255);not null"`
-	OAuthEnabled      bool   `json:"oauth_enable" gorm:"default:false"`
+	OAuthClientID     string `json:"o_auth_client_id" gorm:"type:varchar(255);not null"`
+	OAuthClientSecret string `json:"o_auth_client_secret" gorm:"type:varchar(255);not null"`
+	OAuthEnabled      bool   `json:"o_auth_enabled" gorm:"default:false"`
 	// 自定义美化
 	CustomHead string `json:"custom_head" gorm:"type:longtext"`
 	CreatedAt  time.Time
