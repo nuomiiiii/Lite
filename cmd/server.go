@@ -68,6 +68,7 @@ var ServerCmd = &cobra.Command{
 		r.GET("/api/public", api.GetPublicSettings)
 		r.GET("/api/oauth", api.OAuth)
 		r.GET("/api/oauth_callback", api.OAuthCallback)
+		r.GET("/api/logout", api.Logout)
 
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{
@@ -90,6 +91,7 @@ var ServerCmd = &cobra.Command{
 				clientGroup.POST("/:uuid/edit", admin.EditClient)
 				clientGroup.POST("/:uuid/remove", admin.RemoveClient)
 				clientGroup.GET("/:uuid/token", admin.GetClientToken)
+				clientGroup.POST("/order", admin.OrderWeight)
 			}
 
 			// records
