@@ -81,6 +81,17 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 ## 贡献
 欢迎提交 Issue 或 Pull Request！
 
+## 鸣谢
+ - 感谢 [Alice Networks LTD](https://app.alice.ws/) 提供的免费服务器
+
+## 引用
+ - [gorm.io](https://gorm.io/)
+ - [spf13/cobra](https://github.com/spf13/cobra)
+ - [oschwald/maxminddb-golang](https://github.com/oschwald/maxminddb-golang)
+ - [gorilla/websocket](https://github.com/gorilla/websocket)
+ - [google/uuid](https://github.com/google/uuid)
+ - [gin-gonic/gin](https://github.com/gin-gonic/gin)
+
 ## 许可证
 [MIT License](LICENSE)
 
