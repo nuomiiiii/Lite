@@ -13,13 +13,23 @@ import (
 )
 
 func AddClient(c *gin.Context) {
-
-	uuid, token, err := clients.CreateClient()
+	var req struct {
+		name string
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		uuid, token, err := clients.CreateClient()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "success", "uuid": uuid, "token": token})
+		return
+	}
+	uuid, token, err := clients.CreateClientWithName(req.name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"status": "success", "uuid": uuid, "token": token})
 }
 

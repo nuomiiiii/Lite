@@ -159,6 +159,35 @@ func CreateClient() (clientUUID, token string, err error) {
 	return clientUUID, token, nil
 }
 
+func CreateClientWithName(name string) (clientUUID, token string, err error) {
+	if name == "" {
+		return CreateClient()
+	}
+	db := dbcore.GetDBInstance()
+	token = utils.GenerateToken()
+	clientUUID = uuid.New().String()
+	client := models.Client{
+		UUID:      clientUUID,
+		Token:     token,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	err = db.Create(&client).Error
+	if err != nil {
+		return "", "", err
+	}
+	clientInfo := common.ClientInfo{
+		UUID: clientUUID,
+		Name: name,
+	}
+	err = db.Create(&clientInfo).Error
+	if err != nil {
+		return "", "", err
+	}
+	return clientUUID, token, nil
+}
+
 /*
 // GetAllClients 获取所有客户端配置
 
