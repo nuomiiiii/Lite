@@ -11,6 +11,7 @@ import (
 	"github.com/komari-monitor/komari/database/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 var (
@@ -47,7 +48,12 @@ func InitDatabase() bool {
 func GetDBInstance() *gorm.DB {
 	once.Do(func() {
 		var err error
-		instance, err = gorm.Open(sqlite.Open(flags.DatabaseFile), &gorm.Config{})
+
+		logConfig := &gorm.Config{
+			Logger: logger.Default.LogMode(logger.Silent),
+		}
+
+		instance, err = gorm.Open(sqlite.Open(flags.DatabaseFile), logConfig)
 		if err != nil {
 			log.Fatalf("Failed to connect to SQLite3 database: %v", err)
 		}

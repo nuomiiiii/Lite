@@ -16,7 +16,6 @@ type LoginRequest struct {
 }
 
 func Login(c *gin.Context) {
-	// TODO: Settings -> Disable password login when using OAuth
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid request body"})

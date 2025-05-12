@@ -41,7 +41,7 @@ func initIndex() {
 	}()
 	index, err := io.ReadAll(indexFile)
 	if err != nil {
-		log.Fatalln("Failed to read index.html:", err)
+		log.Println("Failed to read index.html:", err)
 	}
 	RawIndexFile = string(index)
 }
