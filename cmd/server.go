@@ -76,6 +76,7 @@ var ServerCmd = &cobra.Command{
 		r.GET("/api/oauth", api.OAuth)
 		r.GET("/api/oauth_callback", api.OAuthCallback)
 		r.GET("/api/logout", api.Logout)
+		r.GET("/api/recent/:uuid", api.GetClientRecentRecords)
 
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{
