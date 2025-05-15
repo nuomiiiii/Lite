@@ -140,7 +140,9 @@ func SaveClientReport(uuid string, report common.Report) error {
 	if api.Records[uuid] == nil {
 		api.Records[uuid] = []common.Report{}
 	}
-
+	if report.CPU.Usage < 0.01 {
+		report.CPU.Usage = 0.01
+	}
 	api.Records[uuid] = append(api.Records[uuid], report)
 
 	return nil
