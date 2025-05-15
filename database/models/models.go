@@ -33,25 +33,25 @@ type Session struct {
 
 // Record logs client metrics over time
 type Record struct {
-	Client         string    `gorm:"type:uuid;index;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
-	Time           time.Time `gorm:"index;default:CURRENT_TIMESTAMP"`
-	CPU            float32   `gorm:"type:decimal(5,2)"` // e.g., 75.50%
-	GPU            float32   `gorm:"type:decimal(5,2)"`
-	RAM            int64     `gorm:"type:bigint"`
-	RAMTotal       int64     `gorm:"type:bigint"`
-	SWAP           int64     `gorm:"type:bigint"`
-	SWAPTotal      int64     `gorm:"type:bigint"`
-	LOAD           float32   `gorm:"type:decimal(5,2)"`
-	TEMP           float32   `gorm:"type:decimal(5,2)"`
-	DISK           int64     `gorm:"type:bigint"`
-	DISKTotal      int64     `gorm:"type:bigint"`
-	NETIn          int64     `gorm:"type:bigint"`
-	NETOut         int64     `gorm:"type:bigint"`
-	NETTotalUp     int64     `gorm:"type:bigint"`
-	NETTotalDown   int64     `gorm:"type:bigint"`
-	PROCESS        int
-	Connections    int
-	ConnectionsUDP int
+	Client         string    `json:"client" gorm:"type:uuid;index;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
+	Time           time.Time `json:"time" gorm:"index;default:CURRENT_TIMESTAMP"`
+	Cpu            float32   `json:"cpu" gorm:"type:decimal(5,2)"` // e.g., 75.50%
+	Gpu            float32   `json:"gpu" gorm:"type:decimal(5,2)"`
+	Ram            int64     `json:"ram" gorm:"type:bigint"`
+	RamTotal       int64     `json:"ram_total" gorm:"type:bigint"`
+	Swap           int64     `json:"swap" gorm:"type:bigint"`
+	SwapTotal      int64     `json:"swap_total" gorm:"type:bigint"`
+	Load           float32   `json:"load" gorm:"type:decimal(5,2)"`
+	Temp           float32   `json:"temp" gorm:"type:decimal(5,2)"`
+	Disk           int64     `json:"disk" gorm:"type:bigint"`
+	DiskTotal      int64     `json:"disk_total" gorm:"type:bigint"`
+	NetIn          int64     `json:"net_in" gorm:"type:bigint"`
+	NetOut         int64     `json:"net_out" gorm:"type:bigint"`
+	NetTotalUp     int64     `json:"net_total_up" gorm:"type:bigint"`
+	NetTotalDown   int64     `json:"net_total_down" gorm:"type:bigint"`
+	Process        int       `json:"process"`
+	Connections    int       `json:"connections"`
+	ConnectionsUdp int       `json:"connections_udp"`
 }
 
 // Config stores site-wide settings

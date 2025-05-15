@@ -176,46 +176,46 @@ func processTimeRange(db *gorm.DB, clientUUID string, start, end time.Time, inte
 		count := len(agg.Records)
 
 		for _, r := range agg.Records {
-			sumCPU += r.CPU
-			sumGPU += r.GPU
-			sumLOAD += r.LOAD
-			sumTEMP += r.TEMP
-			sumRAM += r.RAM
-			sumRAMTotal += r.RAMTotal
-			sumSWAP += r.SWAP
-			sumSWAPTotal += r.SWAPTotal
-			sumDISK += r.DISK
-			sumDISKTotal += r.DISKTotal
-			sumNETIn += r.NETIn
-			sumNETOut += r.NETOut
-			sumNETTotalUp += r.NETTotalUp
-			sumNETTotalDown += r.NETTotalDown
-			sumPROCESS += r.PROCESS
+			sumCPU += r.Cpu
+			sumGPU += r.Gpu
+			sumLOAD += r.Load
+			sumTEMP += r.Temp
+			sumRAM += r.Ram
+			sumRAMTotal += r.RamTotal
+			sumSWAP += r.Swap
+			sumSWAPTotal += r.SwapTotal
+			sumDISK += r.Disk
+			sumDISKTotal += r.DiskTotal
+			sumNETIn += r.NetIn
+			sumNETOut += r.NetOut
+			sumNETTotalUp += r.NetTotalUp
+			sumNETTotalDown += r.NetTotalDown
+			sumPROCESS += r.Process
 			sumConnections += r.Connections
-			sumConnectionsUDP += r.ConnectionsUDP
+			sumConnectionsUDP += r.ConnectionsUdp
 		}
 
 		// Create new aggregated record
 		newRecord := models.Record{
 			Client:         clientUUID,
 			Time:           agg.StartTime,
-			CPU:            sumCPU / float32(count),
-			GPU:            sumGPU / float32(count),
-			RAM:            sumRAM / int64(count),
-			RAMTotal:       sumRAMTotal / int64(count),
-			SWAP:           sumSWAP / int64(count),
-			SWAPTotal:      sumSWAPTotal / int64(count),
-			LOAD:           sumLOAD / float32(count),
-			TEMP:           sumTEMP / float32(count),
-			DISK:           sumDISK / int64(count),
-			DISKTotal:      sumDISKTotal / int64(count),
-			NETIn:          sumNETIn / int64(count),
-			NETOut:         sumNETOut / int64(count),
-			NETTotalUp:     sumNETTotalUp / int64(count),
-			NETTotalDown:   sumNETTotalDown / int64(count),
-			PROCESS:        sumPROCESS / count,
+			Cpu:            sumCPU / float32(count),
+			Gpu:            sumGPU / float32(count),
+			Ram:            sumRAM / int64(count),
+			RamTotal:       sumRAMTotal / int64(count),
+			Swap:           sumSWAP / int64(count),
+			SwapTotal:      sumSWAPTotal / int64(count),
+			Load:           sumLOAD / float32(count),
+			Temp:           sumTEMP / float32(count),
+			Disk:           sumDISK / int64(count),
+			DiskTotal:      sumDISKTotal / int64(count),
+			NetIn:          sumNETIn / int64(count),
+			NetOut:         sumNETOut / int64(count),
+			NetTotalUp:     sumNETTotalUp / int64(count),
+			NetTotalDown:   sumNETTotalDown / int64(count),
+			Process:        sumPROCESS / count,
 			Connections:    sumConnections / count,
-			ConnectionsUDP: sumConnectionsUDP / count,
+			ConnectionsUdp: sumConnectionsUDP / count,
 		}
 
 		if err := tx.Create(&newRecord).Error; err != nil {
