@@ -50,7 +50,7 @@ func EditClient(c *gin.Context) {
 			return
 		}
 	}
-	allowed_fields := []string{"name", "remark", "weight", "price", "expired_at"}
+	allowed_fields := []string{"name", "remark", "public_remark", "weight", "price", "expired_at"}
 	updateFields := map[string]interface{}{
 		"updated_at": time.Now(),
 	}
