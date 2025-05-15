@@ -5,7 +5,6 @@ import (
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/public"
 	"gorm.io/gorm"
 )
 
@@ -33,7 +32,6 @@ func Get() (models.Config, error) {
 
 func Save(cst models.Config) error {
 	db := dbcore.GetDBInstance()
-	var config models.Config
 	// Only one records
 	cst.ID = 1
 	cst.UpdatedAt = time.Now()
@@ -52,6 +50,17 @@ func Save(cst models.Config) error {
 		Updates(cst).Error; err != nil {
 		return err
 	}
-	go public.UpdateIndex(config)
+	return nil
+}
+
+func Update(cst map[string]interface{}) error {
+	db := dbcore.GetDBInstance()
+	cst["id"] = 1
+	cst["updated_at"] = time.Now()
+	delete(cst, "created_at")
+	delete(cst, "CreatedAt")
+	if err := db.Model(&models.Config{}).Where("id = ?", 1).Updates(cst).Error; err != nil {
+		return err
+	}
 	return nil
 }

@@ -16,7 +16,7 @@ func AddClient(c *gin.Context) {
 	var req struct {
 		name string
 	}
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil || req.name == "" {
 		uuid, token, err := clients.CreateClient()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
@@ -34,11 +34,7 @@ func AddClient(c *gin.Context) {
 }
 
 func EditClient(c *gin.Context) {
-	var req struct {
-		ClientName string `json:"name,omitempty"`
-		Token      string `json:"token,omitempty"`
-		Weigth     int    `json:"weight,omitempty"`
-	}
+	var req = make(map[string]interface{})
 	uuid := c.Param("uuid")
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
@@ -46,26 +42,25 @@ func EditClient(c *gin.Context) {
 	}
 	db := dbcore.GetDBInstance()
 	var err error
-	if req.ClientName != "" {
-		err = db.Model(&common.ClientInfo{}).Where("uuid = ?", uuid).
-			Updates(map[string]interface{}{"name": req.ClientName, "updated_at": time.Now()}).Error
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
-			return
-		}
-	}
-	if req.Token != "" {
+	if req["token"] != "" {
 		err = db.Model(&models.Client{}).Where("uuid = ?", uuid).
-			Updates(map[string]interface{}{"token": req.Token, "updated_at": time.Now()}).Error
+			Updates(map[string]interface{}{"token": req["token"], "updated_at": time.Now()}).Error
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
 			return
 		}
 	}
-	if req.Weigth != 0 {
-		err = db.Model(&common.ClientInfo{}).Where("uuid = ?", uuid).
-			Updates(map[string]interface{}{"weigth": req.Weigth, "updated_at": time.Now()}).Error
-		if err != nil {
+	allowed_fields := []string{"name", "remark", "weight", "price", "expired_at"}
+	updateFields := map[string]interface{}{
+		"updated_at": time.Now(),
+	}
+	for _, field := range allowed_fields {
+		if req[field] != nil {
+			updateFields[field] = req[field]
+		}
+	}
+	if len(updateFields) > 1 { // 大于1是因为至少包含了updated_at
+		if err := db.Model(&common.ClientInfo{}).Where("uuid = ?", uuid).Updates(updateFields).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
 			return
 		}

@@ -33,40 +33,40 @@ type Session struct {
 
 // Record logs client metrics over time
 type Record struct {
-	Client         string    `gorm:"type:uuid;index;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
-	Time           time.Time `gorm:"index;default:CURRENT_TIMESTAMP"`
-	CPU            float32   `gorm:"type:decimal(5,2)"` // e.g., 75.50%
-	GPU            float32   `gorm:"type:decimal(5,2)"`
-	RAM            int64     `gorm:"type:bigint"`
-	RAMTotal       int64     `gorm:"type:bigint"`
-	SWAP           int64     `gorm:"type:bigint"`
-	SWAPTotal      int64     `gorm:"type:bigint"`
-	LOAD           float32   `gorm:"type:decimal(5,2)"`
-	TEMP           float32   `gorm:"type:decimal(5,2)"`
-	DISK           int64     `gorm:"type:bigint"`
-	DISKTotal      int64     `gorm:"type:bigint"`
-	NETIn          int64     `gorm:"type:bigint"`
-	NETOut         int64     `gorm:"type:bigint"`
-	NETTotalUp     int64     `gorm:"type:bigint"`
-	NETTotalDown   int64     `gorm:"type:bigint"`
-	PROCESS        int
-	Connections    int
-	ConnectionsUDP int
+	Client         string    `json:"client" gorm:"type:uuid;index;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
+	Time           time.Time `json:"time" gorm:"index;default:CURRENT_TIMESTAMP"`
+	Cpu            float32   `json:"cpu" gorm:"type:decimal(5,2)"` // e.g., 75.50%
+	Gpu            float32   `json:"gpu" gorm:"type:decimal(5,2)"`
+	Ram            int64     `json:"ram" gorm:"type:bigint"`
+	RamTotal       int64     `json:"ram_total" gorm:"type:bigint"`
+	Swap           int64     `json:"swap" gorm:"type:bigint"`
+	SwapTotal      int64     `json:"swap_total" gorm:"type:bigint"`
+	Load           float32   `json:"load" gorm:"type:decimal(5,2)"`
+	Temp           float32   `json:"temp" gorm:"type:decimal(5,2)"`
+	Disk           int64     `json:"disk" gorm:"type:bigint"`
+	DiskTotal      int64     `json:"disk_total" gorm:"type:bigint"`
+	NetIn          int64     `json:"net_in" gorm:"type:bigint"`
+	NetOut         int64     `json:"net_out" gorm:"type:bigint"`
+	NetTotalUp     int64     `json:"net_total_up" gorm:"type:bigint"`
+	NetTotalDown   int64     `json:"net_total_down" gorm:"type:bigint"`
+	Process        int       `json:"process"`
+	Connections    int       `json:"connections"`
+	ConnectionsUdp int       `json:"connections_udp"`
 }
 
 // Config stores site-wide settings
 type Config struct {
 	ID          uint   `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
 	Sitename    string `json:"sitename" gorm:"type:varchar(100);not null"`
-	Description string `json:"desc" gorm:"type:text"`
+	Description string `json:"description" gorm:"type:text"`
 	AllowCros   bool   `json:"allow_cros" gorm:"default:false"`
 	// GeoIP 配置
-	GeoIpEnabled  bool   `json:"geoip_enable" gorm:"default:true"`
-	GeoIpProvider string `json:"geoip_provider" gorm:"type:varchar(20);default:'mmdb'"` // mmdb, bilibili, ip-api. 暂时只实现了mmdb
+	GeoIpEnabled  bool   `json:"geo_ip_enabled" gorm:"default:true"`
+	GeoIpProvider string `json:"geo_ip_provider" gorm:"type:varchar(20);default:'mmdb'"` // mmdb, bilibili, ip-api. 暂时只实现了mmdb
 	// OAuth 配置
-	OAuthClientID     string `json:"oauth_id" gorm:"type:varchar(255);not null"`
-	OAuthClientSecret string `json:"oauth_secret" gorm:"type:varchar(255);not null"`
-	OAuthEnabled      bool   `json:"oauth_enable" gorm:"default:false"`
+	OAuthClientID     string `json:"o_auth_client_id" gorm:"type:varchar(255);not null"`
+	OAuthClientSecret string `json:"o_auth_client_secret" gorm:"type:varchar(255);not null"`
+	OAuthEnabled      bool   `json:"o_auth_enabled" gorm:"default:false"`
 	// 自定义美化
 	CustomHead string `json:"custom_head" gorm:"type:longtext"`
 	CreatedAt  time.Time

@@ -58,23 +58,23 @@ func SaveClientReport(clientUUID string, report common.Report) (err error) {
 	Record := models.Record{
 		Client:         clientUUID,
 		Time:           time.Now(),
-		CPU:            float32(report.CPU.Usage),
-		GPU:            0, // Report 未提供 GPU Usage，设为 0（与原 nil 行为类似）
-		RAM:            report.Ram.Used,
-		RAMTotal:       report.Ram.Total,
-		SWAP:           report.Swap.Used,
-		SWAPTotal:      report.Swap.Total,
-		LOAD:           float32(report.Load.Load1), // 使用 Load1 作为主要负载指标
-		TEMP:           0,                          // Report 未提供 TEMP，设为 0（与原 nil 行为类似）
-		DISK:           report.Disk.Used,
-		DISKTotal:      report.Disk.Total,
-		NETIn:          report.Network.Down,
-		NETOut:         report.Network.Up,
-		NETTotalUp:     report.Network.TotalUp,
-		NETTotalDown:   report.Network.TotalDown,
-		PROCESS:        report.Process,
+		Cpu:            float32(report.CPU.Usage),
+		Gpu:            0, // Report 未提供 GPU Usage，设为 0（与原 nil 行为类似）
+		Ram:            report.Ram.Used,
+		RamTotal:       report.Ram.Total,
+		Swap:           report.Swap.Used,
+		SwapTotal:      report.Swap.Total,
+		Load:           float32(report.Load.Load1), // 使用 Load1 作为主要负载指标
+		Temp:           0,                          // Report 未提供 TEMP，设为 0（与原 nil 行为类似）
+		Disk:           report.Disk.Used,
+		DiskTotal:      report.Disk.Total,
+		NetIn:          report.Network.Down,
+		NetOut:         report.Network.Up,
+		NetTotalUp:     report.Network.TotalUp,
+		NetTotalDown:   report.Network.TotalDown,
+		Process:        report.Process,
 		Connections:    report.Connections.TCP,
-		ConnectionsUDP: report.Connections.UDP,
+		ConnectionsUdp: report.Connections.UDP,
 	}
 
 	// 使用事务确保 Record 和 ClientsInfo 一致性

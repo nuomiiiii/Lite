@@ -57,6 +57,13 @@ var ServerCmd = &cobra.Command{
 			}()
 		}
 
+		r.Use(func(c *gin.Context) {
+			if len(c.Request.URL.Path) >= 4 && c.Request.URL.Path[:4] == "/api" {
+				c.Header("Cache-Control", "no-store")
+			}
+			c.Next()
+		})
+
 		r.Any("/ping", func(c *gin.Context) {
 			c.String(200, "pong")
 		})
@@ -69,6 +76,7 @@ var ServerCmd = &cobra.Command{
 		r.GET("/api/oauth", api.OAuth)
 		r.GET("/api/oauth_callback", api.OAuthCallback)
 		r.GET("/api/logout", api.Logout)
+		r.GET("/api/recent/:uuid", api.GetClientRecentRecords)
 
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{
