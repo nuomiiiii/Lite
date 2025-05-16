@@ -1,8 +1,10 @@
 package api
 
 import (
+	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/komari-monitor/komari/common"
 
 	"github.com/komari-monitor/komari/database/dbcore"
@@ -13,6 +15,15 @@ import (
 var (
 	Records map[string][]common.Report = make(map[string][]common.Report)
 )
+
+type TerminalSession struct {
+	UUID    string
+	Browser *websocket.Conn
+	Agent   *websocket.Conn
+}
+
+var TerminalSessionsMutex = &sync.Mutex{}
+var TerminalSessions = make(map[string]*TerminalSession)
 
 func SaveClientReportToDB() error {
 	lastMinute := time.Now().Add(-time.Minute * 1).Unix()

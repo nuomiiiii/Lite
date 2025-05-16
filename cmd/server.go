@@ -83,6 +83,7 @@ var ServerCmd = &cobra.Command{
 			tokenAuthrized.GET("/report", client.WebSocketReport) // websocket
 			tokenAuthrized.POST("/uploadBasicInfo", client.UploadBasicInfo)
 			tokenAuthrized.POST("/report", client.UploadReport)
+			tokenAuthrized.GET("/terminal", client.EstablishConnection)
 		}
 
 		adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())
@@ -100,6 +101,8 @@ var ServerCmd = &cobra.Command{
 				clientGroup.POST("/:uuid/remove", admin.RemoveClient)
 				clientGroup.GET("/:uuid/token", admin.GetClientToken)
 				clientGroup.POST("/order", admin.OrderWeight)
+				// client terminal
+				clientGroup.GET("/:uuid/terminal", api.RequestTerminal)
 			}
 
 			// records
@@ -119,7 +122,6 @@ var ServerCmd = &cobra.Command{
 				sessionGroup.POST("/remove", admin.DeleteSession)
 				sessionGroup.POST("/remove/all", admin.DeleteAllSession)
 			}
-
 		}
 
 		public.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
