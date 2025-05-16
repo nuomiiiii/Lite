@@ -93,6 +93,10 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
  - [gorilla/websocket](https://github.com/gorilla/websocket)
  - [google/uuid](https://github.com/google/uuid)
  - [gin-gonic/gin](https://github.com/gin-gonic/gin)
+ - [UserExistsError/conpty](https://github.com/UserExistsError/conpty)
+ - [creack/pty](https://github.com/creack/pty)
+ - [rhysd/go-github-selfupdate](https://github.com/rhysd/go-github-selfupdate)
+ - [shirou/gopsutil](https://github.com/shirou/gopsutil)
 
 ## 许可证
 [MIT License](LICENSE)
