@@ -6,7 +6,7 @@ import (
 
 // Client represents a registered client device
 type Client struct {
-	UUID      string    `json:"uuid,omitempty" gorm:"type:uuid;primaryKey"`
+	UUID      string    `json:"uuid,omitempty" gorm:"type:varchar(36);primaryKey"`
 	Token     string    `json:"token,omitempty" gorm:"type:varchar(255);unique;not null"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -14,7 +14,7 @@ type Client struct {
 
 // User represents an authenticated user
 type User struct {
-	UUID      string    `json:"uuid,omitempty" gorm:"type:uuid;primaryKey"`
+	UUID      string    `json:"uuid,omitempty" gorm:"type:varchar(36);primaryKey"`
 	Username  string    `json:"username" gorm:"type:varchar(50);unique;not null"`
 	Passwd    string    `json:"passwd,omitempty" gorm:"type:varchar(255);not null"` // Hashed password
 	SSOType   string    `json:"sso_type" gorm:"type:varchar(20)"`                   // e.g., "github", "google"
@@ -25,7 +25,7 @@ type User struct {
 
 // Session manages user sessions
 type Session struct {
-	UUID      string    `gorm:"type:uuid;foreignKey:UserUUID;references:UUID;constraint:OnDelete:CASCADE"`
+	UUID      string    `gorm:"type:varchar(36);foreignKey:UserUUID;references:UUID;constraint:OnDelete:CASCADE"`
 	Session   string    `gorm:"type:varchar(255);unique;not null"`
 	Expires   time.Time `gorm:"not null"`
 	CreatedAt time.Time
@@ -33,8 +33,8 @@ type Session struct {
 
 // Record logs client metrics over time
 type Record struct {
-	Client         string    `json:"client" gorm:"type:uuid;index;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
-	Time           time.Time `json:"time" gorm:"index;default:CURRENT_TIMESTAMP"`
+	Client         string    `json:"client" gorm:"type:varchar(36);index;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
+	Time           time.Time `json:"time" gorm:"index"`
 	Cpu            float32   `json:"cpu" gorm:"type:decimal(5,2)"` // e.g., 75.50%
 	Gpu            float32   `json:"gpu" gorm:"type:decimal(5,2)"`
 	Ram            int64     `json:"ram" gorm:"type:bigint"`
