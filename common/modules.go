@@ -49,6 +49,7 @@ type ClientInfo struct {
 	Version        string    `json:"version,omitempty" gorm:"type:varchar(100)"`
 	Weight         int       `json:"weight" gorm:"type:int"`
 	Price          float64   `json:"price"`
+	BillingCycle   int       `json:"billing_cycle"`
 	ExpiredAt      time.Time `json:"expired_at" gorm:"type:timestamp"`
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
