@@ -26,6 +26,17 @@ WORKDIR /app
 COPY --from=builder /app/komari .
 
 ENV GIN_MODE=release
+# 数据库配置环境变量（可以在运行时覆盖）
+ENV KOMARI_DB_TYPE=sqlite
+ENV KOMARI_DB_FILE=/app/data/komari.db
+ENV KOMARI_DB_HOST=localhost
+ENV KOMARI_DB_PORT=3306
+ENV KOMARI_DB_USER=root
+ENV KOMARI_DB_PASS=
+ENV KOMARI_DB_NAME=komari
+ENV KOMARI_LISTEN=0.0.0.0:25774
+
 EXPOSE 25774
 
-CMD ["/app/komari","server", "-l", "0.0.0.0:25774","-d", "/app/data/komari.db"]
+# 使用环境变量启动服务
+CMD ["/app/komari","server"]

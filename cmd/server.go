@@ -11,6 +11,7 @@ import (
 	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/public"
 	"github.com/komari-monitor/komari/utils/geoip"
@@ -83,6 +84,7 @@ var ServerCmd = &cobra.Command{
 			tokenAuthrized.GET("/report", client.WebSocketReport) // websocket
 			tokenAuthrized.POST("/uploadBasicInfo", client.UploadBasicInfo)
 			tokenAuthrized.POST("/report", client.UploadReport)
+			tokenAuthrized.GET("/terminal", client.EstablishConnection)
 		}
 
 		adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())
@@ -100,6 +102,8 @@ var ServerCmd = &cobra.Command{
 				clientGroup.POST("/:uuid/remove", admin.RemoveClient)
 				clientGroup.GET("/:uuid/token", admin.GetClientToken)
 				clientGroup.POST("/order", admin.OrderWeight)
+				// client terminal
+				clientGroup.GET("/:uuid/terminal", api.RequestTerminal)
 			}
 
 			// records
@@ -119,7 +123,6 @@ var ServerCmd = &cobra.Command{
 				sessionGroup.POST("/remove", admin.DeleteSession)
 				sessionGroup.POST("/remove/all", admin.DeleteAllSession)
 			}
-
 		}
 
 		public.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
@@ -140,12 +143,27 @@ var ServerCmd = &cobra.Command{
 }
 
 func init() {
-	ServerCmd.PersistentFlags().StringVarP(&flags.Listen, "listen", "l", "0.0.0.0:25774", "Listen address")
+	// 从环境变量获取监听地址
+	listenAddr := getEnv("KOMARI_LISTEN", "0.0.0.0:25774")
+	ServerCmd.PersistentFlags().StringVarP(&flags.Listen, "listen", "l", listenAddr, "监听地址 [env: KOMARI_LISTEN]")
 	RootCmd.AddCommand(ServerCmd)
 }
 
 func InitDatabase() {
-	if !dbcore.InitDatabase() {
+	// // 打印数据库类型和连接信息
+	// if flags.DatabaseType == "mysql" {
+	// 	log.Printf("使用 MySQL 数据库连接: %s@%s:%s/%s",
+	// 		flags.DatabaseUser, flags.DatabaseHost, flags.DatabasePort, flags.DatabaseName)
+	// 	log.Printf("环境变量配置: [KOMARI_DB_TYPE=%s] [KOMARI_DB_HOST=%s] [KOMARI_DB_PORT=%s] [KOMARI_DB_USER=%s] [KOMARI_DB_NAME=%s]",
+	// 		os.Getenv("KOMARI_DB_TYPE"), os.Getenv("KOMARI_DB_HOST"), os.Getenv("KOMARI_DB_PORT"),
+	// 		os.Getenv("KOMARI_DB_USER"), os.Getenv("KOMARI_DB_NAME"))
+	// } else {
+	// 	log.Printf("使用 SQLite 数据库文件: %s", flags.DatabaseFile)
+	// 	log.Printf("环境变量配置: [KOMARI_DB_TYPE=%s] [KOMARI_DB_FILE=%s]",
+	// 		os.Getenv("KOMARI_DB_TYPE"), os.Getenv("KOMARI_DB_FILE"))
+	// }
+	var count int64 = 0
+	if dbcore.GetDBInstance().Model(&models.User{}).Count(&count); count == 0 {
 		user, passwd, err := accounts.CreateDefaultAdminAccount()
 		if err != nil {
 			panic(err)
