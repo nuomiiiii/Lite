@@ -97,13 +97,19 @@ func GetDBInstance() *gorm.DB {
 		err = instance.AutoMigrate(
 			&models.User{},
 			&models.Client{},
-			&models.Session{},
+			// &models.Session{}, Error 1061 (42000): Duplicate key name 'idx_sessions_session'
 			&models.Record{},
 			&common.ClientInfo{},
 			&models.Config{},
 		)
 		if err != nil {
 			log.Fatalf("Failed to create tables: %v", err)
+		}
+		err = instance.AutoMigrate(
+			&models.Session{},
+		)
+		if err != nil {
+			log.Printf("Failed to create Session table, it may already exist: %v", err)
 		}
 	})
 	return instance

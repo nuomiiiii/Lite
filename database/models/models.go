@@ -26,7 +26,7 @@ type User struct {
 // Session manages user sessions
 type Session struct {
 	UUID      string    `gorm:"type:varchar(36);foreignKey:UserUUID;references:UUID;constraint:OnDelete:CASCADE"`
-	Session   string    `gorm:"type:varchar(255);unique;not null"`
+	Session   string    `gorm:"type:varchar(255);uniqueIndex:idx_sessions_session;not null"`
 	Expires   time.Time `gorm:"not null"`
 	CreatedAt time.Time
 }
