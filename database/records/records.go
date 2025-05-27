@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/komari-monitor/komari/cmd/flags"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 )
@@ -100,7 +101,9 @@ func CompactRecord() error {
 			continue
 		}
 	}
-
+	if flags.DatabaseType != "sqlite" {
+		return nil // Only vacuum for SQLite
+	}
 	if err := db.Exec("VACUUM").Error; err != nil {
 		log.Printf("Error vacuuming the database: %v", err)
 	}
