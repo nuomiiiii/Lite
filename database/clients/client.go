@@ -37,7 +37,7 @@ func DeleteClient(clientUuid string) error {
 	return nil
 }
 
-// 更新或插入客户端基本信息
+// Decprecated: UpdateOrInsertBasicInfo is deprecated and will be removed in a future release. Use SaveClientInfo instead.
 func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 	db := dbcore.GetDBInstance()
 	updates := make(map[string]interface{})
@@ -82,6 +82,26 @@ func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 		Columns:   []clause.Column{{Name: "uuid"}},
 		DoUpdates: clause.Assignments(updates),
 	}).Create(&cbi).Error
+	if err != nil {
+		return err
+	}
+	return nil
+}
+func SaveClientInfo(update map[string]interface{}) error {
+	db := dbcore.GetDBInstance()
+	clientUUID, ok := update["uuid"].(string)
+	if !ok || clientUUID == "" {
+		return fmt.Errorf("invalid client UUID")
+	}
+
+	// 确保更新的字段不为空
+	if len(update) == 0 {
+		return fmt.Errorf("no fields to update")
+	}
+
+	update["updated_at"] = time.Now()
+
+	err := db.Model(&common.ClientInfo{}).Where("uuid = ?", clientUUID).Updates(update).Error
 	if err != nil {
 		return err
 	}

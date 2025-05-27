@@ -3,7 +3,6 @@ package client
 import (
 	"net"
 
-	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/utils/geoip"
@@ -12,7 +11,7 @@ import (
 )
 
 func UploadBasicInfo(c *gin.Context) {
-	var cbi = common.ClientInfo{}
+	var cbi = map[string]interface{}{}
 	if err := c.ShouldBindJSON(&cbi); err != nil {
 		c.JSON(400, gin.H{"status": "error", "error": "Invalid or missing data"})
 		return
@@ -25,25 +24,25 @@ func UploadBasicInfo(c *gin.Context) {
 		return
 	}
 
-	cbi.UUID = uuid
+	cbi["uuid"] = uuid
 
 	if cfg, err := config.Get(); err == nil && cfg.GeoIpEnabled {
-		if cbi.IPv4 != "" {
-			ip4 := net.ParseIP(cbi.IPv4)
+		if ipv4, ok := cbi["ipv4"].(string); ok && ipv4 != "" {
+			ip4 := net.ParseIP(ipv4)
 			ip4_record, _ := geoip.GetGeoIpInfo(ip4)
 			if ip4_record != nil {
-				cbi.Region = geoip.GetRegionUnicodeEmoji(ip4_record.Country.ISOCode)
+				cbi["region"] = geoip.GetRegionUnicodeEmoji(ip4_record.Country.ISOCode)
 			}
-		} else if cbi.IPv6 != "" {
-			ip6 := net.ParseIP(cbi.IPv6)
+		} else if ipv6, ok := cbi["ipv6"].(string); ok && ipv6 != "" {
+			ip6 := net.ParseIP(ipv6)
 			ip6_record, _ := geoip.GetGeoIpInfo(ip6)
 			if ip6_record != nil {
-				cbi.Region = geoip.GetRegionUnicodeEmoji(ip6_record.Country.ISOCode)
+				cbi["region"] = geoip.GetRegionUnicodeEmoji(ip6_record.Country.ISOCode)
 			}
 		}
 	}
 
-	if err := clients.UpdateOrInsertBasicInfo(cbi); err != nil {
+	if err := clients.SaveClientInfo(cbi); err != nil {
 		c.JSON(500, gin.H{"status": "error", "error": err})
 		return
 	}
