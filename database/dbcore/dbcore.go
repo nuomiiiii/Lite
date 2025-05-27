@@ -77,7 +77,7 @@ func GetDBInstance() *gorm.DB {
 
 		case "mysql":
 			// MySQL 连接
-			dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+			dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&collation=utf8mb4_unicode_ci&parseTime=True&loc=Local",
 				flags.DatabaseUser,
 				flags.DatabasePass,
 				flags.DatabaseHost,

@@ -14,9 +14,9 @@ import (
 
 func AddClient(c *gin.Context) {
 	var req struct {
-		name string
+		Name string `json:"name"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || req.name == "" {
+	if err := c.ShouldBindJSON(&req); err != nil || req.Name == "" {
 		uuid, token, err := clients.CreateClient()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
@@ -25,7 +25,7 @@ func AddClient(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "success", "uuid": uuid, "token": token})
 		return
 	}
-	uuid, token, err := clients.CreateClientWithName(req.name)
+	uuid, token, err := clients.CreateClientWithName(req.Name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
 		return
