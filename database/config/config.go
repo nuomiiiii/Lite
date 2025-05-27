@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
@@ -14,15 +15,19 @@ func Get() (models.Config, error) {
 	if err := db.First(&config).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			config = models.Config{
-				ID:           1,
-				Sitename:     "Komari",
-				Description:  "Komari Monitor, a simple server monitoring tool.",
-				AllowCros:    false,
-				OAuthEnabled: false,
-				UpdatedAt:    time.Now(),
-				CreatedAt:    time.Now(),
+				ID:            1,
+				Sitename:      "Komari",
+				Description:   "Komari Monitor, a simple server monitoring tool.",
+				AllowCros:     false,
+				OAuthEnabled:  false,
+				GeoIpEnabled:  true,
+				GeoIpProvider: "mmdb",
+				UpdatedAt:     time.Now(),
+				CreatedAt:     time.Now(),
 			}
-			Save(config)
+			if err := db.Create(&config).Error; err != nil {
+				log.Fatal("Failed to create default config:", err)
+			}
 			return config, nil
 		}
 		return config, err
@@ -55,28 +60,6 @@ func Save(cst models.Config) error {
 
 func Update(cst map[string]interface{}) error {
 	db := dbcore.GetDBInstance()
-
-	// Check if config exists
-	var config models.Config
-	if err := db.First(&config).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			// Create default config if not exists
-			config = models.Config{
-				ID:           1,
-				Sitename:     "Komari",
-				Description:  "Komari Monitor, a simple server monitoring tool.",
-				AllowCros:    false,
-				OAuthEnabled: false,
-				CreatedAt:    time.Now(),
-				UpdatedAt:    time.Now(),
-			}
-			if err := db.Create(&config).Error; err != nil {
-				return err
-			}
-		} else {
-			return err
-		}
-	}
 
 	// Proceed with update
 	cst["id"] = 1
