@@ -55,6 +55,30 @@ func Save(cst models.Config) error {
 
 func Update(cst map[string]interface{}) error {
 	db := dbcore.GetDBInstance()
+
+	// Check if config exists
+	var config models.Config
+	if err := db.First(&config).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			// Create default config if not exists
+			config = models.Config{
+				ID:           1,
+				Sitename:     "Komari",
+				Description:  "Komari Monitor, a simple server monitoring tool.",
+				AllowCros:    false,
+				OAuthEnabled: false,
+				CreatedAt:    time.Now(),
+				UpdatedAt:    time.Now(),
+			}
+			if err := db.Create(&config).Error; err != nil {
+				return err
+			}
+		} else {
+			return err
+		}
+	}
+
+	// Proceed with update
 	cst["id"] = 1
 	cst["updated_at"] = time.Now()
 	delete(cst, "created_at")
