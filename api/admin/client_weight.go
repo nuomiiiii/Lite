@@ -2,8 +2,8 @@ package admin
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
 )
 
 func OrderWeight(c *gin.Context) {
@@ -17,7 +17,7 @@ func OrderWeight(c *gin.Context) {
 	}
 	db := dbcore.GetDBInstance()
 	for uuid, weight := range req {
-		err := db.Model(&common.ClientInfo{}).Where("uuid = ?", uuid).Update("weight", weight).Error
+		err := db.Model(&models.Client{}).Where("uuid = ?", uuid).Update("weight", weight).Error
 		if err != nil {
 			c.JSON(500, gin.H{
 				"status": "error",

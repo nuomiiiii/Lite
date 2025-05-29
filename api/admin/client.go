@@ -2,13 +2,9 @@ package admin
 
 import (
 	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/records"
 )
 
@@ -40,30 +36,15 @@ func EditClient(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
 		return
 	}
-	db := dbcore.GetDBInstance()
-	var err error
-	if req["token"] != "" {
-		err = db.Model(&models.Client{}).Where("uuid = ?", uuid).
-			Updates(map[string]interface{}{"token": req["token"], "updated_at": time.Now()}).Error
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
-			return
-		}
+	if uuid == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid or missing UUID"})
+		return
 	}
-	allowed_fields := []string{"name", "remark", "public_remark", "weight", "price", "expired_at"}
-	updateFields := map[string]interface{}{
-		"updated_at": time.Now(),
-	}
-	for _, field := range allowed_fields {
-		if req[field] != nil {
-			updateFields[field] = req[field]
-		}
-	}
-	if len(updateFields) > 1 { // 大于1是因为至少包含了updated_at
-		if err := db.Model(&common.ClientInfo{}).Where("uuid = ?", uuid).Updates(updateFields).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
-			return
-		}
+
+	err := clients.SaveClient(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
+		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"status": "success"})

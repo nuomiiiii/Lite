@@ -30,14 +30,10 @@ func DeleteClient(clientUuid string) error {
 	if err != nil {
 		return err
 	}
-	err = db.Delete(&common.ClientInfo{}, "uuid = ?", clientUuid).Error
-	if err != nil {
-		return err
-	}
 	return nil
 }
 
-// Decprecated: UpdateOrInsertBasicInfo is deprecated and will be removed in a future release. Use SaveClientInfo instead.
+// Deprecated: UpdateOrInsertBasicInfo is deprecated and will be removed in a future release. Use SaveClientInfo instead.
 func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 	db := dbcore.GetDBInstance()
 	updates := make(map[string]interface{})
@@ -78,10 +74,33 @@ func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 	updates["version"] = cbi.Version
 	updates["updated_at"] = time.Now()
 
-	err := db.Clauses(clause.OnConflict{
+	// 转换为更新Client表
+	client := models.Client{
+		UUID: cbi.UUID,
+	}
+
+	err := db.Model(&client).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "uuid"}},
 		DoUpdates: clause.Assignments(updates),
-	}).Create(&cbi).Error
+	}).Create(map[string]interface{}{
+		"uuid":       cbi.UUID,
+		"name":       cbi.Name,
+		"cpu_name":   cbi.CpuName,
+		"arch":       cbi.Arch,
+		"cpu_cores":  cbi.CpuCores,
+		"os":         cbi.OS,
+		"gpu_name":   cbi.GpuName,
+		"ipv4":       cbi.IPv4,
+		"ipv6":       cbi.IPv6,
+		"region":     cbi.Region,
+		"remark":     cbi.Remark,
+		"mem_total":  cbi.MemTotal,
+		"swap_total": cbi.SwapTotal,
+		"disk_total": cbi.DiskTotal,
+		"version":    cbi.Version,
+		"updated_at": time.Now(),
+	}).Error
+
 	if err != nil {
 		return err
 	}
@@ -101,7 +120,7 @@ func SaveClientInfo(update map[string]interface{}) error {
 
 	update["updated_at"] = time.Now()
 
-	err := db.Model(&common.ClientInfo{}).Where("uuid = ?", clientUUID).Updates(update).Error
+	err := db.Model(&models.Client{}).Where("uuid = ?", clientUUID).Updates(update).Error
 	if err != nil {
 		return err
 	}
@@ -120,7 +139,7 @@ func UpdateClientConfig(config common.ClientConfig) error {
 
 func EditClientName(clientUUID, clientName string) error {
 	db := dbcore.GetDBInstance()
-	err := db.Model(&models.Client{}).Where("uuid = ?", clientUUID).Update("client_name", clientName).Error
+	err := db.Model(&models.Client{}).Where("uuid = ?", clientUUID).Update("name", clientName).Error
 	if err != nil {
 		return err
 	}
@@ -160,19 +179,12 @@ func CreateClient() (clientUUID, token string, err error) {
 	client := models.Client{
 		UUID:      clientUUID,
 		Token:     token,
+		Name:      "client_" + clientUUID[0:8],
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
 
 	err = db.Create(&client).Error
-	if err != nil {
-		return "", "", err
-	}
-	clientInfo := common.ClientInfo{
-		UUID: clientUUID,
-		Name: "client_" + clientUUID[0:8],
-	}
-	err = db.Create(&clientInfo).Error
 	if err != nil {
 		return "", "", err
 	}
@@ -189,19 +201,12 @@ func CreateClientWithName(name string) (clientUUID, token string, err error) {
 	client := models.Client{
 		UUID:      clientUUID,
 		Token:     token,
+		Name:      name,
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
 
 	err = db.Create(&client).Error
-	if err != nil {
-		return "", "", err
-	}
-	clientInfo := common.ClientInfo{
-		UUID: clientUUID,
-		Name: name,
-	}
-	err = db.Create(&clientInfo).Error
 	if err != nil {
 		return "", "", err
 	}
@@ -230,14 +235,14 @@ func GetClientByUUID(uuid string) (client models.Client, err error) {
 }
 
 // GetClientBasicInfo 获取指定 UUID 的客户端基本信息
-func GetClientBasicInfo(uuid string) (client common.ClientInfo, err error) {
+func GetClientBasicInfo(uuid string) (client models.Client, err error) {
 	db := dbcore.GetDBInstance()
 	err = db.Where("uuid = ?", uuid).First(&client).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return common.ClientInfo{}, fmt.Errorf("客户端不存在: %s", uuid)
+			return models.Client{}, fmt.Errorf("客户端不存在: %s", uuid)
 		}
-		return common.ClientInfo{}, err
+		return models.Client{}, err
 	}
 	return client, nil
 }
@@ -252,11 +257,32 @@ func GetClientTokenByUUID(uuid string) (token string, err error) {
 	return client.Token, nil
 }
 
-func GetAllClientBasicInfo() (clients []common.ClientInfo, err error) {
+func GetAllClientBasicInfo() (clients []models.Client, err error) {
 	db := dbcore.GetDBInstance()
 	err = db.Find(&clients).Error
 	if err != nil {
 		return nil, err
 	}
 	return clients, nil
+}
+
+func SaveClient(updates map[string]interface{}) error {
+	db := dbcore.GetDBInstance()
+	clientUUID, ok := updates["uuid"].(string)
+	if !ok || clientUUID == "" {
+		return fmt.Errorf("invalid client UUID")
+	}
+
+	// 确保更新的字段不为空
+	if len(updates) == 0 {
+		return fmt.Errorf("no fields to update")
+	}
+
+	updates["updated_at"] = time.Now()
+
+	err := db.Model(&models.Client{}).Where("uuid = ?", clientUUID).Updates(updates).Error
+	if err != nil {
+		return err
+	}
+	return nil
 }
