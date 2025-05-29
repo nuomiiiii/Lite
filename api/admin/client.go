@@ -40,7 +40,7 @@ func EditClient(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid or missing UUID"})
 		return
 	}
-
+	req["uuid"] = uuid
 	err := clients.SaveClient(req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": err.Error()})
