@@ -19,6 +19,7 @@ func GetNodesInformation(c *gin.Context) {
 		clientList[i].IPv6 = ""
 		clientList[i].Remark = ""
 		clientList[i].Version = ""
+		clientList[i].Token = ""
 	}
 
 	c.JSON(200, gin.H{"status": "success", "data": clientList})

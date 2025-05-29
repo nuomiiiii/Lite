@@ -15,6 +15,64 @@ import (
 	"gorm.io/gorm"
 )
 
+// migrateClientData 将旧版ClientInfo数据迁移到新版Client表
+func migrateClientData(db *gorm.DB) {
+	log.Println("正在迁移旧版ClientInfo数据到新版Client表...")
+
+	// 读取所有ClientInfo记录
+	var clientInfos []common.ClientInfo
+	if err := db.Find(&clientInfos).Error; err != nil {
+		log.Printf("读取ClientInfo表失败: %v", err)
+		return
+	}
+
+	// 遍历每条记录并更新到Client表
+	for _, info := range clientInfos {
+		// 查找对应的Client记录
+		var client models.Client
+		if err := db.Where("uuid = ?", info.UUID).First(&client).Error; err != nil {
+			log.Printf("找不到UUID为%s的Client记录: %v", info.UUID, err)
+			continue
+		}
+
+		// 更新Client记录
+		client.Name = info.Name
+		client.CpuName = info.CpuName
+		client.Virtualization = info.Virtualization
+		client.Arch = info.Arch
+		client.CpuCores = info.CpuCores
+		client.OS = info.OS
+		client.GpuName = info.GpuName
+		client.IPv4 = info.IPv4
+		client.IPv6 = info.IPv6
+		client.Region = info.Region
+		client.Remark = info.Remark
+		client.PublicRemark = info.PublicRemark
+		client.MemTotal = info.MemTotal
+		client.SwapTotal = info.SwapTotal
+		client.DiskTotal = info.DiskTotal
+		client.Version = info.Version
+		client.Weight = info.Weight
+		client.Price = info.Price
+		client.BillingCycle = info.BillingCycle
+		client.ExpiredAt = info.ExpiredAt
+
+		// 保存更新后的Client记录
+		if err := db.Save(&client).Error; err != nil {
+			log.Printf("更新Client记录失败: %v", err)
+			continue
+		}
+	}
+
+	// 数据迁移完成后，备份并删除旧表
+	if err := db.Migrator().RenameTable("client_infos", "client_infos_backup"); err != nil {
+		log.Printf("备份ClientInfo表失败: %v", err)
+		return
+	}
+
+	log.Println("数据迁移完成，旧表已备份为client_infos_backup")
+}
+
 var (
 	instance *gorm.DB
 	once     sync.Once
@@ -92,14 +150,14 @@ func GetDBInstance() *gorm.DB {
 		default:
 			log.Fatalf("Unsupported database type: %s", flags.DatabaseType)
 		}
+		// 检查是否存在旧版ClientInfo表
+		hasOldClientInfoTable := instance.Migrator().HasTable(&common.ClientInfo{})
 
 		// 自动迁移模型
 		err = instance.AutoMigrate(
 			&models.User{},
 			&models.Client{},
-			// &models.Session{}, Error 1061 (42000): Duplicate key name 'idx_sessions_session'
 			&models.Record{},
-			&common.ClientInfo{},
 			&models.Config{},
 		)
 		if err != nil {
@@ -110,6 +168,11 @@ func GetDBInstance() *gorm.DB {
 		)
 		if err != nil {
 			log.Printf("Failed to create Session table, it may already exist: %v", err)
+		}
+
+		// 如果存在旧表，执行数据迁移
+		if hasOldClientInfoTable {
+			migrateClientData(instance)
 		}
 	})
 	return instance

@@ -29,6 +29,7 @@ type ClientConfig struct {
 }
 
 // ClientInfo stores static client information
+// Deprecated: Use models.Client instead.
 type ClientInfo struct {
 	UUID           string    `json:"uuid,omitempty" gorm:"type:varchar(36);primaryKey;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
 	Name           string    `json:"name" gorm:"type:varchar(100);not null"`
