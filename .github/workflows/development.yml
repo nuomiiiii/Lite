@@ -8,32 +8,17 @@ on:
 
 
 jobs:
-  build-and-attach-binaries:
+  build-binaries:
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        goos: [windows, linux]
-        goarch: [amd64, arm64]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '23'
-
-      - name: Clone and build frontend
+      - name: Create dummy index.html
         run: |
-          git clone https://github.com/komari-monitor/komari-web web
-          cd web
-          npm install
-          npm run build
-          cd ..
           mkdir -p public/dist
-          cp -r web/dist/* public/dist/
+          echo "<html><body><h1>This is komari development server.</h1></body></html>" > public/dist/index.html
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -42,27 +27,29 @@ jobs:
           
       - name: Build application
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
+          GOOS: linux
+          GOARCH: amd64
         run: |
-          go build -o komari-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }} .
+          go build -o komari .
           
       - name: Upload binary as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: komari-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: komari-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+          name: komari
+          path: komari
           
   deploy-to-production:
-    needs: build-and-attach-binaries
+    needs: build-binaries
     runs-on: ubuntu-latest
+    env:
+      PRODUCTION_SERVER: ${{ vars.PRODUCTION_SERVER }}
     if: github.ref == 'refs/heads/dev'
     
     steps:
       - name: Download Linux AMD64 binary
         uses: actions/download-artifact@v4
         with:
-          name: komari-linux-amd64
+          name: komari
           
       - name: Setup SSH Key
         uses: webfactory/ssh-agent@v0.8.0
@@ -72,10 +59,10 @@ jobs:
       - name: Add host to known hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H komari-dev.akz.moe >> ~/.ssh/known_hosts
+          ssh-keyscan -H ${{ env.PRODUCTION_SERVER }} >> ~/.ssh/known_hosts
           
       - name: Deploy to production
         run: |
-          chmod +x komari-linux-amd64
-          scp komari-linux-amd64 root@komari-dev.akz.moe:/opt/komari/komari
-          ssh root@komari-dev.akz.moe 'systemctl restart komari.service'
+          chmod +x komari
+          scp komari root@${{ env.PRODUCTION_SERVER }}:/opt/komari/komari
+          ssh root@${{ env.PRODUCTION_SERVER }} 'systemctl restart komari.service'
