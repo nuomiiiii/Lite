@@ -46,7 +46,7 @@ jobs:
     if: github.ref == 'refs/heads/dev'
     
     steps:
-      - name: Download Linux AMD64 binary
+      - name: Download binary
         uses: actions/download-artifact@v4
         with:
           name: komari
@@ -64,5 +64,9 @@ jobs:
       - name: Deploy to production
         run: |
           chmod +x komari
+          ssh root@${{ env.PRODUCTION_SERVER }} 'mkdir -p /opt/komari/'
+          ssh root@${{ env.PRODUCTION_SERVER }} 'systemctl stop komari.service || true'
+          ssh root@${{ env.PRODUCTION_SERVER }} 'rm -f /opt/komari/komari.old'
+          ssh root@${{ env.PRODUCTION_SERVER }} 'mv /opt/komari/komari /opt/komari/komari.old || true'
           scp komari root@${{ env.PRODUCTION_SERVER }}:/opt/komari/komari
-          ssh root@${{ env.PRODUCTION_SERVER }} 'systemctl restart komari.service'
+          ssh root@${{ env.PRODUCTION_SERVER }} 'systemctl start komari.service'
