@@ -6,7 +6,6 @@ on:
       - dev
   workflow_dispatch:
 
-
 jobs:
   build-binaries:
     runs-on: ubuntu-latest
@@ -15,52 +14,62 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Create dummy index.html
+      #- name: Create dummy index.html
+      #  run: |
+      #    mkdir -p public/dist
+      #    echo "<html><body><h1>This is komari development server.</h1></body></html>" > public/dist/index.html
+      
+      - name: Clone and build frontend
         run: |
+          git clone https://github.com/komari-monitor/komari-web web
+          cd web
+          npm install
+          npm run build
+          cd ..
           mkdir -p public/dist
-          echo "<html><body><h1>This is komari development server.</h1></body></html>" > public/dist/index.html
+          cp -r web/dist/* public/dist/
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
-          
+          go-version: "1.23"
+
       - name: Build application
         env:
           GOOS: linux
           GOARCH: amd64
         run: |
           go build -o komari .
-          
+
       - name: Upload binary as artifact
         uses: actions/upload-artifact@v4
         with:
           name: komari
           path: komari
-          
+
   deploy-to-production:
     needs: build-binaries
     runs-on: ubuntu-latest
     env:
       PRODUCTION_SERVER: ${{ vars.PRODUCTION_SERVER }}
     if: github.ref == 'refs/heads/dev'
-    
+
     steps:
       - name: Download binary
         uses: actions/download-artifact@v4
         with:
           name: komari
-          
+
       - name: Setup SSH Key
         uses: webfactory/ssh-agent@v0.8.0
         with:
           ssh-private-key: ${{ secrets.PRODUCTION_SSH_KEY }}
-          
+
       - name: Add host to known hosts
         run: |
           mkdir -p ~/.ssh
           ssh-keyscan -H ${{ env.PRODUCTION_SERVER }} >> ~/.ssh/known_hosts
-          
+
       - name: Deploy to production
         run: |
           chmod +x komari
