@@ -12,8 +12,8 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@v4      
+      
       #- name: Create dummy index.html
       #  run: |
       #    mkdir -p public/dist
@@ -39,7 +39,8 @@ jobs:
           GOOS: linux
           GOARCH: amd64
         run: |
-          go build -o komari .
+          VERSION_SHA="${{ github.sha }}"
+          go build -ldflags "-X github.com/komari-monitor/komari/utils.CurrentVersion=dev -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_SHA}" -o komari .
 
       - name: Upload binary as artifact
         uses: actions/upload-artifact@v4
