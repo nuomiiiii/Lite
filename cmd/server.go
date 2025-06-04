@@ -13,6 +13,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/records"
+	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/public"
 	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/ws"
@@ -200,6 +201,7 @@ func DoRecordsWork() {
 		case <-ticker.C:
 			records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 			records.CompactRecord()
+			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * 24 * 30))
 		case <-ticker1.C:
 			api.SaveClientReportToDB()
 		}
