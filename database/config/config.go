@@ -37,6 +37,7 @@ func Get() (models.Config, error) {
 
 func Save(cst models.Config) error {
 	db := dbcore.GetDBInstance()
+	oldConfig, _ := Get()
 	// Only one records
 	cst.ID = 1
 	cst.UpdatedAt = time.Now()
@@ -55,12 +56,14 @@ func Save(cst models.Config) error {
 		Updates(cst).Error; err != nil {
 		return err
 	}
+	newConfig, _ := Get()
+	publishEvent(oldConfig, newConfig)
 	return nil
 }
 
 func Update(cst map[string]interface{}) error {
 	db := dbcore.GetDBInstance()
-
+	oldConfig, _ := Get()
 	// Proceed with update
 	cst["id"] = 1
 	cst["updated_at"] = time.Now()
@@ -70,5 +73,12 @@ func Update(cst map[string]interface{}) error {
 	if err := db.Model(&models.Config{}).Where("id = ?", 1).Updates(cst).Error; err != nil {
 		return err
 	}
+
+	newconfig, err := Get()
+	if err != nil {
+		return err
+	}
+	publishEvent(oldConfig, newconfig)
+
 	return nil
 }

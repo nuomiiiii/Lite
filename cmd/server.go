@@ -6,6 +6,7 @@ import (
 
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/api/admin"
+	"github.com/komari-monitor/komari/api/admin/update"
 	"github.com/komari-monitor/komari/api/client"
 	"github.com/komari-monitor/komari/cmd/flags"
 	"github.com/komari-monitor/komari/database/accounts"
@@ -22,25 +23,32 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	DynamicCorsEnabled bool = false
+)
+
 var ServerCmd = &cobra.Command{
 	Use:   "server",
 	Short: "Start the server",
 	Long:  `Start the server`,
 	Run: func(cmd *cobra.Command, args []string) {
 		InitDatabase()
-
+		go geoip.InitGeoIp()
 		go DoRecordsWork()
 
 		r := gin.Default()
-		cfg, err := config.Get()
-		if err != nil {
-			log.Fatalln("Failed to get config:", err)
-		}
 
-		// 动态 CORS 中间件：每次请求时读取最新配置并设置 CORS 头
+		// 动态 CORS 中间件
+		conf, err := config.Get()
+		if err != nil {
+			log.Fatal(err)
+		}
+		DynamicCorsEnabled = conf.AllowCors
+		config.Subscribe(func(event config.ConfigEvent) {
+			DynamicCorsEnabled = event.New.AllowCors
+		})
 		r.Use(func(c *gin.Context) {
-			conf, err := config.Get()
-			if err == nil && conf.AllowCors {
+			if DynamicCorsEnabled {
 				c.Header("Access-Control-Allow-Origin", "*")
 				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
 				c.Header("Access-Control-Allow-Headers", "Origin, Content-Length, Content-Type, Authorization, Accept, X-CSRF-Token, X-Requested-With, Set-Cookie")
@@ -54,16 +62,6 @@ var ServerCmd = &cobra.Command{
 			}
 			c.Next()
 		})
-
-		if cfg.GeoIpEnabled {
-			geoip.InitGeoIp()
-			go func() {
-				ticker := time.NewTicker(time.Hour * 24)
-				for range ticker.C {
-					geoip.UpdateGeoIpDatabase()
-				}
-			}()
-		}
 
 		r.Use(func(c *gin.Context) {
 			if len(c.Request.URL.Path) >= 4 && c.Request.URL.Path[:4] == "/api" {
@@ -98,6 +96,12 @@ var ServerCmd = &cobra.Command{
 
 		adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())
 		{
+			// update
+			updateGroup := adminAuthrized.Group("/update")
+			{
+				updateGroup.POST("/mmdb", update.UpdateMmdbGeoIP)
+				updateGroup.POST("/user", update.UpdateUser)
+			}
 			// tasks
 			taskGroup := adminAuthrized.Group("/task")
 			{
