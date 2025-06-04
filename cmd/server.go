@@ -6,6 +6,7 @@ import (
 
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/api/admin"
+	"github.com/komari-monitor/komari/api/admin/update"
 	"github.com/komari-monitor/komari/api/client"
 	"github.com/komari-monitor/komari/cmd/flags"
 	"github.com/komari-monitor/komari/database/accounts"
@@ -95,6 +96,12 @@ var ServerCmd = &cobra.Command{
 
 		adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())
 		{
+			// update
+			updateGroup := adminAuthrized.Group("/update")
+			{
+				updateGroup.POST("/mmdb", update.UpdateMmdbGeoIP)
+				updateGroup.POST("/user", update.UpdateUser)
+			}
 			// tasks
 			taskGroup := adminAuthrized.Group("/task")
 			{

@@ -152,3 +152,26 @@ func UnbindExternalAccount(uuid string) error {
 	}
 	return nil
 }
+
+func UpdateUser(uuid string, name, password, sso_type *string) error {
+	db := dbcore.GetDBInstance()
+	updates := make(map[string]interface{})
+	if name != nil {
+		updates["username"] = *name
+	}
+	if password != nil {
+		updates["passwd"] = hashPasswd(*password)
+	}
+	if sso_type != nil {
+		updates["sso_type"] = *sso_type
+	}
+	updates["updated_at"] = time.Now()
+	err := db.Model(&models.User{}).Where("uuid = ?", uuid).Updates(updates).Error
+	if err != nil {
+		return err
+	}
+	if password != nil {
+		DeleteAllSessions()
+	}
+	return nil
+}
