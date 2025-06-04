@@ -6,12 +6,38 @@ import (
 )
 
 func GetTasks(c *gin.Context) {
-	tasks, err := tasks.GetAllTasks()
+	dbTasks, err := tasks.GetAllTasks()
 	if err != nil {
 		c.JSON(500, gin.H{"status": "error", "message": "Failed to retrieve tasks: " + err.Error()})
 		return
 	}
-	c.JSON(200, gin.H{"status": "success", "tasks": tasks})
+	var responseTasks []gin.H
+	for _, t := range dbTasks {
+		results, err := tasks.GetTaskResultsByTaskId(t.TaskId)
+		if err != nil {
+			c.JSON(500, gin.H{"status": "error", "message": "Failed to retrieve task results: " + err.Error()})
+			return
+		}
+
+		var filteredResults []gin.H
+		for _, r := range results {
+			filteredResults = append(filteredResults, gin.H{
+				"client":      r.Client,
+				"result":      r.Result,
+				"exit_code":   r.ExitCode,
+				"finished_at": r.FinishedAt,
+				"created_at":  r.CreatedAt,
+			})
+		}
+
+		responseTasks = append(responseTasks, gin.H{
+			"task_id": t.TaskId,
+			"clients": t.Clients,
+			"command": t.Command,
+			"results": filteredResults,
+		})
+	}
+	c.JSON(200, gin.H{"status": "success", "tasks": responseTasks})
 }
 
 func GetTaskById(c *gin.Context) {
@@ -29,7 +55,27 @@ func GetTaskById(c *gin.Context) {
 		c.JSON(404, gin.H{"status": "error", "message": "Task not found"})
 		return
 	}
-	c.JSON(200, gin.H{"status": "success", "task": task})
+	results, err := tasks.GetTaskResultsByTaskId(taskId)
+	if err != nil {
+		c.JSON(500, gin.H{"status": "error", "message": "Failed to retrieve task results: " + err.Error()})
+		return
+	}
+	var filteredResults []gin.H
+	for _, r := range results {
+		filteredResults = append(filteredResults, gin.H{
+			"client":      r.Client,
+			"result":      r.Result,
+			"exit_code":   r.ExitCode,
+			"finished_at": r.FinishedAt,
+			"created_at":  r.CreatedAt,
+		})
+	}
+	c.JSON(200, gin.H{"status": "success", "task": gin.H{
+		"task_id": task.TaskId,
+		"clients": task.Clients,
+		"command": task.Command,
+		"results": filteredResults,
+	}})
 }
 
 func GetTasksByClientId(c *gin.Context) {
