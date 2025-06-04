@@ -3,7 +3,7 @@ name: Docker Build and Publish
 on:
   push:
     branches:
-      - dev
+      - main
   workflow_dispatch:
 
 env:
@@ -44,3 +44,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            VERSION_HASH=${{ github.sha }}

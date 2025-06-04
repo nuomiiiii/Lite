@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	GeoIpUrl                        = "https://gh-proxy.com/raw.githubusercontent.com/Loyalsoldier/geoip/release/GeoLite2-Country.mmdb"
+	GeoIpUrl                        = "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/GeoLite2-Country.mmdb"
 	GeoIpFilePath                   = "./data/GeoLite2-Country.mmdb"
 	geoIpDb       *maxminddb.Reader = nil
 	lock                            = &sync.RWMutex{}

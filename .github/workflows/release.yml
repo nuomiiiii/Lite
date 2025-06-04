@@ -55,7 +55,9 @@ jobs:
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY_NAME=${BINARY_NAME}.exe
           fi
-          go build -trimpath -ldflags="-s -w" -o $BINARY_NAME
+          VERSION="${{ github.event.release.tag_name }}"
+          VERSION_HASH="${{ github.sha }}"
+          go build -trimpath -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}" -o $BINARY_NAME
 
       - name: Upload binary to release
         env:
@@ -98,3 +100,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.event.release.tag_name }}
+            VERSION_HASH=${{ github.sha }}
