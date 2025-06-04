@@ -1,7 +1,6 @@
 package tasks
 
 import (
-	"encoding/json"
 	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
@@ -10,15 +9,10 @@ import (
 
 func CreateTask(taskId string, clients []string, command string) error {
 	db := dbcore.GetDBInstance()
-	// Convert clients slice to JSON string
-	clientsJSON, err := json.Marshal(clients)
-	if err != nil {
-		return err
-	}
-	// Create a new task in the database
+	// Create a new task in the database with clients as JSON array
 	task := models.Task{
 		TaskId:  taskId,
-		Clients: string(clientsJSON),
+		Clients: models.StringArray(clients),
 		Command: command,
 	}
 	if err := db.Create(&task).Error; err != nil {
@@ -31,8 +25,8 @@ func CreateTask(taskId string, clients []string, command string) error {
 			Client:     client,
 			Result:     "",
 			ExitCode:   nil,
-			FinishedAt: "",
-			CreatedAt:  time.Now().Format(time.RFC3339),
+			FinishedAt: nil,
+			CreatedAt:  time.Now(),
 		})
 	}
 	if len(taskResults) > 0 {
@@ -90,14 +84,14 @@ func DeleteTaskByTaskId(taskId string) error {
 }
 
 func SaveTaskResult(taskId, clientId, result string, exitCode int, timestamp time.Time) error {
-	taskResult := models.TaskResult{
-		TaskId:     taskId,
-		Client:     clientId,
-		Result:     result,
-		ExitCode:   &exitCode,
-		FinishedAt: timestamp.Format(time.RFC3339),
-	}
-	return dbcore.GetDBInstance().Create(&taskResult).Error
+	return dbcore.GetDBInstance().
+		Model(&models.TaskResult{}).
+		Where("task_id = ? AND client = ?", taskId, clientId).
+		Updates(map[string]interface{}{
+			"result":      result,
+			"exit_code":   exitCode,
+			"finished_at": timestamp,
+		}).Error
 }
 
 func ClearTaskResultsByTimeBefore(before time.Time) error {

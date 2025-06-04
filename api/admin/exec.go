@@ -42,9 +42,11 @@ func Exec(c *gin.Context) {
 	}
 	for _, uuid := range onlineClients {
 		var send struct {
+			Message string `json:"message"`
 			Command string `json:"command"`
 			TaskId  string `json:"task_id"`
 		}
+		send.Message = "exec"
 		send.Command = req.Command
 		send.TaskId = taskId
 
