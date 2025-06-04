@@ -101,6 +101,8 @@ var ServerCmd = &cobra.Command{
 			{
 				updateGroup.POST("/mmdb", update.UpdateMmdbGeoIP)
 				updateGroup.POST("/user", update.UpdateUser)
+				updateGroup.PUT("/favicon", update.UploadFavicon)
+				updateGroup.POST("/favicon", update.DeleteFavicon)
 			}
 			// tasks
 			taskGroup := adminAuthrized.Group("/task")
@@ -151,14 +153,13 @@ var ServerCmd = &cobra.Command{
 		public.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
 			r.NoRoute(handlers...)
 		})
-
-		go func() {
-			cfg, err := config.Get()
-			if err != nil {
-				log.Fatalln("Failed to get config:", err)
+		// 静态文件服务
+		public.UpdateIndex(conf)
+		config.Subscribe(func(event config.ConfigEvent) {
+			if event.Old.CustomHead != event.New.CustomHead {
+				public.UpdateIndex(event.New)
 			}
-			public.UpdateIndex(cfg)
-		}()
+		})
 
 		r.Run(flags.Listen)
 

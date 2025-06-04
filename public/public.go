@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os" // added for file existence check
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -47,7 +48,8 @@ func initIndex() {
 }
 func UpdateIndex(cfg models.Config) {
 	replaceMap := map[string]string{
-		"<!-- customize head -->": cfg.CustomHead,
+		"</head>": cfg.CustomHead + "</head>",
+		"</body>": cfg.CustomBody + "</body>",
 	}
 	for k, v := range replaceMap {
 		IndexFile = strings.Replace(RawIndexFile, k, v, 1)
@@ -71,6 +73,25 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		}
 		r.StaticFS(fmt.Sprintf("/%s/", folders[i]), http.FS(sub))
 	}
+	// Serve favicon.ico: use local file if exists, fallback to embedded
+	r.GET("/favicon.ico", func(c *gin.Context) {
+		if _, err := os.Stat("data/favicon.ico"); err == nil {
+			c.File("data/favicon.ico")
+			return
+		}
+		f, err := DistFS.Open("favicon.ico")
+		if err != nil {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		defer f.Close()
+		data, err := io.ReadAll(f)
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		c.Data(http.StatusOK, "image/x-icon", data)
+	})
 
 	noRoute(func(c *gin.Context) {
 		if c.Request.Method != "GET" && c.Request.Method != "POST" {
