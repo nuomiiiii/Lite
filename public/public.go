@@ -51,9 +51,11 @@ func UpdateIndex(cfg models.Config) {
 		"</head>": cfg.CustomHead + "</head>",
 		"</body>": cfg.CustomBody + "</body>",
 	}
+	updated := RawIndexFile
 	for k, v := range replaceMap {
-		IndexFile = strings.Replace(RawIndexFile, k, v, 1)
+		updated = strings.Replace(updated, k, v, 1)
 	}
+	IndexFile = updated
 }
 
 func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {

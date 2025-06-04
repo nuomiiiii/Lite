@@ -156,9 +156,7 @@ var ServerCmd = &cobra.Command{
 		// 静态文件服务
 		public.UpdateIndex(conf)
 		config.Subscribe(func(event config.ConfigEvent) {
-			if event.Old.CustomHead != event.New.CustomHead {
-				public.UpdateIndex(event.New)
-			}
+			public.UpdateIndex(event.New)
 		})
 
 		r.Run(flags.Listen)
