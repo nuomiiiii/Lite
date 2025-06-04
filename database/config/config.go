@@ -18,7 +18,7 @@ func Get() (models.Config, error) {
 				ID:            1,
 				Sitename:      "Komari",
 				Description:   "Komari Monitor, a simple server monitoring tool.",
-				AllowCros:     false,
+				AllowCors:     false,
 				OAuthEnabled:  false,
 				GeoIpEnabled:  true,
 				GeoIpProvider: "mmdb",
@@ -66,6 +66,11 @@ func Update(cst map[string]interface{}) error {
 	cst["updated_at"] = time.Now()
 	delete(cst, "created_at")
 	delete(cst, "CreatedAt")
+	// Map JSON key allow_cors to DB column allow_cros
+	if v, ok := cst["allow_cors"]; ok {
+		cst["allow_cros"] = v
+		delete(cst, "allow_cors")
+	}
 	if err := db.Model(&models.Config{}).Where("id = ?", 1).Updates(cst).Error; err != nil {
 		return err
 	}

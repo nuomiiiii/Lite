@@ -79,7 +79,7 @@ type Config struct {
 	ID          uint   `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
 	Sitename    string `json:"sitename" gorm:"type:varchar(100);not null"`
 	Description string `json:"description" gorm:"type:text"`
-	AllowCros   bool   `json:"allow_cros" gorm:"default:false"`
+	AllowCors   bool   `json:"allow_cors" gorm:"column:allow_cros;default:false"`
 	// GeoIP 配置
 	GeoIpEnabled  bool   `json:"geo_ip_enabled" gorm:"default:true"`
 	GeoIpProvider string `json:"geo_ip_provider" gorm:"type:varchar(20);default:'mmdb'"` // mmdb, bilibili, ip-api. 暂时只实现了mmdb
