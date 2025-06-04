@@ -89,6 +89,7 @@ type Config struct {
 	OAuthEnabled      bool   `json:"o_auth_enabled" gorm:"default:false"`
 	// 自定义美化
 	CustomHead string `json:"custom_head" gorm:"type:longtext"`
+	CustomBody string `json:"custom_body" gorm:"type:longtext"`
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 }
