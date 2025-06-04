@@ -18,7 +18,7 @@ func Get() (models.Config, error) {
 				ID:            1,
 				Sitename:      "Komari",
 				Description:   "Komari Monitor, a simple server monitoring tool.",
-				AllowCros:     false,
+				AllowCors:     false,
 				OAuthEnabled:  false,
 				GeoIpEnabled:  true,
 				GeoIpProvider: "mmdb",
@@ -44,7 +44,7 @@ func Save(cst models.Config) error {
 	if err := db.Model(&models.Config{}).Where("id = ?", cst.ID).
 		Select("sitename",
 			"description",
-			"allow_cros",
+			"allow_cors",
 			"geo_ip_enabled",
 			"geo_ip_provider",
 			"o_auth_client_id",
@@ -66,6 +66,7 @@ func Update(cst map[string]interface{}) error {
 	cst["updated_at"] = time.Now()
 	delete(cst, "created_at")
 	delete(cst, "CreatedAt")
+
 	if err := db.Model(&models.Config{}).Where("id = ?", 1).Updates(cst).Error; err != nil {
 		return err
 	}

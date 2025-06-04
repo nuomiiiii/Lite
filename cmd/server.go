@@ -13,11 +13,11 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/records"
+	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/public"
 	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/ws"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 )
@@ -37,16 +37,23 @@ var ServerCmd = &cobra.Command{
 			log.Fatalln("Failed to get config:", err)
 		}
 
-		if cfg.AllowCros {
-			r.Use(cors.New(cors.Config{
-				AllowOrigins:     []string{"*"},
-				AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"},
-				AllowHeaders:     []string{"Origin", "Content-Length", "Content-Type", "Authorization"},
-				ExposeHeaders:    []string{"Content-Length"},
-				AllowCredentials: true,
-				MaxAge:           12 * time.Hour,
-			}))
-		}
+		// 动态 CORS 中间件：每次请求时读取最新配置并设置 CORS 头
+		r.Use(func(c *gin.Context) {
+			conf, err := config.Get()
+			if err == nil && conf.AllowCors {
+				c.Header("Access-Control-Allow-Origin", "*")
+				c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
+				c.Header("Access-Control-Allow-Headers", "Origin, Content-Length, Content-Type, Authorization, Accept, X-CSRF-Token, X-Requested-With, Set-Cookie")
+				c.Header("Access-Control-Expose-Headers", "Content-Length, Authorization, Set-Cookie")
+				c.Header("Access-Control-Allow-Credentials", "true")
+				c.Header("Access-Control-Max-Age", "43200") // 12 hours
+				if c.Request.Method == "OPTIONS" {
+					c.AbortWithStatus(204)
+					return
+				}
+			}
+			c.Next()
+		})
 
 		if cfg.GeoIpEnabled {
 			geoip.InitGeoIp()
@@ -194,10 +201,9 @@ func DoRecordsWork() {
 		case <-ticker.C:
 			records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 			records.CompactRecord()
-			break
+			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * 24 * 30))
 		case <-ticker1.C:
 			api.SaveClientReportToDB()
-			break
 		}
 	}
 
