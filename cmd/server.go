@@ -200,10 +200,8 @@ func DoRecordsWork() {
 		case <-ticker.C:
 			records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 			records.CompactRecord()
-			break
 		case <-ticker1.C:
 			api.SaveClientReportToDB()
-			break
 		}
 	}
 

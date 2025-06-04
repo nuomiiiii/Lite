@@ -44,7 +44,7 @@ func Save(cst models.Config) error {
 	if err := db.Model(&models.Config{}).Where("id = ?", cst.ID).
 		Select("sitename",
 			"description",
-			"allow_cros",
+			"allow_cors",
 			"geo_ip_enabled",
 			"geo_ip_provider",
 			"o_auth_client_id",
@@ -66,11 +66,7 @@ func Update(cst map[string]interface{}) error {
 	cst["updated_at"] = time.Now()
 	delete(cst, "created_at")
 	delete(cst, "CreatedAt")
-	// Map JSON key allow_cors to DB column allow_cros
-	if v, ok := cst["allow_cors"]; ok {
-		cst["allow_cros"] = v
-		delete(cst, "allow_cors")
-	}
+
 	if err := db.Model(&models.Config{}).Where("id = ?", 1).Updates(cst).Error; err != nil {
 		return err
 	}
