@@ -86,10 +86,21 @@ var ServerCmd = &cobra.Command{
 			tokenAuthrized.POST("/uploadBasicInfo", client.UploadBasicInfo)
 			tokenAuthrized.POST("/report", client.UploadReport)
 			tokenAuthrized.GET("/terminal", client.EstablishConnection)
+			tokenAuthrized.POST("/task/result", client.TaskResult)
 		}
 
 		adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())
 		{
+			// tasks
+			taskGroup := adminAuthrized.Group("/task")
+			{
+				taskGroup.GET("/all", admin.GetTasks)
+				taskGroup.POST("/exec", admin.Exec)
+				taskGroup.GET("/:task_id", admin.GetTaskById)
+				taskGroup.GET("/:task_id/result", admin.GetTaskResultsByTaskId)
+				taskGroup.GET("/:task_id/result/:uuid", admin.GetSpecificTaskResult)
+				taskGroup.GET("/client/:uuid", admin.GetTasksByClientId)
+			}
 			// settings
 			adminAuthrized.GET("/settings", admin.GetSettings)
 			adminAuthrized.POST("/settings", admin.EditSettings)

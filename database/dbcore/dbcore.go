@@ -169,7 +169,13 @@ func GetDBInstance() *gorm.DB {
 		if err != nil {
 			log.Printf("Failed to create Session table, it may already exist: %v", err)
 		}
-
+		err = instance.AutoMigrate(
+			&models.Task{},
+			&models.TaskResult{},
+		)
+		if err != nil {
+			log.Printf("Failed to create Task and TaskResult table, it may already exist: %v", err)
+		}
 		// 如果存在旧表，执行数据迁移
 		if hasOldClientInfoTable {
 			migrateClientData(instance)
