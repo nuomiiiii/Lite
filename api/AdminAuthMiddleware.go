@@ -13,7 +13,7 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 
 		session, err := c.Cookie("session_token")
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Unauthorized"})
+			RespondError(c, http.StatusUnauthorized, "Unauthorized.")
 			c.Abort()
 			return
 		}
@@ -21,7 +21,7 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 		// Komari is a single user system
 		_, err = accounts.GetSession(session)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Unauthorized."})
+			RespondError(c, http.StatusUnauthorized, "Unauthorized.")
 			c.Abort()
 			return
 		}
