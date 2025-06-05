@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/accounts"
 
 	"github.com/gin-gonic/gin"
@@ -10,10 +11,7 @@ func GetSessions(c *gin.Context) {
 
 	ss, err := accounts.GetAllSessions()
 	if err != nil {
-		c.JSON(500, gin.H{
-			"status": "error",
-			"error":  "Failed to get sessions",
-		})
+		api.RespondError(c, 500, "Failed to retrieve sessions: "+err.Error())
 		return
 	}
 	current, _ := c.Cookie("session_token")
@@ -25,40 +23,25 @@ func DeleteSession(c *gin.Context) {
 		Session string `json:"session" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{
-			"status":  "error",
-			"message": "Invalid or missing session",
-		})
+		api.RespondError(c, 400, "Invalid request: "+err.Error())
 		return
 	}
 	err := accounts.DeleteSession(req.Session)
 	if err != nil {
-		c.JSON(500, gin.H{
-			"status":  "error",
-			"message": "Failed to delete session",
-		})
+		api.RespondError(c, 500, "Failed to delete session: "+err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"status":  "success",
-		"message": "Session deleted successfully",
-	})
+	api.RespondSuccess(c, nil)
 }
 
 func DeleteAllSession(c *gin.Context) {
 
 	err := accounts.DeleteAllSessions()
 	if err != nil {
-		c.JSON(500, gin.H{
-			"status":  "error",
-			"message": "Failed to delete session",
-		})
+		api.RespondError(c, 500, "Failed to delete all sessions: "+err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{
-		"status":  "success",
-		"message": "Session deleted successfully",
-	})
+	api.RespondSuccess(c, nil)
 }

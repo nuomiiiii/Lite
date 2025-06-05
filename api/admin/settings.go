@@ -3,6 +3,7 @@ package admin
 import (
 	"database/sql"
 
+	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/models"
 
@@ -33,20 +34,14 @@ func GetSettings(c *gin.Context) {
 func EditSettings(c *gin.Context) {
 	cfg := make(map[string]interface{})
 	if err := c.ShouldBindJSON(&cfg); err != nil {
-		c.JSON(400, gin.H{
-			"status":  "error",
-			"message": "Bad Request: " + err.Error(),
-		})
+		api.RespondError(c, 400, "Invalid or missing request body: "+err.Error())
 		return
 	}
 
 	cfg["id"] = 1 // Only one record
 	if err := config.Update(cfg); err != nil {
-		c.JSON(500, gin.H{
-			"status":  "error",
-			"message": "Internal Server Error: " + err.Error(),
-		})
+		api.RespondError(c, 500, "Failed to update settings: "+err.Error())
 		return
 	}
-	c.JSON(200, gin.H{"status": "success", "message": ""})
+	api.RespondSuccess(c, nil)
 }

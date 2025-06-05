@@ -2,6 +2,7 @@ package admin
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/accounts"
 )
 
@@ -9,7 +10,7 @@ func BindingExternalAccount(c *gin.Context) {
 	session, _ := c.Cookie("session_token")
 	user, err := accounts.GetUserBySession(session)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "message": "No user found"})
+		api.RespondError(c, 500, "No user found: "+err.Error())
 		return
 	}
 
@@ -20,15 +21,15 @@ func UnbindExternalAccount(c *gin.Context) {
 	session, _ := c.Cookie("session_token")
 	user, err := accounts.GetUserBySession(session)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "message": "No user found"})
+		api.RespondError(c, 500, "No user found: "+err.Error())
 		return
 	}
 
 	err = accounts.UnbindExternalAccount(user.UUID)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "message": "Failed to unbind external account"})
+		api.RespondError(c, 500, "Failed to unbind external account: "+err.Error())
 		return
 	}
 
-	c.JSON(200, gin.H{"status": "success", "message": "External account unbound"})
+	api.RespondSuccess(c, nil)
 }
