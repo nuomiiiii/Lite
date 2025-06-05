@@ -26,16 +26,16 @@ func DeleteSession(c *gin.Context) {
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{
-			"status": "error",
-			"error":  "Invalid or missing session",
+			"status":  "error",
+			"message": "Invalid or missing session",
 		})
 		return
 	}
 	err := accounts.DeleteSession(req.Session)
 	if err != nil {
 		c.JSON(500, gin.H{
-			"status": "error",
-			"error":  "Failed to delete session",
+			"status":  "error",
+			"message": "Failed to delete session",
 		})
 		return
 	}
@@ -51,8 +51,8 @@ func DeleteAllSession(c *gin.Context) {
 	err := accounts.DeleteAllSessions()
 	if err != nil {
 		c.JSON(500, gin.H{
-			"status": "error",
-			"error":  "Failed to delete session",
+			"status":  "error",
+			"message": "Failed to delete session",
 		})
 		return
 	}

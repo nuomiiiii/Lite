@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/config"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,19 +17,25 @@ type LoginRequest struct {
 }
 
 func Login(c *gin.Context) {
+	conf, _ := config.Get()
+	if conf.DisablePasswordLogin {
+		c.JSON(http.StatusForbidden, gin.H{"status": "error", "message": "Password login is disabled"})
+		return
+	}
+
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Invalid request body"})
 		return
 	}
 	var data LoginRequest
 	err = json.Unmarshal(bodyBytes, &data)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Invalid request body"})
 		return
 	}
 	if data.Username == "" || data.Password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Invalid request body"})
 		return
 	}
 
@@ -37,14 +44,14 @@ func Login(c *gin.Context) {
 		session, err := accounts.CreateSession(uuid, 2592000)
 
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Failed to create session" + err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Failed to create session" + err.Error()})
 			return
 		}
 		c.SetCookie("session_token", session, 2592000, "/", "", false, true)
-		c.JSON(200, gin.H{"set-cookie": map[string]interface{}{"session_token": session}})
+		c.JSON(200, gin.H{"status": "success", "message": "", "set-cookie": map[string]interface{}{"session_token": session}})
 		return
 	} else {
-		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Invalid credentials"})
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "message": "Invalid credentials"})
 	}
 
 }

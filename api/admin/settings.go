@@ -22,8 +22,8 @@ func GetSettings(c *gin.Context) {
 			return
 		}
 		c.JSON(500, gin.H{
-			"status": "error",
-			"error":  "Internal Server Error: " + err.Error(),
+			"status":  "error",
+			"message": "Internal Server Error: " + err.Error(),
 		})
 	}
 	c.JSON(200, cst)
@@ -34,8 +34,8 @@ func EditSettings(c *gin.Context) {
 	cfg := make(map[string]interface{})
 	if err := c.ShouldBindJSON(&cfg); err != nil {
 		c.JSON(400, gin.H{
-			"status": "error",
-			"error":  "Bad Request: " + err.Error(),
+			"status":  "error",
+			"message": "Bad Request: " + err.Error(),
 		})
 		return
 	}
@@ -43,10 +43,10 @@ func EditSettings(c *gin.Context) {
 	cfg["id"] = 1 // Only one record
 	if err := config.Update(cfg); err != nil {
 		c.JSON(500, gin.H{
-			"status": "error",
-			"error":  "Internal Server Error: " + err.Error(),
+			"status":  "error",
+			"message": "Internal Server Error: " + err.Error(),
 		})
 		return
 	}
-	c.JSON(200, gin.H{"status": "success"})
+	c.JSON(200, gin.H{"status": "success", "message": ""})
 }

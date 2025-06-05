@@ -10,8 +10,8 @@ func OrderWeight(c *gin.Context) {
 	var req = make(map[string]int)
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{
-			"status": "error",
-			"error":  "Invalid or missing request body",
+			"status":  "error",
+			"message": "Invalid or missing request body",
 		})
 		return
 	}
@@ -20,14 +20,14 @@ func OrderWeight(c *gin.Context) {
 		err := db.Model(&models.Client{}).Where("uuid = ?", uuid).Update("weight", weight).Error
 		if err != nil {
 			c.JSON(500, gin.H{
-				"status": "error",
-				"error":  "Failed to update client weight",
+				"status":  "error",
+				"message": "Failed to update client weight",
 			})
 			return
 		}
 	}
 	c.JSON(200, gin.H{
 		"status":  "success",
-		"message": "Client weight updated successfully",
+		"message": "",
 	})
 }

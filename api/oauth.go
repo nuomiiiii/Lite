@@ -59,12 +59,12 @@ func OAuthCallback(c *gin.Context) {
 		session, _ := c.Cookie("session_token")
 		user, err := accounts.GetUserBySession(session)
 		if err != nil || user.UUID != uuid {
-			c.JSON(500, gin.H{"status": "error", "error": "Binding failed"})
+			c.JSON(500, gin.H{"status": "error", "message": "Binding failed"})
 			return
 		}
 		err = accounts.BindingExternalAccount(user.UUID, sso_id)
 		if err != nil {
-			c.JSON(500, gin.H{"status": "error", "error": "Binding failed"})
+			c.JSON(500, gin.H{"status": "error", "message": "Binding failed"})
 			return
 		}
 		c.Redirect(302, "/")
@@ -75,8 +75,8 @@ func OAuthCallback(c *gin.Context) {
 	user, err := accounts.GetUserBySSO(sso_id)
 	if err != nil {
 		c.JSON(401, gin.H{
-			"status": "error",
-			"error":  "please log in and bind your GitHub account first.",
+			"status":  "error",
+			"message": "please log in and bind your GitHub account first.",
 		})
 		return
 	}
@@ -84,7 +84,7 @@ func OAuthCallback(c *gin.Context) {
 	// 创建会话
 	session, err := accounts.CreateSession(user.UUID, 2592000)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "error": err.Error()})
+		c.JSON(500, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 

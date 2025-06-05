@@ -22,5 +22,5 @@ func GetNodesInformation(c *gin.Context) {
 		clientList[i].Token = ""
 	}
 
-	c.JSON(200, gin.H{"status": "success", "data": clientList})
+	c.JSON(200, gin.H{"status": "success", "message": "", "data": clientList})
 }

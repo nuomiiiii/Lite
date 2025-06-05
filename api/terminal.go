@@ -17,13 +17,14 @@ func RequestTerminal(c *gin.Context) {
 	_, err := clients.GetClientByUUID(uuid)
 	if err != nil {
 		c.JSON(400, gin.H{
-			"error": "Client not found",
+			"status":  "error",
+			"message": "Client not found",
 		})
 		return
 	}
 	// 建立ws
 	if !websocket.IsWebSocketUpgrade(c.Request) {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Require WebSocket upgrade"})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Require WebSocket upgrade"})
 		return
 	}
 	upgrader := websocket.Upgrader{

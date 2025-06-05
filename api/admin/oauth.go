@@ -9,7 +9,7 @@ func BindingExternalAccount(c *gin.Context) {
 	session, _ := c.Cookie("session_token")
 	user, err := accounts.GetUserBySession(session)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "error": "No user found"})
+		c.JSON(500, gin.H{"status": "error", "message": "No user found"})
 		return
 	}
 
@@ -20,13 +20,13 @@ func UnbindExternalAccount(c *gin.Context) {
 	session, _ := c.Cookie("session_token")
 	user, err := accounts.GetUserBySession(session)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "error": "No user found"})
+		c.JSON(500, gin.H{"status": "error", "message": "No user found"})
 		return
 	}
 
 	err = accounts.UnbindExternalAccount(user.UUID)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "error": "Failed to unbind external account"})
+		c.JSON(500, gin.H{"status": "error", "message": "Failed to unbind external account"})
 		return
 	}
 

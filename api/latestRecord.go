@@ -8,8 +8,8 @@ func GetClientRecentRecords(c *gin.Context) {
 	uuid := c.Param("uuid")
 	if uuid == "" {
 		c.JSON(400, gin.H{
-			"status": "error",
-			"error":  "Invalid or missing UUID",
+			"status":  "error",
+			"message": "Invalid or missing UUID",
 		})
 		return
 	}

@@ -18,12 +18,13 @@ func GetPublicSettings(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"status": "success",
 		"data": gin.H{
-			"sitename":     cst.Sitename,
-			"desc":         cst.Description,
-			"custom_head":  cst.CustomHead,
-			"oauth_enable": cst.OAuthEnabled,
-			// use allow_cors consistent with JSON tag
-			"allow_cors": cst.AllowCors,
+			"sitename":               cst.Sitename,
+			"description":            cst.Description,
+			"custom_head":            cst.CustomHead,
+			"custom_body":            cst.CustomBody,
+			"oauth_enable":           cst.OAuthEnabled,
+			"disable_password_login": cst.DisablePasswordLogin,
+			"allow_cors":             cst.AllowCors,
 		},
 	})
 }
