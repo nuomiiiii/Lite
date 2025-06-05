@@ -6,7 +6,7 @@ import (
 )
 
 func GetVersion(c *gin.Context) {
-	c.JSON(200, gin.H{
+	RespondSuccess(c, gin.H{
 		"version": utils.CurrentVersion,
 		"hash":    utils.VersionHash,
 		"status":  "success",

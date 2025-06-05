@@ -19,7 +19,7 @@ func GetSettings(c *gin.Context) {
 			cst = models.Config{Sitename: "Komari"}
 			cst.ID = 1
 			config.Save(cst)
-			c.JSON(200, cst)
+			api.RespondSuccess(c, cst)
 			return
 		}
 		c.JSON(500, gin.H{
@@ -27,7 +27,7 @@ func GetSettings(c *gin.Context) {
 			"message": "Internal Server Error: " + err.Error(),
 		})
 	}
-	c.JSON(200, cst)
+	api.RespondSuccess(c, cst)
 }
 
 // EditSettings 更新自定义配置
