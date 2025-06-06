@@ -48,6 +48,10 @@ func EditSettings(c *gin.Context) {
 	uuid, _ := c.Get("uuid")
 	message := "update settings: "
 	for key := range cfg {
+		ignoredKeys := []string{"id", "updated_at"}
+		if contains(ignoredKeys, key) {
+			continue
+		}
 		message += key + ", "
 	}
 	if len(message) > 2 {
@@ -55,4 +59,13 @@ func EditSettings(c *gin.Context) {
 	}
 	logOperation.Log(c.ClientIP(), uuid.(string), message, "info")
 	api.RespondSuccess(c, nil)
+}
+
+func contains(slice []string, item string) bool {
+	for _, v := range slice {
+		if v == item {
+			return true
+		}
+	}
+	return false
 }
