@@ -1,7 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -168,7 +173,25 @@ var ServerCmd = &cobra.Command{
 			public.UpdateIndex(event.New)
 		})
 
-		r.Run(flags.Listen)
+		srv := &http.Server{
+			Addr:    flags.Listen,
+			Handler: r,
+		}
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				OnFatal(err)
+				log.Fatalf("listen: %s\n", err)
+			}
+		}()
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+		<-quit
+		OnShutdown()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Fatalf("Server forced to shutdown: %v", err)
+		}
 
 	},
 }
@@ -220,4 +243,12 @@ func DoScheduledWork() {
 		}
 	}
 
+}
+
+func OnShutdown() {
+	logOperation.Log("", "", "server is shutting down", "info")
+}
+
+func OnFatal(err error) {
+	logOperation.Log("", "", "server encountered a fatal error: "+err.Error(), "error")
 }
