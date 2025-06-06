@@ -34,9 +34,16 @@ func GetLogs(c *gin.Context) {
 	var logs []models.Log
 	// 添加分页：计算偏移量并限制数量
 	offset := (pageInt - 1) * limitInt
+
+	var total int64
+	if err := db.Model(&models.Log{}).Count(&total).Error; err != nil {
+		api.RespondError(c, 500, "Failed to count logs: "+err.Error())
+		return
+	}
+
 	if err := db.Order("time desc").Limit(limitInt).Offset(offset).Find(&logs).Error; err != nil {
 		api.RespondError(c, 500, "Failed to retrieve logs: "+err.Error())
 		return
 	}
-	api.RespondSuccess(c, logs)
+	api.RespondSuccess(c, gin.H{"logs": logs, "total": total})
 }
