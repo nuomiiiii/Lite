@@ -69,7 +69,7 @@ func OAuthCallback(c *gin.Context) {
 			return
 		}
 		logOperation.Log(c.ClientIP(), user.UUID, "bound external account (OAuth)"+fmt.Sprintf(",sso_id: %s", sso_id), "login")
-		c.Redirect(302, "/admin")
+		c.Redirect(302, "/manage")
 		return
 	}
 
@@ -93,5 +93,5 @@ func OAuthCallback(c *gin.Context) {
 	// 设置cookie并返回
 	c.SetCookie("session_token", session, 2592000, "/", "", false, true)
 	logOperation.Log(c.ClientIP(), user.UUID, "logged in (OAuth)", "login")
-	c.Redirect(302, "/admin")
+	c.Redirect(302, "/manage")
 }
