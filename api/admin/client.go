@@ -28,7 +28,7 @@ func AddClient(c *gin.Context) {
 		return
 	}
 	user_uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), user_uuid.(string), "Client created", "info")
+	logOperation.Log(c.ClientIP(), user_uuid.(string), "create client:"+uuid, "info")
 	c.JSON(http.StatusOK, gin.H{"status": "success", "uuid": uuid, "token": token, "message": ""})
 }
 
@@ -50,7 +50,7 @@ func EditClient(c *gin.Context) {
 		return
 	}
 	user_uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), user_uuid.(string), "Client edited:"+uuid, "info")
+	logOperation.Log(c.ClientIP(), user_uuid.(string), "edit client:"+uuid, "info")
 	c.JSON(http.StatusOK, gin.H{"status": "success"})
 }
 
@@ -65,7 +65,7 @@ func RemoveClient(c *gin.Context) {
 		return
 	}
 	user_uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), user_uuid.(string), "Client deleted:"+uuid, "warn")
+	logOperation.Log(c.ClientIP(), user_uuid.(string), "delete client:"+uuid, "warn")
 	c.JSON(200, gin.H{"status": "success"})
 }
 
@@ -78,7 +78,7 @@ func ClearRecord(c *gin.Context) {
 		return
 	}
 	user_uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), user_uuid.(string), "All records cleared", "warn")
+	logOperation.Log(c.ClientIP(), user_uuid.(string), "clear records", "warn")
 	c.JSON(200, gin.H{"status": "success"})
 }
 

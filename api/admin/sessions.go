@@ -33,7 +33,7 @@ func DeleteSession(c *gin.Context) {
 		return
 	}
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "Session deleted", "info")
+	logOperation.Log(c.ClientIP(), uuid.(string), "delete session", "info")
 	api.RespondSuccess(c, nil)
 }
 
@@ -45,6 +45,6 @@ func DeleteAllSession(c *gin.Context) {
 		return
 	}
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "All sessions deleted", "info")
+	logOperation.Log(c.ClientIP(), uuid.(string), "delete all sessions", "warn")
 	api.RespondSuccess(c, nil)
 }

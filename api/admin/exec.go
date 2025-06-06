@@ -62,7 +62,7 @@ func Exec(c *gin.Context) {
 		}
 	}
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "Command executed, task id: "+taskId, "warn")
+	logOperation.Log(c.ClientIP(), uuid.(string), "REC, task id: "+taskId, "warn")
 	api.RespondSuccess(c, gin.H{
 		"task_id": taskId,
 		"clients": onlineClients,

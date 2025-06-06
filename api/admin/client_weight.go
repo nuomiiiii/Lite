@@ -23,6 +23,6 @@ func OrderWeight(c *gin.Context) {
 		}
 	}
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "Client weights updated", "info")
+	logOperation.Log(c.ClientIP(), uuid.(string), "order clients", "info")
 	api.RespondSuccess(c, nil)
 }

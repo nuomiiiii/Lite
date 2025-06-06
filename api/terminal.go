@@ -8,12 +8,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/ws"
 )
 
 func RequestTerminal(c *gin.Context) {
 	uuid := c.Param("uuid")
+	user_uuid, _ := c.Get("uuid")
 	_, err := clients.GetClientByUUID(uuid)
 	if err != nil {
 		c.JSON(400, gin.H{
@@ -39,9 +41,10 @@ func RequestTerminal(c *gin.Context) {
 	// 新建一个终端连接
 	id := utils.GenerateRandomString(32)
 	session := &TerminalSession{
-		UUID:    uuid,
-		Browser: conn,
-		Agent:   nil,
+		UserUUID: user_uuid.(string),
+		UUID:     uuid,
+		Browser:  conn,
+		Agent:    nil,
 	}
 
 	TerminalSessionsMutex.Lock()
@@ -92,13 +95,16 @@ func RequestTerminal(c *gin.Context) {
 		}
 		TerminalSessionsMutex.Unlock()
 	})
+	logOperation.Log(c.ClientIP(), user_uuid.(string), "request, terminal id:"+id, "terminal")
 }
 
 func ForwardTerminal(id string) {
 	session, exists := TerminalSessions[id]
+
 	if !exists || session == nil || session.Agent == nil || session.Browser == nil {
 		return
 	}
+	logOperation.Log(session.UserUUID, session.UUID, "established, terminal id:"+id, "terminal")
 	errChan := make(chan error, 1)
 
 	go func() {

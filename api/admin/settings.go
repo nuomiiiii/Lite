@@ -44,7 +44,15 @@ func EditSettings(c *gin.Context) {
 		api.RespondError(c, 500, "Failed to update settings: "+err.Error())
 		return
 	}
+
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "Settings updated", "info")
+	message := "update settings: "
+	for key := range cfg {
+		message += key + ", "
+	}
+	if len(message) > 2 {
+		message = message[:len(message)-2]
+	}
+	logOperation.Log(c.ClientIP(), uuid.(string), message, "info")
 	api.RespondSuccess(c, nil)
 }

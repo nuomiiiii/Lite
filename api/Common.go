@@ -19,9 +19,10 @@ var (
 )
 
 type TerminalSession struct {
-	UUID    string
-	Browser *websocket.Conn
-	Agent   *websocket.Conn
+	UUID     string
+	UserUUID string
+	Browser  *websocket.Conn
+	Agent    *websocket.Conn
 }
 
 var TerminalSessionsMutex = &sync.Mutex{}
