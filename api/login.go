@@ -7,6 +7,7 @@ import (
 
 	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/logOperation"
 
 	"github.com/gin-gonic/gin"
 )
@@ -48,6 +49,7 @@ func Login(c *gin.Context) {
 			return
 		}
 		c.SetCookie("session_token", session, 2592000, "/", "", false, true)
+		logOperation.Log(c.ClientIP(), uuid, "User logged in(password)", "login")
 		RespondSuccess(c, gin.H{"set-cookie": gin.H{"session_token": session}})
 		return
 	} else {

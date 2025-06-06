@@ -29,7 +29,7 @@ func RequestTerminal(c *gin.Context) {
 	}
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return true // TODO: 检查源站
+			return true
 		},
 	}
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -60,7 +60,7 @@ func RequestTerminal(c *gin.Context) {
 	})
 
 	if ws.ConnectedClients[uuid] == nil {
-		conn.WriteMessage(1, []byte("Client offline!"))
+		conn.WriteMessage(1, []byte("Client offline!\n被控端离线!"))
 		conn.Close()
 		TerminalSessionsMutex.Lock()
 		delete(TerminalSessions, id)
@@ -78,13 +78,13 @@ func RequestTerminal(c *gin.Context) {
 		TerminalSessionsMutex.Unlock()
 		return
 	}
-	conn.WriteMessage(1, []byte("waiting for agent..."))
+	conn.WriteMessage(1, []byte("等待被控端连接 waiting for agent..."))
 	// 如果没有连接上，则关闭连接
 	time.AfterFunc(30*time.Second, func() {
 		TerminalSessionsMutex.Lock()
 		if session.Agent == nil {
 			if session.Browser != nil {
-				session.Browser.WriteMessage(1, []byte("timeout"))
+				session.Browser.WriteMessage(1, []byte("被控端连接超时 timeout"))
 				session.Browser.Close()
 			}
 			conn.Close()
