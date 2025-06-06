@@ -6,6 +6,7 @@ import (
 
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/api/admin"
+	"github.com/komari-monitor/komari/api/admin/test"
 	"github.com/komari-monitor/komari/api/admin/update"
 	"github.com/komari-monitor/komari/api/client"
 	"github.com/komari-monitor/komari/cmd/flags"
@@ -96,6 +97,12 @@ var ServerCmd = &cobra.Command{
 
 		adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())
 		{
+			// test
+			testGroup := adminAuthrized.Group("/test")
+			{
+				testGroup.GET("/telegram", test.TestTelegram)
+				testGroup.GET("/geoip", test.TestGeoIp)
+			}
 			// update
 			updateGroup := adminAuthrized.Group("/update")
 			{
