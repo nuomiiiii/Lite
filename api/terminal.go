@@ -105,6 +105,7 @@ func ForwardTerminal(id string) {
 		return
 	}
 	logOperation.Log(session.UserUUID, session.UUID, "established, terminal id:"+id, "terminal")
+	established_time := time.Now()
 	errChan := make(chan error, 1)
 
 	go func() {
@@ -159,6 +160,8 @@ func ForwardTerminal(id string) {
 	if session.Browser != nil {
 		session.Browser.Close()
 	}
+	disconnect_time := time.Now()
+	logOperation.Log(session.UserUUID, session.UUID, "disconnected, terminal id:"+id+", duration: "+disconnect_time.Sub(established_time).String(), "terminal")
 	TerminalSessionsMutex.Lock()
 	delete(TerminalSessions, id)
 	TerminalSessionsMutex.Unlock()
