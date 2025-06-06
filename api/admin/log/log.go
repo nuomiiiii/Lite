@@ -22,12 +22,12 @@ func GetLogs(c *gin.Context) {
 	// If conversion fails, return an error
 	limitInt, err := strconv.Atoi(limit)
 	if err != nil || limitInt <= 0 {
-		api.RespondError(c, 400, "Invalid limit parameter: "+err.Error())
+		api.RespondError(c, 400, "Invalid limit: "+limit)
 		return
 	}
 	pageInt, err := strconv.Atoi(page)
 	if err != nil || pageInt <= 0 {
-		api.RespondError(c, 400, "Invalid page parameter: "+err.Error())
+		api.RespondError(c, 400, "Invalid page: "+page)
 		return
 	}
 	db := dbcore.GetDBInstance()
