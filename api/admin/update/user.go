@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/logOperation"
 )
 
 func UpdateUser(c *gin.Context) {
@@ -33,5 +34,7 @@ func UpdateUser(c *gin.Context) {
 		api.RespondError(c, 500, "Failed to update user: "+err.Error())
 		return
 	}
+	uuid, _ := c.Get("uuid")
+	logOperation.Log(c.ClientIP(), uuid.(string), "User updated", "warn")
 	api.RespondSuccess(c, gin.H{"uuid": req.Uuid})
 }

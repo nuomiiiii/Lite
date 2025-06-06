@@ -4,6 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/models"
 )
 
@@ -21,5 +22,7 @@ func OrderWeight(c *gin.Context) {
 			return
 		}
 	}
+	uuid, _ := c.Get("uuid")
+	logOperation.Log(c.ClientIP(), uuid.(string), "Client weights updated", "info")
 	api.RespondSuccess(c, nil)
 }

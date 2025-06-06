@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/komari-monitor/komari/api"
+	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/ws"
@@ -60,6 +61,8 @@ func Exec(c *gin.Context) {
 			return
 		}
 	}
+	uuid, _ := c.Get("uuid")
+	logOperation.Log(c.ClientIP(), uuid.(string), "Command executed, task id: "+taskId, "warn")
 	api.RespondSuccess(c, gin.H{
 		"task_id": taskId,
 		"clients": onlineClients,

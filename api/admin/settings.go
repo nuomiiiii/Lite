@@ -5,6 +5,7 @@ import (
 
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/models"
 
 	"github.com/gin-gonic/gin"
@@ -43,5 +44,7 @@ func EditSettings(c *gin.Context) {
 		api.RespondError(c, 500, "Failed to update settings: "+err.Error())
 		return
 	}
+	uuid, _ := c.Get("uuid")
+	logOperation.Log(c.ClientIP(), uuid.(string), "Settings updated", "info")
 	api.RespondSuccess(c, nil)
 }

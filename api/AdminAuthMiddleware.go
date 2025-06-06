@@ -19,12 +19,15 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 		}
 
 		// Komari is a single user system
-		_, err = accounts.GetSession(session)
+		uuid, err := accounts.GetSession(session)
 		if err != nil {
 			RespondError(c, http.StatusUnauthorized, "Unauthorized.")
 			c.Abort()
 			return
 		}
+		// 将 session 和 用户 UUID 传递到后续处理器
+		c.Set("session", session)
+		c.Set("uuid", uuid)
 
 		c.Next()
 	}

@@ -3,6 +3,7 @@ package admin
 import (
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/logOperation"
 
 	"github.com/gin-gonic/gin"
 )
@@ -31,7 +32,8 @@ func DeleteSession(c *gin.Context) {
 		api.RespondError(c, 500, "Failed to delete session: "+err.Error())
 		return
 	}
-
+	uuid, _ := c.Get("uuid")
+	logOperation.Log(c.ClientIP(), uuid.(string), "Session deleted", "info")
 	api.RespondSuccess(c, nil)
 }
 
@@ -42,6 +44,7 @@ func DeleteAllSession(c *gin.Context) {
 		api.RespondError(c, 500, "Failed to delete all sessions: "+err.Error())
 		return
 	}
-
+	uuid, _ := c.Get("uuid")
+	logOperation.Log(c.ClientIP(), uuid.(string), "All sessions deleted", "info")
 	api.RespondSuccess(c, nil)
 }
