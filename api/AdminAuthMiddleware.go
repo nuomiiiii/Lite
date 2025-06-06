@@ -13,18 +13,22 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 
 		session, err := c.Cookie("session_token")
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Unauthorized"})
+			RespondError(c, http.StatusUnauthorized, "Unauthorized.")
 			c.Abort()
 			return
 		}
 
 		// Komari is a single user system
-		_, err = accounts.GetSession(session)
+		uuid, err := accounts.GetSession(session)
 		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Unauthorized."})
+			RespondError(c, http.StatusUnauthorized, "Unauthorized.")
 			c.Abort()
 			return
 		}
+		accounts.UpdateLatest(session, c.Request.UserAgent(), c.ClientIP())
+		// 将 session 和 用户 UUID 传递到后续处理器
+		c.Set("session", session)
+		c.Set("uuid", uuid)
 
 		c.Next()
 	}

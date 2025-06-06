@@ -8,27 +8,30 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/ws"
 )
 
 func RequestTerminal(c *gin.Context) {
 	uuid := c.Param("uuid")
+	user_uuid, _ := c.Get("uuid")
 	_, err := clients.GetClientByUUID(uuid)
 	if err != nil {
 		c.JSON(400, gin.H{
-			"error": "Client not found",
+			"status":  "error",
+			"message": "Client not found",
 		})
 		return
 	}
 	// 建立ws
 	if !websocket.IsWebSocketUpgrade(c.Request) {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Require WebSocket upgrade"})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Require WebSocket upgrade"})
 		return
 	}
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return true // TODO: 检查源站
+			return true
 		},
 	}
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -38,9 +41,10 @@ func RequestTerminal(c *gin.Context) {
 	// 新建一个终端连接
 	id := utils.GenerateRandomString(32)
 	session := &TerminalSession{
-		UUID:    uuid,
-		Browser: conn,
-		Agent:   nil,
+		UserUUID: user_uuid.(string),
+		UUID:     uuid,
+		Browser:  conn,
+		Agent:    nil,
 	}
 
 	TerminalSessionsMutex.Lock()
@@ -59,7 +63,7 @@ func RequestTerminal(c *gin.Context) {
 	})
 
 	if ws.ConnectedClients[uuid] == nil {
-		conn.WriteMessage(1, []byte("Client offline!"))
+		conn.WriteMessage(1, []byte("Client offline!\n被控端离线!"))
 		conn.Close()
 		TerminalSessionsMutex.Lock()
 		delete(TerminalSessions, id)
@@ -77,13 +81,13 @@ func RequestTerminal(c *gin.Context) {
 		TerminalSessionsMutex.Unlock()
 		return
 	}
-	conn.WriteMessage(1, []byte("waiting for agent..."))
+	conn.WriteMessage(1, []byte("等待被控端连接 waiting for agent..."))
 	// 如果没有连接上，则关闭连接
 	time.AfterFunc(30*time.Second, func() {
 		TerminalSessionsMutex.Lock()
 		if session.Agent == nil {
 			if session.Browser != nil {
-				session.Browser.WriteMessage(1, []byte("timeout"))
+				session.Browser.WriteMessage(1, []byte("被控端连接超时 timeout"))
 				session.Browser.Close()
 			}
 			conn.Close()
@@ -91,13 +95,17 @@ func RequestTerminal(c *gin.Context) {
 		}
 		TerminalSessionsMutex.Unlock()
 	})
+	logOperation.Log(c.ClientIP(), user_uuid.(string), "request, terminal id:"+id+",client:"+session.UUID, "terminal")
 }
 
 func ForwardTerminal(id string) {
 	session, exists := TerminalSessions[id]
+
 	if !exists || session == nil || session.Agent == nil || session.Browser == nil {
 		return
 	}
+	logOperation.Log("", session.UserUUID, "established, terminal id:"+id, "terminal")
+	established_time := time.Now()
 	errChan := make(chan error, 1)
 
 	go func() {
@@ -152,6 +160,8 @@ func ForwardTerminal(id string) {
 	if session.Browser != nil {
 		session.Browser.Close()
 	}
+	disconnect_time := time.Now()
+	logOperation.Log("", session.UserUUID, "disconnected, terminal id:"+id+", duration:"+disconnect_time.Sub(established_time).String(), "terminal")
 	TerminalSessionsMutex.Lock()
 	delete(TerminalSessions, id)
 	TerminalSessionsMutex.Unlock()

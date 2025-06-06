@@ -45,10 +45,16 @@ type User struct {
 
 // Session manages user sessions
 type Session struct {
-	UUID      string    `gorm:"type:varchar(36);foreignKey:UserUUID;references:UUID;constraint:OnDelete:CASCADE"`
-	Session   string    `gorm:"type:varchar(255);uniqueIndex:idx_sessions_session;not null"`
-	Expires   time.Time `gorm:"not null"`
-	CreatedAt time.Time
+	UUID            string    `json:"uuid" gorm:"type:varchar(36);foreignKey:UserUUID;references:UUID;constraint:OnDelete:CASCADE"`
+	Session         string    `json:"session" gorm:"type:varchar(255);uniqueIndex:idx_sessions_session;not null"`
+	UserAgent       string    `json:"user_agent" gorm:"type:text"`
+	Ip              string    `json:"ip" gorm:"type:varchar(100)"`
+	LoginMethod     string    `json:"login_method" gorm:"type:varchar(50)"`
+	LatestOnline    time.Time `json:"latest_online" gorm:"type:timestamp"`
+	LatestUserAgent string    `json:"latest_user_agent" gorm:"type:text"`
+	LatestIp        string    `json:"latest_ip" gorm:"type:varchar(100)"`
+	Expires         time.Time `json:"expires" gorm:"not null"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 // Record logs client metrics over time
@@ -72,24 +78,4 @@ type Record struct {
 	Process        int       `json:"process"`
 	Connections    int       `json:"connections"`
 	ConnectionsUdp int       `json:"connections_udp"`
-}
-
-// Config stores site-wide settings
-type Config struct {
-	ID          uint   `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
-	Sitename    string `json:"sitename" gorm:"type:varchar(100);not null"`
-	Description string `json:"description" gorm:"type:text"`
-	AllowCors   bool   `json:"allow_cors" gorm:"column:allow_cors;default:false"`
-	// GeoIP 配置
-	GeoIpEnabled  bool   `json:"geo_ip_enabled" gorm:"default:true"`
-	GeoIpProvider string `json:"geo_ip_provider" gorm:"type:varchar(20);default:'mmdb'"` // mmdb, bilibili, ip-api. 暂时只实现了mmdb
-	// OAuth 配置
-	OAuthClientID     string `json:"o_auth_client_id" gorm:"type:varchar(255);not null"`
-	OAuthClientSecret string `json:"o_auth_client_secret" gorm:"type:varchar(255);not null"`
-	OAuthEnabled      bool   `json:"o_auth_enabled" gorm:"default:false"`
-	// 自定义美化
-	CustomHead string `json:"custom_head" gorm:"type:longtext"`
-	CustomBody string `json:"custom_body" gorm:"type:longtext"`
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
 }

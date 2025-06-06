@@ -159,6 +159,7 @@ func GetDBInstance() *gorm.DB {
 			&models.Client{},
 			&models.Record{},
 			&models.Config{},
+			&models.Log{},
 		)
 		if err != nil {
 			log.Fatalf("Failed to create tables: %v", err)

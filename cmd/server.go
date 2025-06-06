@@ -1,25 +1,32 @@
 package cmd
 
 import (
+	"context"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/api/admin"
+	log_api "github.com/komari-monitor/komari/api/admin/log"
+	"github.com/komari-monitor/komari/api/admin/test"
 	"github.com/komari-monitor/komari/api/admin/update"
 	"github.com/komari-monitor/komari/api/client"
 	"github.com/komari-monitor/komari/cmd/flags"
 	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/public"
 	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/ws"
-
-	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +41,7 @@ var ServerCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		InitDatabase()
 		go geoip.InitGeoIp()
-		go DoRecordsWork()
+		go DoScheduledWork()
 
 		r := gin.Default()
 
@@ -96,6 +103,12 @@ var ServerCmd = &cobra.Command{
 
 		adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())
 		{
+			// test
+			testGroup := adminAuthrized.Group("/test")
+			{
+				testGroup.GET("/telegram", test.TestTelegram)
+				testGroup.GET("/geoip", test.TestGeoIp)
+			}
 			// update
 			updateGroup := adminAuthrized.Group("/update")
 			{
@@ -148,6 +161,7 @@ var ServerCmd = &cobra.Command{
 				sessionGroup.POST("/remove", admin.DeleteSession)
 				sessionGroup.POST("/remove/all", admin.DeleteAllSession)
 			}
+			adminAuthrized.GET("/logs", log_api.GetLogs)
 		}
 
 		public.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
@@ -156,12 +170,28 @@ var ServerCmd = &cobra.Command{
 		// 静态文件服务
 		public.UpdateIndex(conf)
 		config.Subscribe(func(event config.ConfigEvent) {
-			if event.Old.CustomHead != event.New.CustomHead {
-				public.UpdateIndex(event.New)
-			}
+			public.UpdateIndex(event.New)
 		})
 
-		r.Run(flags.Listen)
+		srv := &http.Server{
+			Addr:    flags.Listen,
+			Handler: r,
+		}
+		go func() {
+			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				OnFatal(err)
+				log.Fatalf("listen: %s\n", err)
+			}
+		}()
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+		<-quit
+		OnShutdown()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Fatalf("Server forced to shutdown: %v", err)
+		}
 
 	},
 }
@@ -196,7 +226,7 @@ func InitDatabase() {
 	}
 }
 
-func DoRecordsWork() {
+func DoScheduledWork() {
 	ticker := time.NewTicker(time.Minute * 30)
 	ticker1 := time.NewTicker(60 * time.Second)
 	records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
@@ -207,9 +237,18 @@ func DoRecordsWork() {
 			records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 			records.CompactRecord()
 			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * 24 * 30))
+			logOperation.RemoveOldLogs()
 		case <-ticker1.C:
 			api.SaveClientReportToDB()
 		}
 	}
 
+}
+
+func OnShutdown() {
+	logOperation.Log("", "", "server is shutting down", "info")
+}
+
+func OnFatal(err error) {
+	logOperation.Log("", "", "server encountered a fatal error: "+err.Error(), "error")
 }

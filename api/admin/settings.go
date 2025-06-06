@@ -3,7 +3,9 @@ package admin
 import (
 	"database/sql"
 
+	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/models"
 
 	"github.com/gin-gonic/gin"
@@ -18,35 +20,52 @@ func GetSettings(c *gin.Context) {
 			cst = models.Config{Sitename: "Komari"}
 			cst.ID = 1
 			config.Save(cst)
-			c.JSON(200, cst)
+			api.RespondSuccess(c, cst)
 			return
 		}
 		c.JSON(500, gin.H{
-			"status": "error",
-			"error":  "Internal Server Error: " + err.Error(),
+			"status":  "error",
+			"message": "Internal Server Error: " + err.Error(),
 		})
 	}
-	c.JSON(200, cst)
+	api.RespondSuccess(c, cst)
 }
 
 // EditSettings 更新自定义配置
 func EditSettings(c *gin.Context) {
 	cfg := make(map[string]interface{})
 	if err := c.ShouldBindJSON(&cfg); err != nil {
-		c.JSON(400, gin.H{
-			"status": "error",
-			"error":  "Bad Request: " + err.Error(),
-		})
+		api.RespondError(c, 400, "Invalid or missing request body: "+err.Error())
 		return
 	}
 
 	cfg["id"] = 1 // Only one record
 	if err := config.Update(cfg); err != nil {
-		c.JSON(500, gin.H{
-			"status": "error",
-			"error":  "Internal Server Error: " + err.Error(),
-		})
+		api.RespondError(c, 500, "Failed to update settings: "+err.Error())
 		return
 	}
-	c.JSON(200, gin.H{"status": "success"})
+
+	uuid, _ := c.Get("uuid")
+	message := "update settings: "
+	for key := range cfg {
+		ignoredKeys := []string{"id", "updated_at"}
+		if contains(ignoredKeys, key) {
+			continue
+		}
+		message += key + ", "
+	}
+	if len(message) > 2 {
+		message = message[:len(message)-2]
+	}
+	logOperation.Log(c.ClientIP(), uuid.(string), message, "info")
+	api.RespondSuccess(c, nil)
+}
+
+func contains(slice []string, item string) bool {
+	for _, v := range slice {
+		if v == item {
+			return true
+		}
+	}
+	return false
 }

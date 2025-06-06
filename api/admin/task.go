@@ -2,20 +2,21 @@ package admin
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/tasks"
 )
 
 func GetTasks(c *gin.Context) {
 	dbTasks, err := tasks.GetAllTasks()
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "message": "Failed to retrieve tasks: " + err.Error()})
+		api.RespondError(c, 500, "Failed to retrieve tasks: "+err.Error())
 		return
 	}
 	var responseTasks []gin.H
 	for _, t := range dbTasks {
 		results, err := tasks.GetTaskResultsByTaskId(t.TaskId)
 		if err != nil {
-			c.JSON(500, gin.H{"status": "error", "message": "Failed to retrieve task results: " + err.Error()})
+			api.RespondError(c, 500, "Failed to retrieve task results: "+err.Error())
 			return
 		}
 
@@ -37,27 +38,27 @@ func GetTasks(c *gin.Context) {
 			"results": filteredResults,
 		})
 	}
-	c.JSON(200, gin.H{"status": "success", "tasks": responseTasks})
+	api.RespondSuccess(c, responseTasks)
 }
 
 func GetTaskById(c *gin.Context) {
 	taskId := c.Param("task_id")
 	if taskId == "" {
-		c.JSON(400, gin.H{"status": "error", "message": "Task ID is required"})
+		api.RespondError(c, 400, "Task ID is required")
 		return
 	}
 	task, err := tasks.GetTaskByTaskId(taskId)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "message": "Failed to retrieve task: " + err.Error()})
+		api.RespondError(c, 500, "Failed to retrieve task: "+err.Error())
 		return
 	}
 	if task == nil {
-		c.JSON(404, gin.H{"status": "error", "message": "Task not found"})
+		api.RespondError(c, 404, "Task not found")
 		return
 	}
 	results, err := tasks.GetTaskResultsByTaskId(taskId)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "message": "Failed to retrieve task results: " + err.Error()})
+		api.RespondError(c, 500, "Failed to retrieve task results: "+err.Error())
 		return
 	}
 	var filteredResults []gin.H
@@ -70,84 +71,84 @@ func GetTaskById(c *gin.Context) {
 			"created_at":  r.CreatedAt,
 		})
 	}
-	c.JSON(200, gin.H{"status": "success", "task": gin.H{
+	api.RespondSuccess(c, gin.H{
 		"task_id": task.TaskId,
 		"clients": task.Clients,
 		"command": task.Command,
 		"results": filteredResults,
-	}})
+	})
 }
 
 func GetTasksByClientId(c *gin.Context) {
 	clientId := c.Param("uuid")
 	if clientId == "" {
-		c.JSON(400, gin.H{"status": "error", "message": "Client ID is required"})
+		api.RespondError(c, 400, "Client ID is required")
 		return
 	}
 	tasks, err := tasks.GetTasksByClientId(clientId)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "message": "Failed to retrieve tasks: " + err.Error()})
+		api.RespondError(c, 500, "Failed to retrieve tasks: "+err.Error())
 		return
 	}
 	if len(tasks) == 0 {
-		c.JSON(404, gin.H{"status": "error", "message": "No tasks found for this client"})
+		api.RespondError(c, 404, "No tasks found for this client")
 		return
 	}
-	c.JSON(200, gin.H{"status": "success", "tasks": tasks})
+	api.RespondSuccess(c, tasks)
 }
 
 func GetSpecificTaskResult(c *gin.Context) {
 	taskId := c.Param("task_id")
 	clientId := c.Param("uuid")
 	if taskId == "" || clientId == "" {
-		c.JSON(400, gin.H{"status": "error", "message": "Task ID and Client ID are required"})
+		api.RespondError(c, 400, "Task ID and Client ID are required")
 		return
 	}
 	result, err := tasks.GetSpecificTaskResult(taskId, clientId)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "message": "Failed to retrieve task result: " + err.Error()})
+		api.RespondError(c, 500, "Failed to retrieve task result: "+err.Error())
 		return
 	}
 	if result == nil {
-		c.JSON(404, gin.H{"status": "error", "message": "No result found for this task and client"})
+		api.RespondError(c, 404, "No result found for this task and client")
 		return
 	}
-	c.JSON(200, gin.H{"status": "success", "result": result})
+	api.RespondSuccess(c, result)
 }
 
 // Param: task_id
 func GetTaskResultsByTaskId(c *gin.Context) {
 	taskId := c.Param("task_id")
 	if taskId == "" {
-		c.JSON(400, gin.H{"status": "error", "message": "Task ID is required"})
+		api.RespondError(c, 400, "Task ID is required")
 		return
 	}
 	results, err := tasks.GetTaskResultsByTaskId(taskId)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "message": "Failed to retrieve task results: " + err.Error()})
+		api.RespondError(c, 500, "Failed to retrieve task results: "+err.Error())
 		return
 	}
 	if len(results) == 0 {
-		c.JSON(404, gin.H{"status": "error", "message": "No results found for this task"})
+		api.RespondError(c, 404, "No results found for this task")
 		return
 	}
-	c.JSON(200, gin.H{"status": "success", "results": results})
+	api.RespondSuccess(c, results)
 }
 
 func GetAllTaskResultByUUID(c *gin.Context) {
 	clientId := c.Param("uuid")
 	if clientId == "" {
-		c.JSON(400, gin.H{"status": "error", "message": "Client ID is required"})
+		api.RespondError(c, 400, "Client ID is required")
 		return
 	}
 	results, err := tasks.GetAllTasksResultByUUID(clientId)
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "message": "Failed to retrieve tasks: " + err.Error()})
+		api.RespondError(c, 500, "Failed to retrieve tasks: "+err.Error())
 		return
 	}
 	if len(results) == 0 {
-		c.JSON(404, gin.H{"status": "error", "message": "No tasks found for this client"})
+		api.RespondError(c, 404, "No tasks found for this client")
 		return
 	}
-	c.JSON(200, gin.H{"status": "success", "tasks": results})
+	api.RespondSuccess(c, results)
 }

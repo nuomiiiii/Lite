@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/utils/oauth"
 )
 
@@ -59,15 +60,16 @@ func OAuthCallback(c *gin.Context) {
 		session, _ := c.Cookie("session_token")
 		user, err := accounts.GetUserBySession(session)
 		if err != nil || user.UUID != uuid {
-			c.JSON(500, gin.H{"status": "error", "error": "Binding failed"})
+			c.JSON(500, gin.H{"status": "error", "message": "Binding failed"})
 			return
 		}
 		err = accounts.BindingExternalAccount(user.UUID, sso_id)
 		if err != nil {
-			c.JSON(500, gin.H{"status": "error", "error": "Binding failed"})
+			c.JSON(500, gin.H{"status": "error", "message": "Binding failed"})
 			return
 		}
-		c.Redirect(302, "/")
+		logOperation.Log(c.ClientIP(), user.UUID, "bound external account (OAuth)"+fmt.Sprintf(",sso_id: %s", sso_id), "login")
+		c.Redirect(302, "/manage")
 		return
 	}
 
@@ -75,20 +77,21 @@ func OAuthCallback(c *gin.Context) {
 	user, err := accounts.GetUserBySSO(sso_id)
 	if err != nil {
 		c.JSON(401, gin.H{
-			"status": "error",
-			"error":  "please log in and bind your GitHub account first.",
+			"status":  "error",
+			"message": "please log in and bind your GitHub account first.",
 		})
 		return
 	}
 
 	// 创建会话
-	session, err := accounts.CreateSession(user.UUID, 2592000)
+	session, err := accounts.CreateSession(user.UUID, 2592000, c.Request.UserAgent(), c.ClientIP(), "oauth")
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "error": err.Error()})
+		c.JSON(500, gin.H{"status": "error", "message": err.Error()})
 		return
 	}
 
 	// 设置cookie并返回
 	c.SetCookie("session_token", session, 2592000, "/", "", false, true)
-	c.Redirect(302, "/")
+	logOperation.Log(c.ClientIP(), user.UUID, "logged in (OAuth)", "login")
+	c.Redirect(302, "/manage")
 }

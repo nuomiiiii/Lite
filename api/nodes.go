@@ -8,7 +8,7 @@ import (
 func GetNodesInformation(c *gin.Context) {
 	clientList, err := clients.GetAllClientBasicInfo()
 	if err != nil {
-		c.JSON(500, gin.H{"status": "error", "error": err.Error()})
+		RespondError(c, 500, "Failed to retrieve client information: "+err.Error())
 		return
 	}
 
@@ -22,5 +22,5 @@ func GetNodesInformation(c *gin.Context) {
 		clientList[i].Token = ""
 	}
 
-	c.JSON(200, gin.H{"status": "success", "data": clientList})
+	RespondSuccess(c, clientList)
 }

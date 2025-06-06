@@ -21,7 +21,7 @@ func TestGetMe(t *testing.T) {
 		t.Fatalf("Failed to create test user: %v", err)
 	}
 	uuid := user.UUID
-	sessionToken, _ := accounts.CreateSession(uuid, 2592000)
+	sessionToken, _ := accounts.CreateSession(uuid, 2592000, "test_user_agent", "127.0.0.1", "oauth")
 
 	tests := []struct {
 		name           string

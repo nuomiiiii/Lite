@@ -7,11 +7,8 @@ import (
 func GetClientRecentRecords(c *gin.Context) {
 	uuid := c.Param("uuid")
 	if uuid == "" {
-		c.JSON(400, gin.H{
-			"status": "error",
-			"error":  "Invalid or missing UUID",
-		})
+		RespondError(c, 400, "UUID is required")
 		return
 	}
-	c.JSON(200, Records[uuid])
+	RespondSuccess(c, Records[uuid])
 }

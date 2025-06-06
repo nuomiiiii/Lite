@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/logOperation"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,35 +18,49 @@ type LoginRequest struct {
 }
 
 func Login(c *gin.Context) {
+	conf, _ := config.Get()
+	if conf.DisablePasswordLogin {
+		RespondError(c, http.StatusForbidden, "Password login is disabled")
+		return
+	}
+
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid request body"})
+		RespondError(c, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
 	}
 	var data LoginRequest
 	err = json.Unmarshal(bodyBytes, &data)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid request body"})
+		RespondError(c, http.StatusBadRequest, "Invalid request body: "+err.Error())
 		return
 	}
 	if data.Username == "" || data.Password == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Invalid request body"})
+		RespondError(c, http.StatusBadRequest, "Invalid request body: Username and password are required")
 		return
 	}
 
 	if uuid, success := accounts.CheckPassword(data.Username, data.Password); success {
 
-		session, err := accounts.CreateSession(uuid, 2592000)
+		session, err := accounts.CreateSession(uuid, 2592000, c.Request.UserAgent(), c.ClientIP(), "password")
 
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Failed to create session" + err.Error()})
+			RespondError(c, http.StatusInternalServerError, "Failed to create session: "+err.Error())
 			return
 		}
 		c.SetCookie("session_token", session, 2592000, "/", "", false, true)
-		c.JSON(200, gin.H{"set-cookie": map[string]interface{}{"session_token": session}})
+		logOperation.Log(c.ClientIP(), uuid, "logged in (password)", "login")
+		RespondSuccess(c, gin.H{"set-cookie": gin.H{"session_token": session}})
 		return
 	} else {
-		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Invalid credentials"})
+		RespondError(c, http.StatusUnauthorized, "Invalid credentials")
 	}
 
+}
+func Logout(c *gin.Context) {
+	session, _ := c.Cookie("session_token")
+	accounts.DeleteSession(session)
+	c.SetCookie("session_token", "", -1, "/", "", false, true)
+	logOperation.Log(c.ClientIP(), "", "logged out", "logout")
+	c.Redirect(302, "/")
 }

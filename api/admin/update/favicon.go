@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/api"
+	"github.com/komari-monitor/komari/database/logOperation"
 )
 
 func UploadFavicon(c *gin.Context) {
@@ -14,27 +16,31 @@ func UploadFavicon(c *gin.Context) {
 	data, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		if strings.Contains(err.Error(), "request body too large") {
-			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"status": "error", "message": "File too large. Maximum size is 5MB"})
+			api.RespondError(c, http.StatusRequestEntityTooLarge, "File too large. Maximum size is 5MB")
 		} else {
-			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": err.Error()})
+			api.RespondError(c, http.StatusBadRequest, err.Error())
 		}
 		return
 	}
 	if err := os.WriteFile("./data/favicon.ico", data, 0644); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Failed to save favicon: " + err.Error()})
+		api.RespondError(c, http.StatusInternalServerError, "Failed to save favicon: "+err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Favicon uploaded successfully"})
+	uuid, _ := c.Get("uuid")
+	logOperation.Log(c.ClientIP(), uuid.(string), "Favicon uploaded", "info")
+	api.RespondSuccess(c, nil)
 }
 
 func DeleteFavicon(c *gin.Context) {
 	if err := os.Remove("./data/favicon.ico"); err != nil {
 		if os.IsNotExist(err) {
-			c.JSON(http.StatusNotFound, gin.H{"status": "error", "message": "Favicon not found"})
+			api.RespondError(c, http.StatusNotFound, "Favicon not found")
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": "Failed to delete favicon: " + err.Error()})
+			api.RespondError(c, http.StatusInternalServerError, "Failed to delete favicon: "+err.Error())
 		}
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Favicon deleted successfully"})
+	uuid, _ := c.Get("uuid")
+	logOperation.Log(c.ClientIP(), uuid.(string), "Favicon deleted", "info")
+	api.RespondSuccess(c, nil)
 }

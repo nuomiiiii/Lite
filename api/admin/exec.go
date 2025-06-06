@@ -5,6 +5,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/komari-monitor/komari/api"
+	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/ws"
@@ -20,24 +22,24 @@ func Exec(c *gin.Context) {
 	}
 	var onlineClients []string
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"status": "error", "message": "Invalid request"})
+		api.RespondError(c, 400, "Invalid or missing request body: "+err.Error())
 		return
 	}
 	for uuid := range ws.ConnectedClients {
 		if contain(req.Clients, uuid) {
 			onlineClients = append(onlineClients, uuid)
 		} else {
-			c.JSON(400, gin.H{"status": "error", "message": "Client not connected: " + uuid})
+			api.RespondError(c, 400, "Client not connected: "+uuid)
 			return
 		}
 	}
 	if len(onlineClients) == 0 {
-		c.JSON(400, gin.H{"status": "error", "message": "No clients connected"})
+		api.RespondError(c, 400, "No clients connected")
 		return
 	}
 	taskId := utils.GenerateRandomString(16)
 	if err := tasks.CreateTask(taskId, onlineClients, req.Command); err != nil {
-		c.JSON(500, gin.H{"status": "error", "message": "Failed to create task: " + err.Error()})
+		api.RespondError(c, 500, "Failed to create task: "+err.Error())
 		return
 	}
 	for _, uuid := range onlineClients {
@@ -55,13 +57,13 @@ func Exec(c *gin.Context) {
 		if client != nil {
 			client.WriteMessage(websocket.TextMessage, payload)
 		} else {
-			c.JSON(400, gin.H{"status": "error", "message": "Client connection is null: " + uuid})
+			api.RespondError(c, 400, "Client connection is null: "+uuid)
 			return
 		}
 	}
-	c.JSON(200, gin.H{
-		"status":  "success",
-		"message": "Command sent to clients",
+	uuid, _ := c.Get("uuid")
+	logOperation.Log(c.ClientIP(), uuid.(string), "REC, task id: "+taskId, "warn")
+	api.RespondSuccess(c, gin.H{
 		"task_id": taskId,
 		"clients": onlineClients,
 	})

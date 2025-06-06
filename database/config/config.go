@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"log"
 	"time"
 
@@ -70,15 +71,32 @@ func Update(cst map[string]interface{}) error {
 	delete(cst, "created_at")
 	delete(cst, "CreatedAt")
 
-	if err := db.Model(&models.Config{}).Where("id = ?", 1).Updates(cst).Error; err != nil {
-		return err
+	// 至少有一种登录方式启用
+	newDisablePasswordLogin := oldConfig.DisablePasswordLogin
+	newOAuthEnabled := oldConfig.OAuthEnabled
+	if val, exists := cst["disable_password_login"]; exists {
+		newDisablePasswordLogin = val.(bool)
+	}
+	if val, exists := cst["o_auth_enabled"]; exists {
+		newOAuthEnabled = val.(bool)
+	}
+	if newDisablePasswordLogin && !newOAuthEnabled {
+		return errors.New("at least one login method must be enabled (password/oauth)")
 	}
 
-	newconfig, err := Get()
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&models.Config{}).Where("id = ?", oldConfig.ID).Updates(cst).Error; err != nil {
+			return errors.Join(err, errors.New("failed to update configuration"))
+		}
+		newConfig := &models.Config{}
+		if err := tx.Where("id = ?", oldConfig.ID).First(newConfig).Error; err != nil {
+			return errors.Join(err, errors.New("failed to retrieve updated configuration"))
+		}
+		publishEvent(oldConfig, *newConfig)
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	publishEvent(oldConfig, newconfig)
-
 	return nil
 }
