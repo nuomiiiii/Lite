@@ -95,7 +95,7 @@ func RequestTerminal(c *gin.Context) {
 		}
 		TerminalSessionsMutex.Unlock()
 	})
-	logOperation.Log(c.ClientIP(), user_uuid.(string), "request, terminal id:"+id, "terminal")
+	logOperation.Log(c.ClientIP(), user_uuid.(string), "request, terminal id:"+id+",client:"+session.UUID, "terminal")
 }
 
 func ForwardTerminal(id string) {
@@ -104,7 +104,7 @@ func ForwardTerminal(id string) {
 	if !exists || session == nil || session.Agent == nil || session.Browser == nil {
 		return
 	}
-	logOperation.Log(session.UserUUID, session.UUID, "established, terminal id:"+id, "terminal")
+	logOperation.Log("", session.UserUUID, "established, terminal id:"+id, "terminal")
 	established_time := time.Now()
 	errChan := make(chan error, 1)
 
@@ -161,7 +161,7 @@ func ForwardTerminal(id string) {
 		session.Browser.Close()
 	}
 	disconnect_time := time.Now()
-	logOperation.Log(session.UserUUID, session.UUID, "disconnected, terminal id:"+id+", duration: "+disconnect_time.Sub(established_time).String(), "terminal")
+	logOperation.Log("", session.UserUUID, "disconnected, terminal id:"+id+", duration:"+disconnect_time.Sub(established_time).String(), "terminal")
 	TerminalSessionsMutex.Lock()
 	delete(TerminalSessions, id)
 	TerminalSessionsMutex.Unlock()
