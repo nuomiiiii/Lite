@@ -42,7 +42,7 @@ func Login(c *gin.Context) {
 
 	if uuid, success := accounts.CheckPassword(data.Username, data.Password); success {
 
-		session, err := accounts.CreateSession(uuid, 2592000)
+		session, err := accounts.CreateSession(uuid, 2592000, c.Request.UserAgent(), c.ClientIP(), "password")
 
 		if err != nil {
 			RespondError(c, http.StatusInternalServerError, "Failed to create session: "+err.Error())

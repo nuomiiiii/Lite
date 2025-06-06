@@ -25,6 +25,7 @@ func AdminAuthMiddleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		accounts.UpdateLatest(session, c.Request.UserAgent(), c.ClientIP())
 		// 将 session 和 用户 UUID 传递到后续处理器
 		c.Set("session", session)
 		c.Set("uuid", uuid)

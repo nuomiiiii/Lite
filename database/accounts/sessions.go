@@ -20,14 +20,18 @@ func GetAllSessions() (sessions []models.Session, err error) {
 }
 
 // CreateSession 创建新会话
-func CreateSession(uuid string, expires int) (string, error) {
+func CreateSession(uuid string, expires int, userAgent, ip, login_method string) (string, error) {
 	db := dbcore.GetDBInstance()
 	session := utils.GenerateRandomString(32)
 
 	sessionRecord := models.Session{
-		UUID:    uuid,
-		Session: session,
-		Expires: time.Now().Add(time.Duration(expires) * time.Second),
+		UUID:         uuid,
+		Session:      session,
+		Expires:      time.Now().Add(time.Duration(expires) * time.Second),
+		UserAgent:    userAgent,
+		Ip:           ip,
+		LoginMethod:  login_method,
+		LatestOnline: time.Now(),
 	}
 
 	err := db.Create(&sessionRecord).Error
@@ -82,4 +86,27 @@ func DeleteAllSessions() error {
 		return result.Error
 	}
 	return nil
+}
+
+func UpdateLatestOnline(session string) error {
+	db := dbcore.GetDBInstance()
+	return db.Model(&models.Session{}).Where("session = ?", session).Update("latest_online", time.Now()).Error
+}
+
+func UpdateLatestUserAgent(session, userAgent string) error {
+	db := dbcore.GetDBInstance()
+	return db.Model(&models.Session{}).Where("session = ?", session).Update("latest_user_agent", userAgent).Error
+}
+func UpdateLatestIp(session, ip string) error {
+	db := dbcore.GetDBInstance()
+	return db.Model(&models.Session{}).Where("session = ?", session).Update("latest_ip", ip).Error
+}
+
+func UpdateLatest(session, useragent, ip string) error {
+	db := dbcore.GetDBInstance()
+	return db.Model(&models.Session{}).Where("session = ?", session).Updates(map[string]interface{}{
+		"latest_online":     time.Now(),
+		"latest_user_agent": useragent,
+		"latest_ip":         ip,
+	}).Error
 }

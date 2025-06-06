@@ -84,7 +84,7 @@ func OAuthCallback(c *gin.Context) {
 	}
 
 	// 创建会话
-	session, err := accounts.CreateSession(user.UUID, 2592000)
+	session, err := accounts.CreateSession(user.UUID, 2592000, c.Request.UserAgent(), c.ClientIP(), "oauth")
 	if err != nil {
 		c.JSON(500, gin.H{"status": "error", "message": err.Error()})
 		return
