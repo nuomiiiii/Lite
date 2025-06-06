@@ -1,6 +1,7 @@
 package logOperation
 
 import (
+	"log"
 	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
@@ -18,4 +19,13 @@ func Log(ip, uuid, message, msgType string) {
 		Time:    now,
 	}
 	db.Create(logEntry)
+}
+
+// Delete logs older than 30 days
+func RemoveOldLogs() {
+	db := dbcore.GetDBInstance()
+	threshold := time.Now().AddDate(0, 0, -30)
+	if err := db.Where("time < ?", threshold).Delete(&models.Log{}).Error; err != nil {
+		log.Println("Failed to remove old logs:", err)
+	}
 }

@@ -4,8 +4,10 @@ import (
 	"log"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/api/admin"
+	log_api "github.com/komari-monitor/komari/api/admin/log"
 	"github.com/komari-monitor/komari/api/admin/test"
 	"github.com/komari-monitor/komari/api/admin/update"
 	"github.com/komari-monitor/komari/api/client"
@@ -13,14 +15,13 @@ import (
 	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/public"
 	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/ws"
-
-	"github.com/gin-gonic/gin"
 	"github.com/spf13/cobra"
 )
 
@@ -35,7 +36,7 @@ var ServerCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		InitDatabase()
 		go geoip.InitGeoIp()
-		go DoRecordsWork()
+		go DoScheduledWork()
 
 		r := gin.Default()
 
@@ -155,6 +156,7 @@ var ServerCmd = &cobra.Command{
 				sessionGroup.POST("/remove", admin.DeleteSession)
 				sessionGroup.POST("/remove/all", admin.DeleteAllSession)
 			}
+			adminAuthrized.GET("/logs", log_api.GetLogs)
 		}
 
 		public.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
@@ -201,7 +203,7 @@ func InitDatabase() {
 	}
 }
 
-func DoRecordsWork() {
+func DoScheduledWork() {
 	ticker := time.NewTicker(time.Minute * 30)
 	ticker1 := time.NewTicker(60 * time.Second)
 	records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
@@ -212,6 +214,7 @@ func DoRecordsWork() {
 			records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 			records.CompactRecord()
 			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * 24 * 30))
+			logOperation.RemoveOldLogs()
 		case <-ticker1.C:
 			api.SaveClientReportToDB()
 		}
