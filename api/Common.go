@@ -80,3 +80,9 @@ func RespondSuccessMessage(c *gin.Context, message string, data interface{}) {
 func RespondError(c *gin.Context, httpStatus int, message string) {
 	Respond(c, httpStatus, "error", message, nil)
 }
+func GetVersion(c *gin.Context) {
+	RespondSuccess(c, gin.H{
+		"version": utils.CurrentVersion,
+		"hash":    utils.VersionHash,
+	})
+}
