@@ -103,11 +103,12 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 
 ## 截图
 
-![image](https://i.111666.best/image/KPDsA2Vj6KB7gpMl0kxlEt.png)
-![image](https://i.111666.best/image/gtlxKHUflzmQJz281TGVEB.png)
-![image](https://i.111666.best/image/3jE4raXwmtvXyn2PZ6lMB0.png)
-![image](https://i.111666.best/image/llocRPk4kEENvNCnWMYPIl.png)
-![image](https://i.111666.best/image/y6Pi9cSQM77wTVwLROYBBE.png)
+![PixPin_2025-06-07_15-28-30](https://github.com/user-attachments/assets/edce5694-c6c8-4647-bc11-8b27105fd55c)
+![PixPin_2025-06-07_15-28-49](https://github.com/user-attachments/assets/23b58032-211a-4b59-b444-c8267606a0bb)
+![PixPin_2025-06-07_15-29-05](https://github.com/user-attachments/assets/f4325d4d-fa69-41c6-9251-19f530476e65)
+![PixPin_2025-06-07_15-30-05](https://github.com/user-attachments/assets/69be38f6-6681-4afb-9a04-965d39b7fcc2)
+![PixPin_2025-06-07_15-30-46](https://github.com/user-attachments/assets/01d84dd1-3c81-4424-a041-7dbc2ae5822e)
+
 
 ## 碎碎念
 
