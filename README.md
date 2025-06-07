@@ -101,6 +101,14 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 ## 许可证
 [MIT License](LICENSE)
 
+## 截图
+
+![image](https://i.111666.best/image/KPDsA2Vj6KB7gpMl0kxlEt.png)
+![image](https://i.111666.best/image/gtlxKHUflzmQJz281TGVEB.png)
+![image](https://i.111666.best/image/3jE4raXwmtvXyn2PZ6lMB0.png)
+![image](https://i.111666.best/image/llocRPk4kEENvNCnWMYPIl.png)
+![image](https://i.111666.best/image/y6Pi9cSQM77wTVwLROYBBE.png)
+
 ## 碎碎念
 
 ### 我为什么做Komari？
