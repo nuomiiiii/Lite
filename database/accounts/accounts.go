@@ -155,6 +155,12 @@ func UnbindExternalAccount(uuid string) error {
 
 func UpdateUser(uuid string, name, password, sso_type *string) error {
 	db := dbcore.GetDBInstance()
+	// Check if user exists
+	var existingUser models.User
+	result := db.Where("uuid = ?", uuid).First(&existingUser)
+	if result.Error != nil {
+		return fmt.Errorf("user not found: %s", uuid)
+	}
 	updates := make(map[string]interface{})
 	if name != nil {
 		updates["username"] = *name

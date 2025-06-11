@@ -15,6 +15,7 @@ import (
 type LoginRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
+	TwoFa    string `json:"2fa_code"`
 }
 
 func Login(c *gin.Context) {
@@ -40,22 +41,30 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	if uuid, success := accounts.CheckPassword(data.Username, data.Password); success {
-
-		session, err := accounts.CreateSession(uuid, 2592000, c.Request.UserAgent(), c.ClientIP(), "password")
-
-		if err != nil {
-			RespondError(c, http.StatusInternalServerError, "Failed to create session: "+err.Error())
-			return
-		}
-		c.SetCookie("session_token", session, 2592000, "/", "", false, true)
-		logOperation.Log(c.ClientIP(), uuid, "logged in (password)", "login")
-		RespondSuccess(c, gin.H{"set-cookie": gin.H{"session_token": session}})
-		return
-	} else {
+	uuid, success := accounts.CheckPassword(data.Username, data.Password)
+	if !success {
 		RespondError(c, http.StatusUnauthorized, "Invalid credentials")
+		return
 	}
-
+	// 2FA
+	user, _ := accounts.GetUserByUUID(uuid)
+	if user.TwoFactor != "" && data.TwoFa == "" {
+		RespondError(c, http.StatusUnauthorized, "2FA code is required")
+		return
+	}
+	if ok, err := accounts.Verify2Fa(uuid, data.TwoFa); err != nil && ok {
+		RespondError(c, http.StatusUnauthorized, "Invalid 2FA code")
+		return
+	}
+	// Create session
+	session, err := accounts.CreateSession(uuid, 2592000, c.Request.UserAgent(), c.ClientIP(), "password")
+	if err != nil {
+		RespondError(c, http.StatusInternalServerError, "Failed to create session: "+err.Error())
+		return
+	}
+	c.SetCookie("session_token", session, 2592000, "/", "", false, true)
+	logOperation.Log(c.ClientIP(), uuid, "logged in (password)", "login")
+	RespondSuccess(c, gin.H{"set-cookie": gin.H{"session_token": session}})
 }
 func Logout(c *gin.Context) {
 	session, _ := c.Cookie("session_token")

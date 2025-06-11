@@ -161,6 +161,12 @@ var ServerCmd = &cobra.Command{
 				sessionGroup.POST("/remove", admin.DeleteSession)
 				sessionGroup.POST("/remove/all", admin.DeleteAllSession)
 			}
+			two_factorGroup := adminAuthrized.Group("/2fa")
+			{
+				two_factorGroup.GET("/generate", admin.Generate2FA)
+				two_factorGroup.POST("/enable", admin.Enable2FA)
+				two_factorGroup.POST("/disable", admin.Disable2FA)
+			}
 			adminAuthrized.GET("/logs", log_api.GetLogs)
 		}
 
