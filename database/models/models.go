@@ -27,6 +27,7 @@ type Client struct {
 	Weight         int       `json:"weight" gorm:"type:int"`
 	Price          float64   `json:"price"`
 	BillingCycle   int       `json:"billing_cycle"`
+	Currency       string    `json:"currency" gorm:"type:varchar(20);default:'$'"`
 	ExpiredAt      time.Time `json:"expired_at" gorm:"type:timestamp"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`

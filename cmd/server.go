@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/api/admin"
+	"github.com/komari-monitor/komari/api/admin/clipboard"
 	log_api "github.com/komari-monitor/komari/api/admin/log"
 	"github.com/komari-monitor/komari/api/admin/test"
 	"github.com/komari-monitor/komari/api/admin/update"
@@ -168,6 +169,17 @@ var ServerCmd = &cobra.Command{
 				two_factorGroup.POST("/disable", admin.Disable2FA)
 			}
 			adminAuthrized.GET("/logs", log_api.GetLogs)
+
+			// clipboard
+			clipboardGroup := adminAuthrized.Group("/clipboard")
+			{
+				clipboardGroup.GET("/:id", clipboard.GetClipboard)
+				clipboardGroup.GET("", clipboard.ListClipboard)
+				clipboardGroup.POST("", clipboard.CreateClipboard)
+				clipboardGroup.POST("/:id", clipboard.UpdateClipboard)
+				clipboardGroup.POST("/remove", clipboard.BatchDeleteClipboard)
+				clipboardGroup.POST("/:id/remove", clipboard.DeleteClipboard)
+			}
 		}
 
 		public.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
