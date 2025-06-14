@@ -15,6 +15,7 @@ import (
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/utils/notification"
 	"github.com/komari-monitor/komari/ws"
 )
 
@@ -109,10 +110,11 @@ func WebSocketReport(c *gin.Context) {
 		conn.WriteJSON(gin.H{"status": "error", "error": "Token already in use"})
 		return
 	}
-
 	ws.ConnectedClients[uuid] = conn
+	go notification.OnlineNotification(uuid)
 	defer func() {
 		delete(ws.ConnectedClients, uuid)
+		notification.OfflineNotification(uuid)
 	}()
 
 	for {

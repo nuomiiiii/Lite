@@ -69,7 +69,7 @@ func QuantileMean(values []float32) float32 {
 // 压缩数据库，针对每个ClientUUID，10分钟内的数据不动，24小时内的数据精简为每15分钟一条，3天为每30分钟一条，7天为每1小时一条，30天为每12小时一条。所有精简的数据是取 [0.02,0.98] 区间内的平均值
 func CompactRecord() error {
 	db := dbcore.GetDBInstance()
-	log.Printf("Compacting records...")
+	//log.Printf("Compacting records...")
 	var clientUUIDs []string
 	if err := db.Model(&models.Record{}).Distinct("client").Pluck("client", &clientUUIDs).Error; err != nil {
 		return err
