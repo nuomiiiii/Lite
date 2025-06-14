@@ -8,9 +8,11 @@ import (
 	"github.com/komari-monitor/komari/cmd/flags"
 	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/utils"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // mergeClientInfo 将旧版ClientInfo数据迁移到新版Client表
@@ -122,7 +124,13 @@ func GetDBInstance() *gorm.DB {
 		var err error
 
 		logConfig := &gorm.Config{
-			//Logger: logger.Default.LogMode(logger.Silent),
+			Logger: logger.Default.LogMode(logger.Silent),
+		}
+
+		if utils.VersionHash == "unknown" {
+			logConfig = &gorm.Config{
+				Logger: logger.Default.LogMode(logger.Info),
+			}
 		}
 
 		// 根据数据库类型选择不同的连接方式
