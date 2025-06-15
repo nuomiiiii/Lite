@@ -5,11 +5,13 @@ import (
 
 	"github.com/komari-monitor/komari/cmd/flags"
 	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/spf13/cobra"
 )
 
 var (
-	Username    string
+	//Username    string
 	NewPassword string
 )
 
@@ -17,7 +19,7 @@ var ChpasswdCmd = &cobra.Command{
 	Use:     "chpasswd",
 	Short:   "Force change password",
 	Long:    `Force change password`,
-	Example: `komari chpasswd -u <username> -p <password>`,
+	Example: `komari chpasswd -p <password>`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if NewPassword == "" {
 			cmd.Help()
@@ -27,9 +29,10 @@ var ChpasswdCmd = &cobra.Command{
 			cmd.Println("Database file does not exist.")
 			return
 		}
-
-		cmd.Println("Changing password for user:", Username)
-		if err := accounts.ForceResetPassword(Username, NewPassword); err != nil {
+		user := &models.User{}
+		dbcore.GetDBInstance().Model(&models.User{}).First(user)
+		cmd.Println("Changing password for user:", user.Username)
+		if err := accounts.ForceResetPassword(user.Username, NewPassword); err != nil {
 			cmd.Println("Error:", err)
 			return
 		}
@@ -45,7 +48,7 @@ var ChpasswdCmd = &cobra.Command{
 }
 
 func init() {
-	ChpasswdCmd.PersistentFlags().StringVarP(&Username, "user", "u", "admin", "The username of the account to change password")
+	//ChpasswdCmd.PersistentFlags().StringVarP(&Username, "user", "u", "admin", "The username of the account to change password")
 	ChpasswdCmd.PersistentFlags().StringVarP(&NewPassword, "password", "p", "", "New password")
 	RootCmd.AddCommand(ChpasswdCmd)
 }

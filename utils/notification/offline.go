@@ -8,6 +8,8 @@ import (
 
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils/telegram"
 )
 
@@ -27,12 +29,27 @@ func OfflineNotification(clientID string) {
 	}
 	now := time.Now()
 
-	if !client.OfflineNotification {
+	conf, _ := config.Get()
+	if !conf.NotificationEnabled {
 		return
 	}
-	conf, _ := config.Get()
-	cooldownDuration := time.Duration(conf.OfflineNotificationCooldown) * time.Second
-	gracePeriod := time.Duration(conf.OfflineNotificationGrace) * time.Second
+
+	noti_conf := models.OfflineNotification{
+		Client: clientID,
+	}
+
+	db := dbcore.GetDBInstance()
+	err = db.Model(&models.OfflineNotification{}).Where("client = ?", clientID).FirstOrCreate(&noti_conf).Error
+	if err != nil {
+		log.Println("Failed to get or create offline notification config:", err)
+		return
+	}
+	if !noti_conf.Enable {
+		return
+	}
+
+	cooldownDuration := time.Duration(noti_conf.Cooldown) * time.Second
+	gracePeriod := time.Duration(noti_conf.GracePeriod) * time.Second
 	if cooldownDuration <= 0 {
 		cooldownDuration = 30 * time.Minute // default cooldown if not set
 	}
@@ -80,12 +97,21 @@ func OnlineNotification(clientID string) {
 	if err != nil {
 		return
 	}
-	if !client.OfflineNotification {
+	noti_conf := models.OfflineNotification{
+		Client: clientID,
+	}
+
+	db := dbcore.GetDBInstance()
+	err = db.Model(&models.OfflineNotification{}).Where("client = ?", clientID).FirstOrCreate(&noti_conf).Error
+	if err != nil {
+		log.Println("Failed to get or create offline notification config:", err)
 		return
 	}
-	conf, _ := config.Get()
-	cooldownDuration := time.Duration(conf.OfflineNotificationCooldown) * time.Second
-	gracePeriod := time.Duration(conf.OfflineNotificationGrace) * time.Second
+	if !noti_conf.Enable {
+		return
+	}
+	cooldownDuration := time.Duration(noti_conf.Cooldown) * time.Second
+	gracePeriod := time.Duration(noti_conf.GracePeriod) * time.Second
 	if cooldownDuration <= 0 {
 		cooldownDuration = 30 * time.Minute // default cooldown if not set
 	}

@@ -24,8 +24,7 @@ type Config struct {
 	TelegramBotToken string `json:"telegram_bot_token" gorm:"type:varchar(255)"`
 	TelegramChatID   string `json:"telegram_chat_id" gorm:"type:varchar(255)"`
 	// 通知
-	OfflineNotificationCooldown int `json:"offline_notification_cool_down" gorm:"default:900"` // 冷却时间，这段时间内不会重复发送通知
-	OfflineNotificationGrace    int `json:"offline_notification_grace" gorm:"default:120"`     // 宽限期，这段时间重连回来不会触发通知
-	CreatedAt                   time.Time
-	UpdatedAt                   time.Time
+	NotificationEnabled bool `json:"notification_enabled" gorm:"default:false"` // 通知总开关
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
