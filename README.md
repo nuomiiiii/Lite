@@ -84,7 +84,7 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 欢迎提交 Issue 或 Pull Request！
 
 ## 鸣谢
- - 感谢 [Alice Networks LTD](https://app.alice.ws/) 提供的免费服务器
+ - 感谢我自己能这么闲
 
 ## 引用
  - [gorm.io](https://gorm.io/)
@@ -100,6 +100,15 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 
 ## 许可证
 [MIT License](LICENSE)
+
+## 截图
+
+![PixPin_2025-06-07_15-28-30](https://github.com/user-attachments/assets/edce5694-c6c8-4647-bc11-8b27105fd55c)
+![PixPin_2025-06-07_15-28-49](https://github.com/user-attachments/assets/23b58032-211a-4b59-b444-c8267606a0bb)
+![PixPin_2025-06-07_15-29-05](https://github.com/user-attachments/assets/f4325d4d-fa69-41c6-9251-19f530476e65)
+![PixPin_2025-06-07_15-30-05](https://github.com/user-attachments/assets/69be38f6-6681-4afb-9a04-965d39b7fcc2)
+![PixPin_2025-06-07_15-30-46](https://github.com/user-attachments/assets/01d84dd1-3c81-4424-a041-7dbc2ae5822e)
+
 
 ## 碎碎念
 
