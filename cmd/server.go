@@ -27,6 +27,7 @@ import (
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/public"
+	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/ws"
 	"github.com/spf13/cobra"
@@ -42,6 +43,9 @@ var ServerCmd = &cobra.Command{
 	Long:  `Start the server`,
 	Run: func(cmd *cobra.Command, args []string) {
 		InitDatabase()
+		if utils.VersionHash != "unknown" {
+			gin.SetMode(gin.ReleaseMode)
+		}
 		go geoip.InitGeoIp()
 		go DoScheduledWork()
 
