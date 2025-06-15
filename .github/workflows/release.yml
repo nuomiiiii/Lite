@@ -20,6 +20,11 @@ jobs:
       matrix:
         goos: [windows, linux]
         goarch: [amd64, arm64]
+        include:
+          - goos: windows
+            gcc: x86_64-w64-mingw32-gcc
+          - goos: linux
+            gcc: gcc
 
     steps:
       - name: Checkout code
@@ -45,11 +50,17 @@ jobs:
         with:
           go-version: '1.23'
 
+      - name: Install cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib gcc-mingw-w64
+
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
+          CC: ${{ matrix.gcc }}
         run: |
           BINARY_NAME=komari-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
