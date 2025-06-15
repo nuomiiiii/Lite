@@ -24,15 +24,18 @@ jobs:
           - goos: windows
             goarch: amd64
             gcc: x86_64-w64-mingw32-gcc
-          - goos: windows
-            goarch: arm64
-            gcc: aarch64-w64-mingw32-gcc
+            CGO_CFLAGS: ''
+            CGO_LDFLAGS: ''
           - goos: linux
             goarch: amd64
             gcc: gcc
+            CGO_CFLAGS: ''
+            CGO_LDFLAGS: ''
           - goos: linux
             goarch: arm64
             gcc: aarch64-linux-gnu-gcc
+            CGO_CFLAGS: '-pthread'
+            CGO_LDFLAGS: '-pthread'
 
     steps:
       - name: Checkout code
@@ -41,7 +44,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '23'
+          node-version: "23"
 
       - name: Clone and build frontend
         run: |
@@ -56,17 +59,22 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: "1.23"
 
       - name: Install cross-compiler
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-multilib gcc-mingw-w64
           if [ "${{ matrix.goarch }}" = "arm64" ] && [ "${{ matrix.goos }}" = "linux" ]; then
-            sudo apt-get install -y gcc-aarch64-linux-gnu
+            sudo apt-get install gcc-aarch64-linux-gnu
+          fi
+          if [ "${{ matrix.goarch }}" = "amd64" ] && [ "${{ matrix.goos }}" = "windows" ]; then
+            sudo apt-get install mingw-w64
           fi
           if [ "${{ matrix.goarch }}" = "arm64" ] && [ "${{ matrix.goos }}" = "windows" ]; then
-            sudo apt-get install -y g++-aarch64-linux-gnu
+            sudo apt-get install wget xz-utils
+            mkdir -p /tmp/mingw64
+            wget https://github.com/mstorsjo/llvm-mingw/releases/download/20250613/llvm-mingw-20250613-ucrt-ubuntu-22.04-aarch64.tar.xz -O /tmp/mingw64.tar.xz
+            tar -xf /tmp/mingw64.tar.xz -C /tmp/mingw64 --strip-components=1
           fi
 
       - name: Build binary
@@ -75,6 +83,8 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
           CC: ${{ matrix.gcc }}
+          CGO_CFLAGS: ${{ matrix.CGO_CFLAGS }}
+          CGO_LDFLAGS: ${{ matrix.CGO_LDFLAGS }}
         run: |
           BINARY_NAME=komari-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
