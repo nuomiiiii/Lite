@@ -24,7 +24,7 @@ type Config struct {
 	TelegramBotToken string `json:"telegram_bot_token" gorm:"type:varchar(255)"`
 	TelegramChatID   string `json:"telegram_chat_id" gorm:"type:varchar(255)"`
 	// 通知
-	NotificationEnabled bool `json:"otification_enabled" gorm:"default:false"` // 通知总开关
+	NotificationEnabled bool `json:"notification_enabled" gorm:"default:false"` // 通知总开关
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 }
