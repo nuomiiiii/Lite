@@ -14,6 +14,7 @@ import (
 	"github.com/komari-monitor/komari/api/admin"
 	"github.com/komari-monitor/komari/api/admin/clipboard"
 	log_api "github.com/komari-monitor/komari/api/admin/log"
+	"github.com/komari-monitor/komari/api/admin/notification"
 	"github.com/komari-monitor/komari/api/admin/test"
 	"github.com/komari-monitor/komari/api/admin/update"
 	"github.com/komari-monitor/komari/api/client"
@@ -179,6 +180,15 @@ var ServerCmd = &cobra.Command{
 				clipboardGroup.POST("/:id", clipboard.UpdateClipboard)
 				clipboardGroup.POST("/remove", clipboard.BatchDeleteClipboard)
 				clipboardGroup.POST("/:id/remove", clipboard.DeleteClipboard)
+			}
+
+			notificationGroup := adminAuthrized.Group("/notification")
+			{
+				// offline notifications
+				notificationGroup.GET("/offline", notification.ListOfflineNotifications)
+				notificationGroup.POST("/offline/edit", notification.EditOfflineNotification)
+				notificationGroup.POST("/offline/enable", notification.EnableOfflineNotification)
+				notificationGroup.POST("/offline/disable", notification.DisableOfflineNotification)
 			}
 		}
 

@@ -35,14 +35,18 @@ func OfflineNotification(clientID string) {
 	}
 
 	noti_conf := models.OfflineNotification{
-		Client:      clientID,
-		Enable:      true,
-		Cooldown:    1800,
-		GracePeriod: 300,
+		Client: clientID,
 	}
 
 	db := dbcore.GetDBInstance()
-	db.Model(&models.OfflineNotification{}).Where("client = ?", clientID).FirstOrCreate(&noti_conf)
+	err = db.Model(&models.OfflineNotification{}).Where("client = ?", clientID).FirstOrCreate(&noti_conf).Error
+	if err != nil {
+		log.Println("Failed to get or create offline notification config:", err)
+		return
+	}
+	if !noti_conf.Enable {
+		return
+	}
 
 	cooldownDuration := time.Duration(noti_conf.Cooldown) * time.Second
 	gracePeriod := time.Duration(noti_conf.GracePeriod) * time.Second
@@ -93,21 +97,19 @@ func OnlineNotification(clientID string) {
 	if err != nil {
 		return
 	}
-	conf, _ := config.Get()
-	if !conf.NotificationEnabled {
-		return
-	}
-
 	noti_conf := models.OfflineNotification{
-		Client:      clientID,
-		Enable:      true,
-		Cooldown:    1800,
-		GracePeriod: 300,
+		Client: clientID,
 	}
 
 	db := dbcore.GetDBInstance()
-	db.Model(&models.OfflineNotification{}).Where("client = ?", clientID).FirstOrCreate(&noti_conf)
-
+	err = db.Model(&models.OfflineNotification{}).Where("client = ?", clientID).FirstOrCreate(&noti_conf).Error
+	if err != nil {
+		log.Println("Failed to get or create offline notification config:", err)
+		return
+	}
+	if !noti_conf.Enable {
+		return
+	}
 	cooldownDuration := time.Duration(noti_conf.Cooldown) * time.Second
 	gracePeriod := time.Duration(noti_conf.GracePeriod) * time.Second
 	if cooldownDuration <= 0 {
