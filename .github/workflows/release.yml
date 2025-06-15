@@ -36,6 +36,9 @@ jobs:
             gcc: aarch64-linux-gnu-gcc
             CGO_CFLAGS: '-pthread'
             CGO_LDFLAGS: '-pthread'
+        exclude:
+          - goos: windows
+            goarch: arm64
 
     steps:
       - name: Checkout code
