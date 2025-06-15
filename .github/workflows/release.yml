@@ -88,6 +88,7 @@ jobs:
           CC: ${{ matrix.gcc }}
           CGO_CFLAGS: ${{ matrix.CGO_CFLAGS }}
           CGO_LDFLAGS: ${{ matrix.CGO_LDFLAGS }}
+          GIN_MODE: release
         run: |
           BINARY_NAME=komari-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
