@@ -15,6 +15,7 @@ import (
 	"github.com/komari-monitor/komari/api/admin/clipboard"
 	log_api "github.com/komari-monitor/komari/api/admin/log"
 	"github.com/komari-monitor/komari/api/admin/notification"
+	"github.com/komari-monitor/komari/api/admin/record"
 	"github.com/komari-monitor/komari/api/admin/test"
 	"github.com/komari-monitor/komari/api/admin/update"
 	"github.com/komari-monitor/komari/api/client"
@@ -97,6 +98,8 @@ var ServerCmd = &cobra.Command{
 		r.GET("/api/logout", api.Logout)
 		r.GET("/api/version", api.GetVersion)
 		r.GET("/api/recent/:uuid", api.GetClientRecentRecords)
+
+		r.GET("/api/records/load", record.GetRecordsByUUID)
 
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{
@@ -194,6 +197,7 @@ var ServerCmd = &cobra.Command{
 				notificationGroup.POST("/offline/enable", notification.EnableOfflineNotification)
 				notificationGroup.POST("/offline/disable", notification.DisableOfflineNotification)
 			}
+
 		}
 
 		public.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
@@ -260,8 +264,8 @@ func InitDatabase() {
 
 func DoScheduledWork() {
 	ticker := time.NewTicker(time.Minute * 30)
-	ticker1 := time.NewTicker(60 * time.Second)
-	records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
+	minute := time.NewTicker(60 * time.Second)
+	//records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 	records.CompactRecord()
 	for {
 		select {
@@ -270,7 +274,7 @@ func DoScheduledWork() {
 			records.CompactRecord()
 			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * 24 * 30))
 			logOperation.RemoveOldLogs()
-		case <-ticker1.C:
+		case <-minute.C:
 			api.SaveClientReportToDB()
 		}
 	}

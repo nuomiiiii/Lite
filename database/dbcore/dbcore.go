@@ -82,43 +82,6 @@ var (
 	once     sync.Once
 )
 
-// 初始化数据库
-// 对于 SQLite：true 如果数据库文件存在，false 如果数据库文件不存在并被创建
-// 对于 MySQL/其他数据库：总是返回 true
-// func InitDatabase() bool {
-// 	// 默认使用 SQLite 如果未指定类型
-// 	if flags.DatabaseType == "" || flags.DatabaseType == "sqlite" {
-// 		if _, err := os.Stat(flags.DatabaseFile); os.IsNotExist(err) {
-// 			log.Printf("SQLite database file %q does not exist, creating...", flags.DatabaseFile)
-// 			dbDir := filepath.Dir(flags.DatabaseFile)
-// 			if dbDir != "" {
-// 				if err := os.MkdirAll(dbDir, 0755); err != nil {
-// 					log.Fatalf("Failed to create database file directory %q: %v", dbDir, err)
-// 				}
-// 			}
-// 			file, err := os.Create(flags.DatabaseFile)
-// 			if err != nil {
-// 				log.Fatalf("Failed to create SQLite database file %q: %v", flags.DatabaseFile, err)
-// 			}
-// 			if err := file.Close(); err != nil {
-// 				log.Fatalf("Failed to close database file %q: %v", flags.DatabaseFile, err)
-// 			}
-// 			return false
-// 		} else if err != nil {
-// 			log.Fatalf("Failed to check database file %q: %v", flags.DatabaseFile, err)
-// 		}
-// 		return true
-// 	} else if flags.DatabaseType == "mysql" {
-// 		// 对于 MySQL，我们不需要创建文件，只需检查连接信息是否有效
-// 		log.Printf("Using MySQL database: %s@%s:%s/%s",
-// 			flags.DatabaseUser, flags.DatabaseHost, flags.DatabasePort, flags.DatabaseName)
-// 		return true
-// 	} else {
-// 		log.Fatalf("Unsupported database type: %s", flags.DatabaseType)
-// 		return false
-// 	}
-// }
-
 func GetDBInstance() *gorm.DB {
 	once.Do(func() {
 		var err error
@@ -174,6 +137,12 @@ func GetDBInstance() *gorm.DB {
 		)
 		if err != nil {
 			log.Fatalf("Failed to create tables: %v", err)
+		}
+		err = instance.Table("records_long_term").AutoMigrate(
+			&models.Record{},
+		)
+		if err != nil {
+			log.Printf("Failed to create records_long_term table, it may already exist: %v", err)
 		}
 		err = instance.AutoMigrate(
 			&models.Session{},
