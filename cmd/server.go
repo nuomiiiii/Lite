@@ -99,6 +99,8 @@ var ServerCmd = &cobra.Command{
 		r.GET("/api/version", api.GetVersion)
 		r.GET("/api/recent/:uuid", api.GetClientRecentRecords)
 
+		r.GET("/api/records/load", record.GetRecordsByUUID)
+
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{
 			tokenAuthrized.GET("/report", client.WebSocketReport) // websocket
@@ -196,10 +198,6 @@ var ServerCmd = &cobra.Command{
 				notificationGroup.POST("/offline/disable", notification.DisableOfflineNotification)
 			}
 
-			recordsGroup := adminAuthrized.Group("/records")
-			{
-				recordsGroup.GET("/load", record.GetRecordsByUUID)
-			}
 		}
 
 		public.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
