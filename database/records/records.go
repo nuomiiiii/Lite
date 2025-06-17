@@ -2,6 +2,8 @@ package records
 
 import (
 	"log"
+	"sort"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -32,95 +34,67 @@ func DeleteRecordBefore(before time.Time) error {
 	return db.Where("time < ?", before).Delete(&models.Record{}).Error
 }
 
-// 计算区间 [0.02, 0.98] 的平均值
-func QuantileMean(values []float32) float32 {
-	if len(values) == 0 {
-		return 0
+func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Record, error) {
+	db := dbcore.GetDBInstance()
+	var records []models.Record
+	var long_term []models.Record
+	err := db.Where("client = ? AND time >= ? AND time <= ?", uuid, start, end).Order("time ASC").Find(&records).Error
+	if err != nil {
+		log.Printf("Error fetching records for client %s between %s and %s: %v", uuid, start, end, err)
+		return nil, err
 	}
-	// 排序数据
-	sorted := make([]float32, len(values))
-	copy(sorted, values)
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[i] > sorted[j] {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
+	err = db.Table("records_long_term").Where("client = ? AND time >= ? AND time <= ?", uuid, start, end).Order("time ASC").Find(&long_term).Error
+	if err != nil {
+		log.Printf("Error fetching long-term records for client %s between %s and %s: %v", uuid, start, end, err)
+		return records, nil
 	}
-	// 区间边缘index
-	lower := int(0.02 * float64(len(sorted)))
-	upper := int(0.98 * float64(len(sorted)))
-	if lower >= upper || lower >= len(sorted) {
-		return 0
-	}
-
-	sum := float32(0)
-	count := 0
-	for i := lower; i < upper && i < len(sorted); i++ {
-		sum += sorted[i]
-		count++
-	}
-	if count == 0 {
-		return 0
-	}
-	return sum / float32(count)
+	records = append(records, long_term...)
+	return records, nil
 }
 
-// 压缩数据库，针对每个ClientUUID，10分钟内的数据不动，24小时内的数据精简为每15分钟一条，3天为每30分钟一条，7天为每1小时一条，30天为每12小时一条。所有精简的数据是取 [0.02,0.98] 区间内的平均值
+func GetAllRecords() ([]models.Record, error) {
+	db := dbcore.GetDBInstance()
+	var records []models.Record
+	var long_term []models.Record
+	err := db.Table("records").Order("time ASC").Find(&records).Error
+	if err != nil {
+		log.Printf("Error fetching all records: %v", err)
+		return nil, err
+	}
+	err = db.Table("records_long_term").Order("time ASC").Find(&long_term).Error
+	if err != nil {
+		log.Printf("Error fetching long-term records: %v", err)
+		return records, nil
+	}
+	records = append(records, long_term...)
+	return records, nil
+}
+
+// 压缩数据库
 func CompactRecord() error {
 	db := dbcore.GetDBInstance()
-	//log.Printf("Compacting records...")
-	var clientUUIDs []string
-	if err := db.Model(&models.Record{}).Distinct("client").Pluck("client", &clientUUIDs).Error; err != nil {
+	err := migrateOldRecords(db)
+	if err != nil {
+		log.Printf("Error migrating old records: %v", err)
 		return err
 	}
 
-	now := time.Now()
-	tenMinutesAgo := now.Add(-10 * time.Minute)
-	oneDayAgo := now.Add(-24 * time.Hour)
-	threeDaysAgo := now.Add(-3 * 24 * time.Hour)
-	sevenDaysAgo := now.Add(-7 * 24 * time.Hour)
-	thirtyDaysAgo := now.Add(-30 * 24 * time.Hour)
-
-	for _, clientUUID := range clientUUIDs {
-		// Process each time range with specific aggregation intervals
-		if err := processTimeRange(db, clientUUID, thirtyDaysAgo, sevenDaysAgo, 12*time.Hour, now); err != nil {
-			log.Printf("Error compacting 30d-7d for client %s: %v", clientUUID, err)
-			continue
+	if flags.DatabaseType == "sqlite" {
+		if err := db.Exec("VACUUM").Error; err != nil {
+			log.Printf("Error vacuuming database: %v", err)
 		}
-		if err := processTimeRange(db, clientUUID, sevenDaysAgo, threeDaysAgo, 1*time.Hour, now); err != nil {
-			log.Printf("Error compacting 7d-3d for client %s: %v", clientUUID, err)
-			continue
-		}
-		if err := processTimeRange(db, clientUUID, threeDaysAgo, oneDayAgo, 30*time.Minute, now); err != nil {
-			log.Printf("Error compacting 3d-1d for client %s: %v", clientUUID, err)
-			continue
-		}
-		if err := processTimeRange(db, clientUUID, oneDayAgo, tenMinutesAgo, 15*time.Minute, now); err != nil {
-			log.Printf("Error compacting 1d-10m for client %s: %v", clientUUID, err)
-			continue
-		}
-	}
-	if flags.DatabaseType != "sqlite" {
-		return nil // Only vacuum for SQLite
-	}
-	if err := db.Exec("VACUUM").Error; err != nil {
-		log.Printf("Error vacuuming the database: %v", err)
 	}
 	log.Printf("Record compaction completed")
 	return nil
 }
 
-func processTimeRange(db *gorm.DB, clientUUID string, start, end time.Time, interval time.Duration, now time.Time) error {
-	// Round start time to the nearest interval
-	start = start.Truncate(interval)
-	end = end.Truncate(interval)
+func migrateOldRecords(db *gorm.DB) error {
+	// 计算 4 小时前的时间
+	fourHoursAgo := time.Now().Add(-4 * time.Hour)
 
-	// Get all records in the time range
+	// 查询 records 表中超过 4 小时的记录
 	var records []models.Record
-	if err := db.Where("client = ? AND time >= ? AND time < ?", clientUUID, start, end).
-		Order("time ASC").
-		Find(&records).Error; err != nil {
+	if err := db.Table("records").Where("time < ?", fourHoursAgo).Find(&records).Error; err != nil {
 		return err
 	}
 
@@ -128,109 +102,163 @@ func processTimeRange(db *gorm.DB, clientUUID string, start, end time.Time, inte
 		return nil
 	}
 
-	// Group records by interval
-	type aggregatedRecord struct {
-		StartTime time.Time
-		Records   []models.Record
+	// 按 Client 和 15 分钟时间段分组，并存储所有记录以计算分位数
+	type groupData struct {
+		Cpu            []float32
+		Gpu            []float32
+		Load           []float32
+		Temp           []float32
+		Ram            []int64
+		RamTotal       []int64
+		Swap           []int64
+		SwapTotal      []int64
+		Disk           []int64
+		DiskTotal      []int64
+		NetIn          []int64
+		NetOut         []int64
+		NetTotalUp     []int64
+		NetTotalDown   []int64
+		Process        []int
+		Connections    []int
+		ConnectionsUdp []int
 	}
-	var aggregatedRecords []aggregatedRecord
-	currentGroup := aggregatedRecord{StartTime: start}
-	currentGroup.Records = make([]models.Record, 0)
 
+	groupedRecords := make(map[string]*groupData)
 	for _, record := range records {
-		groupTime := record.Time.Truncate(interval)
-		if !groupTime.Equal(currentGroup.StartTime) {
-			if len(currentGroup.Records) > 0 {
-				aggregatedRecords = append(aggregatedRecords, currentGroup)
+		key := record.Client + "_" + record.Time.Truncate(15*time.Minute).Format(time.RFC3339)
+		if _, ok := groupedRecords[key]; !ok {
+			groupedRecords[key] = &groupData{}
+		}
+		data := groupedRecords[key]
+		data.Cpu = append(data.Cpu, record.Cpu)
+		data.Gpu = append(data.Gpu, record.Gpu)
+		data.Load = append(data.Load, record.Load)
+		data.Temp = append(data.Temp, record.Temp)
+		data.Ram = append(data.Ram, record.Ram)
+		data.RamTotal = append(data.RamTotal, record.RamTotal)
+		data.Swap = append(data.Swap, record.Swap)
+		data.SwapTotal = append(data.SwapTotal, record.SwapTotal)
+		data.Disk = append(data.Disk, record.Disk)
+		data.DiskTotal = append(data.DiskTotal, record.DiskTotal)
+		data.NetIn = append(data.NetIn, record.NetIn)
+		data.NetOut = append(data.NetOut, record.NetOut)
+		data.NetTotalUp = append(data.NetTotalUp, record.NetTotalUp)
+		data.NetTotalDown = append(data.NetTotalDown, record.NetTotalDown)
+		data.Process = append(data.Process, record.Process)
+		data.Connections = append(data.Connections, record.Connections)
+		data.ConnectionsUdp = append(data.ConnectionsUdp, record.ConnectionsUdp)
+	}
+
+	getPercentile := func(values []float64, percentile float64) float64 {
+		if len(values) == 0 {
+			return 0
+		}
+		sortedValues := make([]float64, len(values))
+		copy(sortedValues, values)
+		sort.Float64s(sortedValues)
+		index := float64(len(sortedValues)-1) * percentile
+		lowerIndex := int(index)
+		if lowerIndex >= len(sortedValues)-1 {
+			return sortedValues[len(sortedValues)-1]
+		}
+		frac := index - float64(lowerIndex)
+		return sortedValues[lowerIndex] + frac*(sortedValues[lowerIndex+1]-sortedValues[lowerIndex])
+	}
+
+	getIntPercentile := func(values []int64, percentile float64) int64 {
+		if len(values) == 0 {
+			return 0
+		}
+		floats := make([]float64, len(values))
+		for i, v := range values {
+			floats[i] = float64(v)
+		}
+		return int64(getPercentile(floats, percentile))
+	}
+
+	getInt32Percentile := func(values []int, percentile float64) int {
+		if len(values) == 0 {
+			return 0
+		}
+		floats := make([]float64, len(values))
+		for i, v := range values {
+			floats[i] = float64(v)
+		}
+		return int(getPercentile(floats, percentile))
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		for key, data := range groupedRecords {
+			// 解析 Client 和时间
+			parts := strings.Split(key, "_")
+			clientUUID := parts[0]
+			timeSlot, err := time.Parse(time.RFC3339, strings.Join(parts[1:], "_"))
+			if err != nil {
+				return err
 			}
-			currentGroup = aggregatedRecord{StartTime: groupTime}
-			currentGroup.Records = []models.Record{record}
-		} else {
-			currentGroup.Records = append(currentGroup.Records, record)
-		}
-	}
-	if len(currentGroup.Records) > 0 {
-		aggregatedRecords = append(aggregatedRecords, currentGroup)
-	}
 
-	// Begin transaction
-	tx := db.Begin()
-	if tx.Error != nil {
-		return tx.Error
-	}
+			cpuFloats := make([]float64, len(data.Cpu))
+			for i, v := range data.Cpu {
+				cpuFloats[i] = float64(v)
+			}
+			gpuFloats := make([]float64, len(data.Gpu))
+			for i, v := range data.Gpu {
+				gpuFloats[i] = float64(v)
+			}
+			loadFloats := make([]float64, len(data.Load))
+			for i, v := range data.Load {
+				loadFloats[i] = float64(v)
+			}
+			tempFloats := make([]float64, len(data.Temp))
+			for i, v := range data.Temp {
+				tempFloats[i] = float64(v)
+			}
+			high_percentile := 0.8
+			// 检查 records_long_term 表中是否已存在相同的记录
+			var existingCount int64
+			if err := tx.Table("records_long_term").Where("client = ? AND time = ?", clientUUID, timeSlot).Count(&existingCount).Error; err != nil {
+				return err
+			}
 
-	// Delete original records in the time range
-	if err := tx.Where("client = ? AND time >= ? AND time < ?", clientUUID, start, end).Delete(&models.Record{}).Error; err != nil {
-		tx.Rollback()
-		return err
-	}
+			newRec := models.Record{
+				Client:         clientUUID,
+				Time:           timeSlot,
+				Cpu:            float32(getPercentile(cpuFloats, high_percentile)),
+				Gpu:            float32(getPercentile(gpuFloats, high_percentile)),
+				Load:           float32(getPercentile(loadFloats, high_percentile)),
+				Temp:           float32(getPercentile(tempFloats, high_percentile)),
+				Ram:            getIntPercentile(data.Ram, high_percentile),
+				RamTotal:       getIntPercentile(data.RamTotal, high_percentile),
+				Swap:           getIntPercentile(data.Swap, high_percentile),
+				SwapTotal:      getIntPercentile(data.SwapTotal, high_percentile),
+				Disk:           getIntPercentile(data.Disk, high_percentile),
+				DiskTotal:      getIntPercentile(data.DiskTotal, high_percentile),
+				NetIn:          getIntPercentile(data.NetIn, high_percentile),
+				NetOut:         getIntPercentile(data.NetOut, high_percentile),
+				NetTotalUp:     getIntPercentile(data.NetTotalUp, high_percentile),
+				NetTotalDown:   getIntPercentile(data.NetTotalDown, high_percentile),
+				Process:        getInt32Percentile(data.Process, high_percentile),
+				Connections:    getInt32Percentile(data.Connections, high_percentile),
+				ConnectionsUdp: getInt32Percentile(data.ConnectionsUdp, high_percentile),
+			}
 
-	// Insert aggregated records
-	for _, agg := range aggregatedRecords {
-		if len(agg.Records) == 0 {
-			continue
-		}
-
-		// Calculate averages and sums
-		var sumCPU, sumGPU, sumLOAD, sumTEMP float32
-		var sumRAM, sumRAMTotal, sumSWAP, sumSWAPTotal, sumDISK, sumDISKTotal int64
-		var sumNETIn, sumNETOut, sumNETTotalUp, sumNETTotalDown int64
-		var sumPROCESS, sumConnections, sumConnectionsUDP int
-		count := len(agg.Records)
-
-		for _, r := range agg.Records {
-			sumCPU += r.Cpu
-			sumGPU += r.Gpu
-			sumLOAD += r.Load
-			sumTEMP += r.Temp
-			sumRAM += r.Ram
-			sumRAMTotal += r.RamTotal
-			sumSWAP += r.Swap
-			sumSWAPTotal += r.SwapTotal
-			sumDISK += r.Disk
-			sumDISKTotal += r.DiskTotal
-			sumNETIn += r.NetIn
-			sumNETOut += r.NetOut
-			sumNETTotalUp += r.NetTotalUp
-			sumNETTotalDown += r.NetTotalDown
-			sumPROCESS += r.Process
-			sumConnections += r.Connections
-			sumConnectionsUDP += r.ConnectionsUdp
-		}
-
-		// Create new aggregated record
-		newRecord := models.Record{
-			Client:         clientUUID,
-			Time:           agg.StartTime,
-			Cpu:            sumCPU / float32(count),
-			Gpu:            sumGPU / float32(count),
-			Ram:            sumRAM / int64(count),
-			RamTotal:       sumRAMTotal / int64(count),
-			Swap:           sumSWAP / int64(count),
-			SwapTotal:      sumSWAPTotal / int64(count),
-			Load:           sumLOAD / float32(count),
-			Temp:           sumTEMP / float32(count),
-			Disk:           sumDISK / int64(count),
-			DiskTotal:      sumDISKTotal / int64(count),
-			NetIn:          sumNETIn / int64(count),
-			NetOut:         sumNETOut / int64(count),
-			NetTotalUp:     sumNETTotalUp / int64(count),
-			NetTotalDown:   sumNETTotalDown / int64(count),
-			Process:        sumPROCESS / count,
-			Connections:    sumConnections / count,
-			ConnectionsUdp: sumConnectionsUDP / count,
+			// 如果记录已存在则更新，否则创建新记录
+			if existingCount > 0 {
+				if err := tx.Table("records_long_term").Where("client = ? AND time = ?", clientUUID, timeSlot).Updates(&newRec).Error; err != nil {
+					return err
+				}
+			} else {
+				if err := tx.Table("records_long_term").Create(&newRec).Error; err != nil {
+					return err
+				}
+			}
 		}
 
-		if err := tx.Create(&newRecord).Error; err != nil {
-			tx.Rollback()
+		// 删除 records 表中的旧数据
+		if err := tx.Table("records").Where("time < ?", fourHoursAgo).Delete(&models.Record{}).Error; err != nil {
 			return err
 		}
-	}
 
-	return tx.Commit().Error
-}
-
-func Save(rec models.Record) error {
-	db := dbcore.GetDBInstance()
-	return db.Create(&rec).Error
+		return nil
+	})
 }

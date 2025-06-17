@@ -260,9 +260,9 @@ func InitDatabase() {
 
 func DoScheduledWork() {
 	ticker := time.NewTicker(time.Minute * 30)
-	ticker1 := time.NewTicker(60 * time.Second)
-	records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
-	records.CompactRecord()
+	minute := time.NewTicker(60 * time.Second)
+	//records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
+	//records.CompactRecord()
 	for {
 		select {
 		case <-ticker.C:
@@ -270,7 +270,7 @@ func DoScheduledWork() {
 			records.CompactRecord()
 			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * 24 * 30))
 			logOperation.RemoveOldLogs()
-		case <-ticker1.C:
+		case <-minute.C:
 			api.SaveClientReportToDB()
 		}
 	}
