@@ -15,6 +15,7 @@ import (
 	"github.com/komari-monitor/komari/api/admin/clipboard"
 	log_api "github.com/komari-monitor/komari/api/admin/log"
 	"github.com/komari-monitor/komari/api/admin/notification"
+	"github.com/komari-monitor/komari/api/admin/record"
 	"github.com/komari-monitor/komari/api/admin/test"
 	"github.com/komari-monitor/komari/api/admin/update"
 	"github.com/komari-monitor/komari/api/client"
@@ -194,6 +195,11 @@ var ServerCmd = &cobra.Command{
 				notificationGroup.POST("/offline/enable", notification.EnableOfflineNotification)
 				notificationGroup.POST("/offline/disable", notification.DisableOfflineNotification)
 			}
+
+			recordsGroup := adminAuthrized.Group("/records")
+			{
+				recordsGroup.GET("/load", record.GetRecordsByUUID)
+			}
 		}
 
 		public.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
@@ -262,7 +268,7 @@ func DoScheduledWork() {
 	ticker := time.NewTicker(time.Minute * 30)
 	minute := time.NewTicker(60 * time.Second)
 	//records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
-	//records.CompactRecord()
+	records.CompactRecord()
 	for {
 		select {
 		case <-ticker.C:

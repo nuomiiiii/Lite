@@ -20,7 +20,10 @@ func RecordOne(rec models.Record) error {
 
 func DeleteAll() error {
 	db := dbcore.GetDBInstance()
-	return db.Exec("DELETE FROM Record").Error
+	if err := db.Exec("DELETE FROM records_long_term").Error; err != nil {
+		return err
+	}
+	return db.Exec("DELETE FROM records").Error
 }
 
 func GetLatestRecord(uuid string) (Record []models.Record, err error) {
@@ -31,6 +34,7 @@ func GetLatestRecord(uuid string) (Record []models.Record, err error) {
 
 func DeleteRecordBefore(before time.Time) error {
 	db := dbcore.GetDBInstance()
+	db.Table("records_long_term").Where("time < ?", before).Delete(&models.Record{})
 	return db.Where("time < ?", before).Delete(&models.Record{}).Error
 }
 
