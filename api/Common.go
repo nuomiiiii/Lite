@@ -41,6 +41,11 @@ func SaveClientReportToDB() error {
 			}
 		}
 		Records[uuid] = filtered
+
+		if uuid == "" {
+			continue
+		}
+
 		r := utils.AverageReport(uuid, time.Now(), filtered)
 
 		record = append(record, r)
