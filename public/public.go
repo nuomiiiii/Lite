@@ -4,6 +4,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"log"
@@ -47,13 +48,22 @@ func initIndex() {
 	RawIndexFile = string(index)
 }
 func UpdateIndex(cfg models.Config) {
+	var titleReplacement string
+	if cfg.Sitename == "Komari" {
+		titleReplacement = "<title>Komari Monitor</title>"
+	} else {
+		titleReplacement = fmt.Sprintf("<title>%s - Komari Monitor</title>", html.EscapeString(cfg.Sitename))
+	}
+
 	replaceMap := map[string]string{
-		"</head>": cfg.CustomHead + "</head>",
-		"</body>": cfg.CustomBody + "</body>",
+		"<title>Komari Monitor</title>": titleReplacement,
+		"A simple server monitor tool.": cfg.Description,
+		"</head>":                       cfg.CustomHead + "</head>",
+		"</body>":                       cfg.CustomBody + "</body>",
 	}
 	updated := RawIndexFile
 	for k, v := range replaceMap {
-		updated = strings.Replace(updated, k, v, 1)
+		updated = strings.Replace(updated, k, v, -1)
 	}
 	IndexFile = updated
 }
