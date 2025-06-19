@@ -1,26 +1,8 @@
 package models
 
 import (
-	"database/sql/driver"
-	"encoding/json"
-	"fmt"
 	"time"
 )
-
-// StringArray represents a slice of strings stored as JSON in the database
-type StringArray []string
-
-func (sa *StringArray) Scan(value interface{}) error {
-	bytes, ok := value.([]byte)
-	if !ok {
-		return fmt.Errorf("failed to scan StringArray: value is not []byte")
-	}
-	return json.Unmarshal(bytes, sa)
-}
-
-func (sa StringArray) Value() (driver.Value, error) {
-	return json.Marshal(sa)
-}
 
 type Task struct {
 	TaskId  string      `json:"task_id" gorm:"type:varchar(36);primaryKey;unique"`
