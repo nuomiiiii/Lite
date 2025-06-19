@@ -267,12 +267,13 @@ func DoScheduledWork() {
 	minute := time.NewTicker(60 * time.Second)
 	//records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 	records.CompactRecord()
+	cfg, _ := config.Get()
 	for {
 		select {
 		case <-ticker.C:
-			records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
+			records.DeleteRecordBefore(time.Now().Add(-time.Hour * time.Duration(cfg.RecordPreserveTime)))
 			records.CompactRecord()
-			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * 24 * 30))
+			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * time.Duration(cfg.RecordPreserveTime)))
 			logOperation.RemoveOldLogs()
 		case <-minute.C:
 			api.SaveClientReportToDB()

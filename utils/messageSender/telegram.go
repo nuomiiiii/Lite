@@ -1,4 +1,4 @@
-package telegram
+package messageSender
 
 import (
 	"encoding/json"
@@ -10,7 +10,7 @@ import (
 	"github.com/komari-monitor/komari/database/config"
 )
 
-func SendMessage(message, msgType string) error {
+func TelegramSendMessage(message, msgType string) error {
 	var lastErr error
 	for i := 0; i < 3; i++ {
 		conf, err := config.Get()
@@ -19,7 +19,7 @@ func SendMessage(message, msgType string) error {
 			continue
 		}
 
-		if !conf.TelegramEnabled || message == "" {
+		if message == "" {
 			return errors.New("telegram is disabled or message is empty")
 		}
 
@@ -63,14 +63,14 @@ func SendMessage(message, msgType string) error {
 }
 
 // SendTextMessage sends a text message via Telegram API
-func SendTextMessage(message string) error {
-	return SendMessage(message, "text")
+func TelegramSendTextMessage(message string) error {
+	return TelegramSendMessage(message, "text")
 }
 
 // SendMarkdownMessage sends a message formatted in Markdown via Telegram API
-func SendMarkdownMessage(message string) error {
-	return SendMessage(message, "MarkdownV2")
+func TelegramSendMarkdownMessage(message string) error {
+	return TelegramSendMessage(message, "MarkdownV2")
 }
-func SendHTMLMessage(message string) error {
-	return SendMessage(message, "HTML")
+func TelegramSendHTMLMessage(message string) error {
+	return TelegramSendMessage(message, "HTML")
 }

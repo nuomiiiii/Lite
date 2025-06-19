@@ -10,7 +10,7 @@ import (
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/utils/telegram"
+	"github.com/komari-monitor/komari/utils/messageSender"
 )
 
 var (
@@ -82,9 +82,9 @@ func OfflineNotification(clientID string) {
 		lastNotified[clientID] = time.Now()
 		delete(pendingOffline, clientID)
 
-		message := fmt.Sprintf("🔴<code>%s</code> is offline", client.Name)
+		message := fmt.Sprintf("🔴%s is offline", client.Name)
 		go func(msg string) {
-			if err := telegram.SendHTMLMessage(msg); err != nil {
+			if err := messageSender.SendTextMessage(msg); err != nil {
 				log.Println("Failed to send offline notification:", err)
 			}
 		}(message)
@@ -137,9 +137,9 @@ func OnlineNotification(clientID string) {
 		return
 	}
 	// send online notification
-	message := fmt.Sprintf("🟢<code>%s</code> is online", client.Name)
+	message := fmt.Sprintf("🟢%s is online", client.Name)
 	go func(msg string) {
-		if err := telegram.SendHTMLMessage(msg); err != nil {
+		if err := messageSender.SendTextMessage(msg); err != nil {
 			log.Println("Failed to send online notification:", err)
 		}
 	}(message)

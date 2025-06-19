@@ -123,18 +123,38 @@ func WebSocketReport(c *gin.Context) {
 			break
 		}
 
-		report := common.Report{}
-		err = json.Unmarshal(message, &report)
-		if err != nil {
-			break
+		type MessageType struct {
+			Type string `json:"type"`
 		}
-		report.UpdatedAt = time.Now()
-		err = SaveClientReport(uuid, report)
+		var msgType MessageType
+		err = json.Unmarshal(message, &msgType)
 		if err != nil {
-			conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
+			conn.WriteJSON(gin.H{"status": "error", "error": "Invalid JSON"})
+			continue
+		}
+		switch msgType.Type {
+		case "", "report":
+			report := common.Report{}
+			err = json.Unmarshal(message, &report)
+			if err != nil {
+				conn.WriteJSON(gin.H{"status": "error", "error": "Invalid report format"})
+				continue
+			}
+			report.UpdatedAt = time.Now()
+			err = SaveClientReport(uuid, report)
+			if err != nil {
+				conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
+				continue
+			}
+			ws.LatestReport[uuid] = &report
+		case "ping_result":
+			conn.WriteJSON(gin.H{"status": "pong"})
+			// TODO: handle ping result
+		default:
+			log.Printf("Unknown message type: %s", msgType.Type)
+			conn.WriteJSON(gin.H{"status": "error", "error": "Unknown message type"})
 		}
 
-		ws.LatestReport[uuid] = &report
 	}
 }
 
