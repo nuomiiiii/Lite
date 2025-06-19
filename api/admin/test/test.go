@@ -7,12 +7,12 @@ import (
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/utils/geoip"
-	"github.com/komari-monitor/komari/utils/telegram"
+	"github.com/komari-monitor/komari/utils/messageSender"
 )
 
 func TestTelegram(c *gin.Context) {
 	message := "Komari test message."
-	err := telegram.SendTextMessage(message)
+	err := messageSender.SendTextMessage(message)
 	if err != nil {
 		api.RespondError(c, 500, "Failed to send Telegram message: "+err.Error())
 		return

@@ -13,13 +13,16 @@ func GetPublicSettings(c *gin.Context) {
 	}
 	// Return public settings including CORS
 	RespondSuccess(c, gin.H{
-		"sitename":               cst.Sitename,
-		"description":            cst.Description,
-		"custom_head":            cst.CustomHead,
-		"custom_body":            cst.CustomBody,
-		"oauth_enable":           cst.OAuthEnabled,
-		"disable_password_login": cst.DisablePasswordLogin,
-		"allow_cors":             cst.AllowCors,
+		"sitename":                  cst.Sitename,
+		"description":               cst.Description,
+		"custom_head":               cst.CustomHead,
+		"custom_body":               cst.CustomBody,
+		"oauth_enable":              cst.OAuthEnabled,
+		"disable_password_login":    cst.DisablePasswordLogin,
+		"allow_cors":                cst.AllowCors,
+		"record_enabled":            cst.RecordEnabled,
+		"record_preserve_time":      cst.RecordPreserveTime,
+		"ping_record_preserve_time": cst.PingRecordPreserveTime,
 	})
 
 }

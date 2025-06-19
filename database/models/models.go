@@ -1,6 +1,9 @@
 package models
 
 import (
+	"database/sql/driver"
+	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -80,4 +83,20 @@ type Record struct {
 	Process        int       `json:"process"`
 	Connections    int       `json:"connections"`
 	ConnectionsUdp int       `json:"connections_udp"`
+}
+
+// StringArray represents a slice of strings stored as JSON in the database
+// StringArray 存储为 JSON 的字符串切片类型
+type StringArray []string
+
+func (sa *StringArray) Scan(value interface{}) error {
+	bytes, ok := value.([]byte)
+	if !ok {
+		return fmt.Errorf("failed to scan StringArray: value is not []byte")
+	}
+	return json.Unmarshal(bytes, sa)
+}
+
+func (sa StringArray) Value() (driver.Value, error) {
+	return json.Marshal(sa)
 }
