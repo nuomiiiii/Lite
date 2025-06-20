@@ -47,15 +47,15 @@ func GetClients(c *gin.Context) {
 			continue
 		}
 		// 已建立连接的客户端uuid列表
-		for key := range ConnectedClients {
+		for key := range GetConnectedClients() {
 			resp.Online = append(resp.Online, key)
 		}
 		// 清除UUID，简化报告单
-		for _, report := range LatestReport {
+		resp.Data = GetLatestReport()
+		for _, report := range resp.Data {
 			report.UUID = ""
 		}
-		resp.Data = LatestReport
-		for _, report := range LatestReport {
+		for _, report := range resp.Data {
 			if report.CPU.Usage == 0 {
 				report.CPU.Usage = 0.01
 			}

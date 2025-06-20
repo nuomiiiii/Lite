@@ -25,7 +25,7 @@ func Exec(c *gin.Context) {
 		api.RespondError(c, 400, "Invalid or missing request body: "+err.Error())
 		return
 	}
-	for uuid := range ws.ConnectedClients {
+	for uuid := range ws.GetConnectedClients() {
 		if contain(req.Clients, uuid) {
 			onlineClients = append(onlineClients, uuid)
 		} else {
@@ -53,7 +53,7 @@ func Exec(c *gin.Context) {
 		send.TaskId = taskId
 
 		payload, _ := json.Marshal(send)
-		client := ws.ConnectedClients[uuid]
+		client := ws.GetConnectedClients()[uuid]
 		if client != nil {
 			client.WriteMessage(websocket.TextMessage, payload)
 		} else {

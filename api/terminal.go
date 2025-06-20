@@ -62,7 +62,7 @@ func RequestTerminal(c *gin.Context) {
 		return nil
 	})
 
-	if ws.ConnectedClients[uuid] == nil {
+	if ws.GetConnectedClients()[uuid] == nil {
 		conn.WriteMessage(1, []byte("Client offline!\n被控端离线!"))
 		conn.Close()
 		TerminalSessionsMutex.Lock()
@@ -70,7 +70,7 @@ func RequestTerminal(c *gin.Context) {
 		TerminalSessionsMutex.Unlock()
 		return
 	}
-	err = ws.ConnectedClients[uuid].WriteJSON(gin.H{
+	err = ws.GetConnectedClients()[uuid].WriteJSON(gin.H{
 		"message":    "terminal",
 		"request_id": id,
 	})
