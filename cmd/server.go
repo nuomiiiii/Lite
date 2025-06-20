@@ -43,6 +43,9 @@ var ServerCmd = &cobra.Command{
 	Short: "Start the server",
 	Long:  `Start the server`,
 	Run: func(cmd *cobra.Command, args []string) {
+		if err := os.MkdirAll("./data", os.ModePerm); err != nil {
+			log.Fatalf("Failed to create data directory: %v", err)
+		}
 		InitDatabase()
 		if utils.VersionHash != "unknown" {
 			gin.SetMode(gin.ReleaseMode)
