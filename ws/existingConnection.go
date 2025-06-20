@@ -1,12 +1,55 @@
 package ws
 
 import (
+	"sync"
+
 	"github.com/gorilla/websocket"
 	"github.com/komari-monitor/komari/common"
 )
 
 var (
-	ConnectedClients = make(map[string]*websocket.Conn)
+	connectedClients = make(map[string]*websocket.Conn)
 	ConnectedUsers   = []*websocket.Conn{}
-	LatestReport     = make(map[string]*common.Report)
+	latestReport     = make(map[string]*common.Report)
+	mu               = sync.RWMutex{}
 )
+
+func GetConnectedClients() map[string]*websocket.Conn {
+	mu.RLock()
+	defer mu.RUnlock()
+	clientsCopy := make(map[string]*websocket.Conn)
+	for k, v := range connectedClients {
+		clientsCopy[k] = v
+	}
+	return clientsCopy
+}
+
+func SetConnectedClients(uuid string, conn *websocket.Conn) {
+	mu.Lock()
+	defer mu.Unlock()
+	connectedClients[uuid] = conn
+}
+func DeleteConnectedClients(uuid string) {
+	mu.Lock()
+	defer mu.Unlock()
+	delete(connectedClients, uuid)
+}
+func GetLatestReport() map[string]*common.Report {
+	mu.RLock()
+	defer mu.RUnlock()
+	reportCopy := make(map[string]*common.Report)
+	for k, v := range latestReport {
+		reportCopy[k] = v
+	}
+	return reportCopy
+}
+func SetLatestReport(uuid string, report *common.Report) {
+	mu.Lock()
+	defer mu.Unlock()
+	latestReport[uuid] = report
+}
+func DeleteLatestReport(uuid string) {
+	mu.Lock()
+	defer mu.Unlock()
+	delete(latestReport, uuid)
+}

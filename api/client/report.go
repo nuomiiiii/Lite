@@ -48,7 +48,7 @@ func UploadReport(c *gin.Context) {
 	}
 	// Update report with method and token
 
-	ws.LatestReport[report.UUID] = &report
+	ws.GetLatestReport()[report.UUID] = &report
 
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // Restore the body for further use
 	c.JSON(200, gin.H{"status": "success"})
@@ -106,14 +106,14 @@ func WebSocketReport(c *gin.Context) {
 	}
 
 	// 只允许一个客户端的连接
-	if _, exists := ws.ConnectedClients[uuid]; exists {
+	if _, exists := ws.GetConnectedClients()[uuid]; exists {
 		conn.WriteJSON(gin.H{"status": "error", "error": "Token already in use"})
 		return
 	}
-	ws.ConnectedClients[uuid] = conn
+	ws.SetConnectedClients(uuid, conn)
 	go notification.OnlineNotification(uuid)
 	defer func() {
-		delete(ws.ConnectedClients, uuid)
+		ws.DeleteConnectedClients(uuid)
 		notification.OfflineNotification(uuid)
 	}()
 
@@ -146,7 +146,7 @@ func WebSocketReport(c *gin.Context) {
 				conn.WriteJSON(gin.H{"status": "error", "error": fmt.Sprintf("%v", err)})
 				continue
 			}
-			ws.LatestReport[uuid] = &report
+			ws.SetLatestReport(uuid, &report)
 		case "ping_result":
 			conn.WriteJSON(gin.H{"status": "pong"})
 			// TODO: handle ping result
