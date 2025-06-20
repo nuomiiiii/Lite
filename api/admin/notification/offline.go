@@ -79,15 +79,15 @@ func EditOfflineNotification(c *gin.Context) {
 			api.RespondError(c, 400, "Client UUID cannot be empty")
 			return
 		}
-		if noti.GracePeriod <= 0 || noti.Cooldown <= 0 {
-			api.RespondError(c, 400, "GracePeriod and Cooldown must be positive integers")
+		if noti.GracePeriod <= 0 {
+			api.RespondError(c, 400, "GracePeriod must be a positive integer")
 			return
 		}
 	}
 	err := dbcore.GetDBInstance().Model(&models.OfflineNotification{}).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "client"}},
-			DoUpdates: clause.AssignmentColumns([]string{"enable", "cooldown", "grace_period"}),
+			DoUpdates: clause.AssignmentColumns([]string{"enable", "grace_period"}),
 		}).
 		Select("*").
 		Create(notifications).Error
