@@ -9,10 +9,11 @@ import (
 	"gorm.io/gorm"
 )
 
-func AddPingTask(clients []string, target, task_type string, interval int) (uint, error) {
+func AddPingTask(clients []string, name string, target, task_type string, interval int) (uint, error) {
 	db := dbcore.GetDBInstance()
 	task := models.PingTask{
 		Clients:  clients,
+		Name:     name,
 		Type:     task_type,
 		Target:   target,
 		Interval: interval,
@@ -34,14 +35,16 @@ func DeletePingTask(id []uint) error {
 	return result.Error
 }
 
-func EditPingTask(id []uint, updates map[string]interface{}) error {
+func EditPingTask(tasks []*models.PingTask) error {
 	db := dbcore.GetDBInstance()
-	result := db.Model(&models.PingTask{}).Where("id IN ?", id).Updates(updates)
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
+	for _, task := range tasks {
+		result := db.Model(&models.PingTask{}).Where("id = ?", task.Id).Updates(task)
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
 	}
 	ReloadPingSchedule()
-	return result.Error
+	return nil
 }
 
 func GetAllPingTasks() ([]models.PingTask, error) {
