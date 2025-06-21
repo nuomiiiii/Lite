@@ -15,6 +15,8 @@ import (
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/utils/notification"
 	"github.com/komari-monitor/komari/ws"
 )
@@ -66,11 +68,12 @@ func WebSocketReport(c *gin.Context) {
 		},
 	}
 	// Upgrade the HTTP connection to a WebSocket connection
-	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	unsafeConn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to upgrade to WebSocket"})
 		return
 	}
+	conn := ws.NewSafeConn(unsafeConn)
 	defer conn.Close()
 
 	_, message, err := conn.ReadMessage()
@@ -148,8 +151,24 @@ func WebSocketReport(c *gin.Context) {
 			}
 			ws.SetLatestReport(uuid, &report)
 		case "ping_result":
-			conn.WriteJSON(gin.H{"status": "pong"})
-			// TODO: handle ping result
+			var reqBody struct {
+				PingTaskID uint      `json:"task_id"`
+				PingResult int       `json:"value"`
+				PingType   string    `json:"ping_type"`
+				FinishedAt time.Time `json:"finished_at"`
+			}
+			err = json.Unmarshal(message, &reqBody)
+			if err != nil {
+				conn.WriteJSON(gin.H{"status": "error", "error": "Invalid ping result format"})
+				continue
+			}
+			pingResult := models.PingRecord{
+				Client: uuid,
+				TaskId: reqBody.PingTaskID,
+				Value:  reqBody.PingResult,
+				Time:   reqBody.FinishedAt,
+			}
+			tasks.SavePingRecord(pingResult)
 		default:
 			log.Printf("Unknown message type: %s", msgType.Type)
 			conn.WriteJSON(gin.H{"status": "error", "error": "Unknown message type"})

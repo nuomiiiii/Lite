@@ -8,23 +8,23 @@ import (
 )
 
 var (
-	connectedClients = make(map[string]*websocket.Conn)
+	connectedClients = make(map[string]*SafeConn)
 	ConnectedUsers   = []*websocket.Conn{}
 	latestReport     = make(map[string]*common.Report)
 	mu               = sync.RWMutex{}
 )
 
-func GetConnectedClients() map[string]*websocket.Conn {
+func GetConnectedClients() map[string]*SafeConn {
 	mu.RLock()
 	defer mu.RUnlock()
-	clientsCopy := make(map[string]*websocket.Conn)
+	clientsCopy := make(map[string]*SafeConn)
 	for k, v := range connectedClients {
 		clientsCopy[k] = v
 	}
 	return clientsCopy
 }
 
-func SetConnectedClients(uuid string, conn *websocket.Conn) {
+func SetConnectedClients(uuid string, conn *SafeConn) {
 	mu.Lock()
 	defer mu.Unlock()
 	connectedClients[uuid] = conn
@@ -32,6 +32,9 @@ func SetConnectedClients(uuid string, conn *websocket.Conn) {
 func DeleteConnectedClients(uuid string) {
 	mu.Lock()
 	defer mu.Unlock()
+	if conn, exists := connectedClients[uuid]; exists {
+		conn.Close()
+	}
 	delete(connectedClients, uuid)
 }
 func GetLatestReport() map[string]*common.Report {

@@ -134,6 +134,8 @@ func GetDBInstance() *gorm.DB {
 			&models.Clipboard{},
 			&models.LoadNotification{},
 			&models.OfflineNotification{},
+			&models.PingRecord{},
+			&models.PingTask{},
 		)
 		if err != nil {
 			log.Fatalf("Failed to create tables: %v", err)
