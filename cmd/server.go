@@ -120,8 +120,8 @@ var ServerCmd = &cobra.Command{
 			// test
 			testGroup := adminAuthrized.Group("/test")
 			{
-				testGroup.GET("/telegram", test.TestTelegram)
 				testGroup.GET("/geoip", test.TestGeoIp)
+				testGroup.POST("/sendMessage", test.TestSendMessage)
 			}
 			// update
 			updateGroup := adminAuthrized.Group("/update")

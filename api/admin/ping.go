@@ -62,9 +62,9 @@ func EditPingTask(c *gin.Context) {
 	if err := tasks.EditPingTask(req.Tasks); err != nil {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
 	} else {
-		for _, task := range req.Tasks {
-			tasks.DeletePingRecords([]uint{task.Id})
-		}
+		// for _, task := range req.Tasks {
+		// 	tasks.DeletePingRecords([]uint{task.Id})
+		// }
 		api.RespondSuccess(c, nil)
 	}
 }
