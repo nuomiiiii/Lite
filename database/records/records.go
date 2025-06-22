@@ -42,7 +42,7 @@ func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Reco
 	db := dbcore.GetDBInstance()
 	var records []models.Record
 
-	fourHoursAgo := time.Now().Add(-4 * time.Hour)
+	fourHoursAgo := time.Now().Add(-4 * time.Hour).Add(10 * time.Minute)
 	interval := end.Sub(start)
 
 	// 4小时内的数据
