@@ -69,6 +69,7 @@ func GetPingRecords(c *gin.Context) {
 	}
 
 	if len(records) > 0 {
+		// 获取当前属于该 uuid 的 pingTasks
 		pingTasks, err := tasks.GetAllPingTasks()
 		if err != nil {
 			api.RespondError(c, 500, "Failed to fetch ping tasks: "+err.Error())
@@ -82,6 +83,18 @@ func GetPingRecords(c *gin.Context) {
 
 		tasksList := make([]gin.H, 0, len(pingTasks))
 		for _, t := range pingTasks {
+			// 只保留分配给该 uuid 的任务
+			found := false
+			for _, client := range t.Clients {
+				if client == uuid {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+			// 只返回有记录的任务
 			if _, ok := taskIdSet[t.Id]; ok {
 				tasksList = append(tasksList, gin.H{
 					"id":   t.Id,
