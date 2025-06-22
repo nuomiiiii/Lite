@@ -62,8 +62,27 @@ func GetPingRecords(c *gin.Context) {
 		api.RespondError(c, 500, "Failed to fetch records: "+err.Error())
 		return
 	}
-	api.RespondSuccess(c, gin.H{
+
+	response := gin.H{
 		"records": records,
 		"count":   len(records),
-	})
+	}
+
+	if len(records) > 0 {
+		pingTasks, err := tasks.GetAllPingTasks()
+		if err != nil {
+			api.RespondError(c, 500, "Failed to fetch ping tasks: "+err.Error())
+			return
+		}
+		tasksList := make([]gin.H, 0, len(pingTasks))
+		for _, t := range pingTasks {
+			tasksList = append(tasksList, gin.H{
+				"id":   t.Id,
+				"name": t.Name,
+			})
+		}
+		response["tasks"] = tasksList
+	}
+
+	api.RespondSuccess(c, response)
 }

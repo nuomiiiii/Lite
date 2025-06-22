@@ -42,15 +42,14 @@ func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Reco
 	db := dbcore.GetDBInstance()
 	var records []models.Record
 
-	fourHoursAgo := time.Now().Add(-4 * time.Hour).Add(10 * time.Minute)
+	threeHoursAgo := time.Now().Add(-3 * time.Hour)
 	interval := end.Sub(start)
 
-	// 4小时内的数据
-	if end.After(fourHoursAgo) {
+	if end.After(threeHoursAgo) {
 		var recentRecords []models.Record
 		recentStart := start
-		if recentStart.Before(fourHoursAgo) {
-			recentStart = fourHoursAgo
+		if recentStart.Before(threeHoursAgo) {
+			recentStart = threeHoursAgo
 		}
 		err := db.Where("client = ? AND time >= ? AND time <= ?", uuid, recentStart, end).Order("time ASC").Find(&recentRecords).Error
 		if err != nil {
@@ -75,7 +74,7 @@ func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Reco
 			})
 			records = append(records, groupedList...)
 		} else {
-			// 查询区间不超过4小时，直接返回全部recentRecords
+			// 查询区间不超过，直接返回全部recentRecords
 			records = append(records, recentRecords...)
 		}
 	}
