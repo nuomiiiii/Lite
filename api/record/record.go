@@ -74,12 +74,20 @@ func GetPingRecords(c *gin.Context) {
 			api.RespondError(c, 500, "Failed to fetch ping tasks: "+err.Error())
 			return
 		}
+
+		taskIdSet := make(map[uint]struct{})
+		for _, r := range records {
+			taskIdSet[r.TaskId] = struct{}{}
+		}
+
 		tasksList := make([]gin.H, 0, len(pingTasks))
 		for _, t := range pingTasks {
-			tasksList = append(tasksList, gin.H{
-				"id":   t.Id,
-				"name": t.Name,
-			})
+			if _, ok := taskIdSet[t.Id]; ok {
+				tasksList = append(tasksList, gin.H{
+					"id":   t.Id,
+					"name": t.Name,
+				})
+			}
 		}
 		response["tasks"] = tasksList
 	}
