@@ -43,11 +43,10 @@ func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Reco
 	var records []models.Record
 
 	threeHoursAgo := time.Now().Add(-3 * time.Hour)
-	interval := end.Sub(start)
 
+	var recentRecords []models.Record
+	recentStart := start
 	if end.After(threeHoursAgo) {
-		var recentRecords []models.Record
-		recentStart := start
 		if recentStart.Before(threeHoursAgo) {
 			recentStart = threeHoursAgo
 		}
@@ -56,35 +55,37 @@ func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Reco
 			log.Printf("Error fetching recent records for client %s between %s and %s: %v", uuid, recentStart, end, err)
 			return nil, err
 		}
-		if interval > 4*time.Hour {
-			// 按15分钟分组，每组只保留一条（取最新一条）
-			grouped := make(map[string]models.Record)
-			for _, rec := range recentRecords {
-				key := rec.Time.Truncate(15 * time.Minute).Format(time.RFC3339)
-				if old, ok := grouped[key]; !ok || rec.Time.After(old.Time) {
-					grouped[key] = rec
-				}
-			}
-			var groupedList []models.Record
-			for _, rec := range grouped {
-				groupedList = append(groupedList, rec)
-			}
-			sort.Slice(groupedList, func(i, j int) bool {
-				return groupedList[i].Time.Before(groupedList[j].Time)
-			})
-			records = append(records, groupedList...)
-		} else {
-			// 查询区间不超过，直接返回全部recentRecords
-			records = append(records, recentRecords...)
-		}
 	}
 
 	var long_term []models.Record
 	err := db.Table("records_long_term").Where("client = ? AND time >= ? AND time <= ?", uuid, start, end).Order("time ASC").Find(&long_term).Error
 	if err != nil {
 		log.Printf("Error fetching long-term records for client %s between %s and %s: %v", uuid, start, end, err)
+		return recentRecords, nil
+	}
+
+	if len(long_term) == 0 {
+		// 没有查到long_term，返回全部recentRecords
+		records = append(records, recentRecords...)
 		return records, nil
 	}
+
+	// 查到了long_term，recentRecords按15分钟分组，每组只保留一条（取最新一条）
+	grouped := make(map[string]models.Record)
+	for _, rec := range recentRecords {
+		key := rec.Time.Truncate(15 * time.Minute).Format(time.RFC3339)
+		if old, ok := grouped[key]; !ok || rec.Time.After(old.Time) {
+			grouped[key] = rec
+		}
+	}
+	var groupedList []models.Record
+	for _, rec := range grouped {
+		groupedList = append(groupedList, rec)
+	}
+	sort.Slice(groupedList, func(i, j int) bool {
+		return groupedList[i].Time.Before(groupedList[j].Time)
+	})
+	records = append(records, groupedList...)
 	records = append(records, long_term...)
 	return records, nil
 }

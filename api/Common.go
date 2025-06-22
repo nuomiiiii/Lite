@@ -51,7 +51,7 @@ func SaveClientReportToDB() error {
 		record = append(record, r)
 
 		db := dbcore.GetDBInstance()
-		err := db.Model(&models.Record{}).Where("client = ?", uuid).Create(record).Error
+		err := db.Model(&models.Record{}).Create(record).Error
 		if err != nil {
 			return err
 		}
