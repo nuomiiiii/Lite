@@ -15,10 +15,10 @@ import (
 	"github.com/komari-monitor/komari/api/admin/clipboard"
 	log_api "github.com/komari-monitor/komari/api/admin/log"
 	"github.com/komari-monitor/komari/api/admin/notification"
-	"github.com/komari-monitor/komari/api/admin/record"
 	"github.com/komari-monitor/komari/api/admin/test"
 	"github.com/komari-monitor/komari/api/admin/update"
 	"github.com/komari-monitor/komari/api/client"
+	"github.com/komari-monitor/komari/api/record"
 	"github.com/komari-monitor/komari/cmd/flags"
 	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/config"
@@ -43,6 +43,10 @@ var ServerCmd = &cobra.Command{
 	Short: "Start the server",
 	Long:  `Start the server`,
 	Run: func(cmd *cobra.Command, args []string) {
+		// #region 初始化
+		if err := os.MkdirAll("./data", os.ModePerm); err != nil {
+			log.Fatalf("Failed to create data directory: %v", err)
+		}
 		InitDatabase()
 		if utils.VersionHash != "unknown" {
 			gin.SetMode(gin.ReleaseMode)
@@ -87,7 +91,7 @@ var ServerCmd = &cobra.Command{
 		r.Any("/ping", func(c *gin.Context) {
 			c.String(200, "pong")
 		})
-
+		// #region 公开路由
 		r.POST("/api/login", api.Login)
 		r.GET("/api/me", api.GetMe)
 		r.GET("/api/clients", ws.GetClients)
@@ -100,7 +104,8 @@ var ServerCmd = &cobra.Command{
 		r.GET("/api/recent/:uuid", api.GetClientRecentRecords)
 
 		r.GET("/api/records/load", record.GetRecordsByUUID)
-
+		r.GET("/api/records/ping", record.GetPingRecords)
+		// #region Agent
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{
 			tokenAuthrized.GET("/report", client.WebSocketReport) // websocket
@@ -109,7 +114,7 @@ var ServerCmd = &cobra.Command{
 			tokenAuthrized.GET("/terminal", client.EstablishConnection)
 			tokenAuthrized.POST("/task/result", client.TaskResult)
 		}
-
+		// #region 管理员
 		adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())
 		{
 			// test
@@ -198,12 +203,21 @@ var ServerCmd = &cobra.Command{
 				notificationGroup.POST("/offline/disable", notification.DisableOfflineNotification)
 			}
 
+			pingTaskGroup := adminAuthrized.Group("/ping")
+			{
+				pingTaskGroup.GET("/", admin.GetAllPingTasks)
+				pingTaskGroup.POST("/add", admin.AddPingTask)
+				pingTaskGroup.POST("/delete", admin.DeletePingTask)
+				pingTaskGroup.POST("/edit", admin.EditPingTask)
+
+			}
+
 		}
 
 		public.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
 			r.NoRoute(handlers...)
 		})
-		// 静态文件服务
+		// #region 静态文件服务
 		public.UpdateIndex(conf)
 		config.Subscribe(func(event config.ConfigEvent) {
 			public.UpdateIndex(event.New)
@@ -262,7 +276,9 @@ func InitDatabase() {
 	}
 }
 
+// #region 定时任务
 func DoScheduledWork() {
+	tasks.ReloadPingSchedule()
 	ticker := time.NewTicker(time.Minute * 30)
 	minute := time.NewTicker(60 * time.Second)
 	//records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
@@ -274,6 +290,7 @@ func DoScheduledWork() {
 			records.DeleteRecordBefore(time.Now().Add(-time.Hour * time.Duration(cfg.RecordPreserveTime)))
 			records.CompactRecord()
 			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * time.Duration(cfg.RecordPreserveTime)))
+			tasks.DeletePingRecordsBefore(time.Now().Add(-time.Hour * time.Duration(cfg.RecordPreserveTime)))
 			logOperation.RemoveOldLogs()
 		case <-minute.C:
 			api.SaveClientReportToDB()

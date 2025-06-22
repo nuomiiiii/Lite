@@ -14,14 +14,11 @@ import (
 )
 
 var (
-	lastNotified       = make(map[string]time.Time)
-	lastOnlineNotified = make(map[string]time.Time)
-	pendingOffline     = make(map[string]time.Time)
-
-	mu sync.Mutex
+	pendingOffline = make(map[string]time.Time)
+	mu             sync.Mutex
 )
 
-// OfflineNotification sends an offline notification for the client if enabled and not sent in cooldown period
+// OfflineNotification sends an offline notification for the client if enabled and not sent in grace period
 func OfflineNotification(clientID string) {
 	client, err := clients.GetClientByUUID(clientID)
 	if err != nil {
@@ -48,11 +45,7 @@ func OfflineNotification(clientID string) {
 		return
 	}
 
-	cooldownDuration := time.Duration(noti_conf.Cooldown) * time.Second
 	gracePeriod := time.Duration(noti_conf.GracePeriod) * time.Second
-	if cooldownDuration <= 0 {
-		cooldownDuration = 30 * time.Minute // default cooldown if not set
-	}
 	if gracePeriod <= 0 {
 		gracePeriod = 5 * time.Minute // default grace period if not set
 	}
@@ -73,13 +66,7 @@ func OfflineNotification(clientID string) {
 		if ts, ok := pendingOffline[clientID]; !ok || !ts.Equal(start) {
 			return
 		}
-		// check cooldown
-		if last, ok := lastNotified[clientID]; ok && time.Since(last) < cooldownDuration {
-			delete(pendingOffline, clientID)
-			return
-		}
 		// record notification time and clear pending
-		lastNotified[clientID] = time.Now()
 		delete(pendingOffline, clientID)
 
 		message := fmt.Sprintf("🔴%s is offline", client.Name)
@@ -88,10 +75,11 @@ func OfflineNotification(clientID string) {
 				log.Println("Failed to send offline notification:", err)
 			}
 		}(message)
+		_ = db.Model(&models.OfflineNotification{}).Where("client = ?", clientID).Update("last_notified", now)
 	}(now)
 }
 
-// OnlineNotification sends an online notification for the client if enabled and not sent in cooldown period
+// OnlineNotification sends an online notification for the client if enabled
 func OnlineNotification(clientID string) {
 	client, err := clients.GetClientByUUID(clientID)
 	if err != nil {
@@ -110,40 +98,15 @@ func OnlineNotification(clientID string) {
 	if !noti_conf.Enable {
 		return
 	}
-	cooldownDuration := time.Duration(noti_conf.Cooldown) * time.Second
-	gracePeriod := time.Duration(noti_conf.GracePeriod) * time.Second
-	if cooldownDuration <= 0 {
-		cooldownDuration = 30 * time.Minute // default cooldown if not set
-	}
-	if gracePeriod <= 0 {
-		gracePeriod = 5 * time.Minute // default grace period if not set
-	}
 	// clear any pending offline debounce
 	mu.Lock()
 	delete(pendingOffline, clientID)
 	mu.Unlock()
 
-	now := time.Now()
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	// if never went offline before, skip first online notification
-	if _, wasOffline := lastNotified[clientID]; !wasOffline {
-		return
-	}
-	// cooldown for online notifications
-	if last, exists := lastOnlineNotified[clientID]; exists && now.Sub(last) < cooldownDuration {
-		return
-	}
-	// send online notification
 	message := fmt.Sprintf("🟢%s is online", client.Name)
 	go func(msg string) {
 		if err := messageSender.SendTextMessage(msg); err != nil {
 			log.Println("Failed to send online notification:", err)
 		}
 	}(message)
-
-	lastOnlineNotified[clientID] = now
-	delete(lastNotified, clientID)
 }
