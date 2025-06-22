@@ -10,11 +10,11 @@ import (
 	"github.com/komari-monitor/komari/utils/messageSender"
 )
 
-func TestTelegram(c *gin.Context) {
+func TestSendMessage(c *gin.Context) {
 	message := "Komari test message."
 	err := messageSender.SendTextMessage(message)
 	if err != nil {
-		api.RespondError(c, 500, "Failed to send Telegram message: "+err.Error())
+		api.RespondError(c, 500, "Failed to send message: "+err.Error())
 		return
 	}
 	api.RespondSuccess(c, nil)

@@ -120,8 +120,8 @@ var ServerCmd = &cobra.Command{
 			// test
 			testGroup := adminAuthrized.Group("/test")
 			{
-				testGroup.GET("/telegram", test.TestTelegram)
 				testGroup.GET("/geoip", test.TestGeoIp)
+				testGroup.POST("/sendMessage", test.TestSendMessage)
 			}
 			// update
 			updateGroup := adminAuthrized.Group("/update")
@@ -290,7 +290,7 @@ func DoScheduledWork() {
 			records.DeleteRecordBefore(time.Now().Add(-time.Hour * time.Duration(cfg.RecordPreserveTime)))
 			records.CompactRecord()
 			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * time.Duration(cfg.RecordPreserveTime)))
-			tasks.DeletePingRecordsBefore(time.Now().Add(-time.Hour * time.Duration(cfg.RecordPreserveTime)))
+			tasks.DeletePingRecordsBefore(time.Now().Add(-time.Hour * time.Duration(cfg.PingRecordPreserveTime)))
 			logOperation.RemoveOldLogs()
 		case <-minute.C:
 			api.SaveClientReportToDB()
