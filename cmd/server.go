@@ -104,7 +104,7 @@ var ServerCmd = &cobra.Command{
 		r.GET("/api/recent/:uuid", api.GetClientRecentRecords)
 
 		r.GET("/api/records/load", record.GetRecordsByUUID)
-		r.GET("/api/records/ping", record.GetRecordsByUUID)
+		r.GET("/api/records/ping", record.GetPingRecords)
 		// #region Agent
 		tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 		{
