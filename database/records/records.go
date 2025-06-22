@@ -41,13 +41,47 @@ func DeleteRecordBefore(before time.Time) error {
 func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Record, error) {
 	db := dbcore.GetDBInstance()
 	var records []models.Record
-	var long_term []models.Record
-	err := db.Where("client = ? AND time >= ? AND time <= ?", uuid, start, end).Order("time ASC").Find(&records).Error
-	if err != nil {
-		log.Printf("Error fetching records for client %s between %s and %s: %v", uuid, start, end, err)
-		return nil, err
+
+	fourHoursAgo := time.Now().Add(-4 * time.Hour)
+	interval := end.Sub(start)
+
+	// 4小时内的数据
+	if end.After(fourHoursAgo) {
+		var recentRecords []models.Record
+		recentStart := start
+		if recentStart.Before(fourHoursAgo) {
+			recentStart = fourHoursAgo
+		}
+		err := db.Where("client = ? AND time >= ? AND time <= ?", uuid, recentStart, end).Order("time ASC").Find(&recentRecords).Error
+		if err != nil {
+			log.Printf("Error fetching recent records for client %s between %s and %s: %v", uuid, recentStart, end, err)
+			return nil, err
+		}
+		if interval > 4*time.Hour {
+			// 按15分钟分组，每组只保留一条（取最新一条）
+			grouped := make(map[string]models.Record)
+			for _, rec := range recentRecords {
+				key := rec.Time.Truncate(15 * time.Minute).Format(time.RFC3339)
+				if old, ok := grouped[key]; !ok || rec.Time.After(old.Time) {
+					grouped[key] = rec
+				}
+			}
+			var groupedList []models.Record
+			for _, rec := range grouped {
+				groupedList = append(groupedList, rec)
+			}
+			sort.Slice(groupedList, func(i, j int) bool {
+				return groupedList[i].Time.Before(groupedList[j].Time)
+			})
+			records = append(records, groupedList...)
+		} else {
+			// 查询区间不超过4小时，直接返回全部recentRecords
+			records = append(records, recentRecords...)
+		}
 	}
-	err = db.Table("records_long_term").Where("client = ? AND time >= ? AND time <= ?", uuid, start, end).Order("time ASC").Find(&long_term).Error
+
+	var long_term []models.Record
+	err := db.Table("records_long_term").Where("client = ? AND time >= ? AND time <= ?", uuid, start, end).Order("time ASC").Find(&long_term).Error
 	if err != nil {
 		log.Printf("Error fetching long-term records for client %s between %s and %s: %v", uuid, start, end, err)
 		return records, nil
