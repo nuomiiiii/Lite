@@ -10,5 +10,6 @@ func GetClientRecentRecords(c *gin.Context) {
 		RespondError(c, 400, "UUID is required")
 		return
 	}
-	RespondSuccess(c, Records[uuid])
+	records, _ := Records.Get(uuid)
+	RespondSuccess(c, records)
 }
