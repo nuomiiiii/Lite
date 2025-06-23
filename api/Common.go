@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	Records map[string][]common.Report = make(map[string][]common.Report)
+	Records = utils.NewSafeMap[string, []common.Report]()
 )
 
 type TerminalSession struct {
@@ -31,8 +31,10 @@ var TerminalSessions = make(map[string]*TerminalSession)
 func SaveClientReportToDB() error {
 	lastMinute := time.Now().Add(-time.Minute * 1).Unix()
 	record := []models.Record{}
+	var err error
+
 	// 遍历所有的客户端记录
-	for uuid, reports := range Records {
+	Records.Range(func(uuid string, reports []common.Report) bool {
 		// 删除一分钟前的记录
 		filtered := reports[:0]
 		for _, r := range reports {
@@ -40,24 +42,24 @@ func SaveClientReportToDB() error {
 				filtered = append(filtered, r)
 			}
 		}
-		Records[uuid] = filtered
+		Records.Store(uuid, filtered)
 
 		if uuid == "" {
-			continue
+			return true
 		}
 
 		r := utils.AverageReport(uuid, time.Now(), filtered)
-
 		record = append(record, r)
 
 		db := dbcore.GetDBInstance()
-		err := db.Model(&models.Record{}).Create(record).Error
+		err = db.Model(&models.Record{}).Create(record).Error
 		if err != nil {
-			return err
+			return false
 		}
-	}
+		return true
+	})
 
-	return nil
+	return err
 }
 
 type Response struct {

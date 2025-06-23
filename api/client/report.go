@@ -178,13 +178,15 @@ func WebSocketReport(c *gin.Context) {
 }
 
 func SaveClientReport(uuid string, report common.Report) error {
-	if api.Records[uuid] == nil {
-		api.Records[uuid] = []common.Report{}
+	reports, _ := api.Records.Get(uuid)
+	if reports == nil {
+		reports = []common.Report{}
 	}
 	if report.CPU.Usage < 0.01 {
 		report.CPU.Usage = 0.01
 	}
-	api.Records[uuid] = append(api.Records[uuid], report)
+	reports = append(reports, report)
+	api.Records.Set(uuid, reports)
 
 	return nil
 }
