@@ -25,35 +25,18 @@ jobs:
               package_name: process.env.GITHUB_REPOSITORY.split('/')[1]
             });
 
-            // Keep packages with 'dev' or 'latest' tags, plus the 10 most recent non-dev, non-latest versions
-            const keepVersions = [
-              // Keep packages with 'dev' tag
-              ...packages.filter(pkg => pkg.metadata.container.tags.includes('dev')),
-              // Keep packages with 'latest' tag, excluding those already included with 'dev'
-              ...packages.filter(
-                pkg =>
-                  pkg.metadata.container.tags.includes('latest') &&
-                  !pkg.metadata.container.tags.includes('dev')
-              ),
-              // Keep the 10 most recent non-dev, non-latest packages
-              ...packages
-                .filter(
-                  pkg =>
-                    !pkg.metadata.container.tags.includes('dev') &&
-                    !pkg.metadata.container.tags.includes('latest')
-                )
-                .slice(0, 10),
-            ];
+            // Identify versions with only a single SHA tag (format: sha-<7 hexadecimal characters>)
+            const shaOnlyVersions = packages.filter(pkg => {
+              const tags = pkg.metadata.container.tags;
+              return tags.length === 1 && tags[0].match(/^sha-[0-9a-f]{7}$/);
+            });
 
-            // Identify versions to delete (not in keepVersions)
-            const deleteVersions = packages.filter(pkg => !keepVersions.includes(pkg));
-
-            // Delete the versions
-            for (const version of deleteVersions) {
+            // Delete the SHA-only versions
+            for (const version of shaOnlyVersions) {
               await github.rest.packages.deletePackageVersionForAuthenticatedUser({
                 package_type: 'container',
                 package_name: process.env.GITHUB_REPOSITORY.split('/')[1],
                 package_version_id: version.id
               });
-              console.log(`Deleted package version ${version.id}`);
+              console.log(`Deleted package version ${version.id} with SHA tag ${version.metadata.container.tags[0]}`);
             }
