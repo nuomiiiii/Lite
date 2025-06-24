@@ -64,10 +64,19 @@ func SaveClientReportToDB() error {
 		}
 	}
 
-	// 批量插入数据库
+	// 批量插入数据库前去重（client与time共同构成唯一键）
 	if len(records) > 0 {
+		unique := make(map[string]models.Record)
+		for _, rec := range records {
+			key := rec.Client + "_" + rec.Time.Format("20060102150405")
+			unique[key] = rec
+		}
+		var deduped []models.Record
+		for _, rec := range unique {
+			deduped = append(deduped, rec)
+		}
 		db := dbcore.GetDBInstance()
-		if err := db.Model(&models.Record{}).Create(&records).Error; err != nil {
+		if err := db.Model(&models.Record{}).Create(&deduped).Error; err != nil {
 			log.Printf("Failed to save records to database: %v", err)
 			return err
 		}

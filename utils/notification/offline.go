@@ -15,6 +15,7 @@ import (
 
 var (
 	pendingOffline = make(map[string]time.Time)
+	firstOnline    = make(map[string]bool)
 	mu             sync.Mutex
 )
 
@@ -98,11 +99,21 @@ func OnlineNotification(clientID string) {
 	if !noti_conf.Enable {
 		return
 	}
+	_, exists := pendingOffline[clientID]
 	// clear any pending offline debounce
 	mu.Lock()
 	delete(pendingOffline, clientID)
 	mu.Unlock()
-
+	if exists {
+		return
+	}
+	mu.Lock()
+	_, notFirst := firstOnline[clientID]
+	if !notFirst {
+		firstOnline[clientID] = true
+		return
+	}
+	mu.Unlock()
 	message := fmt.Sprintf("🟢%s is online", client.Name)
 	go func(msg string) {
 		if err := messageSender.SendTextMessage(msg); err != nil {
