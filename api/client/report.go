@@ -19,6 +19,7 @@ import (
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/utils/notification"
 	"github.com/komari-monitor/komari/ws"
+	"github.com/patrickmn/go-cache"
 )
 
 func UploadReport(c *gin.Context) {
@@ -185,8 +186,8 @@ func SaveClientReport(uuid string, report common.Report) error {
 	if report.CPU.Usage < 0.01 {
 		report.CPU.Usage = 0.01
 	}
-	reports = append(reports, report)
-	api.Records.Set(uuid, reports)
+	reports = append(reports.([]common.Report), report)
+	api.Records.Set(uuid, reports, cache.DefaultExpiration)
 
 	return nil
 }

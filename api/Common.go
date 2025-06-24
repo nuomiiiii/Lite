@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/komari-monitor/komari/common"
+	"github.com/patrickmn/go-cache"
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
@@ -15,7 +17,7 @@ import (
 )
 
 var (
-	Records = utils.NewSafeMap[string, []common.Report]()
+	Records = cache.New(1*time.Minute, 1*time.Minute)
 )
 
 type TerminalSession struct {
@@ -29,37 +31,49 @@ var TerminalSessionsMutex = &sync.Mutex{}
 var TerminalSessions = make(map[string]*TerminalSession)
 
 func SaveClientReportToDB() error {
-	lastMinute := time.Now().Add(-time.Minute * 1).Unix()
-	record := []models.Record{}
-	var err error
+	lastMinute := time.Now().Add(-time.Minute).Unix()
+	var records []models.Record
 
-	// 遍历所有的客户端记录
-	Records.Range(func(uuid string, reports []common.Report) bool {
-		// 删除一分钟前的记录
-		filtered := reports[:0]
+	// 遍历所有客户端记录
+	for uuid, x := range Records.Items() {
+		if uuid == "" {
+			continue
+		}
+
+		reports, ok := x.Object.([]common.Report)
+		if !ok {
+			log.Printf("Invalid report type for UUID %s", uuid)
+			continue
+		}
+
+		// 过滤一分钟前的记录
+		var filtered []common.Report
 		for _, r := range reports {
 			if r.UpdatedAt.Unix() >= lastMinute {
 				filtered = append(filtered, r)
 			}
 		}
-		Records.Store(uuid, filtered)
 
-		if uuid == "" {
-			return true
+		// 更新缓存
+		Records.Set(uuid, filtered, cache.DefaultExpiration)
+
+		// 计算平均报告并添加到记录列表
+		if len(filtered) > 0 {
+			r := utils.AverageReport(uuid, time.Now(), filtered)
+			records = append(records, r)
 		}
+	}
 
-		r := utils.AverageReport(uuid, time.Now(), filtered)
-		record = append(record, r)
-
+	// 批量插入数据库
+	if len(records) > 0 {
 		db := dbcore.GetDBInstance()
-		err = db.Model(&models.Record{}).Create(record).Error
-		if err != nil {
-			return false
+		if err := db.Model(&models.Record{}).Create(&records).Error; err != nil {
+			log.Printf("Failed to save records to database: %v", err)
+			return err
 		}
-		return true
-	})
+	}
 
-	return err
+	return nil
 }
 
 type Response struct {

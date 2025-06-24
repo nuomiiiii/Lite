@@ -7,6 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/oschwald/maxminddb-golang v1.13.1
+	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pquerna/otp v1.5.0
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
