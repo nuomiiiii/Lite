@@ -11,27 +11,42 @@ jobs:
 
     strategy:
       matrix:
-        goos: [windows, linux]
-        goarch: [amd64, arm64]
         include:
+          # Windows
           - goos: windows
             goarch: amd64
-            gcc: x86_64-w64-mingw32-gcc
-            CGO_CFLAGS: ''
-            CGO_LDFLAGS: ''
+            zig_target_triple: x86_64-windows-gnu
+            binary_extension: .exe
+          - goos: windows
+            goarch: arm64
+            zig_target_triple: aarch64-windows-gnu
+            binary_extension: .exe
+          - goos: windows
+            goarch: 386
+            zig_target_triple: x86-windows-gnu
+            binary_extension: .exe
+
+          # Linux
           - goos: linux
             goarch: amd64
-            gcc: gcc
-            CGO_CFLAGS: ''
-            CGO_LDFLAGS: ''
+            zig_target_triple: x86_64-linux-musl
+            binary_extension: ""
           - goos: linux
             goarch: arm64
-            gcc: aarch64-linux-gnu-gcc
-            CGO_CFLAGS: '-pthread'
-            CGO_LDFLAGS: '-pthread'
+            zig_target_triple: aarch64-linux-musl
+            binary_extension: ""
+          - goos: linux
+            goarch: 386
+            zig_target_triple: x86-linux-musl
+            binary_extension: ""
+          - goos: linux
+            goarch: riscv64
+            zig_target_triple: riscv64-linux-musl
+            binary_extension: ""
+
         exclude:
           - goos: windows
-            goarch: arm64
+            goarch: riscv64
 
     steps:
       - name: Checkout code
@@ -57,35 +72,26 @@ jobs:
         with:
           go-version: "1.23"
 
-      - name: Install cross-compiler
+      - name: Install Zig cross-compiler toolchain
         run: |
-          sudo apt-get update
-          if [ "${{ matrix.goarch }}" = "arm64" ] && [ "${{ matrix.goos }}" = "linux" ]; then
-            sudo apt-get install gcc-aarch64-linux-gnu
-          fi
-          if [ "${{ matrix.goarch }}" = "amd64" ] && [ "${{ matrix.goos }}" = "windows" ]; then
-            sudo apt-get install mingw-w64
-          fi
-          if [ "${{ matrix.goarch }}" = "arm64" ] && [ "${{ matrix.goos }}" = "windows" ]; then
-            sudo apt-get install wget xz-utils
-            mkdir -p /tmp/mingw64
-            wget https://github.com/mstorsjo/llvm-mingw/releases/download/20250613/llvm-mingw-20250613-ucrt-ubuntu-22.04-aarch64.tar.xz -O /tmp/mingw64.tar.xz
-            tar -xf /tmp/mingw64.tar.xz -C /tmp/mingw64 --strip-components=1
-          fi
+          sudo apt-get update # Update apt package lists
+          sudo apt-get install -y build-essential curl
+          wget https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz
+          sudo tar -C /usr/local -Jxf zig-x86_64-linux-0.14.1.tar.xz
+          echo "PATH=$PATH:/usr/local/zig-x86_64-linux-0.14.1" >> $GITHUB_ENV
 
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
-          CC: ${{ matrix.gcc }}
-          CGO_CFLAGS: ${{ matrix.CGO_CFLAGS }}
-          CGO_LDFLAGS: ${{ matrix.CGO_LDFLAGS }}
+          CC: zig cc -target ${{ matrix.zig_target_triple }}
           GIN_MODE: release
         run: |
           BINARY_NAME=komari-${{ matrix.goos }}-${{ matrix.goarch }}
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME=${BINARY_NAME}.exe
+          # Append the appropriate executable extension based on the OS
+          if [ "${{ matrix.binary_extension }}" != "" ]; then
+            BINARY_NAME=${BINARY_NAME}${{ matrix.binary_extension }}
           fi
           VERSION="${{ github.sha }}"
           VERSION_HASH="${{ github.sha }}"
