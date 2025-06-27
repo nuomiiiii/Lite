@@ -26,7 +26,7 @@ func CreateTask(taskId string, clients []string, command string) error {
 			Result:     "",
 			ExitCode:   nil,
 			FinishedAt: nil,
-			CreatedAt:  time.Now(),
+			CreatedAt:  models.FromTime(time.Now()),
 		})
 	}
 	if len(taskResults) > 0 {

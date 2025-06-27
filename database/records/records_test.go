@@ -40,7 +40,7 @@ func TestCompactRecord(t *testing.T) {
 	// 插入数据
 	for i := 0; i < totalMinutes; i++ {
 		recTime := now.Add(-time.Duration(i) * time.Minute)
-		rec := models.Record{Client: uuid, Time: recTime, Cpu: float32(i), Gpu: float32(i), Load: float32(i), Temp: float32(i), Ram: int64(i)}
+		rec := models.Record{Client: uuid, Time: models.FromTime(recTime), Cpu: float32(i), Gpu: float32(i), Load: float32(i), Temp: float32(i), Ram: int64(i)}
 		err := db.Create(&rec).Error
 		assert.NoError(t, err)
 
@@ -65,7 +65,7 @@ func TestCompactRecord(t *testing.T) {
 	for _, r := range origRecs {
 		wOrig.Write([]string{
 			r.Client,
-			r.Time.Format(time.RFC3339),
+			r.Time.ToTime().Format(time.RFC3339),
 			strconv.FormatFloat(float64(r.Cpu), 'f', -1, 32),
 			strconv.FormatFloat(float64(r.Gpu), 'f', -1, 32),
 			strconv.FormatFloat(float64(r.Load), 'f', -1, 32),
@@ -100,7 +100,7 @@ func TestCompactRecord(t *testing.T) {
 	for _, r := range compRecs {
 		wComp.Write([]string{
 			r.Client,
-			r.Time.Format(time.RFC3339),
+			r.Time.ToTime().Format(time.RFC3339),
 			strconv.FormatFloat(float64(r.Cpu), 'f', -1, 32),
 			strconv.FormatFloat(float64(r.Gpu), 'f', -1, 32),
 			strconv.FormatFloat(float64(r.Load), 'f', -1, 32),
@@ -119,7 +119,7 @@ func TestCompactRecord(t *testing.T) {
 	for _, r := range compRecs {
 		wComp.Write([]string{
 			r.Client,
-			r.Time.Format(time.RFC3339),
+			r.Time.ToTime().Format(time.RFC3339),
 			strconv.FormatFloat(float64(r.Cpu), 'f', -1, 32),
 			strconv.FormatFloat(float64(r.Gpu), 'f', -1, 32),
 			strconv.FormatFloat(float64(r.Load), 'f', -1, 32),

@@ -16,7 +16,7 @@ func Log(ip, uuid, message, msgType string) {
 		UUID:    uuid,
 		Message: message,
 		MsgType: msgType,
-		Time:    now,
+		Time:    models.FromTime(now),
 	}
 	db.Create(logEntry)
 }

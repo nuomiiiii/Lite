@@ -36,7 +36,7 @@ func AverageReport(uuid string, time time.Time, records []common.Report) models.
 	// Create new aggregated record
 	newRecord := models.Record{
 		Client:         uuid,
-		Time:           time,
+		Time:           models.FromTime(time),
 		Cpu:            sumCPU / float32(count),
 		Gpu:            sumGPU / float32(count),
 		Ram:            sumRAM / int64(count),

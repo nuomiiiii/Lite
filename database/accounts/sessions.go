@@ -27,11 +27,11 @@ func CreateSession(uuid string, expires int, userAgent, ip, login_method string)
 	sessionRecord := models.Session{
 		UUID:         uuid,
 		Session:      session,
-		Expires:      time.Now().Add(time.Duration(expires) * time.Second),
+		Expires:      models.FromTime(time.Now().Add(time.Duration(expires) * time.Second)),
 		UserAgent:    userAgent,
 		Ip:           ip,
 		LoginMethod:  login_method,
-		LatestOnline: time.Now(),
+		LatestOnline: models.FromTime(time.Now()),
 	}
 
 	err := db.Create(&sessionRecord).Error
@@ -50,7 +50,7 @@ func GetSession(session string) (uuid string, err error) {
 		return "", err
 	}
 
-	if time.Now().After(sessionRecord.Expires) {
+	if time.Now().After(sessionRecord.Expires.ToTime()) {
 		// 会话已过期，删除它
 		_ = DeleteSession(session)
 		return "", errors.New("session expired")
