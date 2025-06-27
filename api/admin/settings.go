@@ -7,6 +7,8 @@ import (
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/records"
+	"github.com/komari-monitor/komari/database/tasks"
 
 	"github.com/gin-gonic/gin"
 )
@@ -68,4 +70,12 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+func ClearAllRecords(c *gin.Context) {
+	records.DeleteAll()
+	tasks.DeleteAllPingRecords()
+	uuid, _ := c.Get("uuid")
+	logOperation.Log(c.ClientIP(), uuid.(string), "clear all records", "info")
+	api.RespondSuccess(c, nil)
 }

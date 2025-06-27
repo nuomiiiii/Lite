@@ -165,6 +165,7 @@ var ServerCmd = &cobra.Command{
 			recordGroup := adminAuthrized.Group("/record")
 			{
 				recordGroup.POST("/clear", admin.ClearRecord)
+				recordGroup.POST("/clear/all", admin.ClearAllRecords)
 			}
 			// oauth2
 			oauth2Group := adminAuthrized.Group("/oauth2")
@@ -297,6 +298,10 @@ func DoScheduledWork() {
 			logOperation.RemoveOldLogs()
 		case <-minute.C:
 			api.SaveClientReportToDB()
+			if !cfg.RecordEnabled {
+				records.DeleteAll()
+				tasks.DeleteAllPingRecords()
+			}
 		}
 	}
 
