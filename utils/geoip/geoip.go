@@ -65,6 +65,30 @@ func InitGeoIp() {
 			CurrentProvider = &EmptyProvider{}
 			log.Println("Failed to initialize MaxMind GeoIP service, using EmptyProvider instead.")
 		}
+	case "ip-api":
+		NewCurrentProvider, err := NewIPAPIService()
+		if err != nil {
+			log.Printf("Failed to initialize ip-api service: " + err.Error())
+		}
+		if NewCurrentProvider != nil {
+			CurrentProvider = NewCurrentProvider
+			log.Println("Using ip-api.com as GeoIP provider.")
+		} else {
+			CurrentProvider = &EmptyProvider{}
+			log.Println("Failed to initialize ip-api service, using EmptyProvider instead.")
+		}
+	case "geojs":
+		NewCurrentProvider, err := NewGeoJSService()
+		if err != nil {
+			log.Printf("Failed to initialize GeoJS service: " + err.Error())
+		}
+		if NewCurrentProvider != nil {
+			CurrentProvider = NewCurrentProvider
+			log.Println("Using geojs.io as GeoIP provider.")
+		} else {
+			CurrentProvider = &EmptyProvider{}
+			log.Println("Failed to initialize GeoJS service, using EmptyProvider instead.")
+		}
 	default:
 		CurrentProvider = &EmptyProvider{}
 	}

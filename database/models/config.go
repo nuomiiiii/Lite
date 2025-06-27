@@ -7,7 +7,7 @@ type Config struct {
 	AllowCors   bool   `json:"allow_cors" gorm:"column:allow_cors;default:false"`
 	// GeoIP 配置
 	GeoIpEnabled  bool   `json:"geo_ip_enabled" gorm:"default:true"`
-	GeoIpProvider string `json:"geo_ip_provider" gorm:"type:varchar(20);default:'mmdb'"` // mmdb, bilibili, ip-api. 暂时只实现了mmdb
+	GeoIpProvider string `json:"geo_ip_provider" gorm:"type:varchar(20);default:'ip-api'"` // empty, mmdb, ip-api, geojs
 	// OAuth 配置
 	OAuthClientID        string `json:"o_auth_client_id" gorm:"type:varchar(255)"`
 	OAuthClientSecret    string `json:"o_auth_client_secret" gorm:"type:varchar(255)"`
@@ -27,7 +27,7 @@ type Config struct {
 	// Record
 	RecordEnabled          bool `json:"record_enabled" gorm:"default:true"`          // 是否启用记录功能
 	RecordPreserveTime     int  `json:"record_preserve_time" gorm:"default:720"`     // 记录保留时间，单位小时，默认30天
-	PingRecordPreserveTime int  `json:"ping_record_preserve_time" gorm:"default:72"` // Ping 记录保留时间，单位小时，默认3天
+	PingRecordPreserveTime int  `json:"ping_record_preserve_time" gorm:"default:24"` // Ping 记录保留时间，单位小时，默认1天
 	CreatedAt              UTCTime
 	UpdatedAt              UTCTime
 }

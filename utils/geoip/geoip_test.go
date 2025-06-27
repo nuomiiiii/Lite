@@ -2,25 +2,27 @@ package geoip_test
 
 import (
 	"net"
-	"os"
 	"testing"
 
 	"github.com/komari-monitor/komari/utils/geoip"
 )
 
 // 测试GeoIP数据库的初始化和更新功能
-func TestInitGeoIp(t *testing.T) {
+func TestMmdb(t *testing.T) {
 	geoip.CurrentProvider, _ = geoip.NewMaxMindGeoIPService()
+	testIpAddr(t)
+}
+func TestIpApi(t *testing.T) {
+	geoip.CurrentProvider, _ = geoip.NewIPAPIService()
+	testIpAddr(t)
+}
 
-	// 检查数据库
-	fileInfo, err := os.Stat(geoip.GeoIpFilePath)
-	if err != nil {
-		t.Errorf("Failed to get file info: %v", err)
-	}
-	if fileInfo.Size() == 0 {
-		t.Errorf("GeoIP database file is empty: %s", geoip.GeoIpFilePath)
-	}
+func TestGeojs(t *testing.T) {
+	geoip.CurrentProvider, _ = geoip.NewGeoJSService()
+	testIpAddr(t)
+}
 
+func testIpAddr(t *testing.T) {
 	// IPv4
 	ipaddr := "8.8.8.8"
 	ip := net.ParseIP(ipaddr)

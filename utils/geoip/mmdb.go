@@ -10,6 +10,7 @@ import (
 	"path/filepath" // 新增导入，用于处理文件路径
 	"sync"
 
+	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/oschwald/maxminddb-golang"
 )
 
@@ -49,21 +50,21 @@ func NewMaxMindGeoIPService() (*MaxMindGeoIPService, error) {
 
 	// 确保数据目录存在
 	if err := os.MkdirAll(filepath.Dir(dbFilePath), os.ModePerm); err != nil {
+		logOperation.Log("", "", "Failed to create data directory for MaxMind database: "+err.Error(), "error")
 		return nil, fmt.Errorf("failed to create data directory for MaxMind database: %w", err)
 	}
 
 	// 检查数据库文件是否存在，如果不存在则尝试下载
 	if _, err := os.Stat(dbFilePath); os.IsNotExist(err) {
-		log.Println("MaxMind database not found, attempting to download...")
 		if err := service.UpdateDatabase(); err != nil {
-			log.Printf("Error downloading initial MaxMind database: %v", err)
+			logOperation.Log("", "", "Failed to download initial MaxMind database: "+err.Error(), "error")
 			return nil, fmt.Errorf("failed to download initial MaxMind database: %w", err)
 		}
-		log.Println("Initial MaxMind database downloaded successfully.")
 	}
 
 	// 初始化或重新加载 MaxMind 数据库。
 	if err := service.initialize(); err != nil {
+		logOperation.Log("", "", "Failed to initialize MaxMind database: "+err.Error(), "error")
 		return nil, fmt.Errorf("failed to initialize MaxMind database: %w", err)
 	}
 	return service, nil
@@ -129,7 +130,6 @@ func (s *MaxMindGeoIPService) UpdateDatabase() error {
 	s.mu.Lock() // 获取写锁，确保更新过程的互斥性
 	defer s.mu.Unlock()
 
-	log.Println("Downloading MaxMind GeoIP database...")
 	resp, err := http.Get(GeoIpUrl) // GeoIpUrl 是预定义的 MaxMind 数据库下载地址
 	if err != nil {
 		return fmt.Errorf("failed to initiate MaxMind database download: %w", err)
@@ -155,8 +155,6 @@ func (s *MaxMindGeoIPService) UpdateDatabase() error {
 	if err != nil {
 		return fmt.Errorf("failed to write MaxMind database file: %w", err)
 	}
-	log.Println("MaxMind GeoIP database downloaded successfully.")
-
 	// 重新加载数据库以使用新下载的文件
 	return s.initialize()
 }
