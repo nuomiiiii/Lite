@@ -1,100 +1,33 @@
 package geoip
 
 import (
-	"fmt"
-	"io"
 	"log"
 	"net"
-	"net/http"
-	"os"
 	"strings"
-	"sync"
 	"unicode"
 
-	"github.com/oschwald/maxminddb-golang"
+	"github.com/komari-monitor/komari/database/config"
 )
 
-var (
-	GeoIpUrl                        = "https://raw.githubusercontent.com/Loyalsoldier/geoip/release/GeoLite2-Country.mmdb"
-	GeoIpFilePath                   = "./data/GeoLite2-Country.mmdb"
-	geoIpDb       *maxminddb.Reader = nil
-	lock                            = &sync.RWMutex{}
-)
+var CurrentProvider GeoIPService
 
-type GeoIpRecord struct {
-	Country struct {
-		ISOCode string            `maxminddb:"iso_code"`
-		Names   map[string]string `maxminddb:"names"`
-	} `maxminddb:"country"`
+type GeoInfo struct {
+	ISOCode string
+	Name    string
 }
 
-// 更新Geoip数据库，使用 GeoIpUrl下载最新的数据库文件，并覆盖本地的 GeoIpFilePath 文件
-func UpdateGeoIpDatabase() error {
-	lock.Lock()
-	defer lock.Unlock()
-	if geoIpDb != nil {
-		geoIpDb.Close()
-		geoIpDb = nil
-	}
-	log.Println("Downloading GeoIP database...")
-	resp, err := http.Get(GeoIpUrl)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download file: %s", resp.Status)
-	}
-
-	out, err := os.Create(GeoIpFilePath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
-		return err
-	}
-	return nil
+func init() {
+	CurrentProvider = &EmptyProvider{}
 }
 
-func InitGeoIp() {
-	if os.MkdirAll("./data", os.ModePerm) != nil {
-		return
-	}
-	if _, err := os.Stat(GeoIpFilePath); os.IsNotExist(err) {
-		err := UpdateGeoIpDatabase()
-		if err != nil {
-			log.Println("Error updating GeoIP database:", err)
-		} else {
-			log.Println("GeoIP database updated successfully.")
-		}
-	}
-	var err error
-	geoIpDb, err = maxminddb.Open(GeoIpFilePath)
-	if err != nil {
-		log.Printf("Error opening GeoIP database: %v", err)
-	}
-}
+// GeoIPService 接口定义了获取地理位置信息的核心方法。
+// 任何实现此接口的类型都可以作为地理位置服务提供者。
+type GeoIPService interface {
+	GetGeoInfo(ip net.IP) (*GeoInfo, error)
 
-func GetGeoIpInfo(ip net.IP) (*GeoIpRecord, error) {
-	lock.RLock()
-	defer lock.RUnlock()
-	if geoIpDb == nil {
-		InitGeoIp()
-	}
-	if ip == nil {
-		return nil, fmt.Errorf("IP address is nil")
-	}
-	var record GeoIpRecord
-	err := geoIpDb.Lookup(ip, &record)
-	if err != nil {
-		log.Printf("Error looking up IP %s: %v", ip.String(), err)
-		return nil, err
-	}
-	return &record, nil
+	UpdateDatabase() error
+
+	Close() error
 }
 
 func GetRegionUnicodeEmoji(isoCode string) string {
@@ -110,4 +43,53 @@ func GetRegionUnicodeEmoji(isoCode string) string {
 	rune1 := rune(0x1F1E6 + (rune(isoCode[0]) - 'A'))
 	rune2 := rune(0x1F1E6 + (rune(isoCode[1]) - 'A'))
 	return string(rune1) + string(rune2)
+}
+
+func InitGeoIp() {
+	conf, err := config.Get()
+	if err != nil {
+		panic("Failed to get configuration for GeoIP: " + err.Error())
+	}
+	if !conf.GeoIpEnabled {
+		return
+	}
+	switch conf.GeoIpProvider {
+	case "mmdb":
+		NewCurrentProvider, err := NewMaxMindGeoIPService()
+		if err != nil {
+			log.Printf("Failed to initialize MaxMind GeoIP service: " + err.Error())
+		}
+		if NewCurrentProvider != nil {
+			CurrentProvider = NewCurrentProvider
+		} else {
+			CurrentProvider = &EmptyProvider{}
+			log.Println("Failed to initialize MaxMind GeoIP service, using EmptyProvider instead.")
+		}
+	case "ip-api":
+		NewCurrentProvider, err := NewIPAPIService()
+		if err != nil {
+			log.Printf("Failed to initialize ip-api service: " + err.Error())
+		}
+		if NewCurrentProvider != nil {
+			CurrentProvider = NewCurrentProvider
+			log.Println("Using ip-api.com as GeoIP provider.")
+		} else {
+			CurrentProvider = &EmptyProvider{}
+			log.Println("Failed to initialize ip-api service, using EmptyProvider instead.")
+		}
+	case "geojs":
+		NewCurrentProvider, err := NewGeoJSService()
+		if err != nil {
+			log.Printf("Failed to initialize GeoJS service: " + err.Error())
+		}
+		if NewCurrentProvider != nil {
+			CurrentProvider = NewCurrentProvider
+			log.Println("Using geojs.io as GeoIP provider.")
+		} else {
+			CurrentProvider = &EmptyProvider{}
+			log.Println("Failed to initialize GeoJS service, using EmptyProvider instead.")
+		}
+	default:
+		CurrentProvider = &EmptyProvider{}
+	}
 }

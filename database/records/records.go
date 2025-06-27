@@ -42,13 +42,13 @@ func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Reco
 	db := dbcore.GetDBInstance()
 	var records []models.Record
 
-	threeHoursAgo := time.Now().Add(-3 * time.Hour)
+	fourHoursAgo := time.Now().Add(-4*time.Hour - time.Minute)
 
 	var recentRecords []models.Record
 	recentStart := start
-	if end.After(threeHoursAgo) {
-		if recentStart.Before(threeHoursAgo) {
-			recentStart = threeHoursAgo
+	if end.After(fourHoursAgo) {
+		if recentStart.Before(fourHoursAgo) {
+			recentStart = fourHoursAgo
 		}
 		err := db.Where("client = ? AND time >= ? AND time <= ?", uuid, recentStart, end).Order("time ASC").Find(&recentRecords).Error
 		if err != nil {
@@ -122,7 +122,7 @@ func CompactRecord() error {
 			log.Printf("Error vacuuming database: %v", err)
 		}
 	}
-	log.Printf("Record compaction completed")
+	//log.Printf("Record compaction completed")
 	return nil
 }
 
@@ -251,7 +251,8 @@ func migrateOldRecords(db *gorm.DB) error {
 			for i, v := range data.Temp {
 				tempFloats[i] = float64(v)
 			}
-			high_percentile := 0.8
+			// 取高位
+			high_percentile := 0.7
 			// 检查 records_long_term 表中是否已存在相同的记录
 			var existingCount int64
 			if err := tx.Table("records_long_term").Where("client = ? AND time = ?", clientUUID, timeSlot).Count(&existingCount).Error; err != nil {
@@ -271,8 +272,8 @@ func migrateOldRecords(db *gorm.DB) error {
 				SwapTotal:      getIntPercentile(data.SwapTotal, high_percentile),
 				Disk:           getIntPercentile(data.Disk, high_percentile),
 				DiskTotal:      getIntPercentile(data.DiskTotal, high_percentile),
-				NetIn:          getIntPercentile(data.NetIn, high_percentile),
-				NetOut:         getIntPercentile(data.NetOut, high_percentile),
+				NetIn:          getIntPercentile(data.NetIn, 0.2),
+				NetOut:         getIntPercentile(data.NetOut, 0.2),
 				NetTotalUp:     getIntPercentile(data.NetTotalUp, high_percentile),
 				NetTotalDown:   getIntPercentile(data.NetTotalDown, high_percentile),
 				Process:        getInt32Percentile(data.Process, high_percentile),
@@ -293,7 +294,7 @@ func migrateOldRecords(db *gorm.DB) error {
 		}
 
 		// 删除 records 表中的旧数据
-		if err := tx.Table("records").Where("time < ?", fourHoursAgo).Delete(&models.Record{}).Error; err != nil {
+		if err := tx.Table("records").Where("time < ?", fourHoursAgo.Add(-1*time.Hour)).Delete(&models.Record{}).Error; err != nil {
 			return err
 		}
 
