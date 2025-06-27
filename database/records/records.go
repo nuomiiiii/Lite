@@ -42,13 +42,13 @@ func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Reco
 	db := dbcore.GetDBInstance()
 	var records []models.Record
 
-	threeHoursAgo := time.Now().Add(-3 * time.Hour)
+	fourHoursAgo := time.Now().Add(-4*time.Hour - time.Minute)
 
 	var recentRecords []models.Record
 	recentStart := start
-	if end.After(threeHoursAgo) {
-		if recentStart.Before(threeHoursAgo) {
-			recentStart = threeHoursAgo
+	if end.After(fourHoursAgo) {
+		if recentStart.Before(fourHoursAgo) {
+			recentStart = fourHoursAgo
 		}
 		err := db.Where("client = ? AND time >= ? AND time <= ?", uuid, recentStart, end).Order("time ASC").Find(&recentRecords).Error
 		if err != nil {
