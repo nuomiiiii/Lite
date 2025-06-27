@@ -73,8 +73,8 @@ func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Reco
 	// 查到了long_term，recentRecords按15分钟分组，每组只保留一条（取最新一条）
 	grouped := make(map[string]models.Record)
 	for _, rec := range recentRecords {
-		key := rec.Time.Truncate(15 * time.Minute).Format(time.RFC3339)
-		if old, ok := grouped[key]; !ok || rec.Time.After(old.Time) {
+		key := rec.Time.ToTime().Truncate(15 * time.Minute).Format(time.RFC3339)
+		if old, ok := grouped[key]; !ok || rec.Time.ToTime().After(old.Time.ToTime()) {
 			grouped[key] = rec
 		}
 	}
@@ -83,7 +83,7 @@ func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Reco
 		groupedList = append(groupedList, rec)
 	}
 	sort.Slice(groupedList, func(i, j int) bool {
-		return groupedList[i].Time.Before(groupedList[j].Time)
+		return groupedList[i].Time.ToTime().Before(groupedList[j].Time.ToTime())
 	})
 	records = append(records, groupedList...)
 	records = append(records, long_term...)
@@ -163,7 +163,7 @@ func migrateOldRecords(db *gorm.DB) error {
 
 	groupedRecords := make(map[string]*groupData)
 	for _, record := range records {
-		key := record.Client + "_" + record.Time.Truncate(15*time.Minute).Format(time.RFC3339)
+		key := record.Client + "_" + record.Time.ToTime().Truncate(15*time.Minute).Format(time.RFC3339)
 		if _, ok := groupedRecords[key]; !ok {
 			groupedRecords[key] = &groupData{}
 		}
@@ -260,7 +260,7 @@ func migrateOldRecords(db *gorm.DB) error {
 
 			newRec := models.Record{
 				Client:         clientUUID,
-				Time:           timeSlot,
+				Time:           models.FromTime(timeSlot),
 				Cpu:            float32(getPercentile(cpuFloats, high_percentile)),
 				Gpu:            float32(getPercentile(gpuFloats, high_percentile)),
 				Load:           float32(getPercentile(loadFloats, high_percentile)),

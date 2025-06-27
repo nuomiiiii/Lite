@@ -11,6 +11,8 @@ import (
 	"github.com/komari-monitor/komari/common"
 	"github.com/patrickmn/go-cache"
 
+	"strconv"
+
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils"
@@ -68,7 +70,7 @@ func SaveClientReportToDB() error {
 	if len(records) > 0 {
 		unique := make(map[string]models.Record)
 		for _, rec := range records {
-			key := rec.Client + "_" + rec.Time.Format("20060102150405")
+			key := rec.Client + "_" + strconv.FormatInt(rec.Time.ToTime().Unix(), 10)
 			unique[key] = rec
 		}
 		var deduped []models.Record

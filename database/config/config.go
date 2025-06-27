@@ -23,8 +23,8 @@ func Get() (models.Config, error) {
 				OAuthEnabled:  false,
 				GeoIpEnabled:  true,
 				GeoIpProvider: "mmdb",
-				UpdatedAt:     time.Now(),
-				CreatedAt:     time.Now(),
+				UpdatedAt:     models.FromTime(time.Now()),
+				CreatedAt:     models.FromTime(time.Now()),
 			}
 			if err := db.Create(&config).Error; err != nil {
 				log.Fatal("Failed to create default config:", err)
@@ -41,7 +41,7 @@ func Save(cst models.Config) error {
 	oldConfig, _ := Get()
 	// Only one records
 	cst.ID = 1
-	cst.UpdatedAt = time.Now()
+	cst.UpdatedAt = models.FromTime(time.Now())
 	// Do not update CreatedAt
 	if err := db.Model(&models.Config{}).Where("id = ?", cst.ID).
 		Select("sitename",

@@ -1,12 +1,10 @@
 package models
 
-import "time"
-
 type PingRecord struct {
-	Client string    `json:"client" gorm:"type:varchar(36);not null;index;constraint:OnDelete:CASCADE,OnUpdate:CASCADE;foreignKey:client;references:UUID"`
-	TaskId uint      `json:"task_id" gorm:"not null;index;constraint:OnDelete:CASCADE,OnUpdate:CASCADE;foreignKey:TaskId;references:Id"`
-	Time   time.Time `json:"time" gorm:"index;not null"`
-	Value  int       `json:"value" gorm:"type:int;not null"` // Ping 值，单位毫秒
+	Client string  `json:"client" gorm:"type:varchar(36);not null;index;constraint:OnDelete:CASCADE,OnUpdate:CASCADE;foreignKey:client;references:UUID"`
+	TaskId uint    `json:"task_id" gorm:"not null;index;constraint:OnDelete:CASCADE,OnUpdate:CASCADE;foreignKey:TaskId;references:Id"`
+	Time   UTCTime `json:"time" gorm:"index;not null"`
+	Value  int     `json:"value" gorm:"type:int;not null"` // Ping 值，单位毫秒
 }
 
 type PingTask struct {

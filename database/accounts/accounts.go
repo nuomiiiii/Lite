@@ -100,8 +100,8 @@ func CreateDefaultAdminAccount() (username, passwd string, err error) {
 		Username:  username,
 		Passwd:    hashedPassword,
 		SSOID:     "",
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: models.FromTime(time.Now()),
+		UpdatedAt: models.FromTime(time.Now()),
 	}
 
 	err = db.Create(&user).Error

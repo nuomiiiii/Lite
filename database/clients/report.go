@@ -57,7 +57,7 @@ func SaveClientReport(clientUUID string, report common.Report) (err error) {
 
 	Record := models.Record{
 		Client:         clientUUID,
-		Time:           time.Now(),
+		Time:           models.FromTime(time.Now()),
 		Cpu:            float32(report.CPU.Usage),
 		Gpu:            0, // Report 未提供 GPU Usage，设为 0（与原 nil 行为类似）
 		Ram:            report.Ram.Used,

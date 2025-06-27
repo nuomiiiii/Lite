@@ -167,7 +167,7 @@ func WebSocketReport(c *gin.Context) {
 				Client: uuid,
 				TaskId: reqBody.PingTaskID,
 				Value:  reqBody.PingResult,
-				Time:   reqBody.FinishedAt,
+				Time:   models.FromTime(reqBody.FinishedAt),
 			}
 			tasks.SavePingRecord(pingResult)
 		default:

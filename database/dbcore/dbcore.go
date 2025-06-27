@@ -50,7 +50,7 @@ func mergeClientInfo(db *gorm.DB) {
 		client.Weight = info.Weight
 		client.Price = info.Price
 		client.BillingCycle = info.BillingCycle
-		client.ExpiredAt = info.ExpiredAt
+		client.ExpiredAt = models.FromTime(info.ExpiredAt)
 		// Save updated Client record
 		if err := db.Save(&client).Error; err != nil {
 			log.Printf("Failed to update Client record: %v", err)

@@ -180,8 +180,8 @@ func CreateClient() (clientUUID, token string, err error) {
 		UUID:      clientUUID,
 		Token:     token,
 		Name:      "client_" + clientUUID[0:8],
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: models.FromTime(time.Now()),
+		UpdatedAt: models.FromTime(time.Now()),
 	}
 
 	err = db.Create(&client).Error
@@ -202,8 +202,8 @@ func CreateClientWithName(name string) (clientUUID, token string, err error) {
 		UUID:      clientUUID,
 		Token:     token,
 		Name:      name,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: models.FromTime(time.Now()),
+		UpdatedAt: models.FromTime(time.Now()),
 	}
 
 	err = db.Create(&client).Error
