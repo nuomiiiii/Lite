@@ -89,6 +89,18 @@ func InitGeoIp() {
 			CurrentProvider = &EmptyProvider{}
 			log.Println("Failed to initialize GeoJS service, using EmptyProvider instead.")
 		}
+	case "ipinfo":
+		NewCurrentProvider, err := NewIPInfoService()
+		if err != nil {
+			log.Printf("Failed to initialize IPInfo service: " + err.Error())
+		}
+		if NewCurrentProvider != nil {
+			CurrentProvider = NewCurrentProvider
+			log.Println("Using ipinfo.io as GeoIP provider.")
+		} else {
+			CurrentProvider = &EmptyProvider{}
+			log.Println("Failed to initialize IPInfo service, using EmptyProvider instead.")
+		}
 	default:
 		CurrentProvider = &EmptyProvider{}
 	}
