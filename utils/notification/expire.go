@@ -2,6 +2,7 @@ package notification
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/komari-monitor/komari/database/clients"
@@ -12,9 +13,8 @@ import (
 func CheckExpireScheduledWork() {
 	for {
 		now := time.Now()
-		next := time.Date(now.Year(), now.Month(), now.Day(), 17, 0, 0, 0, now.Location())
+		next := time.Date(now.Year(), now.Month(), now.Day(), 9, 0, 0, 0, now.Location()) // UTC 9AM = CST 17PM
 		if now.After(next) {
-			// 如果已经过了今天的17:00，则设为明天的17:00
 			next = next.Add(24 * time.Hour)
 		}
 		duration := next.Sub(now)
@@ -38,23 +38,39 @@ func CheckExpireScheduledWork() {
 			continue
 		}
 
-		var clientLeadToExpire []string
+		type clientToExpireInfo struct {
+			Name     string
+			DaysLeft int
+		}
+
+		var clientLeadToExpire []clientToExpireInfo
+
+		checkTime := time.Now()
+
 		for _, client := range clients_all {
-			if client.ExpiredAt.ToTime().Before(now) {
+			clientExpireTime := client.ExpiredAt.ToTime()
+
+			if clientExpireTime.Before(checkTime) {
 				continue
 			}
 
-			notificationThreshold := now.Add(time.Duration(notificationLeadDays) * 24 * time.Hour)
+			notificationThreshold := checkTime.Add(time.Duration(notificationLeadDays) * 24 * time.Hour)
 
-			if client.ExpiredAt.ToTime().Before(notificationThreshold) || client.ExpiredAt.ToTime().Equal(notificationThreshold) {
-				clientLeadToExpire = append(clientLeadToExpire, client.Name)
+			if clientExpireTime.Before(notificationThreshold) || clientExpireTime.Equal(notificationThreshold) {
+				remainingDuration := clientExpireTime.Sub(checkTime)
+				daysLeft := int(math.Ceil(remainingDuration.Hours() / 24))
+
+				clientLeadToExpire = append(clientLeadToExpire, clientToExpireInfo{
+					Name:     client.Name,
+					DaysLeft: daysLeft,
+				})
 			}
 		}
 
 		if len(clientLeadToExpire) > 0 {
-			message := "The following clients are about to expire: \n"
-			for i := 0; i < len(clientLeadToExpire); i++ {
-				message += fmt.Sprintf("%s in %d days.\n", clientLeadToExpire[i], notificationLeadDays)
+			message := "The following clients are about to expire: \n\n"
+			for _, clientInfo := range clientLeadToExpire {
+				message += fmt.Sprintf("%s in %d days.\n", clientInfo.Name, clientInfo.DaysLeft)
 			}
 			messageSender.SendTextMessage(message)
 		}
