@@ -128,7 +128,6 @@ func (s *MaxMindGeoIPService) GetGeoInfo(ip net.IP) (*GeoInfo, error) {
 // 它会下载最新的 GeoLite2-Country.mmdb 文件并重新加载数据库。
 func (s *MaxMindGeoIPService) UpdateDatabase() error {
 	s.mu.Lock() // 获取写锁，确保更新过程的互斥性
-	defer s.mu.Unlock()
 
 	resp, err := http.Get(GeoIpUrl) // GeoIpUrl 是预定义的 MaxMind 数据库下载地址
 	if err != nil {
@@ -155,6 +154,7 @@ func (s *MaxMindGeoIPService) UpdateDatabase() error {
 	if err != nil {
 		return fmt.Errorf("failed to write MaxMind database file: %w", err)
 	}
+	s.mu.Unlock() // initialize 方法需要在解锁后调用，以避免死锁
 	// 重新加载数据库以使用新下载的文件
 	return s.initialize()
 }
