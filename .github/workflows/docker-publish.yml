@@ -1,4 +1,4 @@
-name: Docker Build and Publish
+name: Publish Docker Image
 
 on:
   push:
@@ -11,7 +11,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
+  build-and-push-multi-arch:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,6 +20,54 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "23"
+
+      - name: Clone and build frontend
+        run: |
+          git clone https://github.com/komari-monitor/komari-web web
+          cd web
+          npm install
+          npm run build
+          cd ..
+          mkdir -p public/dist
+          cp -r web/dist/* public/dist/
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Install Zig
+        run: |
+          wget https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz
+          sudo tar -C /usr/local -Jxf zig-x86_64-linux-0.14.1.tar.xz
+          echo "PATH=$PATH:/usr/local/zig-x86_64-linux-0.14.1" >> $GITHUB_ENV
+
+      - name: Build static binaries for multi-arch
+        env:
+          GOOS: linux
+          CGO_ENABLED: 1
+          GIN_MODE: release
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION_HASH="${{ github.sha }}"
+          LDFLAGS="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}"
+
+          echo "Building for linux/amd64..."
+          GOARCH=amd64 CC="zig cc -target x86_64-linux-musl" go build -trimpath -ldflags="$LDFLAGS" -o komari-linux-amd64
+
+          echo "Building for linux/arm64..."
+          GOARCH=arm64 CC="zig cc -target aarch64-linux-musl" go build -trimpath -ldflags="$LDFLAGS" -o komari-linux-arm64
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to the Container registry
         uses: docker/login-action@v3
@@ -42,8 +90,6 @@ jobs:
         with:
           context: .
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            VERSION_HASH=${{ github.sha }}
