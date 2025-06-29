@@ -21,6 +21,14 @@ type Config struct {
 	TelegramEndpoint string `json:"telegram_endpoint" gorm:"type:varchar(255);default:'https://api.telegram.org/bot'"`
 	TelegramBotToken string `json:"telegram_bot_token" gorm:"type:varchar(255)"`
 	TelegramChatID   string `json:"telegram_chat_id" gorm:"type:varchar(255)"`
+	// Email 配置
+	EmailHost     string `json:"email_host" gorm:"type:varchar(255)"`     // 邮件服务器地址
+	EmailPort     int    `json:"email_port" gorm:"default:587"`           // 邮件服务器端口，默认587
+	EmailUsername string `json:"email_username" gorm:"type:varchar(255)"` // 邮箱用户名
+	EmailPassword string `json:"email_password" gorm:"type:varchar(255)"` // 邮箱密码
+	EmailSender   string `json:"email_sender" gorm:"type:varchar(255)"`   // 邮箱发送者地址
+	EmailUseSSL   bool   `json:"email_use_ssl" gorm:"default:true"`       // 是否使用 SSL/TLS 连接，默认 true
+	EmailReceiver string `json:"email_receiver" gorm:"type:varchar(255)"` // 邮件接收者地址
 	// 通知
 	NotificationEnabled        bool   `json:"notification_enabled" gorm:"default:false"` // 通知总开关
 	NotificationMethod         string `json:"notification_method" gorm:"type:varchar(64);default:'none'"`

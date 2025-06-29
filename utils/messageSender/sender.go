@@ -20,6 +20,8 @@ func Initialize() {
 	switch cfg.NotificationMethod {
 	case "telegram":
 		CurrentProvider = &TelegramMessageSender{}
+	case "email":
+		CurrentProvider = &EmailMessageSender{}
 	case "none", "":
 		CurrentProvider = &EmptyProvider{}
 	default:

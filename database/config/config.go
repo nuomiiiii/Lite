@@ -22,7 +22,10 @@ func Get() (models.Config, error) {
 				AllowCors:     false,
 				OAuthEnabled:  false,
 				GeoIpEnabled:  true,
-				GeoIpProvider: "mmdb",
+				GeoIpProvider: "ip-api",
+				EmailPort:     587,
+				EmailUseSSL:   true,
+				EmailReceiver: "", // Default empty
 				UpdatedAt:     models.FromTime(time.Now()),
 				CreatedAt:     models.FromTime(time.Now()),
 			}
@@ -53,6 +56,14 @@ func Save(cst models.Config) error {
 			"o_auth_client_secret",
 			"o_auth_enabled",
 			"custom_head",
+			"email_enabled",
+			"email_host",
+			"email_port",
+			"email_username",
+			"email_password",
+			"email_sender",
+			"email_use_ssl",
+			"email_receiver",
 			"updated_at").
 		Updates(cst).Error; err != nil {
 		return err

@@ -30,6 +30,7 @@ import (
 	"github.com/komari-monitor/komari/public"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/geoip"
+	"github.com/komari-monitor/komari/utils/messageSender"
 	u_notification "github.com/komari-monitor/komari/utils/notification"
 	"github.com/komari-monitor/komari/ws"
 	"github.com/spf13/cobra"
@@ -54,6 +55,7 @@ var ServerCmd = &cobra.Command{
 		}
 		go geoip.InitGeoIp()
 		go DoScheduledWork()
+		go messageSender.Initialize()
 
 		r := gin.Default()
 
@@ -67,6 +69,7 @@ var ServerCmd = &cobra.Command{
 			DynamicCorsEnabled = event.New.AllowCors
 			if event.New.GeoIpProvider != event.Old.GeoIpProvider {
 				go geoip.InitGeoIp()
+				go messageSender.Initialize()
 			}
 		})
 		r.Use(func(c *gin.Context) {
