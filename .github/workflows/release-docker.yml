@@ -1,25 +1,67 @@
 name: Publish Docker Image
 
 on:
-  release:
-    types: [published]
+  push:
+    branches:
+      - main
   workflow_dispatch:
-
-permissions:
-  contents: read
-  packages: write
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
-jobs:        
-  build-and-push-docker:
+jobs:
+  build-and-push-multi-arch:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "23"
+
+      - name: Clone and build frontend
+        run: |
+          git clone https://github.com/komari-monitor/komari-web web
+          cd web
+          npm install
+          npm run build
+          cd ..
+          mkdir -p public/dist
+          cp -r web/dist/* public/dist/
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Install Zig
+        run: |
+          wget https://ziglang.org/download/0.14.1/zig-x86_64-linux-0.14.1.tar.xz
+          sudo tar -C /usr/local -Jxf zig-x86_64-linux-0.14.1.tar.xz
+          echo "PATH=$PATH:/usr/local/zig-x86_64-linux-0.14.1" >> $GITHUB_ENV
+
+      - name: Build static binaries for multi-arch
+        env:
+          GOOS: linux
+          CGO_ENABLED: 1
+          GIN_MODE: release
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION_HASH="${{ github.sha }}"
+          LDFLAGS="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}"
+
+          echo "Building for linux/amd64..."
+          GOARCH=amd64 CC="zig cc -target x86_64-linux-musl" go build -trimpath -ldflags="$LDFLAGS" -o komari-linux-amd64
+
+          echo "Building for linux/arm64..."
+          GOARCH=arm64 CC="zig cc -target aarch64-linux-musl" go build -trimpath -ldflags="$LDFLAGS" -o komari-linux-arm64
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -34,24 +76,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ github.event.release.tag_name }}
-            type=raw,value=latest
+            type=raw,value=${{ github.ref_name }}
+            type=sha,format=short
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          build-args: |
-            VERSION=${{ github.event.release.tag_name }}
-            VERSION_HASH=${{ github.sha }}
