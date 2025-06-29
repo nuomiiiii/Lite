@@ -72,7 +72,7 @@ func CheckExpireScheduledWork() {
 			for _, clientInfo := range clientLeadToExpire {
 				message += fmt.Sprintf("%s in %d days.\n", clientInfo.Name, clientInfo.DaysLeft)
 			}
-			messageSender.SendTextMessage(message)
+			messageSender.SendTextMessage(message, "Komari Expiration Notification")
 		}
 
 		// 等待1秒，防止多次触发

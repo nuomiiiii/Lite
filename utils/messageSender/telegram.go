@@ -10,27 +10,36 @@ import (
 	"github.com/komari-monitor/komari/database/config"
 )
 
-func TelegramSendMessage(message, msgType string) error {
+// TelegramMessageSender implements the MessageSender interface for Telegram.
+type TelegramMessageSender struct{}
+
+// SendTextMessage sends a text message via Telegram API.
+// The title is prepended to the message.
+func (t *TelegramMessageSender) SendTextMessage(message, title string) error {
+	fullMessage := message
+	if title != "" {
+		fullMessage = fmt.Sprintf("<b>%s</b>\n%s", title, message)
+	}
+
 	var lastErr error
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 3; i++ { // Retry mechanism
 		conf, err := config.Get()
 		if err != nil {
 			lastErr = err
 			continue
 		}
 
-		if message == "" {
-			return errors.New("telegram is disabled or message is empty")
+		if fullMessage == "" {
+			return errors.New("telegram is disabled or message is empty") // Assuming disabled if message is empty
 		}
 
 		endpoint := conf.TelegramEndpoint + conf.TelegramBotToken + "/sendMessage"
 
 		data := url.Values{}
 		data.Set("chat_id", conf.TelegramChatID)
-		data.Set("text", message)
-		if msgType != "text" {
-			data.Set("parse_mode", msgType)
-		}
+		data.Set("text", fullMessage)
+		data.Set("parse_mode", "HTML") // Use HTML for basic formatting if title is present
+
 		resp, err := http.PostForm(endpoint, data)
 		if err != nil {
 			lastErr = fmt.Errorf("failed to send message: %v", err)
@@ -60,17 +69,4 @@ func TelegramSendMessage(message, msgType string) error {
 		return nil
 	}
 	return lastErr
-}
-
-// SendTextMessage sends a text message via Telegram API
-func TelegramSendTextMessage(message string) error {
-	return TelegramSendMessage(message, "text")
-}
-
-// SendMarkdownMessage sends a message formatted in Markdown via Telegram API
-func TelegramSendMarkdownMessage(message string) error {
-	return TelegramSendMessage(message, "MarkdownV2")
-}
-func TelegramSendHTMLMessage(message string) error {
-	return TelegramSendMessage(message, "HTML")
 }
