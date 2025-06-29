@@ -69,6 +69,8 @@ var ServerCmd = &cobra.Command{
 			DynamicCorsEnabled = event.New.AllowCors
 			if event.New.GeoIpProvider != event.Old.GeoIpProvider {
 				go geoip.InitGeoIp()
+			}
+			if event.New.NotificationMethod != event.Old.NotificationMethod {
 				go messageSender.Initialize()
 			}
 		})
