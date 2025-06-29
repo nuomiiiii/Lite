@@ -22,6 +22,10 @@ func TestGeojs(t *testing.T) {
 	testIpAddr(t)
 }
 
+func TestIpInfo(t *testing.T) {
+	geoip.CurrentProvider, _ = geoip.NewIPInfoService()
+	testIpAddr(t)
+}
 func testIpAddr(t *testing.T) {
 	// IPv4
 	ipaddr := "8.8.8.8"
