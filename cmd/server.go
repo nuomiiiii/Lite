@@ -126,6 +126,7 @@ var ServerCmd = &cobra.Command{
 		// #region 管理员
 		adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())
 		{
+			adminAuthrized.GET("/download/backup", admin.DownloadBackup)
 			// test
 			testGroup := adminAuthrized.Group("/test")
 			{
