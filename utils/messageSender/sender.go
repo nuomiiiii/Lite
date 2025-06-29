@@ -1,22 +1,36 @@
 package messageSender
 
 import (
-	"errors"
-
 	"github.com/komari-monitor/komari/database/config"
 )
 
-func SendTextMessage(message string) error {
-	cfg, _ := config.Get()
-	if !cfg.NotificationEnabled {
-		return nil
+var CurrentProvider MessageSender
+
+func init() {
+	CurrentProvider = &EmptyProvider{}
+}
+
+func Initialize() {
+	cfg, err := config.Get()
+	if err != nil {
+		CurrentProvider = &EmptyProvider{}
+		return
 	}
+
 	switch cfg.NotificationMethod {
-	case "none":
-		return nil
 	case "telegram":
-		return TelegramSendTextMessage(message)
+		CurrentProvider = &TelegramMessageSender{}
+	case "none", "":
+		CurrentProvider = &EmptyProvider{}
 	default:
-		return errors.New("unsupported notification method: " + cfg.NotificationMethod)
+		CurrentProvider = &EmptyProvider{}
 	}
+}
+
+type MessageSender interface {
+	SendTextMessage(message, title string) error
+}
+
+func SendTextMessage(message string, title string) error {
+	return CurrentProvider.SendTextMessage(message, title)
 }

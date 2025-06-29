@@ -12,7 +12,7 @@ import (
 
 func TestSendMessage(c *gin.Context) {
 	message := "Komari test message."
-	err := messageSender.SendTextMessage(message)
+	err := messageSender.SendTextMessage(message, "Komari Test Notification")
 	if err != nil {
 		api.RespondError(c, 500, "Failed to send message: "+err.Error())
 		return

@@ -100,7 +100,7 @@ func OfflineNotification(clientID string) {
 		// Send notification
 		message := fmt.Sprintf("🔴%s is offline", client.Name)
 		go func(msg string) {
-			if err := messageSender.SendTextMessage(msg); err != nil {
+			if err := messageSender.SendTextMessage(msg, "Komari Offline Notification"); err != nil {
 				log.Println("Failed to send offline notification:", err)
 			}
 		}(message)
@@ -151,7 +151,7 @@ func OnlineNotification(clientID string) {
 	// 规则3：客户端离线足够久已通知（或未待离线），现在重新上线，发送上线通知。
 	message := fmt.Sprintf("🟢%s is online", client.Name)
 	go func(msg string) {
-		if err := messageSender.SendTextMessage(msg); err != nil {
+		if err := messageSender.SendTextMessage(msg, "Komari Online Notification"); err != nil {
 			log.Println("Failed to send online notification:", err)
 		}
 	}(message)
