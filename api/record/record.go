@@ -97,8 +97,9 @@ func GetPingRecords(c *gin.Context) {
 			// 只返回有记录的任务
 			if _, ok := taskIdSet[t.Id]; ok {
 				tasksList = append(tasksList, gin.H{
-					"id":   t.Id,
-					"name": t.Name,
+					"id":       t.Id,
+					"name":     t.Name,
+					"interval": t.Interval,
 				})
 			}
 		}
