@@ -7,6 +7,10 @@ import (
 
 type EmptyProvider struct{}
 
+func (e *EmptyProvider) Name() string {
+	return "EmptyProvider"
+}
+
 func (e *EmptyProvider) Initialize() error {
 	return nil
 }

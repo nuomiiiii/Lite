@@ -27,6 +27,8 @@ func init() {
 // GeoIPService 接口定义了获取地理位置信息的核心方法。
 // 任何实现此接口的类型都可以作为地理位置服务提供者。
 type GeoIPService interface {
+	Name() string
+
 	GetGeoInfo(ip net.IP) (*GeoInfo, error)
 
 	UpdateDatabase() error
@@ -111,19 +113,7 @@ func InitGeoIp() {
 }
 
 func GetGeoInfo(ip net.IP) (*GeoInfo, error) {
-	providerName := "unknown"
-	switch CurrentProvider.(type) {
-	case *MaxMindGeoIPService:
-		providerName = "mmdb"
-	case *IPAPIService:
-		providerName = "ip-api"
-	case *GeoJSService:
-		providerName = "geojs"
-	case *IPInfoService:
-		providerName = "ipinfo"
-	case *EmptyProvider:
-		providerName = "empty"
-	}
+	providerName := CurrentProvider.Name()
 	cacheKey := providerName + ":" + ip.String()
 
 	if cachedInfo, found := geoCache.Get(cacheKey); found {
