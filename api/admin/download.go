@@ -4,13 +4,12 @@ import (
 	"archive/zip"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	"log"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
@@ -80,24 +79,35 @@ func DownloadBackup(c *gin.Context) {
 		return
 	}
 
-	// 如果数据库文件不在 ./data 目录下，单独添加
-	dbFilePath := flags.DatabaseFile
-	dbFileName := filepath.Base(dbFilePath)
+	// 获取 ./data 和数据库文件的绝对路径以进行可靠的比较
+	dataAbsPath, err := filepath.Abs("./data")
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error getting absolute path for data directory: %v", err))
+		return
+	}
 
-	if !strings.HasPrefix(filepath.Clean(dbFilePath), filepath.Clean("./data")) {
-		// 不在 ./data，单独添加
+	dbFilePath := flags.DatabaseFile
+	dbAbsPath, err := filepath.Abs(dbFilePath)
+	if err != nil {
+		// 如果无法解析数据库路径，可能是一个配置问题，但我们记录并跳过，避免备份失败
+		log.Printf("Could not determine absolute path for database file '%s', skipping explicit addition. Error: %v\n", dbFilePath, err)
+		return
+	}
+
+	// 如果数据库文件的绝对路径不是以 ./data 目录的绝对路径开头，则单独添加它
+	if !strings.HasPrefix(dbAbsPath, dataAbsPath) {
+		dbFileName := filepath.Base(dbFilePath)
 		dbInfo, err := os.Stat(dbFilePath)
 		if err != nil {
 			if os.IsNotExist(err) {
 				log.Printf("Database file '%s' does not exist, skipping.\n", dbFilePath)
-				// 数据库文件不存在不影响主流程
-				return
+				return // 数据库不存在是正常情况，直接返回
 			}
 			api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error stating database file: %v", err))
 			return
 		}
 
-		if !dbInfo.IsDir() { // 确保是文件
+		if !dbInfo.IsDir() {
 			file, err := os.Open(dbFilePath)
 			if err != nil {
 				api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error opening database file: %v", err))
@@ -105,7 +115,6 @@ func DownloadBackup(c *gin.Context) {
 			}
 			defer file.Close()
 
-			// 直接用文件名放在 zip 根目录
 			writer, err := zipWriter.CreateHeader(&zip.FileHeader{
 				Name:     dbFileName,
 				Method:   zip.Deflate,
