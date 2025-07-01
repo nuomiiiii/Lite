@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func getEnv(key, defaultValue string) string {
+func GetEnv(key, defaultValue string) string {
 	value := os.Getenv(key)
 	if value == "" {
 		return defaultValue
@@ -19,13 +19,13 @@ func getEnv(key, defaultValue string) string {
 
 // 从环境变量获取默认值
 var (
-	dbTypeEnv = getEnv("KOMARI_DB_TYPE", "sqlite")
-	dbFileEnv = getEnv("KOMARI_DB_FILE", "./data/komari.db")
-	dbHostEnv = getEnv("KOMARI_DB_HOST", "localhost")
-	dbPortEnv = getEnv("KOMARI_DB_PORT", "3306")
-	dbUserEnv = getEnv("KOMARI_DB_USER", "root")
-	dbPassEnv = getEnv("KOMARI_DB_PASS", "")
-	dbNameEnv = getEnv("KOMARI_DB_NAME", "komari")
+	dbTypeEnv = GetEnv("KOMARI_DB_TYPE", "sqlite")
+	dbFileEnv = GetEnv("KOMARI_DB_FILE", "./data/komari.db")
+	dbHostEnv = GetEnv("KOMARI_DB_HOST", "localhost")
+	dbPortEnv = GetEnv("KOMARI_DB_PORT", "3306")
+	dbUserEnv = GetEnv("KOMARI_DB_USER", "root")
+	dbPassEnv = GetEnv("KOMARI_DB_PASS", "")
+	dbNameEnv = GetEnv("KOMARI_DB_NAME", "komari")
 )
 
 var RootCmd = &cobra.Command{
