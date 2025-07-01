@@ -4,12 +4,15 @@ import (
 	"log"
 	"net"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/patrickmn/go-cache"
 )
 
 var CurrentProvider GeoIPService
+var geoCache *cache.Cache
 
 type GeoInfo struct {
 	ISOCode string
@@ -18,6 +21,7 @@ type GeoInfo struct {
 
 func init() {
 	CurrentProvider = &EmptyProvider{}
+	geoCache = cache.New(48*time.Hour, 1*time.Hour)
 }
 
 // GeoIPService 接口定义了获取地理位置信息的核心方法。
@@ -104,4 +108,42 @@ func InitGeoIp() {
 	default:
 		CurrentProvider = &EmptyProvider{}
 	}
+}
+
+func GetGeoInfo(ip net.IP) (*GeoInfo, error) {
+	providerName := "unknown"
+	switch CurrentProvider.(type) {
+	case *MaxMindGeoIPService:
+		providerName = "mmdb"
+	case *IPAPIService:
+		providerName = "ip-api"
+	case *GeoJSService:
+		providerName = "geojs"
+	case *IPInfoService:
+		providerName = "ipinfo"
+	case *EmptyProvider:
+		providerName = "empty"
+	}
+	cacheKey := providerName + ":" + ip.String()
+
+	if cachedInfo, found := geoCache.Get(cacheKey); found {
+		log.Println("GeoIP cache hit for", cacheKey)
+		return cachedInfo.(*GeoInfo), nil
+	}
+
+	info, err := CurrentProvider.GetGeoInfo(ip)
+	if err == nil && info != nil {
+		log.Println("GeoIP cache miss for", cacheKey)
+		geoCache.Set(cacheKey, info, cache.DefaultExpiration)
+	}
+	return info, err
+}
+
+func UpdateDatabase() error {
+	err := CurrentProvider.UpdateDatabase()
+	if err == nil {
+		geoCache.Flush()
+		log.Println("GeoIP cache cleared due to database update.")
+	}
+	return err
 }

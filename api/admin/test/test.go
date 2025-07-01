@@ -38,7 +38,7 @@ func TestGeoIp(c *gin.Context) {
 		api.RespondError(c, 400, "GeoIP is not enabled in the configuration.")
 		return
 	}
-	GeoIpRecord, err := geoip.CurrentProvider.GetGeoInfo(net.ParseIP(ip))
+	GeoIpRecord, err := geoip.GetGeoInfo(net.ParseIP(ip))
 	if err != nil {
 		api.RespondError(c, 500, "Failed to get GeoIP record: "+err.Error())
 		return
