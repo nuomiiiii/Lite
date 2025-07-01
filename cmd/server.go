@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/public"
 	"github.com/komari-monitor/komari/utils"
+	"github.com/komari-monitor/komari/utils/cloudflared"
 	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/utils/messageSender"
 	u_notification "github.com/komari-monitor/komari/utils/notification"
@@ -56,6 +58,13 @@ var ServerCmd = &cobra.Command{
 		go geoip.InitGeoIp()
 		go DoScheduledWork()
 		go messageSender.Initialize()
+
+		if strings.ToLower(GetEnv("KOMARI_ENABLE_CLOUDFLARED", "false")) == "true" {
+			err := cloudflared.RunCloudflared() // 阻塞，确保cloudflared跑起来
+			if err != nil {
+				log.Fatalf("Failed to run cloudflared: %v", err)
+			}
+		}
 
 		r := gin.Default()
 
@@ -259,7 +268,7 @@ var ServerCmd = &cobra.Command{
 
 func init() {
 	// 从环境变量获取监听地址
-	listenAddr := getEnv("KOMARI_LISTEN", "0.0.0.0:25774")
+	listenAddr := GetEnv("KOMARI_LISTEN", "0.0.0.0:25774")
 	ServerCmd.PersistentFlags().StringVarP(&flags.Listen, "listen", "l", listenAddr, "监听地址 [env: KOMARI_LISTEN]")
 	RootCmd.AddCommand(ServerCmd)
 }
@@ -317,8 +326,10 @@ func DoScheduledWork() {
 
 func OnShutdown() {
 	logOperation.Log("", "", "server is shutting down", "info")
+	cloudflared.Kill()
 }
 
 func OnFatal(err error) {
 	logOperation.Log("", "", "server encountered a fatal error: "+err.Error(), "error")
+	cloudflared.Kill()
 }
