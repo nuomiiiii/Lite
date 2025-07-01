@@ -38,6 +38,11 @@ func NewIPInfoService() (*IPInfoService, error) {
 	}, nil
 }
 
+// Name 返回服务的名称。
+func (s *IPInfoService) Name() string {
+	return "ipinfo.io"
+}
+
 // GetGeoInfo 使用 ipinfo.io 服务检索给定 IP 地址的地理位置信息。
 // 免费额度主要提供国家信息。
 func (s *IPInfoService) GetGeoInfo(ip net.IP) (*GeoInfo, error) {

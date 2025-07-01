@@ -40,6 +40,11 @@ type MaxMindGeoIPService struct {
 	mu sync.RWMutex
 }
 
+// Name 返回服务的名称。
+func (s *MaxMindGeoIPService) Name() string {
+	return "MaxMind"
+}
+
 // NewMaxMindGeoIPService 创建并返回一个 MaxMindGeoIPService 实例。
 // 它负责初始化服务，包括尝试加载或下载数据库。
 func NewMaxMindGeoIPService() (*MaxMindGeoIPService, error) {

@@ -32,6 +32,11 @@ func NewGeoJSService() (*GeoJSService, error) {
 	}, nil
 }
 
+// Name 返回服务的名称。
+func (s *GeoJSService) Name() string {
+	return "geojs.io"
+}
+
 // GetGeoInfo 使用 geojs.io 服务检索给定 IP 地址的地理位置信息。
 func (s *GeoJSService) GetGeoInfo(ip net.IP) (*GeoInfo, error) {
 	// GeoJS 的 API 端点

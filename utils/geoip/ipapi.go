@@ -32,6 +32,10 @@ type ipAPIResponse struct {
 	Query       string  `json:"query"`
 }
 
+func (s *IPAPIService) Name() string {
+	return "ip-api.com"
+}
+
 // NewIPAPIService 创建并返回一个 IPAPIService 的新实例。
 func NewIPAPIService() (*IPAPIService, error) {
 	return &IPAPIService{

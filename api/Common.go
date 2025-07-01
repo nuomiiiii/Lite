@@ -61,7 +61,7 @@ func SaveClientReportToDB() error {
 
 		// 计算平均报告并添加到记录列表
 		if len(filtered) > 0 {
-			r := utils.AverageReport(uuid, time.Now(), filtered)
+			r := utils.AverageReport(uuid, time.Now(), filtered, 0.3)
 			records = append(records, r)
 		}
 	}
