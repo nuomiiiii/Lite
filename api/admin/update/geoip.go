@@ -8,7 +8,7 @@ import (
 )
 
 func UpdateMmdbGeoIP(c *gin.Context) {
-	if err := geoip.CurrentProvider.UpdateDatabase(); err != nil {
+	if err := geoip.UpdateDatabase(); err != nil {
 		api.RespondError(c, 500, "Failed to update GeoIP database "+err.Error())
 		return
 	}

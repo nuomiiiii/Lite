@@ -105,3 +105,11 @@ func InitGeoIp() {
 		CurrentProvider = &EmptyProvider{}
 	}
 }
+
+func GetGeoInfo(ip net.IP) (*GeoInfo, error) {
+	return CurrentProvider.GetGeoInfo(ip)
+}
+
+func UpdateDatabase() error {
+	return CurrentProvider.UpdateDatabase()
+}
