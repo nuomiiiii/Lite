@@ -30,7 +30,7 @@ func testIpAddr(t *testing.T) {
 	// IPv4
 	ipaddr := "8.8.8.8"
 	ip := net.ParseIP(ipaddr)
-	record, err := geoip.CurrentProvider.GetGeoInfo(ip)
+	record, err := geoip.GetGeoInfo(ip)
 	if err != nil {
 		t.Errorf("Failed to get GeoIP info for IP %s: %v", ipaddr, err)
 	}
@@ -48,7 +48,7 @@ func testIpAddr(t *testing.T) {
 	// IPv6
 	ipaddr = "2001:4860:4860::8888"
 	ip = net.ParseIP(ipaddr)
-	record, err = geoip.CurrentProvider.GetGeoInfo(ip)
+	record, err = geoip.GetGeoInfo(ip)
 	if err != nil {
 		t.Errorf("Failed to get GeoIP info for IPv6 %s: %v", ipaddr, err)
 	}
