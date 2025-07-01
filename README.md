@@ -78,7 +78,7 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 这个坑晚点再填吧 ヽ(￣ω￣(￣ω￣〃)ゝ
 
 ## 客户端 Agent 开发指南
-这个坑晚点再填吧 (o゜▽゜)o☆
+[Komari Agent 信息上报与事件处理文档](https://komari-monitor.github.io/komari-document/dev/agent.html)
 
 ## 贡献
 欢迎提交 Issue 或 Pull Request！
@@ -87,46 +87,6 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
  - 感谢我自己能这么闲
  - 广告位招租喵
 
-## 引用
- - [gorm.io](https://gorm.io/)
- - [spf13/cobra](https://github.com/spf13/cobra)
- - [oschwald/maxminddb-golang](https://github.com/oschwald/maxminddb-golang)
- - [gorilla/websocket](https://github.com/gorilla/websocket)
- - [google/uuid](https://github.com/google/uuid)
- - [gin-gonic/gin](https://github.com/gin-gonic/gin)
- - [UserExistsError/conpty](https://github.com/UserExistsError/conpty)
- - [creack/pty](https://github.com/creack/pty)
- - [rhysd/go-github-selfupdate](https://github.com/rhysd/go-github-selfupdate)
- - [shirou/gopsutil](https://github.com/shirou/gopsutil)
+## Star History
 
-## 许可证
-[MIT License](LICENSE)
-
-## 截图
-
-![PixPin_2025-06-07_15-28-30](https://github.com/user-attachments/assets/edce5694-c6c8-4647-bc11-8b27105fd55c)
-![PixPin_2025-06-07_15-28-49](https://github.com/user-attachments/assets/23b58032-211a-4b59-b444-c8267606a0bb)
-![PixPin_2025-06-07_15-29-05](https://github.com/user-attachments/assets/f4325d4d-fa69-41c6-9251-19f530476e65)
-![PixPin_2025-06-07_15-30-05](https://github.com/user-attachments/assets/69be38f6-6681-4afb-9a04-965d39b7fcc2)
-![PixPin_2025-06-07_15-30-46](https://github.com/user-attachments/assets/01d84dd1-3c81-4424-a041-7dbc2ae5822e)
-
-
-## 碎碎念
-
-### 我为什么做Komari？
-
-起因： [求推荐系统监控软件](https://www.nodeseek.com/post-133745-1)
-
-> @古xx斯
-> 哪吒？
-> > 数据至少保存15天
-
-> @sxxu
-> 怕不是做梦的预算
-
-> @Vxxn
-> prometheus加grafana
-> > 部署太麻烦
-
-没有合适的，最近刚好时间稍微多了一些，就搓了 komari.
-
+[![Star History Chart](https://api.star-history.com/svg?repos=komari-monitor/komari&type=Date)](https://www.star-history.com/#komari-monitor/komari&Date)
