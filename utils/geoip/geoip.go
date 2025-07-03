@@ -117,13 +117,13 @@ func GetGeoInfo(ip net.IP) (*GeoInfo, error) {
 	cacheKey := providerName + ":" + ip.String()
 
 	if cachedInfo, found := geoCache.Get(cacheKey); found {
-		log.Println("GeoIP cache hit for", cacheKey)
+		//log.Println("GeoIP cache hit for", cacheKey)
 		return cachedInfo.(*GeoInfo), nil
 	}
 
 	info, err := CurrentProvider.GetGeoInfo(ip)
 	if err == nil && info != nil {
-		log.Println("GeoIP cache miss for", cacheKey)
+		//log.Println("GeoIP cache miss for", cacheKey)
 		geoCache.Set(cacheKey, info, cache.DefaultExpiration)
 	}
 	return info, err

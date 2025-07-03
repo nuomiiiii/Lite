@@ -21,52 +21,44 @@ func (t *TelegramMessageSender) SendTextMessage(message, title string) error {
 		fullMessage = fmt.Sprintf("<b>%s</b>\n%s", title, message)
 	}
 
-	var lastErr error
-	for i := 0; i < 3; i++ { // Retry mechanism
-		conf, err := config.Get()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		if fullMessage == "" {
-			return errors.New("telegram is disabled or message is empty") // Assuming disabled if message is empty
-		}
-
-		endpoint := conf.TelegramEndpoint + conf.TelegramBotToken + "/sendMessage"
-
-		data := url.Values{}
-		data.Set("chat_id", conf.TelegramChatID)
-		data.Set("text", fullMessage)
-		data.Set("parse_mode", "HTML") // Use HTML for basic formatting if title is present
-
-		resp, err := http.PostForm(endpoint, data)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to send message: %v", err)
-			continue
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf("telegram API returned non-OK status: %d", resp.StatusCode)
-			continue
-		}
-
-		var result struct {
-			Ok          bool   `json:"ok"`
-			Description string `json:"description"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			lastErr = err
-			continue
-		}
-
-		if !result.Ok {
-			lastErr = fmt.Errorf("telegram API error: %s", result.Description)
-			continue
-		}
-
-		return nil
+	var err error
+	conf, err := config.Get()
+	if err != nil {
+		return err
 	}
-	return lastErr
+
+	if fullMessage == "" {
+		return errors.New("message is empty")
+	}
+
+	endpoint := conf.TelegramEndpoint + conf.TelegramBotToken + "/sendMessage"
+
+	data := url.Values{}
+	data.Set("chat_id", conf.TelegramChatID)
+	data.Set("text", fullMessage)
+	data.Set("parse_mode", "HTML")
+
+	resp, err := http.PostForm(endpoint, data)
+	if err != nil {
+		return fmt.Errorf("failed to send message: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("telegram API returned non-OK status: %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Ok          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return err
+	}
+
+	if !result.Ok {
+		return fmt.Errorf("telegram API error: %s", result.Description)
+	}
+
+	return nil
 }
