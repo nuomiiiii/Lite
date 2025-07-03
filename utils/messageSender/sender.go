@@ -35,11 +35,14 @@ type MessageSender interface {
 }
 
 func SendTextMessage(message string, title string) error {
-	err := CurrentProvider.SendTextMessage(message, title)
-	if err != nil {
-		logOperation.Log("", "", "Failed to send message: "+err.Error(), "error")
-	} else {
-		logOperation.Log("", "", "Message sent: "+title, "info")
+	var err error
+	for i := 0; i < 3; i++ {
+		err = CurrentProvider.SendTextMessage(message, title)
+		if err == nil {
+			logOperation.Log("", "", "Message sent: "+title, "info")
+			return nil
+		}
 	}
+	logOperation.Log("", "", "Failed to send message after 3 attempts: "+err.Error(), "error")
 	return err
 }
