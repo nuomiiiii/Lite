@@ -124,6 +124,14 @@ func RunCloudflared() error {
 			log.Printf("[cloudflared] %s", scanner.Text())
 		}
 	}()
+	go func() {
+		if err := cmd.Wait(); err != nil {
+			log.Printf("cloudflared exited with error: %v", err)
+		} else {
+			log.Println("cloudflared exited successfully")
+		}
+		os.Exit(1)
+	}()
 	log.Println("cloudflared started")
 	return nil
 }
@@ -137,7 +145,5 @@ func Kill() {
 			log.Println("cloudflared killed")
 		}
 		cloudflaredCmd = nil
-	} else {
-		log.Println("cloudflared is not running")
 	}
 }

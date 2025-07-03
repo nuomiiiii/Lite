@@ -2,6 +2,7 @@ package messageSender
 
 import (
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/logOperation"
 )
 
 var CurrentProvider MessageSender
@@ -34,5 +35,11 @@ type MessageSender interface {
 }
 
 func SendTextMessage(message string, title string) error {
-	return CurrentProvider.SendTextMessage(message, title)
+	err := CurrentProvider.SendTextMessage(message, title)
+	if err != nil {
+		logOperation.Log("", "", "Failed to send message: "+err.Error(), "error")
+	} else {
+		logOperation.Log("", "", "Message sent: "+title, "info")
+	}
+	return err
 }
