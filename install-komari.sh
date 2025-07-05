@@ -262,6 +262,7 @@ install_binary() {
     
     if systemctl is-active --quiet ${SERVICE_NAME}.service; then
         log_success "Komari 服务启动成功"
+        show_binary_info
         show_access_info
     else
         log_error "Komari 服务启动失败"
@@ -376,6 +377,26 @@ show_docker_info() {
     fi
 }
 
+# Show binary installation info
+show_binary_info() {
+    echo
+    log_config "二进制安装信息："
+    log_config "  安装目录: ${GREEN}$INSTALL_DIR${NC}"
+    log_config "  服务名称: ${GREEN}$SERVICE_NAME${NC}"
+    log_config "  监听端口: ${GREEN}$PORT${NC}"
+    
+    log_step "获取默认登录信息..."
+    sleep 2
+    local logs=$(journalctl -u ${SERVICE_NAME} --since "2 minutes ago" | grep -i "Default admin account created" | tail -1)
+    if [ -n "$logs" ]; then
+        echo
+        log_success "默认登录信息："
+        echo -e "${GREEN}$logs${NC}"
+    else
+        log_warning "未找到默认登录信息，请查看服务日志: journalctl -u ${SERVICE_NAME} -f"
+    fi
+}
+
 # Show access information
 show_access_info() {
     echo
@@ -487,6 +508,14 @@ upgrade_binary() {
         local version_info=$(journalctl -u ${SERVICE_NAME} --since "1 minute ago" | grep "Komari Monitor" | tail -1)
         if [ -n "$version_info" ]; then
             log_info "版本信息: ${GREEN}$version_info${NC}"
+        fi
+        
+        # Show login info if this is a fresh installation
+        local login_info=$(journalctl -u ${SERVICE_NAME} --since "2 minutes ago" | grep -i "Default admin account created" | tail -1)
+        if [ -n "$login_info" ]; then
+            echo
+            log_success "默认登录信息："
+            echo -e "${GREEN}$login_info${NC}"
         fi
         
         show_access_info
