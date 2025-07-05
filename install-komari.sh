@@ -81,6 +81,12 @@ detect_arch() {
         aarch64)
             echo "arm64"
             ;;
+        i386|i686)
+            echo "386"
+            ;;
+        riscv64)
+            echo "riscv64"
+            ;;
         *)
             log_error "不支持的架构: $arch"
             exit 1
@@ -230,7 +236,7 @@ install_binary() {
     mkdir -p "$INSTALL_DIR"
     
     # Download binary
-    local file_name="komari_linux_${arch}"
+    local file_name="komari-linux-${arch}"
     local download_url="https://github.com/komari-monitor/komari/releases/latest/download/${file_name}"
     local binary_path="${INSTALL_DIR}/komari"
     
@@ -453,7 +459,7 @@ upgrade_binary() {
     
     # Download new version
     local arch=$(detect_arch)
-    local file_name="komari_linux_${arch}"
+    local file_name="komari-linux-${arch}"
     local download_url="https://github.com/komari-monitor/komari/releases/latest/download/${file_name}"
     local binary_path="${INSTALL_DIR}/komari"
     
