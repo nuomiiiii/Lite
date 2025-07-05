@@ -32,7 +32,7 @@ log_step() {
 }
 
 log_config() {
-    echo -e "${CYAN}[CONFIG]${NC} $1"
+    echo -e "${NC} $1"
 }
 
 # Default configuration
