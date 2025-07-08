@@ -37,20 +37,21 @@ type Client struct {
 
 // User represents an authenticated user
 type User struct {
-	UUID      string  `json:"uuid,omitempty" gorm:"type:varchar(36);primaryKey"`
-	Username  string  `json:"username" gorm:"type:varchar(50);unique;not null"`
-	Passwd    string  `json:"passwd,omitempty" gorm:"type:varchar(255);not null"` // Hashed password
-	SSOType   string  `json:"sso_type" gorm:"type:varchar(20)"`                   // e.g., "github", "google"
-	SSOID     string  `json:"sso_id" gorm:"type:varchar(100)"`                    // OAuth provider's user ID
-	TwoFactor string  `json:"two_factor,omitempty" gorm:"type:varchar(255)"`      // 2FA secret
-	CreatedAt UTCTime `json:"created_at"`
-	UpdatedAt UTCTime `json:"updated_at"`
+	UUID      string    `json:"uuid,omitempty" gorm:"type:varchar(36);primaryKey"`
+	Username  string    `json:"username" gorm:"type:varchar(50);unique;not null"`
+	Passwd    string    `json:"passwd,omitempty" gorm:"type:varchar(255);not null"` // Hashed password
+	SSOType   string    `json:"sso_type" gorm:"type:varchar(20)"`                   // e.g., "github", "google"
+	SSOID     string    `json:"sso_id" gorm:"type:varchar(100)"`                    // OAuth provider's user ID
+	TwoFactor string    `json:"two_factor,omitempty" gorm:"type:varchar(255)"`      // 2FA secret
+	Sessions  []Session `json:"sessions,omitempty" gorm:"foreignKey:UUID;references:UUID;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
+	CreatedAt UTCTime   `json:"created_at"`
+	UpdatedAt UTCTime   `json:"updated_at"`
 }
 
 // Session manages user sessions
 type Session struct {
-	UUID            string  `json:"uuid" gorm:"type:varchar(36);foreignKey:UserUUID;references:UUID;constraint:OnDelete:CASCADE"`
-	Session         string  `json:"session" gorm:"type:varchar(255);uniqueIndex:idx_sessions_session;not null"`
+	UUID            string  `json:"uuid" gorm:"type:varchar(36)"`
+	Session         string  `json:"session" gorm:"type:varchar(255);primaryKey;uniqueIndex:idx_sessions_session;not null"`
 	UserAgent       string  `json:"user_agent" gorm:"type:text"`
 	Ip              string  `json:"ip" gorm:"type:varchar(100)"`
 	LoginMethod     string  `json:"login_method" gorm:"type:varchar(50)"`
@@ -63,7 +64,7 @@ type Session struct {
 
 // Record logs client metrics over time
 type Record struct {
-	Client         string  `json:"client" gorm:"type:varchar(36);index;foreignKey:ClientUUID;references:UUID;constraint:OnDelete:CASCADE"`
+	Client         string  `json:"client" gorm:"type:varchar(36);index"`
 	Time           UTCTime `json:"time" gorm:"index"`
 	Cpu            float32 `json:"cpu" gorm:"type:decimal(5,2)"` // e.g., 75.50%
 	Gpu            float32 `json:"gpu" gorm:"type:decimal(5,2)"`
