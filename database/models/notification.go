@@ -13,12 +13,11 @@ type OfflineNotification struct {
 // LoadNotification 定义了基于资源占用达标时间比的负载通知规则
 type LoadNotification struct {
 	Id           uint        `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
+	Name         string      `json:"name" gorm:"type:varchar(255)"`
 	Clients      StringArray `json:"clients" gorm:"type:longtext"`
-	Enable       bool        `json:"enable" gorm:"type:boolean;default:false"`
 	Metric       string      `json:"metric" gorm:"type:varchar(50);not null;default:'cpu'"`     // 监控指标，如 cpu, ram, load
 	Threshold    float32     `json:"threshold" gorm:"type:decimal(5,2);not null;default:80.00"` // 阈值百分比
-	Window       int         `json:"window" gorm:"type:int;not null;default:300"`               // 观测窗口（秒）
 	Ratio        float32     `json:"ratio" gorm:"type:decimal(5,2);not null;default:0.80"`      // 达标时间比
-	Cooldown     int         `json:"cooldown" gorm:"type:int;not null;default:1800"`            // 冷却时间（秒）
+	Interval     int         `json:"interval" gorm:"type:int;not null;default:15"`              // 监测间隔（分钟）
 	LastNotified UTCTime     `json:"last_notified"`                                             // 上次通知时间
 }

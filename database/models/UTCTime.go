@@ -140,6 +140,7 @@ func GetAppLocation() *time.Location {
 			appLocation = defaultLocation
 			log.Printf("Info: Environment variable TZ not set, using default UTC timezone (%s).\n", appLocation.String())
 		}
+		time.Local = appLocation // 设置全局时区
 	})
 	return appLocation
 }

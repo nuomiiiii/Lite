@@ -26,6 +26,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/models"
+	d_notification "github.com/komari-monitor/komari/database/notification"
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/public"
@@ -221,6 +222,13 @@ var ServerCmd = &cobra.Command{
 				notificationGroup.POST("/offline/edit", notification.EditOfflineNotification)
 				notificationGroup.POST("/offline/enable", notification.EnableOfflineNotification)
 				notificationGroup.POST("/offline/disable", notification.DisableOfflineNotification)
+				loadAlertGroup := notificationGroup.Group("/load")
+				{
+					loadAlertGroup.GET("/", notification.GetAllLoadNotifications)
+					loadAlertGroup.POST("/add", notification.AddLoadNotification)
+					loadAlertGroup.POST("/delete", notification.DeleteLoadNotification)
+					loadAlertGroup.POST("/edit", notification.EditLoadNotification)
+				}
 			}
 
 			pingTaskGroup := adminAuthrized.Group("/ping")
@@ -299,6 +307,7 @@ func InitDatabase() {
 // #region 定时任务
 func DoScheduledWork() {
 	tasks.ReloadPingSchedule()
+	d_notification.ReloadLoadNotificationSchedule()
 	ticker := time.NewTicker(time.Minute * 30)
 	minute := time.NewTicker(60 * time.Second)
 	//records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
