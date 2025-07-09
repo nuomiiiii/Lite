@@ -31,6 +31,7 @@ type Client struct {
 	BillingCycle   int     `json:"billing_cycle"`
 	Currency       string  `json:"currency" gorm:"type:varchar(20);default:'$'"`
 	ExpiredAt      UTCTime `json:"expired_at" gorm:"type:timestamp"`
+	Group          string  `json:"group" gorm:"type:varchar(100)"`
 	CreatedAt      UTCTime `json:"created_at"`
 	UpdatedAt      UTCTime `json:"updated_at"`
 }

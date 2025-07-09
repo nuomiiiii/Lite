@@ -43,6 +43,6 @@ func SendTextMessage(message string, title string) error {
 			return nil
 		}
 	}
-	logOperation.Log("", "", "Failed to send message after 3 attempts: "+err.Error(), "error")
+	logOperation.Log("", "", "Failed to send message after 3 attempts: "+err.Error()+","+title, "error")
 	return err
 }
