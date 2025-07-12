@@ -113,7 +113,12 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		c.Header("Content-Type", "text/html")
 		c.Status(200)
 
-		c.Writer.WriteString(IndexFile)
+		if strings.HasPrefix(c.Request.RequestURI, "/admin") {
+			c.Writer.WriteString(RawIndexFile)
+		} else {
+			c.Writer.WriteString(IndexFile)
+		}
+
 		c.Writer.Flush()
 		c.Writer.WriteHeaderNow()
 	})
