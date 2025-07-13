@@ -6,8 +6,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
+	"github.com/komari-monitor/komari/database/auditlog"
 	clipboardDB "github.com/komari-monitor/komari/database/clipboard"
-	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/models"
 )
 
@@ -49,7 +49,7 @@ func CreateClipboard(c *gin.Context) {
 		return
 	}
 	userUUID, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), userUUID.(string), "create clipboard:"+strconv.Itoa(req.Id), "info")
+	auditlog.Log(c.ClientIP(), userUUID.(string), "create clipboard:"+strconv.Itoa(req.Id), "info")
 	api.RespondSuccess(c, req)
 }
 
@@ -71,7 +71,7 @@ func UpdateClipboard(c *gin.Context) {
 		return
 	}
 	userUUID, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), userUUID.(string), "update clipboard:"+strconv.Itoa(id), "info")
+	auditlog.Log(c.ClientIP(), userUUID.(string), "update clipboard:"+strconv.Itoa(id), "info")
 	api.RespondSuccess(c, nil)
 }
 
@@ -88,7 +88,7 @@ func DeleteClipboard(c *gin.Context) {
 		return
 	}
 	userUUID, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), userUUID.(string), "delete clipboard:"+strconv.Itoa(id), "warn")
+	auditlog.Log(c.ClientIP(), userUUID.(string), "delete clipboard:"+strconv.Itoa(id), "warn")
 	api.RespondSuccess(c, nil)
 }
 
@@ -110,6 +110,6 @@ func BatchDeleteClipboard(c *gin.Context) {
 		return
 	}
 	userUUID, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), userUUID.(string), "batch delete clipboard: "+strconv.Itoa(len(req.IDs))+" items", "warn")
+	auditlog.Log(c.ClientIP(), userUUID.(string), "batch delete clipboard: "+strconv.Itoa(len(req.IDs))+" items", "warn")
 	api.RespondSuccess(c, nil)
 }

@@ -1,4 +1,4 @@
-package logOperation
+package auditlog
 
 import (
 	"log"

@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/records"
 )
 
@@ -28,7 +28,7 @@ func AddClient(c *gin.Context) {
 		return
 	}
 	user_uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), user_uuid.(string), "create client:"+uuid, "info")
+	auditlog.Log(c.ClientIP(), user_uuid.(string), "create client:"+uuid, "info")
 	c.JSON(http.StatusOK, gin.H{"status": "success", "uuid": uuid, "token": token, "message": ""})
 }
 
@@ -50,7 +50,7 @@ func EditClient(c *gin.Context) {
 		return
 	}
 	user_uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), user_uuid.(string), "edit client:"+uuid, "info")
+	auditlog.Log(c.ClientIP(), user_uuid.(string), "edit client:"+uuid, "info")
 	c.JSON(http.StatusOK, gin.H{"status": "success"})
 }
 
@@ -65,7 +65,7 @@ func RemoveClient(c *gin.Context) {
 		return
 	}
 	user_uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), user_uuid.(string), "delete client:"+uuid, "warn")
+	auditlog.Log(c.ClientIP(), user_uuid.(string), "delete client:"+uuid, "warn")
 	c.JSON(200, gin.H{"status": "success"})
 }
 
@@ -78,7 +78,7 @@ func ClearRecord(c *gin.Context) {
 		return
 	}
 	user_uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), user_uuid.(string), "clear records", "warn")
+	auditlog.Log(c.ClientIP(), user_uuid.(string), "clear records", "warn")
 	c.JSON(200, gin.H{"status": "success"})
 }
 

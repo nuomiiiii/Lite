@@ -3,7 +3,7 @@ package notification
 import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
-	load_notification "github.com/komari-monitor/komari/utils/notification"
+	"github.com/komari-monitor/komari/utils/notifier"
 	"gorm.io/gorm"
 )
 
@@ -64,5 +64,5 @@ func ReloadLoadNotificationSchedule() error {
 	if err := db.Find(&loadNotifications).Error; err != nil {
 		return err
 	}
-	return load_notification.ReloadLoadNotificationSchedule(loadNotifications)
+	return notifier.ReloadLoadNotificationSchedule(loadNotifications)
 }

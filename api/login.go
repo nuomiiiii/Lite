@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/config"
-	"github.com/komari-monitor/komari/database/logOperation"
 
 	"github.com/gin-gonic/gin"
 )
@@ -63,13 +63,13 @@ func Login(c *gin.Context) {
 		return
 	}
 	c.SetCookie("session_token", session, 2592000, "/", "", false, true)
-	logOperation.Log(c.ClientIP(), uuid, "logged in (password)", "login")
+	auditlog.Log(c.ClientIP(), uuid, "logged in (password)", "login")
 	RespondSuccess(c, gin.H{"set-cookie": gin.H{"session_token": session}})
 }
 func Logout(c *gin.Context) {
 	session, _ := c.Cookie("session_token")
 	accounts.DeleteSession(session)
 	c.SetCookie("session_token", "", -1, "/", "", false, true)
-	logOperation.Log(c.ClientIP(), "", "logged out", "logout")
+	auditlog.Log(c.ClientIP(), "", "logged out", "logout")
 	c.Redirect(302, "/")
 }

@@ -5,8 +5,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/config"
-	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/utils/oauth"
 )
 
@@ -68,7 +68,7 @@ func OAuthCallback(c *gin.Context) {
 			c.JSON(500, gin.H{"status": "error", "message": "Binding failed"})
 			return
 		}
-		logOperation.Log(c.ClientIP(), user.UUID, "bound external account (OAuth)"+fmt.Sprintf(",sso_id: %s", sso_id), "login")
+		auditlog.Log(c.ClientIP(), user.UUID, "bound external account (OAuth)"+fmt.Sprintf(",sso_id: %s", sso_id), "login")
 		c.Redirect(302, "/manage")
 		return
 	}
@@ -92,6 +92,6 @@ func OAuthCallback(c *gin.Context) {
 
 	// 设置cookie并返回
 	c.SetCookie("session_token", session, 2592000, "/", "", false, true)
-	logOperation.Log(c.ClientIP(), user.UUID, "logged in (OAuth)", "login")
+	auditlog.Log(c.ClientIP(), user.UUID, "logged in (OAuth)", "login")
 	c.Redirect(302, "/manage")
 }

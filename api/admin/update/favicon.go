@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
-	"github.com/komari-monitor/komari/database/logOperation"
+	"github.com/komari-monitor/komari/database/auditlog"
 )
 
 func UploadFavicon(c *gin.Context) {
@@ -27,7 +27,7 @@ func UploadFavicon(c *gin.Context) {
 		return
 	}
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "Favicon uploaded", "info")
+	auditlog.Log(c.ClientIP(), uuid.(string), "Favicon uploaded", "info")
 	api.RespondSuccess(c, nil)
 }
 
@@ -41,6 +41,6 @@ func DeleteFavicon(c *gin.Context) {
 		return
 	}
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "Favicon deleted", "info")
+	auditlog.Log(c.ClientIP(), uuid.(string), "Favicon deleted", "info")
 	api.RespondSuccess(c, nil)
 }

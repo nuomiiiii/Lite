@@ -17,7 +17,7 @@ import (
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/tasks"
-	"github.com/komari-monitor/komari/utils/notification"
+	"github.com/komari-monitor/komari/utils/notifier"
 	"github.com/komari-monitor/komari/ws"
 	"github.com/patrickmn/go-cache"
 )
@@ -115,10 +115,10 @@ func WebSocketReport(c *gin.Context) {
 		return
 	}
 	ws.SetConnectedClients(uuid, conn)
-	go notification.OnlineNotification(uuid)
+	go notifier.OnlineNotification(uuid)
 	defer func() {
 		ws.DeleteConnectedClients(uuid)
-		notification.OfflineNotification(uuid)
+		notifier.OfflineNotification(uuid)
 	}()
 
 	for {
