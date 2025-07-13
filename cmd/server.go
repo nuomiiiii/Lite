@@ -34,7 +34,7 @@ import (
 	"github.com/komari-monitor/komari/utils/cloudflared"
 	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/utils/messageSender"
-	u_notification "github.com/komari-monitor/komari/utils/notification"
+	"github.com/komari-monitor/komari/utils/notifier"
 	"github.com/komari-monitor/komari/ws"
 	"github.com/spf13/cobra"
 )
@@ -313,7 +313,7 @@ func DoScheduledWork() {
 	//records.DeleteRecordBefore(time.Now().Add(-time.Hour * 24 * 30))
 	records.CompactRecord()
 	cfg, _ := config.Get()
-	go u_notification.CheckExpireScheduledWork()
+	go notifier.CheckExpireScheduledWork()
 	for {
 		select {
 		case <-ticker.C:
