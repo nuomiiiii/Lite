@@ -22,9 +22,9 @@ import (
 	"github.com/komari-monitor/komari/api/record"
 	"github.com/komari-monitor/komari/cmd/flags"
 	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/models"
 	d_notification "github.com/komari-monitor/komari/database/notification"
 	"github.com/komari-monitor/komari/database/records"
@@ -321,7 +321,7 @@ func DoScheduledWork() {
 			records.CompactRecord()
 			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * time.Duration(cfg.RecordPreserveTime)))
 			tasks.DeletePingRecordsBefore(time.Now().Add(-time.Hour * time.Duration(cfg.PingRecordPreserveTime)))
-			logOperation.RemoveOldLogs()
+			auditlog.RemoveOldLogs()
 		case <-minute.C:
 			api.SaveClientReportToDB()
 			if !cfg.RecordEnabled {
@@ -334,11 +334,11 @@ func DoScheduledWork() {
 }
 
 func OnShutdown() {
-	logOperation.Log("", "", "server is shutting down", "info")
+	auditlog.Log("", "", "server is shutting down", "info")
 	cloudflared.Kill()
 }
 
 func OnFatal(err error) {
-	logOperation.Log("", "", "server encountered a fatal error: "+err.Error(), "error")
+	auditlog.Log("", "", "server encountered a fatal error: "+err.Error(), "error")
 	cloudflared.Kill()
 }

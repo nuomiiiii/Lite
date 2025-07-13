@@ -3,7 +3,7 @@ package admin
 import (
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/accounts"
-	"github.com/komari-monitor/komari/database/logOperation"
+	"github.com/komari-monitor/komari/database/auditlog"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,7 +33,7 @@ func DeleteSession(c *gin.Context) {
 		return
 	}
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "delete session", "info")
+	auditlog.Log(c.ClientIP(), uuid.(string), "delete session", "info")
 	api.RespondSuccess(c, nil)
 }
 
@@ -45,6 +45,6 @@ func DeleteAllSession(c *gin.Context) {
 		return
 	}
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "delete all sessions", "warn")
+	auditlog.Log(c.ClientIP(), uuid.(string), "delete all sessions", "warn")
 	api.RespondSuccess(c, nil)
 }

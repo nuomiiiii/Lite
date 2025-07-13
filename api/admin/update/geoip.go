@@ -3,7 +3,7 @@ package update
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
-	"github.com/komari-monitor/komari/database/logOperation"
+	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/utils/geoip"
 )
 
@@ -13,6 +13,6 @@ func UpdateMmdbGeoIP(c *gin.Context) {
 		return
 	}
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "GeoIP database updated", "info")
+	auditlog.Log(c.ClientIP(), uuid.(string), "GeoIP database updated", "info")
 	api.RespondSuccess(c, nil)
 }

@@ -4,8 +4,8 @@ import (
 	"database/sql"
 
 	"github.com/komari-monitor/komari/api"
+	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/config"
-	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/database/tasks"
@@ -59,7 +59,7 @@ func EditSettings(c *gin.Context) {
 	if len(message) > 2 {
 		message = message[:len(message)-2]
 	}
-	logOperation.Log(c.ClientIP(), uuid.(string), message, "info")
+	auditlog.Log(c.ClientIP(), uuid.(string), message, "info")
 	api.RespondSuccess(c, nil)
 }
 
@@ -76,6 +76,6 @@ func ClearAllRecords(c *gin.Context) {
 	records.DeleteAll()
 	tasks.DeleteAllPingRecords()
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "clear all records", "info")
+	auditlog.Log(c.ClientIP(), uuid.(string), "clear all records", "info")
 	api.RespondSuccess(c, nil)
 }

@@ -3,8 +3,8 @@ package admin
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
+	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/logOperation"
 	"github.com/komari-monitor/komari/database/models"
 )
 
@@ -23,6 +23,6 @@ func OrderWeight(c *gin.Context) {
 		}
 	}
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "order clients", "info")
+	auditlog.Log(c.ClientIP(), uuid.(string), "order clients", "info")
 	api.RespondSuccess(c, nil)
 }

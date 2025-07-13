@@ -4,7 +4,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/accounts"
-	"github.com/komari-monitor/komari/database/logOperation"
+	"github.com/komari-monitor/komari/database/auditlog"
 )
 
 func UpdateUser(c *gin.Context) {
@@ -35,6 +35,6 @@ func UpdateUser(c *gin.Context) {
 		return
 	}
 	uuid, _ := c.Get("uuid")
-	logOperation.Log(c.ClientIP(), uuid.(string), "User updated", "warn")
+	auditlog.Log(c.ClientIP(), uuid.(string), "User updated", "warn")
 	api.RespondSuccess(c, gin.H{"uuid": req.Uuid})
 }

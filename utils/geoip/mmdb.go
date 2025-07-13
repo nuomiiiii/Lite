@@ -10,7 +10,7 @@ import (
 	"path/filepath" // 新增导入，用于处理文件路径
 	"sync"
 
-	"github.com/komari-monitor/komari/database/logOperation"
+	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/oschwald/maxminddb-golang"
 )
 
@@ -55,21 +55,21 @@ func NewMaxMindGeoIPService() (*MaxMindGeoIPService, error) {
 
 	// 确保数据目录存在
 	if err := os.MkdirAll(filepath.Dir(dbFilePath), os.ModePerm); err != nil {
-		logOperation.Log("", "", "Failed to create data directory for MaxMind database: "+err.Error(), "error")
+		auditlog.Log("", "", "Failed to create data directory for MaxMind database: "+err.Error(), "error")
 		return nil, fmt.Errorf("failed to create data directory for MaxMind database: %w", err)
 	}
 
 	// 检查数据库文件是否存在，如果不存在则尝试下载
 	if _, err := os.Stat(dbFilePath); os.IsNotExist(err) {
 		if err := service.UpdateDatabase(); err != nil {
-			logOperation.Log("", "", "Failed to download initial MaxMind database: "+err.Error(), "error")
+			auditlog.Log("", "", "Failed to download initial MaxMind database: "+err.Error(), "error")
 			return nil, fmt.Errorf("failed to download initial MaxMind database: %w", err)
 		}
 	}
 
 	// 初始化或重新加载 MaxMind 数据库。
 	if err := service.initialize(); err != nil {
-		logOperation.Log("", "", "Failed to initialize MaxMind database: "+err.Error(), "error")
+		auditlog.Log("", "", "Failed to initialize MaxMind database: "+err.Error(), "error")
 		return nil, fmt.Errorf("failed to initialize MaxMind database: %w", err)
 	}
 	return service, nil
