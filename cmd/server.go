@@ -64,6 +64,10 @@ func RunServer() {
 	if err := os.MkdirAll("./data", os.ModePerm); err != nil {
 		log.Fatalf("Failed to create data directory: %v", err)
 	}
+	// 创建主题目录
+	if err := os.MkdirAll("./data/theme", os.ModePerm); err != nil {
+		log.Fatalf("Failed to create theme directory: %v", err)
+	}
 	InitDatabase()
 	if utils.VersionHash != "unknown" {
 		gin.SetMode(gin.ReleaseMode)
@@ -176,6 +180,15 @@ func RunServer() {
 		// settings
 		adminAuthrized.GET("/settings", admin.GetSettings)
 		adminAuthrized.POST("/settings", admin.EditSettings)
+
+		// themes
+		themeGroup := adminAuthrized.Group("/theme")
+		{
+			themeGroup.PUT("/upload", admin.UploadTheme)
+			themeGroup.GET("/list", admin.ListThemes)
+			themeGroup.POST("/delete", admin.DeleteTheme)
+			themeGroup.GET("/set", admin.SetTheme)
+		}
 		// clients
 		clientGroup := adminAuthrized.Group("/client")
 		{
