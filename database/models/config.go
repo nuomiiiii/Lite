@@ -5,6 +5,7 @@ type Config struct {
 	Sitename    string `json:"sitename" gorm:"type:varchar(100);not null"`
 	Description string `json:"description" gorm:"type:text"`
 	AllowCors   bool   `json:"allow_cors" gorm:"column:allow_cors;default:false"`
+	Theme       string `json:"theme" gorm:"type:varchar(100);default:'default'"` // 主题名称，默认 'default'
 	// GeoIP 配置
 	GeoIpEnabled  bool   `json:"geo_ip_enabled" gorm:"default:true"`
 	GeoIpProvider string `json:"geo_ip_provider" gorm:"type:varchar(20);default:'ip-api'"` // empty, mmdb, ip-api, geojs
