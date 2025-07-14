@@ -32,6 +32,7 @@ type Client struct {
 	Currency       string  `json:"currency" gorm:"type:varchar(20);default:'$'"`
 	ExpiredAt      UTCTime `json:"expired_at" gorm:"type:timestamp"`
 	Group          string  `json:"group" gorm:"type:varchar(100)"`
+	Tags           string  `json:"tags" gorm:"type:text"` // split by ';'
 	CreatedAt      UTCTime `json:"created_at"`
 	UpdatedAt      UTCTime `json:"updated_at"`
 }
