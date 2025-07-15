@@ -112,7 +112,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		path := c.Request.URL.Path
 
 		// 对于admin页面，直接使用embedded文件
-		if strings.HasPrefix(path, "/admin") {
+		if strings.HasPrefix(path, "/admin") || strings.HasPrefix(path, "/terminal") {
 			serveFromEmbedded(c, path)
 			return
 		}
@@ -165,7 +165,7 @@ func serveFromEmbedded(c *gin.Context, path string) {
 	c.Header("Content-Type", "text/html")
 	c.Status(200)
 
-	if strings.HasPrefix(path, "/admin") {
+	if strings.HasPrefix(path, "/admin") || strings.HasPrefix(path, "/terminal") {
 		c.Writer.WriteString(RawIndexFile)
 	} else {
 		c.Writer.WriteString(IndexFile)
