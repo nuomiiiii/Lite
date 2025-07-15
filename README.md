@@ -78,7 +78,7 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
    默认监听 `25774` 端口，访问 `http://localhost:25774`。
 
 ## 前端开发指南
-这个坑晚点再填吧 ヽ(￣ω￣(￣ω￣〃)ゝ
+[Komari 主题开发指南 | Komari](https://komari-monitor.github.io/komari-document/dev/theme.html)
 
 ## 客户端 Agent 开发指南
 [Komari Agent 信息上报与事件处理文档](https://komari-monitor.github.io/komari-document/dev/agent.html)
