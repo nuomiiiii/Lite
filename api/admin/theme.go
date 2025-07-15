@@ -268,7 +268,7 @@ func loadThemeConfig(configPath string) (models.Theme, error) {
 
 // isValidThemeShort 验证主题short字段格式
 func isValidThemeShort(short string) bool {
-	if short == "" {
+	if short == "" || short == "default" {
 		return false
 	}
 
