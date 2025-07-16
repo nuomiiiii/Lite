@@ -29,6 +29,7 @@ type Client struct {
 	Weight         int     `json:"weight" gorm:"type:int"`
 	Price          float64 `json:"price"`
 	BillingCycle   int     `json:"billing_cycle"`
+	AutoRenewal    bool    `json:"auto_renewal" gorm:"default:false"` // 是否自动续费
 	Currency       string  `json:"currency" gorm:"type:varchar(20);default:'$'"`
 	ExpiredAt      UTCTime `json:"expired_at" gorm:"type:timestamp"`
 	Group          string  `json:"group" gorm:"type:varchar(100)"`

@@ -21,6 +21,10 @@ func Log(ip, uuid, message, msgType string) {
 	db.Create(logEntry)
 }
 
+func EventLog(eventType, message string) {
+	Log("", "", message, eventType)
+}
+
 // Delete logs older than 30 days
 func RemoveOldLogs() {
 	db := dbcore.GetDBInstance()
