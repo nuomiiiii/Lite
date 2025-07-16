@@ -11,6 +11,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils/messageSender"
+	"github.com/komari-monitor/komari/utils/renewal"
 )
 
 // notificationState 保存单个客户端的通知状态。
@@ -119,7 +120,8 @@ func OnlineNotification(clientID string) {
 	if err != nil {
 		return
 	}
-
+	// 上线时检测续费
+	renewal.CheckAndAutoRenewal(client)
 	_, enabled := getNotificationConfig(clientID)
 	if !enabled {
 		return

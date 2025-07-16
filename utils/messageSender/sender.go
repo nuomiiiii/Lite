@@ -36,6 +36,13 @@ type MessageSender interface {
 
 func SendTextMessage(message string, title string) error {
 	var err error
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+	if !cfg.NotificationEnabled {
+		return nil
+	}
 	for i := 0; i < 3; i++ {
 		err = CurrentProvider.SendTextMessage(message, title)
 		if err == nil {
