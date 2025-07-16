@@ -8,6 +8,7 @@ import (
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/utils/messageSender"
+	"github.com/komari-monitor/komari/utils/renewal"
 )
 
 func CheckExpireScheduledWork() {
@@ -76,6 +77,9 @@ func CheckExpireScheduledWork() {
 
 		// 等待1秒，防止多次触发
 		time.Sleep(time.Second)
+		for _, client := range clients_all {
+			renewal.CheckAndAutoRenewal(client)
+		}
 	}
 
 }
