@@ -87,8 +87,9 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 欢迎提交 Issue 或 Pull Request！
 
 ## 鸣谢
+ - [DreamCloud - 极高性价比解锁直连亚太高防](https://as211392.com/)
  - 感谢我自己能这么闲
- - 广告位招租喵
+ - 提交PR、制作主题的各位开发者
 
 ## Star History
 
