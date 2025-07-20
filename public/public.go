@@ -103,6 +103,32 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		}
 		c.Data(http.StatusOK, "image/x-icon", data)
 	})
+	r.GET("/manifest.json", func(c *gin.Context) {
+		cfg, err := config.Get()
+		if cfg.Theme == "default" || cfg.Theme == "" || err != nil {
+			// 使用默认主题的manifest.json
+			f, err := DistFS.Open("manifest.json")
+			if err != nil {
+				c.Status(http.StatusNotFound)
+				return
+			}
+			defer f.Close()
+			data, err := io.ReadAll(f)
+			if err != nil {
+				c.Status(http.StatusInternalServerError)
+				return
+			}
+			c.Data(http.StatusOK, "application/json", data)
+		} else {
+			// 使用自定义主题的manifest.json
+			themePath := filepath.Join("./data/theme", cfg.Theme, "dist", "manifest.json")
+			if _, err := os.Stat(themePath); os.IsNotExist(err) {
+				c.JSON(http.StatusNotFound, gin.H{"error": "Manifest not found"})
+			} else {
+				c.File(themePath)
+			}
+		}
+	})
 
 	// Serve theme files from data/theme directory (for theme previews and static assets)
 	r.Static("/themes", "./data/theme")
