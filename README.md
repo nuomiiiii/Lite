@@ -15,11 +15,11 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 
 ## 快速开始
 
-### 依赖
-- Docker（快速部署）
-- 或者 Go 1.18+ 和 Node.js 20+（手工构建）
+### 0. 容器云一键部署
 
-### 使用一键安装脚本
+[![](https://raw.githubusercontent.com/ClawCloud/Run-Template/refs/heads/main/Run-on-ClawCloud.svg)](https://template.run.claw.cloud/?openapp=system-fastdeploy%3FtemplateName%3Dkomari)
+
+### 1. 使用一键安装脚本
 适用于使用了 systemd 的发行版（Ubuntu、Debian...）。
 ```bash
 curl -fsSL https://raw.githubusercontent.com/komari-monitor/komari/main/install-komari.sh -o install-komari.sh
@@ -27,7 +27,7 @@ chmod +x install-komari.sh
 sudo ./install-komari.sh
 ```
 
-### Docker 部署
+### 2. Docker 部署
 1. 创建数据目录：
    ```bash
    mkdir -p ./data
@@ -49,7 +49,7 @@ sudo ./install-komari.sh
 > [!NOTE]
 > 你也可以通过环境变量 `ADMIN_USERNAME` 和 `ADMIN_PASSWORD` 自定义初始用户名和密码。
 
-### 二进制文件部署
+### 3. 二进制文件部署
 1. 访问 Komari 的 [GitHub Release 页面](https://github.com/komari-monitor/komari/releases) 下载适用于你操作系统的最新二进制文件。
 2. 运行 Komari：
    ```bash
@@ -63,6 +63,11 @@ sudo ./install-komari.sh
 
 
 ### 手工构建
+
+#### 依赖
+
+- Go 1.18+ 和 Node.js 20+（手工构建）
+
 1. 构建前端静态文件：
    ```bash
    git clone https://github.com/komari-monitor/komari-web
