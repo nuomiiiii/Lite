@@ -19,6 +19,14 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 - Docker（快速部署）
 - 或者 Go 1.18+ 和 Node.js 20+（手工构建）
 
+### 使用一键安装脚本
+适用于使用了 systemd 的发行版（Ubuntu、Debian...）。
+```bash
+curl -fsSL https://raw.githubusercontent.com/komari-monitor/komari/main/install-komari.sh -o install-komari.sh
+chmod +x install-komari.sh
+sudo ./install-komari.sh
+```
+
 ### Docker 部署
 1. 创建数据目录：
    ```bash
