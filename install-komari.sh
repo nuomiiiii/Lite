@@ -23,11 +23,14 @@ log_step() {
     echo -e "${YELLOW}$1${NC}"
 }
 
+
 # Global variables
 INSTALL_DIR="/opt/komari"
 DATA_DIR="/opt/komari/data"
 SERVICE_NAME="komari"
 BINARY_PATH="$INSTALL_DIR/komari"
+DEFAULT_PORT="25774"
+LISTEN_PORT=""
 
 # Show banner
 show_banner() {
@@ -119,6 +122,21 @@ install_binary() {
         return
     fi
 
+
+    # 监听端口输入，校验范围 1-65535
+    while true; do
+        read -p "请输入监听端口 [默认: $DEFAULT_PORT]: " input_port
+        if [[ -z "$input_port" ]]; then
+            LISTEN_PORT="$DEFAULT_PORT"
+            break
+        elif [[ "$input_port" =~ ^[0-9]+$ ]] && (( input_port >= 1 && input_port <= 65535 )); then
+            LISTEN_PORT="$input_port"
+            break
+        else
+            log_error "端口号无效，请输入 1-65535 之间的数字。"
+        fi
+    done
+
     install_dependencies
 
     local arch=$(detect_arch)
@@ -147,13 +165,13 @@ install_binary() {
     if ! check_systemd; then
         log_step "警告：未检测到 systemd，跳过服务创建。"
         log_step "您可以从命令行手动运行 Komari："
-        log_step "    $BINARY_PATH server -l 0.0.0.0:25774"
+        log_step "    $BINARY_PATH server -l 0.0.0.0:$LISTEN_PORT"
         echo
         log_success "安装完成！"
         return
     fi
 
-    create_systemd_service
+    create_systemd_service "$LISTEN_PORT"
 
     systemctl daemon-reload
     systemctl enable ${SERVICE_NAME}.service
@@ -168,7 +186,7 @@ install_binary() {
         if [ -z "$password" ]; then
             log_error "未能获取初始密码，请检查日志"
         fi
-        show_access_info "$password"
+        show_access_info "$password" "$LISTEN_PORT"
     else
         log_error "Komari 服务启动失败"
         log_info "查看日志: journalctl -u ${SERVICE_NAME} -f"
@@ -178,6 +196,7 @@ install_binary() {
 
 # Create systemd service file
 create_systemd_service() {
+    local port="$1"
     log_step "创建 systemd 服务..."
 
     local service_file="/etc/systemd/system/${SERVICE_NAME}.service"
@@ -188,7 +207,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=${BINARY_PATH} server -l 0.0.0.0:25774
+ExecStart=${BINARY_PATH} server -l 0.0.0.0:${port}
 WorkingDirectory=${DATA_DIR}
 Restart=always
 User=root
@@ -203,13 +222,14 @@ EOF
 # Show access information
 show_access_info() {
     local password=$1
+    local port=${2:-$DEFAULT_PORT}
     echo
     log_success "安装完成！"
     echo
     log_info "访问信息："
-    log_info "  URL: http://$(hostname -I | awk '{print $1}'):25774"
+    log_info "  URL: http://$(hostname -I | awk '{print $1}'):${port}"
     if [ -n "$password" ]; then
-        log_info "初始登录信息: $password"
+        log_info "初始登录信息（仅显示一次）: $password"
     fi
     echo
     log_info "服务管理命令："
