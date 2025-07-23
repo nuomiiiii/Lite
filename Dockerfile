@@ -6,6 +6,8 @@ WORKDIR /app
 ARG TARGETOS
 ARG TARGETARCH
 
+RUN apk add --no-cache tzdata
+
 COPY komari-${TARGETOS}-${TARGETARCH} /app/komari
 
 RUN chmod +x /app/komari
