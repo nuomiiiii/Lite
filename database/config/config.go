@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
@@ -10,7 +11,15 @@ import (
 	"gorm.io/gorm"
 )
 
+var mu sync.Mutex
+
+func init() {
+	mu = sync.Mutex{}
+}
+
 func Get() (models.Config, error) {
+	mu.Lock()
+	defer mu.Unlock()
 	db := dbcore.GetDBInstance()
 	var config models.Config
 	if err := db.First(&config).Error; err != nil {
