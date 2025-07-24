@@ -17,6 +17,8 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 
 ### 0. 容器云一键部署
 
+[![](https://rainyun-apps.cn-nb1.rains3.com/materials/deploy-on-rainyun-cn.svg)](https://app.rainyun.com/apps/rca/store/6780/NzYxNzAz_)
+
 [![](https://raw.githubusercontent.com/ClawCloud/Run-Template/refs/heads/main/Run-on-ClawCloud.svg)](https://template.run.claw.cloud/?openapp=system-fastdeploy%3FtemplateName%3Dkomari)
 
 ### 1. 使用一键安装脚本
