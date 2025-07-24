@@ -97,10 +97,10 @@ sudo ./install-komari.sh
    默认监听 `25774` 端口，访问 `http://localhost:25774`。
 
 ## 前端开发指南
-[Komari 主题开发指南 | Komari](https://komari-monitor.github.io/komari-document/dev/theme.html)
+[Komari 主题开发指南 | Komari](https://komari-document.pages.dev/dev/theme.html)
 
 ## 客户端 Agent 开发指南
-[Komari Agent 信息上报与事件处理文档](https://komari-monitor.github.io/komari-document/dev/agent.html)
+[Komari Agent 信息上报与事件处理文档](https://komari-document.pages.dev/dev/agent.html)
 
 ## 贡献
 欢迎提交 Issue 或 Pull Request！
