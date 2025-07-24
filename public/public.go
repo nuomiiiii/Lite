@@ -103,32 +103,32 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		}
 		c.Data(http.StatusOK, "image/x-icon", data)
 	})
-	r.GET("/manifest.json", func(c *gin.Context) {
-		cfg, err := config.Get()
-		if cfg.Theme == "default" || cfg.Theme == "" || err != nil {
-			// 使用默认主题的manifest.json
-			f, err := DistFS.Open("manifest.json")
-			if err != nil {
-				c.Status(http.StatusNotFound)
-				return
-			}
-			defer f.Close()
-			data, err := io.ReadAll(f)
-			if err != nil {
-				c.Status(http.StatusInternalServerError)
-				return
-			}
-			c.Data(http.StatusOK, "application/json", data)
-		} else {
-			// 使用自定义主题的manifest.json
-			themePath := filepath.Join("./data/theme", cfg.Theme, "dist", "manifest.json")
-			if _, err := os.Stat(themePath); os.IsNotExist(err) {
-				c.JSON(http.StatusNotFound, gin.H{"error": "Manifest not found"})
-			} else {
-				c.File(themePath)
-			}
-		}
-	})
+	// r.GET("/manifest.json", func(c *gin.Context) {
+	// 	cfg, err := config.Get()
+	// 	if cfg.Theme == "default" || cfg.Theme == "" || err != nil {
+	// 		// 使用默认主题的manifest.json
+	// 		f, err := DistFS.Open("manifest.json")
+	// 		if err != nil {
+	// 			c.Status(http.StatusNotFound)
+	// 			return
+	// 		}
+	// 		defer f.Close()
+	// 		data, err := io.ReadAll(f)
+	// 		if err != nil {
+	// 			c.Status(http.StatusInternalServerError)
+	// 			return
+	// 		}
+	// 		c.Data(http.StatusOK, "application/json", data)
+	// 	} else {
+	// 		// 使用自定义主题的manifest.json
+	// 		themePath := filepath.Join("./data/theme", cfg.Theme, "dist", "manifest.json")
+	// 		if _, err := os.Stat(themePath); os.IsNotExist(err) {
+	// 			c.JSON(http.StatusNotFound, gin.H{"error": "Manifest not found"})
+	// 		} else {
+	// 			c.File(themePath)
+	// 		}
+	// 	}
+	// })
 
 	// Serve theme files from data/theme directory (for theme previews and static assets)
 	r.Static("/themes", "./data/theme")
@@ -159,26 +159,43 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 // serveFromEmbedded 从嵌入的文件系统服务文件
 func serveFromEmbedded(c *gin.Context, path string) {
 	// 处理静态资源文件夹
-	folders := []string{"assets", "images", "streamer", "static"}
-	for _, folder := range folders {
-		if strings.HasPrefix(path, "/"+folder+"/") {
-			c.Header("Cache-Control", "public, max-age=15552000")
-			sub, err := fs.Sub(DistFS, folder)
-			if err == nil {
-				relativePath := strings.TrimPrefix(path, "/"+folder+"/")
-				file, err := sub.Open(relativePath)
-				if err == nil {
-					defer file.Close()
-					data, err := io.ReadAll(file)
-					if err == nil {
-						// 设置正确的Content-Type
-						contentType := getContentType(path)
-						c.Header("Content-Type", contentType)
-						c.Data(http.StatusOK, contentType, data)
-						return
-					}
-				}
+	// folders := []string{"assets", "images", "streamer", "static"}
+	// for _, folder := range folders {
+	// 	if strings.HasPrefix(path, "/"+folder+"/") {
+	// 		c.Header("Cache-Control", "public, max-age=15552000")
+	// 		sub, err := fs.Sub(DistFS, folder)
+	// 		if err == nil {
+	// 			relativePath := strings.TrimPrefix(path, "/"+folder+"/")
+	// 			file, err := sub.Open(relativePath)
+	// 			if err == nil {
+	// 				defer file.Close()
+	// 				data, err := io.ReadAll(file)
+	// 				if err == nil {
+	// 					// 设置正确的Content-Type
+	// 					contentType := getContentType(path)
+	// 					c.Header("Content-Type", contentType)
+	// 					c.Data(http.StatusOK, contentType, data)
+	// 					return
+	// 				}
+	// 			}
+	// 		}
+	// 	}
+	// }
+	// 如果文件存在，直接返回文件内容
+	cleanPath := strings.TrimPrefix(path, "/")
+	file, err := DistFS.Open(cleanPath)
+	if err == nil {
+		defer file.Close()
+		data, err := io.ReadAll(file)
+		if err == nil {
+			contentType := getContentType(path)
+			c.Header("Content-Type", contentType)
+			// 静态资源设置缓存
+			if strings.Contains(path, "/assets/") || strings.Contains(path, "/static/") {
+				c.Header("Cache-Control", "public, max-age=15552000")
 			}
+			c.Data(http.StatusOK, contentType, data)
+			return
 		}
 	}
 
