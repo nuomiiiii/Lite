@@ -153,6 +153,7 @@ func RunServer() {
 	adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())
 	{
 		adminAuthrized.GET("/download/backup", admin.DownloadBackup)
+		adminAuthrized.POST("/upload/backup", admin.UploadBackup)
 		// test
 		testGroup := adminAuthrized.Group("/test")
 		{
