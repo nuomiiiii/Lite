@@ -42,6 +42,16 @@ func GetRecordsByUUID(c *gin.Context) {
 func GetPingRecords(c *gin.Context) {
 	uuid := c.Query("uuid")
 	hours := c.Query("hours")
+	type RecordsResp struct {
+		TaskId uint   `json:"task_id"`
+		Time   string `json:"time"`
+		Value  int    `json:"value"`
+	}
+	type Resp struct {
+		Count   int           `json:"count"`
+		Records []RecordsResp `json:"records"`
+		Tasks   []gin.H       `json:"tasks,omitempty"` // 任务列表
+	}
 
 	if uuid == "" {
 		api.RespondError(c, 400, "UUID is required")
@@ -63,9 +73,16 @@ func GetPingRecords(c *gin.Context) {
 		return
 	}
 
-	response := gin.H{
-		"records": records,
-		"count":   len(records),
+	response := &Resp{
+		Count:   len(records),
+		Records: []RecordsResp{},
+	}
+	for _, r := range records {
+		response.Records = append(response.Records, RecordsResp{
+			TaskId: r.TaskId,
+			Time:   r.Time.ToTime().Format("2006-01-02 15:04:05"),
+			Value:  r.Value,
+		})
 	}
 
 	if len(records) > 0 {
@@ -103,7 +120,7 @@ func GetPingRecords(c *gin.Context) {
 				})
 			}
 		}
-		response["tasks"] = tasksList
+		response.Tasks = tasksList
 	}
 
 	api.RespondSuccess(c, response)
