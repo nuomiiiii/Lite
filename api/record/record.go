@@ -80,7 +80,7 @@ func GetPingRecords(c *gin.Context) {
 	for _, r := range records {
 		response.Records = append(response.Records, RecordsResp{
 			TaskId: r.TaskId,
-			Time:   r.Time.ToTime().Format("2006-01-02 15:04:05"),
+			Time:   r.Time.ToTime().Format(time.RFC3339),
 			Value:  r.Value,
 		})
 	}
