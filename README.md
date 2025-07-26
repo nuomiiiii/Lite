@@ -99,6 +99,8 @@ sudo ./install-komari.sh
 ## 前端开发指南
 [Komari 主题开发指南 | Komari](https://komari-document.pages.dev/dev/theme.html)
 
+[在 Crowdin 上翻译 Komari](https://crowdin.com/project/komari/invite?h=cd051bf172c9a9f7f1360e87ffb521692507706)
+
 ## 客户端 Agent 开发指南
 [Komari Agent 信息上报与事件处理文档](https://komari-document.pages.dev/dev/agent.html)
 
