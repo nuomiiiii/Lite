@@ -135,5 +135,23 @@ func DownloadBackup(c *gin.Context) {
 		log.Printf("Database file '%s' is within './data', skipping explicit addition.\n", dbFilePath)
 	}
 
+	// 添加备份标记文件
+	markupContent := "此文件为 Komari 备份标记文件，请勿删除。\nThis is a Komari backup markup file, please do not delete.\n\n备份时间 / Backup Time: " + time.Now().Format("2006-01-02 15:04:05")
+	markupWriter, err := zipWriter.CreateHeader(&zip.FileHeader{
+		Name:     "komari-backup-markup",
+		Method:   zip.Deflate,
+		Modified: time.Now(),
+	})
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error creating backup markup file: %v", err))
+		return
+	}
+
+	_, err = markupWriter.Write([]byte(markupContent))
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error writing backup markup file: %v", err))
+		return
+	}
+
 	// zipWriter.Close() 由 defer 自动调用
 }

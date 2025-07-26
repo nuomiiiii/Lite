@@ -9,14 +9,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/cmd/flags"
 )
 
+// 只有一个备份恢复操作在进行
+var restoreMutex sync.Mutex
+
 // UploadBackup 用于接收上传的备份文件并将其内容恢复到原始位置
 func UploadBackup(c *gin.Context) {
+	// 尝试获取锁，如果已有恢复操作在进行，则立即返回错误
+	if !restoreMutex.TryLock() {
+		api.RespondError(c, http.StatusConflict, "Another restore operation is already in progress")
+		return
+	}
+	defer restoreMutex.Unlock()
+
 	// 获取上传的文件
 	file, header, err := c.Request.FormFile("backup")
 	if err != nil {
@@ -57,6 +68,19 @@ func UploadBackup(c *gin.Context) {
 	}
 	defer zipReader.Close()
 
+	// 检查是否包含备份标记文件
+	hasMarkupFile := false
+	for _, zipFile := range zipReader.File {
+		if zipFile.Name == "komari-backup-markup" {
+			hasMarkupFile = true
+			break
+		}
+	}
+	if !hasMarkupFile {
+		api.RespondError(c, http.StatusBadRequest, "Invalid backup file: missing komari-backup-markup file")
+		return
+	}
+
 	// 确保data目录存在
 	if err := os.MkdirAll("./data", 0755); err != nil {
 		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error creating data directory: %v", err))
@@ -72,6 +96,11 @@ func UploadBackup(c *gin.Context) {
 		filePath := zipFile.Name
 		if strings.Contains(filePath, "..") {
 			log.Printf("Potentially unsafe path in zip: %s, skipping", filePath)
+			continue
+		}
+
+		// 跳过备份标记文件
+		if filePath == "komari-backup-markup" {
 			continue
 		}
 
