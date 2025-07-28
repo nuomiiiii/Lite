@@ -26,22 +26,24 @@ jobs:
             });
 
             // Identify versions with only a single SHA tag (sha-<7 hex>) or sha256:<64 hex>
-            const shaOnlyVersions = packages.filter(pkg => {
+            // 或没有任何标签的版本
+            const shaOrNoTagVersions = packages.filter(pkg => {
               const tags = pkg.metadata.container.tags;
               return (
-                tags.length === 1 && (
+                (tags.length === 1 && (
                   tags[0].match(/^sha-[0-9a-f]{7}$/) ||
                   tags[0].match(/^sha256:[0-9a-f]{64}$/)
-                )
+                )) ||
+                tags.length === 0
               );
             });
 
-            // Delete the SHA-only versions
-            for (const version of shaOnlyVersions) {
+            // Delete the SHA-only or no-tag versions
+            for (const version of shaOrNoTagVersions) {
               await github.rest.packages.deletePackageVersionForAuthenticatedUser({
                 package_type: 'container',
                 package_name: process.env.GITHUB_REPOSITORY.split('/')[1],
                 package_version_id: version.id
               });
-              console.log(`Deleted package version ${version.id} with tag ${version.metadata.container.tags[0]}`);
+              console.log(`Deleted package version ${version.id} with tags: ${version.metadata.container.tags.join(', ') || 'none'}`);
             }
