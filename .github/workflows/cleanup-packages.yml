@@ -20,14 +20,25 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const { data: packages } = await github.rest.packages.getAllPackageVersionsForPackageOwnedByAuthenticatedUser({
-              package_type: 'container',
-              package_name: process.env.GITHUB_REPOSITORY.split('/')[1]
-            });
+            // 分页获取所有包版本
+            const allVersions = [];
+            let page = 1;
+            let fetched;
+            const packageName = process.env.GITHUB_REPOSITORY.split('/')[1];
+            do {
+              const { data: packages } = await github.rest.packages.getAllPackageVersionsForPackageOwnedByAuthenticatedUser({
+                package_type: 'container',
+                package_name: packageName,
+                page,
+                per_page: 100
+              });
+              fetched = packages.length;
+              allVersions.push(...packages);
+              page++;
+            } while (fetched === 100);
 
-            // Identify versions with only a single SHA tag (sha-<7 hex>) or sha256:<64 hex>
-            // 或没有任何标签的版本
-            const shaOrNoTagVersions = packages.filter(pkg => {
+            // 筛选仅有 SHA/sha256 标签或无标签的版本
+            const shaOrNoTagVersions = allVersions.filter(pkg => {
               const tags = pkg.metadata.container.tags;
               return (
                 (tags.length === 1 && (
@@ -38,11 +49,11 @@ jobs:
               );
             });
 
-            // Delete the SHA-only or no-tag versions
+            // 删除这些版本
             for (const version of shaOrNoTagVersions) {
               await github.rest.packages.deletePackageVersionForAuthenticatedUser({
                 package_type: 'container',
-                package_name: process.env.GITHUB_REPOSITORY.split('/')[1],
+                package_name: packageName,
                 package_version_id: version.id
               });
               console.log(`Deleted package version ${version.id} with tags: ${version.metadata.container.tags.join(', ') || 'none'}`);
