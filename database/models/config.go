@@ -39,6 +39,6 @@ type Config struct {
 	RecordEnabled          bool `json:"record_enabled" gorm:"default:true"`          // 是否启用记录功能
 	RecordPreserveTime     int  `json:"record_preserve_time" gorm:"default:720"`     // 记录保留时间，单位小时，默认30天
 	PingRecordPreserveTime int  `json:"ping_record_preserve_time" gorm:"default:24"` // Ping 记录保留时间，单位小时，默认1天
-	CreatedAt              UTCTime
-	UpdatedAt              UTCTime
+	CreatedAt              LocalTime
+	UpdatedAt              LocalTime
 }

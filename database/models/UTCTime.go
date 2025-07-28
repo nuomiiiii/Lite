@@ -10,137 +10,112 @@ import (
 	"time"
 )
 
-// UTCTime 是一个自定义类型，用于在 GORM 中处理 time.Time。
-// 它强制所有时间都以指定时区（或 UTC）的字符串格式存取。
-type UTCTime time.Time
+// LocalTime is a custom time type for GORM to handle time.Time correctly.
+// It ensures that all times are stored and retrieved based on the application's configured timezone.
+type LocalTime time.Time
 
-// Value 实现 driver.Valuer 接口，将 UTCTime 转换为数据库可以识别的 TEXT 类型。
-// 所有时间在存储到数据库前，都转换为 UTC 并以标准格式存储。
-func (t UTCTime) Value() (driver.Value, error) {
+// Value implements the driver.Valuer interface.
+// It converts UTCTime to a TEXT format that the database understands.
+// The time is formatted as a string in the application's local timezone, without timezone information.
+func (t LocalTime) Value() (driver.Value, error) {
 	if time.Time(t).IsZero() {
-		return nil, nil // GORM 默认会将零值时间存储为 NULL，这里保持一致
+		return nil, nil
 	}
-	// 将时间转换为应用程序指定的时区，并格式化为不带时区信息的字符串。
-	// 这样数据库中存储的是 'YYYY-MM-DD HH:MM:SS.NNNNNNN' 格式。
-	// 注意：之前你遇到的格式是 "2025-06-14 23:51:17.3022328+08:00"
-	// 这种格式带有微秒和时区偏移。为了兼容旧数据读取，我们这里也用精确格式。
-	// 但存储时，为了避免时区混乱，建议统一为某个特定时区的纯时间戳字符串。
-	// 这里我建议统一存储为 UTC 时间的精确字符串。
-	// "2006-01-02 15:04:05.0000000" 这个布局对应不带时区后缀的纳秒精度。
 	return time.Time(t).In(GetAppLocation()).Format("2006-01-02 15:04:05.0000000"), nil
 }
 
-// Scan 实现 sql.Scanner 接口，将数据库中的 TEXT 值扫描到 UTCTime。
-// 所有时间字符串在读取时，都会被尝试解析为指定时区（或 UTC）的 time.Time 对象。
-func (t *UTCTime) Scan(v interface{}) error {
+// Scan implements the sql.Scanner interface.
+// It scans a value from the database into a UTCTime object.
+func (t *LocalTime) Scan(v interface{}) error {
 	if v == nil {
-		*t = UTCTime(time.Time{})
+		*t = LocalTime(time.Time{})
 		return nil
 	}
+
+	loc := GetAppLocation()
 
 	switch val := v.(type) {
 	case time.Time:
-		// If the driver already parsed it to time.Time, use it directly.
-		// Then convert to the application's desired location.
-		*t = UTCTime(val.In(GetAppLocation()))
+		// CRITICAL FIX: When the driver reads a timezone-less string (e.g., "16:00:00"),
+		// it often incorrectly assumes it's UTC. We must correct this by re-interpreting
+		// the date and clock values in the application's actual timezone.
+		year, month, day := val.Date()
+		hour, min, sec := val.Clock()
+		nanosec := val.Nanosecond()
+		*t = LocalTime(time.Date(year, month, day, hour, min, sec, nanosec, loc))
 		return nil
 	case []byte:
-		// If it's still a byte slice (string), parse it.
-		timeStr := strings.TrimSpace(string(val))
-		if timeStr == "" {
-			*t = UTCTime(time.Time{})
-			return nil
-		}
-
-		var parsedTime time.Time
-		var err error
-
-		layouts := []string{
-			"2006-01-02 15:04:05.0000000-07:00", // Your observed precise format with timezone
-			"2006-01-02 15:04:05-07:00",         // With seconds and timezone
-			time.RFC3339Nano,                    // RFC3339 with nanoseconds
-			time.RFC3339,                        // RFC3339
-			"2006-01-02 15:04:05.0000000",       // Nanoseconds, no timezone
-			"2006-01-02 15:04:05",               // Standard, no timezone
-			"2006-01-02",                        // Date only
-		}
-
-		for _, layout := range layouts {
-			// time.Parse handles strings that include timezone info correctly.
-			parsedTime, err = time.Parse(layout, timeStr)
-			if err == nil {
-				break
-			}
-		}
-
-		if err != nil {
-			return fmt.Errorf("无法解析时间字符串 '%s' 为 UTCTime: %w", timeStr, err)
-		}
-
-		*t = UTCTime(parsedTime.In(GetAppLocation()))
-		return nil
+		return t.parseTime(string(val), loc)
+	case string:
+		return t.parseTime(val, loc)
 	default:
-		return fmt.Errorf("UTCTime scan source was not []byte or time.Time: %T (%v)", v, v)
+		return fmt.Errorf("UTCTime scan source was not string, []byte or time.Time: %T (%v)", v, v)
 	}
 }
 
-// MarshalJSON implements json.Marshaler interface.
-// This method defines how UTCTime should be serialized to JSON.
-func (t UTCTime) MarshalJSON() ([]byte, error) {
+// parseTime handles parsing a string into UTCTime.
+func (t *LocalTime) parseTime(timeStr string, loc *time.Location) error {
+	timeStr = strings.TrimSpace(timeStr)
+	if timeStr == "" {
+		*t = LocalTime(time.Time{})
+		return nil
+	}
+
+	layouts := []string{
+		time.RFC3339Nano, time.RFC3339,
+		"2006-01-02 15:04:05.0000000-07:00", "2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05.0000000", "2006-01-02 15:04:05", "2006-01-02",
+	}
+
+	for _, layout := range layouts {
+		if parsedTime, err := time.ParseInLocation(layout, timeStr, loc); err == nil {
+			*t = LocalTime(parsedTime)
+			return nil
+		}
+	}
+	return fmt.Errorf("unable to parse time string '%s' into UTCTime", timeStr)
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+// Serializes UTCTime to JSON in RFC3339 format with the correct timezone offset.
+func (t LocalTime) MarshalJSON() ([]byte, error) {
 	if time.Time(t).IsZero() {
-		// 如果是零值时间，返回 JSON null。
-		// 这样 API 返回的就是 "field": null，而不是 "field": {}。
 		return []byte("null"), nil
 	}
-	// 将时间转换为应用程序指定的时区，并格式化为 JSON 字符串。
-	// 使用双引号包裹，符合 JSON 字符串规范。
-	// 同样使用之前定义的精确格式，便于客户端解析。
-	formattedTime := time.Time(t).In(GetAppLocation()).Format("2006-01-02 15:04:05.0000000-07:00")
+	formattedTime := time.Time(t).In(GetAppLocation()).Format(time.RFC3339)
 	return []byte(fmt.Sprintf(`"%s"`, formattedTime)), nil
 }
 
-// ToTime 将 UTCTime 转换为 Go 的 time.Time 类型。
-func (t UTCTime) ToTime() time.Time {
-	return time.Time(t)
-}
+// ToTime converts UTCTime to Go's native time.Time type.
+func (t LocalTime) ToTime() time.Time { return time.Time(t) }
 
-// FromTime 将 Go 的 time.Time 类型转换为 UTCTime。
-func FromTime(t time.Time) UTCTime {
-	return UTCTime(t)
-}
+// FromTime converts Go's native time.Time type to UTCTime.
+func FromTime(t time.Time) LocalTime { return LocalTime(t) }
 
 // Now returns the current time in the application's configured location.
-func Now() UTCTime {
-	return UTCTime(time.Now().In(GetAppLocation()))
-}
+func Now() LocalTime { return LocalTime(time.Now().In(GetAppLocation())) }
 
-// AppLocation 用于存储应用程序全局使用的时区。
-// 首次获取后会缓存，避免重复加载。
 var (
-	appLocation     *time.Location
-	locationOnce    sync.Once
-	defaultLocation = time.UTC // 默认时区设为 UTC
+	appLocation  *time.Location
+	locationOnce sync.Once
 )
 
-// GetAppLocation 获取应用程序的全局时区。
-// 优先从环境变量 "TZ" 获取，否则使用默认的 UTC。
+// GetAppLocation retrieves the application's global timezone from the "TZ" environment variable.
 func GetAppLocation() *time.Location {
 	locationOnce.Do(func() {
 		tz := os.Getenv("TZ")
-		if tz != "" {
-			loc, err := time.LoadLocation(tz)
-			if err != nil {
-				log.Printf("Warning: Failed to load timezone from environment variable TZ='%s', using default UTC. Error: %v\n", tz, err)
-				appLocation = defaultLocation
-			} else {
-				appLocation = loc
-				log.Printf("Info: Application timezone set from environment variable TZ='%s' (%s).\n", tz, appLocation.String())
-			}
-		} else {
-			appLocation = defaultLocation
-			log.Printf("Info: Environment variable TZ not set, using default UTC timezone (%s).\n", appLocation.String())
+		if tz == "" {
+			tz = "UTC"
 		}
-		time.Local = appLocation // 设置全局时区
+		loc, err := time.LoadLocation(tz)
+		if err != nil {
+			log.Printf("Warning: Failed to load timezone '%s', falling back to UTC. Error: %v", tz, err)
+			appLocation = time.UTC
+		} else {
+			appLocation = loc
+		}
+		time.Local = appLocation
+		log.Printf("Application timezone is set to '%s'.", appLocation.String())
 	})
 	return appLocation
 }
