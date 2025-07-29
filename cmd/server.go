@@ -116,6 +116,8 @@ func RunServer() {
 		c.Next()
 	})
 
+	r.Use(api.PrivateSiteMiddleware())
+
 	r.Use(func(c *gin.Context) {
 		if len(c.Request.URL.Path) >= 4 && c.Request.URL.Path[:4] == "/api" {
 			c.Header("Cache-Control", "no-store")
