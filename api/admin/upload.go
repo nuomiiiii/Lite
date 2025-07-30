@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
@@ -161,6 +162,12 @@ func UploadBackup(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
-		"message": "Backup restored successfully",
+		"message": "Backup restored successfully. The service will restart shortly.",
 	})
+
+	go func() {
+		log.Println("Backup restored, restarting service in 2 seconds...")
+		time.Sleep(2 * time.Second)
+		os.Exit(0)
+	}()
 }
