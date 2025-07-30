@@ -23,6 +23,7 @@ func GetPublicSettings(c *gin.Context) {
 		"record_enabled":            cst.RecordEnabled,
 		"record_preserve_time":      cst.RecordPreserveTime,
 		"ping_record_preserve_time": cst.PingRecordPreserveTime,
+		"private_site":              cst.PrivateSite,
 	})
 
 }

@@ -1,0 +1,60 @@
+package api
+
+import (
+	"net/http"
+
+	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/config"
+
+	"github.com/gin-gonic/gin"
+)
+
+var (
+	publicPaths = []string{
+		"/ping",
+		"/api/public",
+		"/api/login",
+		"/api/me",
+		"/api/oauth",
+		"/api/oauth_callback",
+		"/api/version",
+	}
+)
+
+func PrivateSiteMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 如果是公开的路径，直接放行
+		for _, path := range publicPaths {
+			if len(c.Request.URL.Path) >= len(path) && c.Request.URL.Path[:len(path)] == path {
+				c.Next()
+				return
+			}
+		}
+		conf, err := config.Get()
+		if err != nil {
+			RespondError(c, http.StatusInternalServerError, "Failed to get configuration.")
+			c.Abort()
+			return
+		}
+		// 验证私有, 如果不是私有站点，直接放行
+		if !conf.PrivateSite {
+			c.Next()
+			return
+		}
+		// 如果是私有站点，检查是否有 session
+		session, err := c.Cookie("session_token")
+		if err != nil {
+			RespondError(c, http.StatusUnauthorized, "Private site is enabled, please login first.")
+			c.Abort()
+			return
+		}
+		_, err = accounts.GetSession(session)
+		if err != nil {
+			RespondError(c, http.StatusUnauthorized, "Unauthorized.")
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
