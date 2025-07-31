@@ -1,7 +1,10 @@
 package factory
 
+import "log"
+
 var (
-	providers = make(map[string]IOidcProvider)
+	providers                = make(map[string]IOidcProvider)
+	ProvidersAdditionalItems = make(map[string][]IOidcProviderAdditionalItem)
 )
 
 func RegisterProvider(constructor OidcConstructor) {
@@ -10,7 +13,8 @@ func RegisterProvider(constructor OidcConstructor) {
 		panic("OIDC provider constructor returned nil")
 	}
 	if _, exists := providers[provider.GetName()]; exists {
-		panic("OIDC provider already registered: " + provider.GetName())
+		log.Println("OIDC provider already registered: " + provider.GetName())
 	}
 	providers[provider.GetName()] = provider
+
 }
