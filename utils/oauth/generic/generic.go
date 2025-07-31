@@ -16,7 +16,7 @@ func (g *Generic) GetName() string {
 	return "generic"
 }
 func (g *Generic) GetConfiguration() factory.Configuration {
-	return g.Addition
+	return &g.Addition
 }
 
 func (g *Generic) GetAuthorizationURL() string {

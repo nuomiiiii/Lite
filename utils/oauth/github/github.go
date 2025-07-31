@@ -21,7 +21,7 @@ func (g *Github) GetName() string {
 	return "github"
 }
 func (g *Github) GetConfiguration() factory.Configuration {
-	return g.Addition
+	return &g.Addition
 }
 
 func (g *Github) GetAuthorizationURL() string {

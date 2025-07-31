@@ -6,7 +6,7 @@ import (
 )
 
 func init() {
-	factory.RegisterProvider(func() factory.IOidcProvider {
+	factory.RegisterOidcProvider(func() factory.IOidcProvider {
 		return &Github{}
 	})
 }
