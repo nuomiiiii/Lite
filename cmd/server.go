@@ -101,13 +101,12 @@ func RunServer() {
 			} else {
 				log.Printf("Using %s as OIDC provider", oidcProvider.Name)
 			}
+			err = oauth.LoadProvider(oidcProvider.Name, oidcProvider.Addition)
+			if err != nil {
+				auditlog.EventLog("error", fmt.Sprintf("Failed to load OIDC provider: %v", err))
+			}
 		}
-		err = oauth.LoadProvider(oidcProvider.Name, oidcProvider.Addition)
-		if err != nil {
-			auditlog.EventLog("error", fmt.Sprintf("Failed to load OIDC provider: %v", err))
-		} else {
-			log.Printf("Using %s as OIDC provider", oidcProvider.Name)
-		}
+
 	})
 	// 初始化 cloudflared
 	if strings.ToLower(GetEnv("KOMARI_ENABLE_CLOUDFLARED", "false")) == "true" {

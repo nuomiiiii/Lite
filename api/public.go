@@ -18,6 +18,7 @@ func GetPublicSettings(c *gin.Context) {
 		"custom_head":               cst.CustomHead,
 		"custom_body":               cst.CustomBody,
 		"oauth_enable":              cst.OAuthEnabled,
+		"oauth_provider":            cst.OAuthProvider,
 		"disable_password_login":    cst.DisablePasswordLogin,
 		"allow_cors":                cst.AllowCors,
 		"record_enabled":            cst.RecordEnabled,
