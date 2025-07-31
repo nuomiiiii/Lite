@@ -19,7 +19,7 @@ func (g *Generic) GetConfiguration() factory.Configuration {
 	return &g.Addition
 }
 
-func (g *Generic) GetAuthorizationURL() string {
+func (g *Generic) GetAuthorizationURL() (string, string) {
 	state := utils.GenerateRandomString(16)
 
 	// 构建GitHub OAuth授权URL
@@ -31,11 +31,10 @@ func (g *Generic) GetAuthorizationURL() string {
 		url.QueryEscape(g.Addition.Scope),
 	)
 
-	return authURL
+	return authURL, state
 }
-func (g *Generic) OnCallback(ctx context.Context, query map[string]string) (factory.OidcCallback, error) {
+func (g *Generic) OnCallback(ctx context.Context, state string, query map[string]string) (factory.OidcCallback, error) {
 	code := query["code"]
-	state := query["state"]
 
 	// 验证state防止CSRF攻击
 	if g.stateCache == nil {

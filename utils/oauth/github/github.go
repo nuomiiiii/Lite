@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/oauth/factory"
 	"github.com/patrickmn/go-cache"
@@ -24,7 +23,7 @@ func (g *Github) GetConfiguration() factory.Configuration {
 	return &g.Addition
 }
 
-func (g *Github) GetAuthorizationURL() string {
+func (g *Github) GetAuthorizationURL() (string, string) {
 	state := utils.GenerateRandomString(16)
 
 	// 构建GitHub OAuth授权URL
@@ -34,13 +33,10 @@ func (g *Github) GetAuthorizationURL() string {
 		url.QueryEscape(state),
 	)
 
-	return authURL
+	return authURL, state
 }
-func (g *Github) OnCallback(ctx context.Context, query map[string]string) (factory.OidcCallback, error) {
+func (g *Github) OnCallback(ctx context.Context, state string, query map[string]string) (factory.OidcCallback, error) {
 	code := query["code"]
-	state := query["state"]
-
-	cfg, _ := config.Get()
 
 	// 验证state防止CSRF攻击
 	// state, _ := c.Cookie("oauth_state")
@@ -63,8 +59,8 @@ func (g *Github) OnCallback(ctx context.Context, query map[string]string) (facto
 	// 获取访问令牌
 	tokenURL := "https://github.com/login/oauth/access_token"
 	data := url.Values{
-		"client_id":     {cfg.OAuthClientID},
-		"client_secret": {cfg.OAuthClientSecret},
+		"client_id":     {g.Addition.ClientId},
+		"client_secret": {g.Addition.ClientSecret},
 		"code":          {code},
 	}
 

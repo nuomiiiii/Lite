@@ -6,8 +6,9 @@ type IOidcProvider interface {
 	GetName() string
 	// 请务必返回 &Configuration{} 的指针
 	GetConfiguration() Configuration
-	GetAuthorizationURL() string
-	OnCallback(ctx context.Context, query map[string]string) (OidcCallback, error)
+	// 获取授权URL和状态
+	GetAuthorizationURL() (string, string)
+	OnCallback(ctx context.Context, state string, query map[string]string) (OidcCallback, error)
 	Init() error
 	Destroy() error
 }

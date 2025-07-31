@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/komari-monitor/komari/api/client"
 	"github.com/komari-monitor/komari/api/record"
 	"github.com/komari-monitor/komari/cmd/flags"
+	"github.com/komari-monitor/komari/database"
 	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/config"
@@ -35,6 +37,7 @@ import (
 	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/utils/messageSender"
 	"github.com/komari-monitor/komari/utils/notifier"
+	"github.com/komari-monitor/komari/utils/oauth"
 	"github.com/komari-monitor/komari/ws"
 	"github.com/spf13/cobra"
 )
@@ -72,10 +75,41 @@ func RunServer() {
 	if utils.VersionHash != "unknown" {
 		gin.SetMode(gin.ReleaseMode)
 	}
+	conf, err := config.Get()
+	if err != nil {
+		log.Fatal(err)
+	}
 	go geoip.InitGeoIp()
 	go DoScheduledWork()
 	go messageSender.Initialize()
 
+	oidcProvider, err := database.GetOidcConfigByName(conf.OAuthProvider)
+	if err != nil {
+		log.Printf("Failed to get OIDC provider config: %v", err)
+	}
+	err = oauth.LoadProvider(oidcProvider.Name, oidcProvider.Addition)
+	if err != nil {
+		log.Printf("Failed to load OIDC provider: %v", err)
+	} else {
+		log.Printf("Using %s as OIDC provider", oidcProvider.Name)
+	}
+	config.Subscribe(func(event config.ConfigEvent) {
+		if event.New.OAuthProvider != event.Old.OAuthProvider {
+			oidcProvider, err := database.GetOidcConfigByName(event.New.OAuthProvider)
+			if err != nil {
+				log.Printf("Failed to get OIDC provider config: %v", err)
+			} else {
+				log.Printf("Using %s as OIDC provider", oidcProvider.Name)
+			}
+		}
+		err = oauth.LoadProvider(oidcProvider.Name, oidcProvider.Addition)
+		if err != nil {
+			auditlog.EventLog("error", fmt.Sprintf("Failed to load OIDC provider: %v", err))
+		} else {
+			log.Printf("Using %s as OIDC provider", oidcProvider.Name)
+		}
+	})
+	// 初始化 cloudflared
 	if strings.ToLower(GetEnv("KOMARI_ENABLE_CLOUDFLARED", "false")) == "true" {
 		err := cloudflared.RunCloudflared() // 阻塞，确保cloudflared跑起来
 		if err != nil {
@@ -86,10 +120,7 @@ func RunServer() {
 	r := gin.Default()
 
 	// 动态 CORS 中间件
-	conf, err := config.Get()
-	if err != nil {
-		log.Fatal(err)
-	}
+
 	DynamicCorsEnabled = conf.AllowCors
 	config.Subscribe(func(event config.ConfigEvent) {
 		DynamicCorsEnabled = event.New.AllowCors
@@ -181,9 +212,13 @@ func RunServer() {
 			taskGroup.GET("/client/:uuid", admin.GetTasksByClientId)
 		}
 		// settings
-		adminAuthrized.GET("/settings", admin.GetSettings)
-		adminAuthrized.POST("/settings", admin.EditSettings)
-
+		settingsGroup := adminAuthrized.Group("/settings")
+		{
+			settingsGroup.GET("/", admin.GetSettings)
+			settingsGroup.POST("/", admin.EditSettings)
+			settingsGroup.POST("/oidc", admin.SetOidcProvider)
+			settingsGroup.GET("/oidc", admin.GetOidcProvider)
+		}
 		// themes
 		themeGroup := adminAuthrized.Group("/theme")
 		{
