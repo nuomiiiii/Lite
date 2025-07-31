@@ -1,6 +1,7 @@
 package dbcore
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -79,6 +80,31 @@ func MergeDatabase(db *gorm.DB) {
 		log.Println("[>0.1.4] Rebuilding LoadNotification table....")
 		db.Migrator().DropTable(&models.LoadNotification{})
 	}
+	if !db.Migrator().HasTable(&models.OidcProvider{}) && db.Migrator().HasTable(&models.Config{}) {
+		log.Println("[>1.0.2] Merge OidcProvider table....")
+		var config struct {
+			OAuthClientID     string `json:"o_auth_client_id" gorm:"type:varchar(255)"`
+			OAuthClientSecret string `json:"o_auth_client_secret" gorm:"type:varchar(255)"`
+		}
+		if err := db.Raw("SELECT * FROM configs LIMIT 1").Scan(&config).Error; err != nil {
+			log.Println("Failed to get config for OIDC provider migration:", err)
+		}
+		db.AutoMigrate(&models.OidcProvider{})
+		j, err := json.Marshal(&map[string]string{
+			"client_id":     config.OAuthClientID,
+			"client_secret": config.OAuthClientSecret,
+		})
+		if err != nil {
+			log.Println("Failed to marshal OIDC provider config:", err)
+			return
+		}
+		db.Save(&models.OidcProvider{
+			Name:     "github",
+			Addition: string(j),
+		})
+		db.AutoMigrate(&models.Config{})
+		db.Model(&models.Config{}).Where("id = 1").Update("o_auth_provider", "github")
+	}
 }
 
 var (
@@ -140,6 +166,7 @@ func GetDBInstance() *gorm.DB {
 			&models.OfflineNotification{},
 			&models.PingRecord{},
 			&models.PingTask{},
+			&models.OidcProvider{},
 		)
 		if err != nil {
 			log.Fatalf("Failed to create tables: %v", err)

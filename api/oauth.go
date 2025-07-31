@@ -18,7 +18,7 @@ func OAuth(c *gin.Context) {
 		return
 	}
 
-	authURL, state := oauth.GetOAuthUrl()
+	authURL, state := oauth.CurrentProvider().GetAuthorizationURL()
 
 	c.SetCookie("oauth_state", state, 3600, "/", "", false, true)
 
@@ -35,21 +35,20 @@ func OAuthCallback(c *gin.Context) {
 		return
 	}
 
-	// 获取code
-	code := c.Query("code")
-	if code == "" {
-		c.JSON(400, gin.H{"status": "error", "error": "No code provided"})
-		return
+	queries := make(map[string]string)
+	for key, values := range c.Request.URL.Query() {
+		if len(values) > 0 {
+			queries[key] = values[0]
+		}
 	}
-
-	githubUser, err := oauth.OAuthCallback(code, state)
+	oidcUser, err := oauth.CurrentProvider().OnCallback(c.Request.Context(), state, queries)
 	if err != nil {
 		c.JSON(500, gin.H{"status": "error", "error": "Failed to get user info: " + err.Error()})
 		return
 	}
 
 	// 使用GitHub ID作为SSO ID
-	sso_id := fmt.Sprintf("github_%d", githubUser.ID)
+	sso_id := fmt.Sprintf("%s_%s", oauth.CurrentProvider().GetName(), oidcUser.UserId)
 
 	// 如果cookie中有binding_external_account，说明是绑定外部账号
 	// 否则是登录

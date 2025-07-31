@@ -11,9 +11,8 @@ type Config struct {
 	GeoIpEnabled  bool   `json:"geo_ip_enabled" gorm:"default:true"`
 	GeoIpProvider string `json:"geo_ip_provider" gorm:"type:varchar(20);default:'ip-api'"` // empty, mmdb, ip-api, geojs
 	// OAuth 配置
-	OAuthClientID        string `json:"o_auth_client_id" gorm:"type:varchar(255)"`
-	OAuthClientSecret    string `json:"o_auth_client_secret" gorm:"type:varchar(255)"`
 	OAuthEnabled         bool   `json:"o_auth_enabled" gorm:"default:false"`
+	OAuthProvider        string `json:"o_auth_provider" gorm:"type:varchar(50);default:'github'"`
 	DisablePasswordLogin bool   `json:"disable_password_login" gorm:"default:false"`
 	// 自定义美化
 	CustomHead string `json:"custom_head" gorm:"type:longtext"`
