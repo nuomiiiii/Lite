@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/oauth/factory"
@@ -32,7 +33,7 @@ func (g *Github) GetAuthorizationURL() (string, string) {
 		url.QueryEscape(g.Addition.ClientId),
 		url.QueryEscape(state),
 	)
-
+	g.stateCache.Set(state, true, cache.NoExpiration)
 	return authURL, state
 }
 func (g *Github) OnCallback(ctx context.Context, state string, query map[string]string) (factory.OidcCallback, error) {
@@ -103,7 +104,7 @@ func (g *Github) OnCallback(ctx context.Context, state string, query map[string]
 	return factory.OidcCallback{UserId: fmt.Sprintf("%d", githubUser.ID)}, nil
 }
 func (g *Github) Init() error {
-	g.stateCache = cache.New(cache.NoExpiration, cache.NoExpiration)
+	g.stateCache = cache.New(time.Minute*5, time.Minute*10)
 	return nil
 }
 func (g *Github) Destroy() error {

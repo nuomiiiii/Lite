@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/oauth/factory"
@@ -30,7 +31,7 @@ func (g *Generic) GetAuthorizationURL() (string, string) {
 		url.QueryEscape(state),
 		url.QueryEscape(g.Addition.Scope),
 	)
-
+	g.stateCache.Set(state, true, cache.DefaultExpiration)
 	return authURL, state
 }
 func (g *Generic) OnCallback(ctx context.Context, state string, query map[string]string) (factory.OidcCallback, error) {
@@ -102,7 +103,7 @@ func (g *Generic) OnCallback(ctx context.Context, state string, query map[string
 	return factory.OidcCallback{UserId: fmt.Sprintf("%v", userId)}, nil
 }
 func (g *Generic) Init() error {
-	g.stateCache = cache.New(cache.NoExpiration, cache.NoExpiration)
+	g.stateCache = cache.New(time.Minute*5, time.Minute*10)
 	return nil
 }
 func (g *Generic) Destroy() error {
