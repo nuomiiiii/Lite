@@ -47,7 +47,7 @@ func OAuthCallback(c *gin.Context) {
 		return
 	}
 
-	// 使用GitHub ID作为SSO ID
+	// ID作为SSO ID
 	sso_id := fmt.Sprintf("%s_%s", oauth.CurrentProvider().GetName(), oidcUser.UserId)
 
 	// 如果cookie中有binding_external_account，说明是绑定外部账号
@@ -77,7 +77,7 @@ func OAuthCallback(c *gin.Context) {
 	if err != nil {
 		c.JSON(401, gin.H{
 			"status":  "error",
-			"message": "please log in and bind your GitHub account first.",
+			"message": "please log in and bind your external account first.",
 		})
 		return
 	}
@@ -92,5 +92,5 @@ func OAuthCallback(c *gin.Context) {
 	// 设置cookie并返回
 	c.SetCookie("session_token", session, 2592000, "/", "", false, true)
 	auditlog.Log(c.ClientIP(), user.UUID, "logged in (OAuth)", "login")
-	c.Redirect(302, "/manage")
+	c.Redirect(302, "/admin")
 }
