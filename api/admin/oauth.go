@@ -5,7 +5,9 @@ import (
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database"
 	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/utils/oauth"
 	"github.com/komari-monitor/komari/utils/oauth/factory"
 )
 
@@ -76,6 +78,15 @@ func SetOidcProvider(c *gin.Context) {
 	if err := database.SaveOidcConfig(&oidcConfig); err != nil {
 		api.RespondError(c, 500, "Failed to save OIDC provider configuration: "+err.Error())
 		return
+	}
+	cfg, _ := config.Get()
+	// 正在使用，重载
+	if cfg.OAuthProvider == oidcConfig.Name {
+		err := oauth.LoadProvider(oidcConfig.Name, oidcConfig.Addition)
+		if err != nil {
+			api.RespondError(c, 500, "Failed to load OIDC provider: "+err.Error())
+			return
+		}
 	}
 	api.RespondSuccess(c, gin.H{"message": "OIDC provider set successfully"})
 }
