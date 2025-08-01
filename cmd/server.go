@@ -82,7 +82,7 @@ func RunServer() {
 	go geoip.InitGeoIp()
 	go DoScheduledWork()
 	go messageSender.Initialize()
-
+	// oidcInit
 	oidcProvider, err := database.GetOidcConfigByName(conf.OAuthProvider)
 	if err != nil {
 		log.Printf("Failed to get OIDC provider config: %v", err)
@@ -105,6 +105,9 @@ func RunServer() {
 			if err != nil {
 				auditlog.EventLog("error", fmt.Sprintf("Failed to load OIDC provider: %v", err))
 			}
+		}
+		if event.New.NotificationMethod != event.Old.NotificationMethod {
+			messageSender.Initialize()
 		}
 
 	})
@@ -217,6 +220,8 @@ func RunServer() {
 			settingsGroup.POST("/", admin.EditSettings)
 			settingsGroup.POST("/oidc", admin.SetOidcProvider)
 			settingsGroup.GET("/oidc", admin.GetOidcProvider)
+			settingsGroup.POST("/message-sender", admin.SetMessageSenderProvider)
+			settingsGroup.GET("/message-sender", admin.GetMessageSenderProvider)
 		}
 		// themes
 		themeGroup := adminAuthrized.Group("/theme")

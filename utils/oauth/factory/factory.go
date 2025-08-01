@@ -2,7 +2,6 @@ package factory
 
 import (
 	"log"
-	"reflect"
 
 	"github.com/komari-monitor/komari/utils/item"
 )
@@ -26,25 +25,7 @@ func RegisterOidcProvider(constructor OidcConstructor) {
 
 	// 使用反射来提取提供程序的配置字段
 	config := provider.GetConfiguration()
-	val := reflect.ValueOf(config)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-
-	var items []item.Item
-	for i := 0; i < val.NumField(); i++ {
-		field := val.Type().Field(i)
-		item := item.Item{
-			Name:     field.Tag.Get("json"),
-			Required: field.Tag.Get("required") == "true",
-			Type:     field.Type.Name(),
-			Options:  field.Tag.Get("options"),
-		}
-		if item.Type == "" {
-			item.Type = "string"
-		}
-		items = append(items, item)
-	}
+	items := item.Parse(config)
 	providersAdditionalItems[provider.GetName()] = items
 }
 

@@ -105,6 +105,102 @@ func MergeDatabase(db *gorm.DB) {
 		db.AutoMigrate(&models.Config{})
 		db.Model(&models.Config{}).Where("id = 1").Update("o_auth_provider", "github")
 	}
+	if !db.Migrator().HasTable(&models.MessageSenderProvider{}) && db.Migrator().HasTable(&models.Config{}) {
+		log.Println("[>1.0.2] Migrate MessageSender configuration....")
+		var config struct {
+			TelegramBotToken   string `json:"telegram_bot_token" gorm:"type:varchar(255)"`
+			TelegramChatID     string `json:"telegram_chat_id" gorm:"type:varchar(255)"`
+			TelegramEndpoint   string `json:"telegram_endpoint" gorm:"type:varchar(255)"`
+			EmailHost          string `json:"email_host" gorm:"type:varchar(255)"`
+			EmailPort          int    `json:"email_port" gorm:"type:int"`
+			EmailUsername      string `json:"email_username" gorm:"type:varchar(255)"`
+			EmailPassword      string `json:"email_password" gorm:"type:varchar(255)"`
+			EmailSender        string `json:"email_sender" gorm:"type:varchar(255)"`
+			EmailReceiver      string `json:"email_receiver" gorm:"type:varchar(255)"`
+			EmailUseSSL        bool   `json:"email_use_ssl" gorm:"type:boolean"`
+			NotificationMethod string `json:"notification_method" gorm:"type:varchar(50)"`
+		}
+		if err := db.Raw("SELECT * FROM configs LIMIT 1").Scan(&config).Error; err != nil {
+			log.Println("Failed to get config for MessageSender migration:", err)
+		}
+
+		db.AutoMigrate(&models.MessageSenderProvider{})
+
+		// 迁移Telegram配置
+		if config.NotificationMethod == "telegram" && config.TelegramBotToken != "" {
+			telegramConfig := map[string]interface{}{
+				"bot_token": config.TelegramBotToken,
+				"chat_id":   config.TelegramChatID,
+				"endpoint":  config.TelegramEndpoint,
+			}
+			if telegramConfig["endpoint"] == "" {
+				telegramConfig["endpoint"] = "https://api.telegram.org/bot"
+			}
+			telegramConfigJSON, err := json.Marshal(telegramConfig)
+			if err != nil {
+				log.Println("Failed to marshal Telegram config:", err)
+			} else {
+				db.Save(&models.MessageSenderProvider{
+					Name:     "telegram",
+					Addition: string(telegramConfigJSON),
+				})
+			}
+		}
+
+		// 迁移Email配置
+		if config.NotificationMethod == "email" && config.EmailHost != "" {
+			emailConfig := map[string]interface{}{
+				"host":     config.EmailHost,
+				"port":     config.EmailPort,
+				"username": config.EmailUsername,
+				"password": config.EmailPassword,
+				"sender":   config.EmailSender,
+				"receiver": config.EmailReceiver,
+				"use_ssl":  config.EmailUseSSL,
+			}
+			emailConfigJSON, err := json.Marshal(emailConfig)
+			if err != nil {
+				log.Println("Failed to marshal Email config:", err)
+			} else {
+				db.Save(&models.MessageSenderProvider{
+					Name:     "email",
+					Addition: string(emailConfigJSON),
+				})
+			}
+		}
+
+		// 删除旧的配置字段
+		if db.Migrator().HasColumn(&models.Config{}, "telegram_bot_token") {
+			db.Migrator().DropColumn(&models.Config{}, "telegram_bot_token")
+		}
+		if db.Migrator().HasColumn(&models.Config{}, "telegram_chat_id") {
+			db.Migrator().DropColumn(&models.Config{}, "telegram_chat_id")
+		}
+		if db.Migrator().HasColumn(&models.Config{}, "telegram_endpoint") {
+			db.Migrator().DropColumn(&models.Config{}, "telegram_endpoint")
+		}
+		if db.Migrator().HasColumn(&models.Config{}, "email_host") {
+			db.Migrator().DropColumn(&models.Config{}, "email_host")
+		}
+		if db.Migrator().HasColumn(&models.Config{}, "email_port") {
+			db.Migrator().DropColumn(&models.Config{}, "email_port")
+		}
+		if db.Migrator().HasColumn(&models.Config{}, "email_username") {
+			db.Migrator().DropColumn(&models.Config{}, "email_username")
+		}
+		if db.Migrator().HasColumn(&models.Config{}, "email_password") {
+			db.Migrator().DropColumn(&models.Config{}, "email_password")
+		}
+		if db.Migrator().HasColumn(&models.Config{}, "email_sender") {
+			db.Migrator().DropColumn(&models.Config{}, "email_sender")
+		}
+		if db.Migrator().HasColumn(&models.Config{}, "email_receiver") {
+			db.Migrator().DropColumn(&models.Config{}, "email_receiver")
+		}
+		if db.Migrator().HasColumn(&models.Config{}, "email_use_ssl") {
+			db.Migrator().DropColumn(&models.Config{}, "email_use_ssl")
+		}
+	}
 }
 
 var (
@@ -167,6 +263,7 @@ func GetDBInstance() *gorm.DB {
 			&models.PingRecord{},
 			&models.PingTask{},
 			&models.OidcProvider{},
+			&models.MessageSenderProvider{},
 		)
 		if err != nil {
 			log.Fatalf("Failed to create tables: %v", err)
