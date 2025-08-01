@@ -8,6 +8,7 @@ type Item struct {
 	Type     string `json:"type"`
 	Options  string `json:"options"`
 	Default  string `json:"default"`
+	Help     string `json:"help"`
 }
 
 func Parse(v any) []Item {
@@ -25,6 +26,7 @@ func Parse(v any) []Item {
 			Type:     field.Type.Name(),
 			Options:  field.Tag.Get("options"),
 			Default:  field.Tag.Get("default"),
+			Help:     field.Tag.Get("help"),
 		}
 		if item.Type == "" {
 			item.Type = "string"
