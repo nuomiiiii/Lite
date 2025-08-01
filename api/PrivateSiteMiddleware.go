@@ -32,6 +32,11 @@ func PrivateSiteMiddleware() gin.HandlerFunc {
 				return
 			}
 		}
+		// 如果不是 /api，直接放行
+		if len(c.Request.URL.Path) < 4 || c.Request.URL.Path[:4] != "/api" {
+			c.Next()
+			return
+		}
 		conf, err := config.Get()
 		if err != nil {
 			RespondError(c, http.StatusInternalServerError, "Failed to get configuration.")
