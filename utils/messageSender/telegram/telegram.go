@@ -49,6 +49,11 @@ func (t *TelegramSender) SendTextMessage(message, title string) error {
 	data.Set("text", fullMessage)
 	data.Set("parse_mode", "HTML")
 
+	// Add message_thread_id if provided
+	if t.Addition.MessageThreadID != "" {
+		data.Set("message_thread_id", t.Addition.MessageThreadID)
+	}
+
 	resp, err := http.PostForm(endpoint, data)
 	if err != nil {
 		return fmt.Errorf("failed to send message: %v", err)
