@@ -76,6 +76,9 @@ func CheckAndAutoRenewal(client models.Client) {
 			} else if billingCycle >= 1080 && billingCycle <= 1150 {
 				// 三年计费 - 加3年
 				newExpireTime = baseTime.AddDate(3, 0, 0)
+			} else if billingCycle >= 1800 && billingCycle <= 1850 {
+				// 五年计费 - 加5年
+				newExpireTime = baseTime.AddDate(5, 0, 0)
 			} else {
 				// 其他情况，直接加上账单周期天数
 				newExpireTime = baseTime.AddDate(0, 0, billingCycle)
