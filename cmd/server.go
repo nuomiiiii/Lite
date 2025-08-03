@@ -86,12 +86,15 @@ func RunServer() {
 	oidcProvider, err := database.GetOidcConfigByName(conf.OAuthProvider)
 	if err != nil {
 		log.Printf("Failed to get OIDC provider config: %v", err)
+		oauth.LoadProvider(conf.OAuthProvider, "{}") // 如果没有配置，使用空配置
 	}
-	err = oauth.LoadProvider(oidcProvider.Name, oidcProvider.Addition)
-	if err != nil {
-		log.Printf("Failed to load OIDC provider: %v", err)
-	} else {
-		log.Printf("Using %s as OIDC provider", oidcProvider.Name)
+	if oidcProvider != nil {
+		err = oauth.LoadProvider(oidcProvider.Name, oidcProvider.Addition)
+		if err != nil {
+			log.Printf("Failed to load OIDC provider: %v", err)
+		} else {
+			log.Printf("Using %s as OIDC provider", oidcProvider.Name)
+		}
 	}
 	config.Subscribe(func(event config.ConfigEvent) {
 		if event.New.OAuthProvider != event.Old.OAuthProvider {
