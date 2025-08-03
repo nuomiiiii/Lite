@@ -27,9 +27,6 @@ func CurrentProvider() factory.IOidcProvider {
 func LoadProvider(name string, configJson string) error {
 	mu.Lock()
 	defer mu.Unlock()
-	if currentProvider != nil && currentProvider.GetName() == name {
-		return nil // 已经加载了相同的提供程序
-	}
 	if currentProvider != nil {
 		if err := currentProvider.Destroy(); err != nil {
 			log.Printf("Failed to destroy provider %s: %v", currentProvider.GetName(), err)
