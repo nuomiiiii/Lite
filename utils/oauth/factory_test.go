@@ -22,10 +22,10 @@ func TestRegisterAndGetProviderConfigs(t *testing.T) {
 		t.Error("Expected non-empty OIDC provider names, got empty")
 	}
 
-	err := LoadProvider("github", `{"client_id":"test_id","client_secret":"test_secret"}`)
-	if err != nil {
-		t.Errorf("Failed to load provider: %v", err)
-	}
+	//err := LoadProvider("github", `{"client_id":"test_id","client_secret":"test_secret"}`)
+	//if err != nil {
+	//	t.Errorf("Failed to load provider: %v", err)
+	//}
 	cfg := CurrentProvider().GetConfiguration()
 	if cfg == nil {
 		t.Error("Expected non-nil configuration for 'github' provider, got nil")

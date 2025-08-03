@@ -83,19 +83,7 @@ func RunServer() {
 	go DoScheduledWork()
 	go messageSender.Initialize()
 	// oidcInit
-	oidcProvider, err := database.GetOidcConfigByName(conf.OAuthProvider)
-	if err != nil {
-		log.Printf("Failed to get OIDC provider config: %v", err)
-		oauth.LoadProvider(conf.OAuthProvider, "{}") // 如果没有配置，使用空配置
-	}
-	if oidcProvider != nil {
-		err = oauth.LoadProvider(oidcProvider.Name, oidcProvider.Addition)
-		if err != nil {
-			log.Printf("Failed to load OIDC provider: %v", err)
-		} else {
-			log.Printf("Using %s as OIDC provider", oidcProvider.Name)
-		}
-	}
+	go oauth.Initialize()
 	config.Subscribe(func(event config.ConfigEvent) {
 		if event.New.OAuthProvider != event.Old.OAuthProvider {
 			oidcProvider, err := database.GetOidcConfigByName(event.New.OAuthProvider)
