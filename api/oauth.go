@@ -7,6 +7,7 @@ import (
 	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/oauth"
 )
 
@@ -18,7 +19,9 @@ func OAuth(c *gin.Context) {
 		return
 	}
 
-	authURL, state := oauth.CurrentProvider().GetAuthorizationURL()
+	redirectURI := utils.GetScheme(c) + "://" + c.Request.Host + "/api/oauth_callback"
+
+	authURL, state := oauth.CurrentProvider().GetAuthorizationURL(redirectURI)
 
 	c.SetCookie("oauth_state", state, 3600, "/", "", false, true)
 

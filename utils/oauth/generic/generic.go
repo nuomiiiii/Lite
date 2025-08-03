@@ -20,16 +20,17 @@ func (g *Generic) GetConfiguration() factory.Configuration {
 	return &g.Addition
 }
 
-func (g *Generic) GetAuthorizationURL() (string, string) {
+func (g *Generic) GetAuthorizationURL(redirectURI string) (string, string) {
 	state := utils.GenerateRandomString(16)
 
 	// 构建GitHub OAuth授权URL
 	authURL := fmt.Sprintf(
-		"%s?client_id=%s&state=%s&scope=%s&response_type=code",
+		"%s?client_id=%s&state=%s&scope=%s&redirect_uri=%s&response_type=code",
 		g.Addition.AuthURL,
 		url.QueryEscape(g.Addition.ClientId),
 		url.QueryEscape(state),
 		url.QueryEscape(g.Addition.Scope),
+		url.QueryEscape(redirectURI),
 	)
 	g.stateCache.Set(state, true, cache.DefaultExpiration)
 	return authURL, state
