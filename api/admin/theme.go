@@ -3,6 +3,7 @@ package admin
 import (
 	"archive/zip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -280,4 +281,123 @@ func isValidThemeShort(short string) bool {
 	}
 
 	return true
+}
+
+// downloadThemeFromURL 从URL下载主题文件
+func downloadThemeFromURL(url string) ([]byte, error) {
+	// 发送HTTP GET请求
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("下载主题文件失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态码
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("下载主题文件失败，HTTP状态码: %d", resp.StatusCode)
+	}
+
+	// 读取响应内容
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取主题文件内容失败: %v", err)
+	}
+
+	// 检查文件大小
+	if len(data) == 0 {
+		return nil, errors.New("下载的主题文件为空")
+	}
+
+	return data, nil
+}
+
+// UpdateTheme 更新主题
+func UpdateTheme(c *gin.Context) {
+	var req struct {
+		Short string `json:"short" binding:"required"` // 主题短名称
+		URL   string `json:"url"`                      // 新的URL地址（可选）
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		return
+	}
+
+	// 检查主题是否存在
+	themeDir := filepath.Join("./data/theme", req.Short)
+	themeConfigPath := filepath.Join(themeDir, "komari-theme.json")
+
+	if _, err := os.Stat(themeConfigPath); os.IsNotExist(err) {
+		api.RespondError(c, http.StatusNotFound, "主题不存在")
+		return
+	}
+
+	// 加载现有主题配置
+	themeInfo, err := loadThemeConfig(themeConfigPath)
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, "读取主题配置失败: "+err.Error())
+		return
+	}
+
+	// 尝试从原始URL下载主题
+	var themeData []byte
+	var downloadURL string
+
+	if themeInfo.URL != "" {
+		themeData, err = downloadThemeFromURL(themeInfo.URL)
+		if err == nil {
+			downloadURL = themeInfo.URL
+		}
+	}
+
+	// 如果原始URL下载失败且提供了新URL，则尝试从新URL下载
+	if (themeData == nil || len(themeData) == 0) && req.URL != "" {
+		themeData, err = downloadThemeFromURL(req.URL)
+		if err != nil {
+			api.RespondError(c, http.StatusBadRequest, "从新URL下载主题失败: "+err.Error())
+			return
+		}
+		downloadURL = req.URL
+	}
+
+	// 如果没有成功下载主题数据
+	if themeData == nil || len(themeData) == 0 {
+		api.RespondError(c, http.StatusBadRequest, "无法从原始URL下载主题，请提供新的URL")
+		return
+	}
+
+	// 临时文件名
+	tempFile := filepath.Join(os.TempDir(), "downloaded_theme.zip")
+	if err := os.WriteFile(tempFile, themeData, 0644); err != nil {
+		api.RespondError(c, http.StatusInternalServerError, "保存文件失败: "+err.Error())
+		return
+	}
+	defer os.Remove(tempFile)
+
+	// 解压ZIP文件并验证
+	updatedThemeInfo, err := extractAndValidateTheme(tempFile)
+	if err != nil {
+		api.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// 如果下载URL与原始URL不同，更新主题配置中的URL
+	if downloadURL != themeInfo.URL {
+		updatedThemeInfo.URL = downloadURL
+
+		// 更新主题配置文件
+		updatedConfigPath := filepath.Join("./data/theme", updatedThemeInfo.Short, "komari-theme.json")
+		updatedConfigData, err := json.MarshalIndent(updatedThemeInfo, "", "  ")
+		if err != nil {
+			api.RespondError(c, http.StatusInternalServerError, "生成主题配置失败: "+err.Error())
+			return
+		}
+
+		if err := os.WriteFile(updatedConfigPath, updatedConfigData, 0644); err != nil {
+			api.RespondError(c, http.StatusInternalServerError, "更新主题配置文件失败: "+err.Error())
+			return
+		}
+	}
+
+	api.RespondSuccessMessage(c, "主题更新成功", updatedThemeInfo)
 }
