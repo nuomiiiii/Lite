@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/komari-monitor/komari/utils"
@@ -35,7 +36,7 @@ func (g *Generic) GetAuthorizationURL(redirectURI string) (string, string) {
 	g.stateCache.Set(state, true, cache.DefaultExpiration)
 	return authURL, state
 }
-func (g *Generic) OnCallback(ctx context.Context, state string, query map[string]string) (factory.OidcCallback, error) {
+func (g *Generic) OnCallback(ctx context.Context, state string, query map[string]string, callbackURI string) (factory.OidcCallback, error) {
 	code := query["code"]
 
 	// 验证state防止CSRF攻击
@@ -59,12 +60,13 @@ func (g *Generic) OnCallback(ctx context.Context, state string, query map[string
 		"client_id":     {g.Addition.ClientId},
 		"client_secret": {g.Addition.ClientSecret},
 		"code":          {code},
+		"redirect_uri":  {callbackURI},
 		"grant_type":    {"authorization_code"},
 	}
 
-	req, _ := http.NewRequest("POST", g.Addition.TokenURL, nil)
-	req.URL.RawQuery = data.Encode()
+	req, _ := http.NewRequest("POST", g.Addition.TokenURL, strings.NewReader(data.Encode()))
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

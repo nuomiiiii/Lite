@@ -8,7 +8,7 @@ type IOidcProvider interface {
 	GetConfiguration() Configuration
 	// 获取授权URL和状态
 	GetAuthorizationURL(redirectURI string) (string, string)
-	OnCallback(ctx context.Context, state string, query map[string]string) (OidcCallback, error)
+	OnCallback(ctx context.Context, state string, query map[string]string, callbackURI string) (OidcCallback, error)
 	Init() error
 	Destroy() error
 }

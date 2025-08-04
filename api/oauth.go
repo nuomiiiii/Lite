@@ -19,9 +19,7 @@ func OAuth(c *gin.Context) {
 		return
 	}
 
-	redirectURI := utils.GetScheme(c) + "://" + c.Request.Host + "/api/oauth_callback"
-
-	authURL, state := oauth.CurrentProvider().GetAuthorizationURL(redirectURI)
+	authURL, state := oauth.CurrentProvider().GetAuthorizationURL(utils.GetCallbackURL(c))
 
 	c.SetCookie("oauth_state", state, 3600, "/", "", false, true)
 
@@ -44,7 +42,7 @@ func OAuthCallback(c *gin.Context) {
 			queries[key] = values[0]
 		}
 	}
-	oidcUser, err := oauth.CurrentProvider().OnCallback(c.Request.Context(), state, queries)
+	oidcUser, err := oauth.CurrentProvider().OnCallback(c.Request.Context(), state, queries, utils.GetCallbackURL(c))
 	if err != nil {
 		c.JSON(500, gin.H{"status": "error", "error": "Failed to get user info: " + err.Error()})
 		return
