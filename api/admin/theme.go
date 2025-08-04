@@ -311,11 +311,71 @@ func downloadThemeFromURL(url string) ([]byte, error) {
 	return data, nil
 }
 
+// getGitHubReleaseDownloadURL 从GitHub API获取最新release的下载链接
+// 该函数通过GitHub API获取指定仓库最新release的资源下载链接
+// 参考API: https://api.github.com/repos/{owner}/{repo}/releases/latest
+// 参数:
+//   - owner: GitHub仓库所有者
+//   - repo: GitHub仓库名称
+//
+// 
+// 返回:
+//   - 最新release的第一个资源的下载链接
+//   - 错误信息（如果有）
+func getGitHubReleaseDownloadURL(owner, repo string) (string, error) {
+	if owner == "" || repo == "" {
+		return "", errors.New("GitHub仓库所有者和仓库名称不能为空")
+	}
+
+	// 构建GitHub API URL
+	// 使用GitHub API获取最新release信息
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
+
+	// 发送HTTP GET请求
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		return "", fmt.Errorf("获取GitHub release信息失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 检查响应状态码
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("获取GitHub release信息失败，HTTP状态码: %d", resp.StatusCode)
+	}
+
+	// 解析JSON响应
+	// GitHub API返回的JSON包含assets数组，每个asset包含browser_download_url字段
+	var releaseInfo struct {
+		Assets []struct {
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&releaseInfo); err != nil {
+		return "", fmt.Errorf("解析GitHub API响应失败: %v", err)
+	}
+
+	// 检查是否有可下载的资源
+	if len(releaseInfo.Assets) == 0 {
+		return "", errors.New("GitHub release中没有可下载的资源")
+	}
+
+	// 返回第一个资源的下载链接
+	// 相当于shell命令: curl -s https://api.github.com/repos/owner/repo/releases/latest | jq -r ".assets[0].browser_download_url"
+	return releaseInfo.Assets[0].BrowserDownloadURL, nil
+}
+
 // UpdateTheme 更新主题
+// 支持三种更新方式：
+// 1. 使用主题原有URL下载更新
+// 2. 提供新的直接下载URL进行更新
+// 3. 提供GitHub仓库信息，从最新release下载更新
 func UpdateTheme(c *gin.Context) {
-	var req struct {
-		Short string `json:"short" binding:"required"` // 主题短名称
-		URL   string `json:"url"`                      // 新的URL地址（可选）
+		Short    string `json:"short" binding:"required"` // 主题短名称
+		URL      string `json:"url"`                      // 新的URL地址（可选）
+		GitOwner string `json:"git_owner"`                // GitHub仓库所有者（可选）
+		GitRepo  string `json:"git_repo"`                 // GitHub仓库名称（可选）
+		GitRepo   string `json:"git_repo"`                // GitHub仓库名称（可选）
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -339,7 +399,7 @@ func UpdateTheme(c *gin.Context) {
 		return
 	}
 
-	// 尝试从原始URL下载主题
+	// 方式1: 尝试从原始URL下载主题
 	var themeData []byte
 	var downloadURL string
 
@@ -350,21 +410,48 @@ func UpdateTheme(c *gin.Context) {
 		}
 	}
 
-	// 如果原始URL下载失败且提供了新URL，则尝试从新URL下载
-	if (themeData == nil || len(themeData) == 0) && req.URL != "" {
-		themeData, err = downloadThemeFromURL(req.URL)
-		if err != nil {
-			api.RespondError(c, http.StatusBadRequest, "从新URL下载主题失败: "+err.Error())
-			return
+	// 如果原始URL下载失败，尝试其他方式下载
+	if themeData == nil || len(themeData) == 0 {
+		// 方式3: 如果提供了GitHub仓库信息，尝试从GitHub最新release下载
+		// 这种方式允许用户只需提供owner和repo信息，系统会自动获取最新release的下载链接
+		if req.GitOwner != "" && req.GitRepo != "" {
+			// 从GitHub API获取下载链接
+			// 相当于: DOWNLOAD_URL=$(curl -s https://api.github.com/repos/owner/repo/releases/latest | jq -r ".assets[0].browser_download_url")
+			gitHubURL, err := getGitHubReleaseDownloadURL(req.GitOwner, req.GitRepo)
+			if err != nil {
+				api.RespondError(c, http.StatusBadRequest, "从GitHub获取下载链接失败: "+err.Error())
+				return
+
+			
+			// 使用获取到的链接下载主题
+			themeData, err = downloadThemeFromURL(gitHubURL)
+			if err != nil {
+				api.RespondError(c, http.StatusBadRequest, "从GitHub下载主题失败: "+err.Error())
+				return
+			}
+			// 保存下载链接，稍后更新到主题配置中
+			downloadURL = gitHubURL
+		} else if req.URL != "" {
+			// 方式2: 如果提供了新URL，尝试从新URL下载
+			themeData, err = downloadThemeFromURL(req.URL)
+			if err != nil {
+				api.RespondError(c, http.StatusBadRequest, "从新URL下载主题失败: "+err.Error())
+				return
+			}
+			downloadURL = req.URL
 		}
-		downloadURL = req.URL
 	}
 
 	// 如果没有成功下载主题数据
 	if themeData == nil || len(themeData) == 0 {
-		api.RespondError(c, http.StatusBadRequest, "无法从原始URL下载主题，请提供新的URL")
+		api.RespondError(c, http.StatusBadRequest, "无法下载主题，请提供有效的URL或GitHub仓库信息")
 		return
-	}
+
+	
+	// 到这里，我们已经成功获取了主题数据，可能是通过以下三种方式之一：
+	// 1. 原始URL下载
+	// 2. 用户提供的新URL下载
+	// 3. GitHub仓库最新release下载
 
 	// 临时文件名
 	tempFile := filepath.Join(os.TempDir(), "downloaded_theme.zip")
