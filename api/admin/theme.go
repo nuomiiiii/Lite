@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -318,7 +319,6 @@ func downloadThemeFromURL(url string) ([]byte, error) {
 //   - owner: GitHub仓库所有者
 //   - repo: GitHub仓库名称
 //
-// 
 // 返回:
 //   - 最新release的第一个资源的下载链接
 //   - 错误信息（如果有）
@@ -365,17 +365,68 @@ func getGitHubReleaseDownloadURL(owner, repo string) (string, error) {
 	return releaseInfo.Assets[0].BrowserDownloadURL, nil
 }
 
+// isGitHubRepoURL 检查URL是否是GitHub仓库地址
+// 支持的格式:
+// - https://github.com/owner/repo
+// - https://github.com/owner/repo.git
+// - https://www.github.com/owner/repo
+// - http://github.com/owner/repo
+// 返回:
+//   - 是否是GitHub仓库URL
+//   - 仓库所有者
+//   - 仓库名称
+func isGitHubRepoURL(urlStr string) (bool, string, string) {
+	if urlStr == "" {
+		return false, "", ""
+	}
+
+	// 检查URL是否包含github.com
+	if !strings.Contains(strings.ToLower(urlStr), "github.com") {
+		return false, "", ""
+	}
+
+	// 解析URL
+	parsedURL, err := url.Parse(urlStr)
+	if err != nil {
+		return false, "", ""
+	}
+
+	// 检查主机名是否是github.com或www.github.com
+	hostname := strings.ToLower(parsedURL.Host)
+	if hostname != "github.com" && hostname != "www.github.com" {
+		return false, "", ""
+	}
+
+	// 解析路径部分，提取owner和repo
+	// 路径格式应该是 /owner/repo 或 /owner/repo.git
+	path := strings.TrimPrefix(parsedURL.Path, "/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) < 2 {
+		return false, "", ""
+	}
+
+	owner := parts[0]
+	repo := parts[1]
+
+	// 如果repo以.git结尾，去掉这个后缀
+	repo = strings.TrimSuffix(repo, ".git")
+
+	return true, owner, repo
+}
+
 // UpdateTheme 更新主题
-// 支持三种更新方式：
+// 支持四种更新方式：
 // 1. 使用主题原有URL下载更新
 // 2. 提供新的直接下载URL进行更新
 // 3. 提供GitHub仓库信息，从最新release下载更新
+// 4. 如果主题URL是GitHub仓库地址，自动获取最新release
 func UpdateTheme(c *gin.Context) {
+	var req struct {
 		Short    string `json:"short" binding:"required"` // 主题短名称
 		URL      string `json:"url"`                      // 新的URL地址（可选）
 		GitOwner string `json:"git_owner"`                // GitHub仓库所有者（可选）
 		GitRepo  string `json:"git_repo"`                 // GitHub仓库名称（可选）
-		GitRepo   string `json:"git_repo"`                // GitHub仓库名称（可选）
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -399,14 +450,36 @@ func UpdateTheme(c *gin.Context) {
 		return
 	}
 
-	// 方式1: 尝试从原始URL下载主题
+	// 方式1和方式4: 尝试从原始URL下载主题
+	// 如果原始URL是GitHub仓库地址，则自动获取最新release
 	var themeData []byte
 	var downloadURL string
+	var err2 error
 
 	if themeInfo.URL != "" {
-		themeData, err = downloadThemeFromURL(themeInfo.URL)
-		if err == nil {
-			downloadURL = themeInfo.URL
+		// 检查原始URL是否是GitHub仓库地址
+		// 例如: https://github.com/owner/repo
+		isGitHub, owner, repo := isGitHubRepoURL(themeInfo.URL)
+		if isGitHub {
+			// 方式4: 如果原始URL是GitHub仓库地址，自动获取最新release
+			// 这是本次需求的核心功能：当主题文件中现有的url地址如果是github仓库的路径，则直接引用该url地址去下载最新的release
+			gitHubURL, err := getGitHubReleaseDownloadURL(owner, repo)
+			if err == nil {
+				// 使用获取到的GitHub release下载链接下载主题
+				themeData, err2 = downloadThemeFromURL(gitHubURL)
+				if err2 == nil {
+					// 注意：这里我们保存的是release的下载链接，而不是GitHub仓库地址
+					// 这样做是为了在下载成功后，将这个具体的release下载链接保存到主题配置中
+					// 但在下次更新时，我们仍然会检测到这是一个GitHub仓库，并获取最新的release
+					downloadURL = gitHubURL
+				}
+			}
+		} else {
+			// 原始URL不是GitHub仓库地址，直接尝试下载（方式1）
+			themeData, err2 = downloadThemeFromURL(themeInfo.URL)
+			if err2 == nil {
+				downloadURL = themeInfo.URL
+			}
 		}
 	}
 
@@ -421,8 +494,8 @@ func UpdateTheme(c *gin.Context) {
 			if err != nil {
 				api.RespondError(c, http.StatusBadRequest, "从GitHub获取下载链接失败: "+err.Error())
 				return
+			}
 
-			
 			// 使用获取到的链接下载主题
 			themeData, err = downloadThemeFromURL(gitHubURL)
 			if err != nil {
@@ -433,12 +506,36 @@ func UpdateTheme(c *gin.Context) {
 			downloadURL = gitHubURL
 		} else if req.URL != "" {
 			// 方式2: 如果提供了新URL，尝试从新URL下载
-			themeData, err = downloadThemeFromURL(req.URL)
-			if err != nil {
-				api.RespondError(c, http.StatusBadRequest, "从新URL下载主题失败: "+err.Error())
-				return
+			// 检查新URL是否是GitHub仓库地址
+			isGitHub, owner, repo := isGitHubRepoURL(req.URL)
+			if isGitHub {
+				// 如果新URL是GitHub仓库地址，获取最新release
+				// 这里也应用了自动检测GitHub仓库并下载最新release的功能
+				gitHubURL, err := getGitHubReleaseDownloadURL(owner, repo)
+				if err != nil {
+					api.RespondError(c, http.StatusBadRequest, "从GitHub获取下载链接失败: "+err.Error())
+					return
+				}
+
+				// 使用获取到的链接下载主题
+				themeData, err = downloadThemeFromURL(gitHubURL)
+				if err != nil {
+					api.RespondError(c, http.StatusBadRequest, "从GitHub下载主题失败: "+err.Error())
+					return
+				}
+				// 保存GitHub仓库URL，而不是release下载链接，以便将来可以获取最新版本
+				// 这是一个重要的设计决策：我们保存的是GitHub仓库URL，而不是具体的release下载链接
+				// 这样在下次更新时，系统会再次检测到这是GitHub仓库，并自动获取最新的release
+				downloadURL = req.URL
+			} else {
+				// 新URL不是GitHub仓库地址，直接尝试下载
+				themeData, err = downloadThemeFromURL(req.URL)
+				if err != nil {
+					api.RespondError(c, http.StatusBadRequest, "从新URL下载主题失败: "+err.Error())
+					return
+				}
+				downloadURL = req.URL
 			}
-			downloadURL = req.URL
 		}
 	}
 
@@ -446,12 +543,13 @@ func UpdateTheme(c *gin.Context) {
 	if themeData == nil || len(themeData) == 0 {
 		api.RespondError(c, http.StatusBadRequest, "无法下载主题，请提供有效的URL或GitHub仓库信息")
 		return
+	}
 
-	
-	// 到这里，我们已经成功获取了主题数据，可能是通过以下三种方式之一：
-	// 1. 原始URL下载
-	// 2. 用户提供的新URL下载
-	// 3. GitHub仓库最新release下载
+	// 到这里，我们已经成功获取了主题数据，可能是通过以下四种方式之一：
+	// 1. 原始URL直接下载
+	// 2. 原始URL是GitHub仓库，自动获取最新release下载
+	// 3. 用户提供的新URL下载
+	// 4. 用户提供的GitHub仓库信息，获取最新release下载
 
 	// 临时文件名
 	tempFile := filepath.Join(os.TempDir(), "downloaded_theme.zip")
