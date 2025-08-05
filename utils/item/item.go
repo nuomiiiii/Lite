@@ -20,10 +20,14 @@ func Parse(v any) []Item {
 	var items []Item
 	for i := 0; i < val.NumField(); i++ {
 		field := val.Type().Field(i)
+		typ := field.Tag.Get("type")
+		if typ != "option" {
+			typ = field.Type.Name()
+		}
 		item := Item{
 			Name:     field.Tag.Get("json"),
 			Required: field.Tag.Get("required") == "true",
-			Type:     field.Type.Name(),
+			Type:     typ,
 			Options:  field.Tag.Get("options"),
 			Default:  field.Tag.Get("default"),
 			Help:     field.Tag.Get("help"),
