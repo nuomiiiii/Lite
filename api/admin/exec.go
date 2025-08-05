@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -21,16 +22,25 @@ func Exec(c *gin.Context) {
 		Clients []string `json:"clients" binding:"required"`
 	}
 	var onlineClients []string
+	var offlineClients []string
 	if err := c.ShouldBindJSON(&req); err != nil {
 		api.RespondError(c, 400, "Invalid or missing request body: "+err.Error())
 		return
 	}
-	for uuid := range ws.GetConnectedClients() {
-		if contain(req.Clients, uuid) {
+	// for uuid := range ws.GetConnectedClients() {
+	// 	if contain(req.Clients, uuid) {
+	// 		onlineClients = append(onlineClients, uuid)
+	// 	}
+	// 	// else {
+	// 	// 	api.RespondError(c, 400, "Client not connected: "+uuid)
+	// 	// 	return
+	// 	// }
+	// }
+	for _, uuid := range req.Clients {
+		if client := ws.GetConnectedClients()[uuid]; client != nil {
 			onlineClients = append(onlineClients, uuid)
 		} else {
-			api.RespondError(c, 400, "Client not connected: "+uuid)
-			return
+			offlineClients = append(offlineClients, uuid)
 		}
 	}
 	if len(onlineClients) == 0 {
@@ -67,12 +77,18 @@ func Exec(c *gin.Context) {
 		"task_id": taskId,
 		"clients": onlineClients,
 	})
-}
-func contain(clients []string, uuid string) bool {
-	for _, client := range clients {
-		if client == uuid {
-			return true
+	if len(offlineClients) > 0 {
+		for _, uuid := range offlineClients {
+			tasks.SaveTaskResult(taskId, uuid, "Client offline!", -1, time.Now())
 		}
 	}
-	return false
 }
+
+// func contain(clients []string, uuid string) bool {
+// 	for _, client := range clients {
+// 		if client == uuid {
+// 			return true
+// 		}
+// 	}
+// 	return false
+// }
