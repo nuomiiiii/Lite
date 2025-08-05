@@ -6,7 +6,7 @@ import (
 
 type Addition struct {
 	URL         string `json:"url" required:"true"`
-	Method      string `json:"method" default:"GET" type:"option" option:"POST,GET"`
+	Method      string `json:"method" default:"GET" type:"option" options:"POST,GET"`
 	ContentType string `json:"content_type" default:"application/json"`
 	Headers     string `json:"headers" help:"HTTP headers in JSON format"`
 	Body        string `json:"body" default:"{\"message\":\"{{message}}\",\"title\":\"{{title}}\"}"` // 默认使用message和title字段
