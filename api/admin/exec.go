@@ -48,7 +48,7 @@ func Exec(c *gin.Context) {
 		return
 	}
 	taskId := utils.GenerateRandomString(16)
-	if err := tasks.CreateTask(taskId, onlineClients, req.Command); err != nil {
+	if err := tasks.CreateTask(taskId, append(onlineClients, offlineClients...), req.Command); err != nil {
 		api.RespondError(c, 500, "Failed to create task: "+err.Error())
 		return
 	}
