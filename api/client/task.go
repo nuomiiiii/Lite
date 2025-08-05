@@ -1,10 +1,9 @@
 package client
 
 import (
-	"time"
-
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/tasks"
 )
 
@@ -19,7 +18,7 @@ func TaskResult(c *gin.Context) {
 		TaskId     string    `json:"task_id" binding:"required"`
 		Result     string    `json:"result" binding:"required"`
 		ExitCode   int       `json:"exit_code"`
-		FinishedAt time.Time `json:"finished_at" binding:"required"`
+		FinishedAt models.LocalTime `json:"finished_at" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"status": "error", "message": "Invalid request"})

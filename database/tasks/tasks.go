@@ -83,7 +83,7 @@ func DeleteTaskByTaskId(taskId string) error {
 	return dbcore.GetDBInstance().Where("task_id = ?", taskId).Delete(&models.Task{}).Error
 }
 
-func SaveTaskResult(taskId, clientId, result string, exitCode int, timestamp time.Time) error {
+func SaveTaskResult(taskId, clientId, result string, exitCode int, timestamp models.LocalTime) error {
 	return dbcore.GetDBInstance().
 		Model(&models.TaskResult{}).
 		Where("task_id = ? AND client = ?", taskId, clientId).

@@ -8,6 +8,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/auditlog"
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/ws"
@@ -79,7 +80,7 @@ func Exec(c *gin.Context) {
 	})
 	if len(offlineClients) > 0 {
 		for _, uuid := range offlineClients {
-			tasks.SaveTaskResult(taskId, uuid, "Client offline!", -1, time.Now())
+			tasks.SaveTaskResult(taskId, uuid, "Client offline!", -1, models.FromTime(time.Now()))
 		}
 	}
 }
