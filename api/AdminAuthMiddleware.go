@@ -10,7 +10,14 @@ import (
 
 func AdminAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-
+		// API key authentication
+		apiKey := c.GetHeader("Authorization")
+		if isApiKeyValid(apiKey) {
+			c.Set("api_key", apiKey)
+			c.Next()
+			return
+		}
+		// session-based authentication
 		session, err := c.Cookie("session_token")
 		if err != nil {
 			RespondError(c, http.StatusUnauthorized, "Unauthorized.")
