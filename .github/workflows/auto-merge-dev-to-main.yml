@@ -2,7 +2,7 @@ name: Auto Merge Dev to Main
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize] # No longer need 'closed' trigger
     branches:
       - main
     paths-ignore:
@@ -10,9 +10,10 @@ on:
       - 'docs/**'
 
 jobs:
+  # Job to enable Auto-Merge for the PR
   auto-merge:
     runs-on: ubuntu-latest
-    # Only handle PRs from dev branch to main branch
+    # Only run for open PRs from dev to main
     if: github.head_ref == 'dev' && github.base_ref == 'main'
 
     permissions:
@@ -26,7 +27,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
+          fetch-depth: 0 # Required for git history
 
       - name: Configure Git
         run: |
@@ -41,12 +42,12 @@ jobs:
       - name: Check for conflicts
         id: check-conflicts
         run: |
-          # Try to merge to check for conflicts
-          git checkout main
-          git pull origin main
+          # Ensure local branches are up-to-date
+          git fetch origin main
+          git fetch origin dev
           
-          # Try to merge dev branch (test only, not actual merge)
-          if git merge-tree $(git merge-base main dev) main dev | grep -q '<<<<<<<'; then
+          # Use merge-base to find the common ancestor and check for conflicts
+          if git merge-tree $(git merge-base origin/main origin/dev) origin/main origin/dev | grep -q '<<<<<<<'; then
             echo "has_conflicts=true" >> $GITHUB_OUTPUT
             echo "❌ Merge conflicts detected"
           else
@@ -56,40 +57,41 @@ jobs:
 
       - name: Add conflict comment
         if: steps.check-conflicts.outputs.has_conflicts == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh pr comment ${{ steps.get-pr.outputs.pr_number }} \
             --body "❌ **Merge Conflict Detection**
 
-          This PR has merge conflicts and cannot be automatically merged. Please resolve conflicts manually and push to the dev branch.
+            This PR has merge conflicts and cannot be automatically merged. Please resolve conflicts manually and push to the dev branch.
 
-          Steps to resolve conflicts:
-          1. \`git checkout dev\`
-          2. \`git merge main\`
-          3. Resolve conflicts
-          4. \`git commit\`
-          5. \`git push origin dev\`"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            Steps to resolve conflicts:
+            1. \`git checkout dev\`
+            2. \`git merge main\`
+            3. Resolve conflicts
+            4. \`git commit\`
+            5. \`git push origin dev\`"
+          exit 1 # Exit to prevent further steps
 
       - name: Enable auto-merge
         if: steps.check-conflicts.outputs.has_conflicts == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Enable auto-merge
+          # Enable auto-merge using a merge commit
           gh pr merge ${{ steps.get-pr.outputs.pr_number }} \
             --auto \
-            --squash \
+            --merge \
             --delete-branch=false
           
           # Add success comment
           gh pr comment ${{ steps.get-pr.outputs.pr_number }} \
             --body "✅ **Auto-merge Enabled**
 
-          This PR has no merge conflicts and auto-merge has been enabled. It will be automatically merged to the main branch once all checks pass.
+            This PR has no merge conflicts and auto-merge has been enabled. It will be automatically merged to the main branch once all checks pass.
 
-          Merge method: Squash and merge
-          Branch retention: dev branch will be preserved"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            Merge method: Merge commit
+            Branch retention: dev branch will be preserved"
 
       - name: Summary
         run: |
