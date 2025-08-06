@@ -25,6 +25,13 @@ var (
 
 func PrivateSiteMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// API key authentication
+		apiKey := c.GetHeader("Authorization")
+		if isApiKeyValid(apiKey) {
+			c.Set("api_key", apiKey)
+			c.Next()
+			return
+		}
 		// 如果是公开的路径，直接放行
 		for _, path := range publicPaths {
 			if len(c.Request.URL.Path) >= len(path) && c.Request.URL.Path[:len(path)] == path {

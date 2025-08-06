@@ -13,6 +13,7 @@ import (
 
 	"strconv"
 
+	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils"
@@ -118,4 +119,17 @@ func GetVersion(c *gin.Context) {
 		"version": utils.CurrentVersion,
 		"hash":    utils.VersionHash,
 	})
+}
+
+func isApiKeyValid(apiKey string) bool {
+	cfg, err := config.Get()
+	if err != nil {
+		log.Printf("Failed to retrieve configuration: %v", err)
+		return false
+	}
+	if cfg.ApiKey == "" || len(cfg.ApiKey) < 12 {
+		log.Println("API key is not set or is too short.")
+		return false
+	}
+	return apiKey == "Bearer "+cfg.ApiKey
 }

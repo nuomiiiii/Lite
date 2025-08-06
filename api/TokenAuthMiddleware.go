@@ -16,6 +16,14 @@ import (
 // TokenAuthMiddleware creates a Gin middleware that validates a token from query parameters or request body.
 func TokenAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// API key authentication
+		apiKey := c.GetHeader("Authorization")
+		if isApiKeyValid(apiKey) {
+			c.Set("api_key", apiKey)
+			c.Next()
+			return
+		}
+
 		var token string
 
 		// Step 1: Check query parameter for token
