@@ -26,7 +26,7 @@ log_step() {
 
 # Global variables
 INSTALL_DIR="/opt/komari"
-DATA_DIR="/opt/komari/data"
+DATA_DIR="/opt/komari"
 SERVICE_NAME="komari"
 BINARY_PATH="$INSTALL_DIR/komari"
 DEFAULT_PORT="25774"
