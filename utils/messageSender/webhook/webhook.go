@@ -111,15 +111,11 @@ func (w *WebhookSender) createPOSTRequest(message, title string) (*http.Request,
 }
 
 func (w *WebhookSender) createGETRequest(message, title string) (*http.Request, error) {
-	u, err := url.Parse(w.Addition.URL)
+	URL := w.replaceTemplate(w.Addition.Body, message, title)
+	u, err := url.Parse(URL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL: %v", err)
 	}
-
-	query := u.Query()
-	query.Set("message", message)
-	query.Set("title", title)
-	u.RawQuery = query.Encode()
 
 	req, err := http.NewRequest("GET", u.String(), nil)
 	if err != nil {
