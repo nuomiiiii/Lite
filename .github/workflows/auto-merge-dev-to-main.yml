@@ -14,7 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     # Only handle PRs from dev branch to main branch
     if: github.head_ref == 'dev' && github.base_ref == 'main'
-    
+
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+      statuses: read
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
