@@ -167,6 +167,7 @@ func RunServer() {
 	r.GET("/api/records/load", record.GetRecordsByUUID)
 	r.GET("/api/records/ping", record.GetPingRecords)
 	// #region Agent
+	r.POST("/api/clients/register", client.RegisterClient)
 	tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
 	{
 		tokenAuthrized.GET("/report", client.WebSocketReport) // websocket
