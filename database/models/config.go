@@ -1,13 +1,14 @@
 package models
 
 type Config struct {
-	ID          uint   `json:"id,omitempty" gorm:"primaryKey;autoIncrement"` // 1
-	Sitename    string `json:"sitename" gorm:"type:varchar(100);not null"`
-	Description string `json:"description" gorm:"type:text"`
-	AllowCors   bool   `json:"allow_cors" gorm:"column:allow_cors;default:false"`
-	Theme       string `json:"theme" gorm:"type:varchar(100);default:'default'"` // 主题名称，默认 'default'
-	PrivateSite bool   `json:"private_site" gorm:"default:false"`                // 是否为私有站点，默认 false
-	ApiKey      string `json:"api_key" gorm:"type:varchar(255);default:''"`
+	ID               uint   `json:"id,omitempty" gorm:"primaryKey;autoIncrement"` // 1
+	Sitename         string `json:"sitename" gorm:"type:varchar(100);not null"`
+	Description      string `json:"description" gorm:"type:text"`
+	AllowCors        bool   `json:"allow_cors" gorm:"column:allow_cors;default:false"`
+	Theme            string `json:"theme" gorm:"type:varchar(100);default:'default'"` // 主题名称，默认 'default'
+	PrivateSite      bool   `json:"private_site" gorm:"default:false"`                // 是否为私有站点，默认 false
+	ApiKey           string `json:"api_key" gorm:"type:varchar(255);default:''"`
+	AutoDiscoveryKey string `json:"auto_discovery_key" gorm:"type:varchar(255);default:''"` // 自动发现密钥
 	// GeoIP 配置
 	GeoIpEnabled  bool   `json:"geo_ip_enabled" gorm:"default:true"`
 	GeoIpProvider string `json:"geo_ip_provider" gorm:"type:varchar(20);default:'ip-api'"` // empty, mmdb, ip-api, geojs
