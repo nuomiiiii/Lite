@@ -14,18 +14,92 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/cmd/flags"
+	"github.com/komari-monitor/komari/database/dbcore"
 )
+
+// copyDatabaseToTemp 安全地复制数据库文件到临时目录
+// 对于SQLite数据库，会使用BACKUP命令确保数据一致性
+func copyDatabaseToTemp(dbFilePath, tempDir string) (string, error) {
+	if dbFilePath == "" {
+		return "", fmt.Errorf("database file path is empty")
+	}
+
+	// 检查数据库文件是否存在
+	if _, err := os.Stat(dbFilePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("database file does not exist: %s", dbFilePath)
+	}
+
+	dbFileName := filepath.Base(dbFilePath)
+	tempDbPath := filepath.Join(tempDir, dbFileName)
+
+	// 如果是SQLite数据库，使用SQLite的BACKUP命令来确保一致性
+	if flags.DatabaseType == "sqlite" || flags.DatabaseType == "" {
+		db := dbcore.GetDBInstance()
+
+		// 获取底层的SQLite连接
+		sqlDB, err := db.DB()
+		if err != nil {
+			return "", fmt.Errorf("failed to get underlying database connection: %v", err)
+		}
+
+		// 使用SQLite的BACKUP API来创建一致的备份
+		backupSQL := fmt.Sprintf("BACKUP DATABASE main TO '%s'", tempDbPath)
+		_, err = sqlDB.Exec(backupSQL)
+		if err != nil {
+			// 如果BACKUP命令失败，回退到文件复制方法
+			log.Printf("SQLite BACKUP command failed, falling back to file copy: %v", err)
+			return copyFileToTemp(dbFilePath, tempDbPath)
+		}
+
+		log.Printf("Database backed up using SQLite BACKUP to: %s", tempDbPath)
+		return tempDbPath, nil
+	} else {
+		// 对于非SQLite数据库，直接复制文件
+		return copyFileToTemp(dbFilePath, tempDbPath)
+	}
+}
+
+// copyFileToTemp 简单的文件复制到临时目录
+func copyFileToTemp(srcPath, destPath string) (string, error) {
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open source file: %v", err)
+	}
+	defer src.Close()
+
+	dest, err := os.Create(destPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to create destination file: %v", err)
+	}
+	defer dest.Close()
+
+	_, err = io.Copy(dest, src)
+	if err != nil {
+		return "", fmt.Errorf("failed to copy file: %v", err)
+	}
+
+	log.Printf("Database file copied to: %s", destPath)
+	return destPath, nil
+}
 
 // DownloadBackup 用于打包 ./data 目录及数据库文件为 zip 并通过 HTTP 下载
 func DownloadBackup(c *gin.Context) {
-	backupFileName := fmt.Sprintf("backup-%s.zip", time.Now().Format("20060102-150405"))
+	backupFileName := fmt.Sprintf("backup-%d.zip", time.Now().UnixMicro())
 	c.Writer.Header().Set("Content-Type", "application/zip")
 	c.Writer.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", backupFileName))
 
 	zipWriter := zip.NewWriter(c.Writer)
 	defer zipWriter.Close()
 
-	err := filepath.Walk("./data", func(filePath string, info os.FileInfo, err error) error {
+	// 创建临时目录用于存放数据库备份
+	tempDir, err := os.MkdirTemp("", "komari-backup-*")
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error creating temporary directory: %v", err))
+		return
+	}
+	defer os.RemoveAll(tempDir) // 清理临时目录
+
+	err = filepath.Walk("./data", func(filePath string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -96,27 +170,32 @@ func DownloadBackup(c *gin.Context) {
 
 	// 如果数据库文件的绝对路径不是以 ./data 目录的绝对路径开头，则单独添加它
 	if !strings.HasPrefix(dbAbsPath, dataAbsPath) {
-		dbFileName := filepath.Base(dbFilePath)
-		dbInfo, err := os.Stat(dbFilePath)
+		// 使用安全的数据库复制方法
+		tempDbPath, err := copyDatabaseToTemp(dbFilePath, tempDir)
 		if err != nil {
 			if os.IsNotExist(err) {
 				log.Printf("Database file '%s' does not exist, skipping.\n", dbFilePath)
-				return // 数据库不存在是正常情况，直接返回
+			} else {
+				api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error copying database file: %v", err))
+				return
 			}
-			api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error stating database file: %v", err))
-			return
-		}
-
-		if !dbInfo.IsDir() {
-			file, err := os.Open(dbFilePath)
+		} else {
+			// 将临时数据库文件添加到zip
+			dbInfo, err := os.Stat(tempDbPath)
 			if err != nil {
-				api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error opening database file: %v", err))
+				api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error stating temp database file: %v", err))
+				return
+			}
+
+			file, err := os.Open(tempDbPath)
+			if err != nil {
+				api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error opening temp database file: %v", err))
 				return
 			}
 			defer file.Close()
 
 			writer, err := zipWriter.CreateHeader(&zip.FileHeader{
-				Name:     dbFileName,
+				Name:     filepath.Base(dbFilePath), // 使用原始数据库文件名
 				Method:   zip.Deflate,
 				Modified: dbInfo.ModTime(),
 			})
@@ -136,7 +215,7 @@ func DownloadBackup(c *gin.Context) {
 	}
 
 	// 添加备份标记文件
-	markupContent := "此文件为 Komari 备份标记文件，请勿删除。\nThis is a Komari backup markup file, please do not delete.\n\n备份时间 / Backup Time: " + time.Now().Format("2006-01-02 15:04:05")
+	markupContent := "此文件为 Komari 备份标记文件，请勿删除。\nThis is a Komari backup markup file, please do not delete.\n\n备份时间 / Backup Time: " + time.Now().Format(time.RFC3339)
 	markupWriter, err := zipWriter.CreateHeader(&zip.FileHeader{
 		Name:     "komari-backup-markup",
 		Method:   zip.Deflate,
