@@ -65,7 +65,7 @@ func WebSocketReport(c *gin.Context) {
 	}
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return true
+			return true // 被控
 		},
 	}
 	// Upgrade the HTTP connection to a WebSocket connection
