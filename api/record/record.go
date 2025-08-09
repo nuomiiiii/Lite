@@ -106,14 +106,30 @@ func GetPingRecords(c *gin.Context) {
 			if !found {
 				continue
 			}
-			// 只返回有记录的任务
-			//if _, ok := taskIdSet[t.Id]; ok {
+
+			// 计算该任务的丢包率
+			totalCount := 0
+			lossCount := 0
+			for _, r := range records {
+				if r.TaskId == t.Id {
+					totalCount++
+					if r.Value < 0 {
+						lossCount++
+					}
+				}
+			}
+
+			var lossRate float64 = 0
+			if totalCount > 0 {
+				lossRate = float64(lossCount) / float64(totalCount) * 100
+			}
+
 			tasksList = append(tasksList, gin.H{
 				"id":       t.Id,
 				"name":     t.Name,
 				"interval": t.Interval,
+				"loss":     lossRate,
 			})
-			//}
 		}
 		response.Tasks = tasksList
 	}
