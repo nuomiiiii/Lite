@@ -16,9 +16,7 @@ func GetClients(c *gin.Context) {
 		return
 	}
 	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
+		CheckOrigin: CheckOrigin,
 	}
 	// Upgrade the HTTP connection to a WebSocket connection
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)

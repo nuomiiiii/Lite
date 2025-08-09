@@ -22,7 +22,7 @@ func EstablishConnection(c *gin.Context) {
 	}
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return true // TODO: 检查源站
+			return true // 被控
 		},
 	}
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)

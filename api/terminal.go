@@ -3,7 +3,6 @@ package api
 import (
 	"log"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -31,18 +30,7 @@ func RequestTerminal(c *gin.Context) {
 		return
 	}
 	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool {
-			origin := r.Header.Get("Origin")
-			if origin == "" {
-				return false
-			}
-			host := r.Host
-			originUrl, err := url.Parse(origin)
-			if err != nil {
-				return false
-			}
-			return originUrl.Host == host
-		},
+		CheckOrigin: ws.CheckOrigin,
 	}
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
