@@ -48,13 +48,15 @@ func Login(c *gin.Context) {
 	}
 	// 2FA
 	user, _ := accounts.GetUserByUUID(uuid)
-	if user.TwoFactor != "" && data.TwoFa == "" {
-		RespondError(c, http.StatusUnauthorized, "2FA code is required")
-		return
-	}
-	if ok, err := accounts.Verify2Fa(uuid, data.TwoFa); err != nil || !ok {
-		RespondError(c, http.StatusUnauthorized, "Invalid 2FA code")
-		return
+	if user.TwoFactor != "" { // 开启了2FA
+		if data.TwoFa == "" {
+			RespondError(c, http.StatusUnauthorized, "2FA code is required")
+			return
+		}
+		if ok, err := accounts.Verify2Fa(uuid, data.TwoFa); err != nil || !ok {
+			RespondError(c, http.StatusUnauthorized, "Invalid 2FA code")
+			return
+		}
 	}
 	// Create session
 	session, err := accounts.CreateSession(uuid, 2592000, c.Request.UserAgent(), c.ClientIP(), "password")
