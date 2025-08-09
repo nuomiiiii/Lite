@@ -68,6 +68,7 @@ func RemoveClient(c *gin.Context) {
 	user_uuid, _ := c.Get("uuid")
 	auditlog.Log(c.ClientIP(), user_uuid.(string), "delete client:"+uuid, "warn")
 	c.JSON(200, gin.H{"status": "success"})
+	ws.DeleteConnectedClients(uuid)
 	ws.DeleteLatestReport(uuid)
 }
 
