@@ -52,7 +52,7 @@ func Login(c *gin.Context) {
 		RespondError(c, http.StatusUnauthorized, "2FA code is required")
 		return
 	}
-	if ok, err := accounts.Verify2Fa(uuid, data.TwoFa); err != nil && ok {
+	if ok, err := accounts.Verify2Fa(uuid, data.TwoFa); err != nil || !ok {
 		RespondError(c, http.StatusUnauthorized, "Invalid 2FA code")
 		return
 	}
