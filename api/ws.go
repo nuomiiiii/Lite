@@ -48,7 +48,7 @@ func GetClients(c *gin.Context) {
 			continue
 		}
 
-		// 登录状态检查（决定是否展示 Hidden 节点）: 直接查询 session 表，避免导入 accounts 引发循环依赖
+		// 登录状态检查
 		isLogin := false
 		session, _ := c.Cookie("session_token")
 		_, err = accounts.GetUserBySession(session)
