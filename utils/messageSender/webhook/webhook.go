@@ -111,7 +111,7 @@ func (w *WebhookSender) createPOSTRequest(message, title string) (*http.Request,
 }
 
 func (w *WebhookSender) createGETRequest(message, title string) (*http.Request, error) {
-	URL := w.replaceTemplate(w.Addition.Body, message, title)
+	URL := w.replaceTemplate(w.Addition.URL, message, title)
 	u, err := url.Parse(URL)
 	if err != nil {
 		return nil, fmt.Errorf("invalid URL: %v", err)
