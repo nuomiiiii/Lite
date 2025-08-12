@@ -36,6 +36,7 @@ type Client struct {
 	Group          string    `json:"group" gorm:"type:varchar(100)"`
 	Tags           string    `json:"tags" gorm:"type:text"` // split by ';'
 	Hidden         bool      `json:"hidden" gorm:"default:false"`
+	TrafficLimit   int64     `json:"traffic_limit" gorm:"type:bigint"`
 	CreatedAt      LocalTime `json:"created_at"`
 	UpdatedAt      LocalTime `json:"updated_at"`
 }
