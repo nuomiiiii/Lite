@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/clients"
 )
 
@@ -11,16 +12,28 @@ func GetNodesInformation(c *gin.Context) {
 		RespondError(c, 500, "Failed to retrieve client information: "+err.Error())
 		return
 	}
+	isLogin := false
+	session, _ := c.Cookie("session_token")
+	_, err = accounts.GetUserBySession(session)
+	if err == nil {
+		isLogin = true
+	}
 
-	count := len(clientList)
-	// 公开信息不展示IP地址,私有备注不展示
-	for i := 0; i < count; i++ {
+	// 过滤掉 Hidden 的客户端，并清理需要隐藏的字段
+	j := 0
+	for i := 0; i < len(clientList); i++ {
+		if clientList[i].Hidden && !isLogin { // 不返回 Hidden 客户端
+			continue
+		}
 		clientList[i].IPv4 = ""
 		clientList[i].IPv6 = ""
-		clientList[i].Remark = ""
+		clientList[i].Remark = "" // 私有备注不展示
 		clientList[i].Version = ""
 		clientList[i].Token = ""
+		clientList[j] = clientList[i]
+		j++
 	}
+	clientList = clientList[:j]
 
 	RespondSuccess(c, clientList)
 }

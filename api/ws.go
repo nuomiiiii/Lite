@@ -1,12 +1,15 @@
-package ws
+package api
 
 import (
 	"net/http"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/komari-monitor/komari/common"
-
-	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/database/accounts"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/ws"
 )
 
 func GetClients(c *gin.Context) {
@@ -16,7 +19,7 @@ func GetClients(c *gin.Context) {
 		return
 	}
 	upgrader := websocket.Upgrader{
-		CheckOrigin: CheckOrigin,
+		CheckOrigin: ws.CheckOrigin,
 	}
 	// Upgrade the HTTP connection to a WebSocket connection
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -44,16 +47,41 @@ func GetClients(c *gin.Context) {
 			conn.WriteJSON(gin.H{"status": "error", "error": "Invalid message"})
 			continue
 		}
+
+		// 登录状态检查
+		isLogin := false
+		session, _ := c.Cookie("session_token")
+		_, err = accounts.GetUserBySession(session)
+		if err == nil {
+			isLogin = true
+		}
+		// 仅在未登录时需要 Hidden 信息做过滤
+		hiddenMap := map[string]bool{}
+		if !isLogin {
+			var hiddenClients []models.Client
+			db := dbcore.GetDBInstance()
+			_ = db.Select("uuid").Where("hidden = ?", true).Find(&hiddenClients).Error
+			for _, cli := range hiddenClients {
+				hiddenMap[cli.UUID] = true
+			}
+		}
 		// 已建立连接的客户端uuid列表
-		for key := range GetConnectedClients() {
-			resp.Online = append(resp.Online, key)
+		for key := range ws.GetConnectedClients() {
+			if !(!isLogin && hiddenMap[key]) { // 未登录且 Hidden -> 跳过
+				resp.Online = append(resp.Online, key)
+			}
 		}
 		// 清除UUID，简化报告单
-		resp.Data = GetLatestReport()
-		for _, report := range resp.Data {
-			report.UUID = ""
+		resp.Data = ws.GetLatestReport()
+		if !isLogin { // 未登录过滤 Hidden 的节点报告
+			for uuid := range resp.Data {
+				if hiddenMap[uuid] {
+					delete(resp.Data, uuid)
+				}
+			}
 		}
-		for _, report := range resp.Data {
+		for _, report := range resp.Data { // 不暴露 uuid
+			report.UUID = ""
 			if report.CPU.Usage == 0 {
 				report.CPU.Usage = 0.01
 			}
