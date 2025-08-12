@@ -38,7 +38,6 @@ import (
 	"github.com/komari-monitor/komari/utils/messageSender"
 	"github.com/komari-monitor/komari/utils/notifier"
 	"github.com/komari-monitor/komari/utils/oauth"
-	"github.com/komari-monitor/komari/ws"
 	"github.com/spf13/cobra"
 )
 
@@ -155,7 +154,7 @@ func RunServer() {
 	// #region 公开路由
 	r.POST("/api/login", api.Login)
 	r.GET("/api/me", api.GetMe)
-	r.GET("/api/clients", ws.GetClients)
+	r.GET("/api/clients", api.GetClients)
 	r.GET("/api/nodes", api.GetNodesInformation)
 	r.GET("/api/public", api.GetPublicSettings)
 	r.GET("/api/oauth", api.OAuth)

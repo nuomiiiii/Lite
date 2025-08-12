@@ -35,6 +35,7 @@ type Client struct {
 	ExpiredAt      LocalTime `json:"expired_at" gorm:"type:timestamp"`
 	Group          string    `json:"group" gorm:"type:varchar(100)"`
 	Tags           string    `json:"tags" gorm:"type:text"` // split by ';'
+	Hidden         bool      `json:"hidden" gorm:"default:false"`
 	CreatedAt      LocalTime `json:"created_at"`
 	UpdatedAt      LocalTime `json:"updated_at"`
 }
