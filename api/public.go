@@ -1,8 +1,13 @@
 package api
 
 import (
+	"encoding/json"
+	"log"
+
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/models"
 )
 
 func GetPublicSettings(c *gin.Context) {
@@ -10,6 +15,17 @@ func GetPublicSettings(c *gin.Context) {
 	if err != nil {
 		RespondError(c, 500, err.Error())
 		return
+	}
+	db := dbcore.GetDBInstance()
+	tc := models.ThemeConfiguration{}
+	err = db.Model(&models.ThemeConfiguration{}).Where("short = ?", cst.Theme).First(&tc).Error
+	if err != nil {
+		tc.Data = "{}"
+	}
+	tc_data := gin.H{}
+	err = json.Unmarshal([]byte(tc.Data), &tc_data)
+	if err != nil {
+		log.Printf("%v", err)
 	}
 	// Return public settings including CORS
 	RespondSuccess(c, gin.H{
@@ -25,6 +41,8 @@ func GetPublicSettings(c *gin.Context) {
 		"record_preserve_time":      cst.RecordPreserveTime,
 		"ping_record_preserve_time": cst.PingRecordPreserveTime,
 		"private_site":              cst.PrivateSite,
+		"theme":                     cst.Theme,
+		"theme_settings":            tc_data,
 	})
 
 }
