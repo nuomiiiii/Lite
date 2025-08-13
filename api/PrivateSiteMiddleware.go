@@ -18,6 +18,7 @@ var (
 		"/api/oauth",
 		"/api/oauth_callback",
 		"/api/version",
+		"/api/recent",
 		"/api/admin",    // 由AdminAuthMiddleware处理
 		"/api/clients/", // 由TokenAuthMiddleware处理
 	}
