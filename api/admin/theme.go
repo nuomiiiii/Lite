@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 )
 
@@ -586,4 +587,33 @@ func UpdateTheme(c *gin.Context) {
 	// }
 
 	api.RespondSuccessMessage(c, "主题更新成功", updatedThemeInfo)
+}
+
+func UpdateThemeSettings(c *gin.Context) {
+	theme := c.Query("theme")
+	if theme == "" || theme == "default" {
+		api.RespondError(c, http.StatusBadRequest, "主题名称不能为空或不能是默认主题")
+		return
+	}
+
+	var req map[string]any
+
+	err := c.ShouldBindJSON(&req)
+	if err != nil {
+		api.RespondError(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		return
+	}
+	db := dbcore.GetDBInstance()
+
+	data, err := json.Marshal(&req)
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, "生成主题配置失败: "+err.Error())
+		return
+	}
+
+	var themeCfg models.ThemeConfiguration
+	db.Where("short = ?", theme).
+		Assign(models.ThemeConfiguration{Short: theme, Data: string(data)}).
+		FirstOrCreate(&themeCfg)
+	api.RespondSuccess(c, nil)
 }

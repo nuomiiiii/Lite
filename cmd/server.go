@@ -222,6 +222,7 @@ func RunServer() {
 			themeGroup.POST("/delete", admin.DeleteTheme)
 			themeGroup.GET("/set", admin.SetTheme)
 			themeGroup.POST("/update", admin.UpdateTheme)
+			themeGroup.POST("/settings", admin.UpdateThemeSettings)
 		}
 		// clients
 		clientGroup := adminAuthrized.Group("/client")
