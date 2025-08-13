@@ -148,7 +148,6 @@ func SaveClientInfo(update map[string]interface{}) error {
 	}
 
 	if err := verify(update); err != nil {
-		fmt.Println(err)
 		return err
 	}
 
