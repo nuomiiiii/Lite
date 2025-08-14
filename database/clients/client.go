@@ -1,6 +1,7 @@
 package clients
 
 import (
+	"math"
 	"time"
 
 	"github.com/komari-monitor/komari/common"
@@ -47,7 +48,7 @@ func UpdateOrInsertBasicInfo(cbi common.ClientInfo) error {
 	if cbi.Arch != "" {
 		updates["arch"] = cbi.Arch
 	}
-	if cbi.CpuCores != 0 {
+	if cbi.CpuCores > 0 || cbi.CpuCores < math.MaxInt-1 {
 		updates["cpu_cores"] = cbi.CpuCores
 	}
 	if cbi.OS != "" {
@@ -119,6 +120,36 @@ func SaveClientInfo(update map[string]interface{}) error {
 	}
 
 	update["updated_at"] = time.Now()
+
+	checkInt64 := func(name string, val float64) error {
+		if val < 0 {
+			return fmt.Errorf("%s must be non-negative, got %d", name, int64(val))
+		}
+		if val > math.MaxInt64-1 {
+			return fmt.Errorf("%s exceeds int64 max limit: %d", name, int64(val))
+		}
+		return nil
+	}
+
+	verify := func(update map[string]interface{}) error {
+		if update["cpu_cores"].(float64) < 0 || update["cpu_cores"].(float64) > math.MaxInt-1 {
+			return fmt.Errorf("Cpu.Cores be not a valid int64 number: %d", update["cpu_cores"])
+		}
+		if err := checkInt64("Ram.Total", update["mem_total"].(float64)); err != nil {
+			return err
+		}
+		if err := checkInt64("Swap.Total", update["swap_total"].(float64)); err != nil {
+			return err
+		}
+		if err := checkInt64("Disk.Total", update["disk_total"].(float64)); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	if err := verify(update); err != nil {
+		return err
+	}
 
 	err := db.Model(&models.Client{}).Where("uuid = ?", clientUUID).Updates(update).Error
 	if err != nil {
