@@ -10,6 +10,18 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func getClientIPType(ip net.IP) int {
+	// 0:ipv4 1:ipv6 -1:错误的输入
+	if ip == nil {
+		return -1
+	}
+	if ip.To4() == nil {
+		return 1
+	} else {
+		return 0
+	}
+}
+
 func UploadBasicInfo(c *gin.Context) {
 	var cbi = map[string]interface{}{}
 	if err := c.ShouldBindJSON(&cbi); err != nil {
@@ -25,6 +37,28 @@ func UploadBasicInfo(c *gin.Context) {
 	}
 
 	cbi["uuid"] = uuid
+
+	if (func() bool {
+		if v4, ok := cbi["ipv4"].(string); !ok || v4 == "" {
+			if v6, ok := cbi["ipv6"].(string); !ok || v6 == "" {
+				return true
+			}
+		}
+		return false
+	})() {
+		ipStr := c.ClientIP()
+		ip := net.ParseIP(ipStr)
+		ipType := getClientIPType(ip)
+
+		switch ipType {
+		case 0:
+			cbi["ipv4"] = ip
+		case 1:
+			cbi["ipv6"] = ip
+		default:
+			break
+		}
+	}
 
 	if cfg, err := config.Get(); err == nil && cfg.GeoIpEnabled {
 		if ipv4, ok := cbi["ipv4"].(string); ok && ipv4 != "" {
