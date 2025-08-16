@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -10,16 +11,13 @@ import (
 
 // PingTaskManager 管理定时器和任务
 type PingTaskManager struct {
-	mu       sync.Mutex
-	tickers  map[int]*time.Ticker
-	tasks    map[int][]models.PingTask
-	stopChan chan struct{}
+	mu         sync.Mutex
+	cancelFunc context.CancelFunc
+	tasks      map[int][]models.PingTask
 }
 
 var manager = &PingTaskManager{
-	tickers:  make(map[int]*time.Ticker),
-	tasks:    make(map[int][]models.PingTask),
-	stopChan: make(chan struct{}),
+	tasks: make(map[int][]models.PingTask),
 }
 
 // Reload 重载时间表
@@ -27,60 +25,73 @@ func (m *PingTaskManager) Reload(pingTasks []models.PingTask) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// 停止所有现有定时器
-	for _, ticker := range m.tickers {
-		ticker.Stop()
+	if m.cancelFunc != nil {
+		m.cancelFunc()
 	}
-	m.tickers = make(map[int]*time.Ticker)
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancelFunc = cancel
+
 	m.tasks = make(map[int][]models.PingTask)
 
 	// 按Interval分组任务
 	taskGroups := make(map[int][]models.PingTask)
 	for _, task := range pingTasks {
+		if task.Interval <= 0 {
+			continue
+		}
 		taskGroups[task.Interval] = append(taskGroups[task.Interval], task)
 	}
 
-	// 为每个唯一的Interval创建定时器
+	// 为每个唯一的Interval创建协程
 	for interval, tasks := range taskGroups {
-		ticker := time.NewTicker(time.Duration(interval) * time.Second)
-		m.tickers[interval] = ticker
 		m.tasks[interval] = tasks
-
-		go func(ticker *time.Ticker, tasks []models.PingTask) {
-			for {
-				select {
-				case <-ticker.C:
-					for _, task := range tasks {
-						go executePingTask(task)
-					}
-				case <-m.stopChan:
-					return
-				}
-			}
-		}(ticker, tasks)
+		go m.runPreciseLoop(time.Duration(interval)*time.Second, tasks, ctx.Done())
 	}
-
 	return nil
 }
 
+func (m *PingTaskManager) runPreciseLoop(interval time.Duration, tasks []models.PingTask, stopChan <-chan struct{}) {
+	// Start the first timer.
+	timer := time.NewTimer(interval)
+
+	// This will be the reference point for all future ticks.
+	// By adding the interval to this time, we avoid accumulating execution delays.
+	nextTick := time.Now().Add(interval)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-timer.C:
+			onlineClients := ws.GetConnectedClients()
+			for _, task := range tasks {
+				go executePingTask(task, onlineClients)
+			}
+
+			nextTick = nextTick.Add(interval)
+			timer.Reset(time.Until(nextTick))
+
+		case <-stopChan:
+			return
+		}
+	}
+}
+
 // executePingTask 执行单个PingTask
-func executePingTask(task models.PingTask) {
-	clients := ws.GetConnectedClients()
+func executePingTask(task models.PingTask, onlineClients map[string]*ws.SafeConn) {
 	var message struct {
 		TaskID  uint   `json:"ping_task_id"`
 		Message string `json:"message"`
 		Type    string `json:"ping_type"`
 		Target  string `json:"ping_target"`
 	}
+
+	message.Message = "ping"
+	message.TaskID = task.Id
+	message.Type = task.Type
+	message.Target = task.Target
+
 	for _, clientUUID := range task.Clients {
-		if conn, exists := clients[clientUUID]; exists {
-			if conn == nil {
-				continue
-			}
-			message.Message = "ping"
-			message.TaskID = task.Id
-			message.Type = task.Type
-			message.Target = task.Target
+		if conn, exists := onlineClients[clientUUID]; exists && conn != nil {
 			if err := conn.WriteJSON(message); err != nil {
 				continue
 			}
