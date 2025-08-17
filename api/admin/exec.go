@@ -66,7 +66,10 @@ func Exec(c *gin.Context) {
 		payload, _ := json.Marshal(send)
 		client := ws.GetConnectedClients()[uuid]
 		if client != nil {
-			client.WriteMessage(websocket.TextMessage, payload)
+			if err := client.WriteMessage(websocket.TextMessage, payload); err != nil {
+				api.RespondError(c, 400, "Client connection is broke: "+uuid)
+				return
+			}
 		} else {
 			api.RespondError(c, 400, "Client connection is null: "+uuid)
 			return
