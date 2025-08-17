@@ -29,12 +29,19 @@ func SetConnectedClients(uuid string, conn *SafeConn) {
 	defer mu.Unlock()
 	connectedClients[uuid] = conn
 }
+func DeleteClientConditionally(uuid string, connToRemove *SafeConn) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	// 检查当前 map 里的 conn 是否就是要删除的这一个
+	if currentConn, exists := connectedClients[uuid]; exists && currentConn == connToRemove {
+		delete(connectedClients, uuid)
+	}
+}
 func DeleteConnectedClients(uuid string) {
 	mu.Lock()
 	defer mu.Unlock()
-	if conn, exists := connectedClients[uuid]; exists {
-		conn.Close()
-	}
+	// 只从 map 中删除，不再负责关闭连接
 	delete(connectedClients, uuid)
 }
 func GetLatestReport() map[string]*common.Report {

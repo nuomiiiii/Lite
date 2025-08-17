@@ -10,12 +10,14 @@ import (
 type SafeConn struct {
 	conn *websocket.Conn
 	mu   sync.Mutex
+	ID   int64
 }
 
 func NewSafeConn(conn *websocket.Conn) *SafeConn {
 	return &SafeConn{
 		conn: conn,
 		mu:   sync.Mutex{},
+		ID:   time.Now().UnixNano(),
 	}
 }
 

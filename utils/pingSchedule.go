@@ -45,12 +45,12 @@ func (m *PingTaskManager) Reload(pingTasks []models.PingTask) error {
 	// 为每个唯一的Interval创建协程
 	for interval, tasks := range taskGroups {
 		m.tasks[interval] = tasks
-		go m.runPreciseLoop(time.Duration(interval)*time.Second, tasks, ctx.Done())
+		go m.runPreciseLoop(ctx, time.Duration(interval)*time.Second, tasks)
 	}
 	return nil
 }
 
-func (m *PingTaskManager) runPreciseLoop(interval time.Duration, tasks []models.PingTask, stopChan <-chan struct{}) {
+func (m *PingTaskManager) runPreciseLoop(ctx context.Context, interval time.Duration, tasks []models.PingTask) {
 	// Start the first timer.
 	timer := time.NewTimer(interval)
 
@@ -64,20 +64,20 @@ func (m *PingTaskManager) runPreciseLoop(interval time.Duration, tasks []models.
 		case <-timer.C:
 			onlineClients := ws.GetConnectedClients()
 			for _, task := range tasks {
-				go executePingTask(task, onlineClients)
+				go executePingTask(ctx, task, onlineClients)
 			}
 
 			nextTick = nextTick.Add(interval)
 			timer.Reset(time.Until(nextTick))
 
-		case <-stopChan:
+		case <-ctx.Done():
 			return
 		}
 	}
 }
 
 // executePingTask 执行单个PingTask
-func executePingTask(task models.PingTask, onlineClients map[string]*ws.SafeConn) {
+func executePingTask(ctx context.Context, task models.PingTask, onlineClients map[string]*ws.SafeConn) {
 	var message struct {
 		TaskID  uint   `json:"ping_task_id"`
 		Message string `json:"message"`
@@ -91,6 +91,14 @@ func executePingTask(task models.PingTask, onlineClients map[string]*ws.SafeConn
 	message.Target = task.Target
 
 	for _, clientUUID := range task.Clients {
+		select {
+		case <-ctx.Done():
+			// Context was canceled, stop sending pings.
+			return
+		default:
+			// Context is still active, continue.
+		}
+
 		if conn, exists := onlineClients[clientUUID]; exists && conn != nil {
 			if err := conn.WriteJSON(message); err != nil {
 				continue
