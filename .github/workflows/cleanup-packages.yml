@@ -1,8 +1,9 @@
 name: Cleanup Old Packages
 
 on:
-  schedule:
-    - cron: '0 0 * * 0'  # Run every Sunday at midnight
+  #schedule:
+  #  - cron: '0 0 * * 0'  # Run every Sunday at midnight
+  # 会清理掉正常的镜像
   workflow_dispatch:      # Allow manual trigger
 
 jobs:
