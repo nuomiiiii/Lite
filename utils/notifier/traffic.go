@@ -31,6 +31,10 @@ func CheckTraffic() {
 		return
 	}
 
+	if cfg.TrafficLimitPercentage <= 0 {
+		return
+	}
+
 	// 起始阈值：例如 80%，非5的倍数则从上取整到最近的5的倍数，例如 83->85
 	startThreshold := cfg.TrafficLimitPercentage
 	if startThreshold < 0 {
@@ -67,14 +71,14 @@ func CheckTraffic() {
 			continue
 		}
 
-		// 当前所在阈值步进（5%的倍数），且不超过100%
+		// 当前所在阈值步进（5%的倍数）
 		curStep := int(math.Floor(pct/5.0) * 5.0)
 		if curStep < baseStep {
 			curStep = baseStep
 		}
-		if curStep > 100 {
-			curStep = 100
-		}
+		// if curStep > 100 {
+		// 	curStep = 100
+		// }
 
 		key := "traffic:" + c.UUID
 		last, _ := trafficCache.Get(key)
