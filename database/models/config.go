@@ -24,6 +24,7 @@ type Config struct {
 	NotificationMethod         string `json:"notification_method" gorm:"type:varchar(64);default:'none'"`
 	ExpireNotificationEnabled  bool   `json:"expire_notification_enabled" gorm:"default:false"` // 是否启用过期通知
 	ExpireNotificationLeadDays int    `json:"expire_notification_lead_days" gorm:"default:7"`   // 过期前多少天通知，默认7天
+	LoginNotification          bool   `json:"login_notification" gorm:"default:false"`          // 登录通知
 	// Record
 	RecordEnabled          bool `json:"record_enabled" gorm:"default:true"`          // 是否启用记录功能
 	RecordPreserveTime     int  `json:"record_preserve_time" gorm:"default:720"`     // 记录保留时间，单位小时，默认30天

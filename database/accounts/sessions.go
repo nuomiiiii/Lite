@@ -2,11 +2,16 @@ package accounts
 
 import (
 	"errors"
+	"fmt"
+	"net"
 	"time"
 
+	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils"
+	"github.com/komari-monitor/komari/utils/geoip"
+	"github.com/komari-monitor/komari/utils/messageSender"
 )
 
 // GetAllSessions 获取所有会话
@@ -32,6 +37,16 @@ func CreateSession(uuid string, expires int, userAgent, ip, login_method string)
 		Ip:           ip,
 		LoginMethod:  login_method,
 		LatestOnline: models.FromTime(time.Now()),
+	}
+	cfg, _ := config.Get()
+	if cfg.LoginNotification {
+		ipAddr := net.ParseIP(ip)
+		ipinfo, _ := geoip.GetGeoInfo(ipAddr)
+		loc := "unknown"
+		if ipinfo != nil {
+			loc = ipinfo.Name
+		}
+		messageSender.SendTextMessage(fmt.Sprintf("From: %s,(%s)\nMethod: %s\nUser Agent: %s\n\n%s", ip, loc, login_method, userAgent, time.Now().Format(time.RFC3339)), "New Login on Komari")
 	}
 
 	err := db.Create(&sessionRecord).Error
