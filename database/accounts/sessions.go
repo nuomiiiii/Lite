@@ -46,7 +46,7 @@ func CreateSession(uuid string, expires int, userAgent, ip, login_method string)
 		if ipinfo != nil {
 			loc = ipinfo.Name
 		}
-		messageSender.SendTextMessage("New Login on Komari", fmt.Sprintf("From: %s,(%s)\nMethod: %s\nUser Agent: %s\n\n%s", ip, loc, login_method, userAgent, time.Now().Format(time.RFC3339)))
+		messageSender.SendTextMessage(fmt.Sprintf("From: %s,(%s)\nMethod: %s\nUser Agent: %s\n\n%s", ip, loc, login_method, userAgent, time.Now().Format(time.RFC3339)), "New Login on Komari")
 	}
 
 	err := db.Create(&sessionRecord).Error
