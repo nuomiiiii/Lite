@@ -380,6 +380,8 @@ func DoScheduledWork() {
 				records.DeleteAll()
 				tasks.DeleteAllPingRecords()
 			}
+			// 每分钟检查一次流量提醒
+			go notifier.CheckTraffic()
 		}
 	}
 
