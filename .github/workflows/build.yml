@@ -1,9 +1,13 @@
-name: Build Binaries on Main Push
+name: Build Binaries on Main Push and PR
 
 on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   build-binaries:
