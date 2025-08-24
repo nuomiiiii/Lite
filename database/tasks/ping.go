@@ -109,3 +109,12 @@ func GetPingRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.
 	}
 	return records, nil
 }
+
+func GetPingRecordsByTaskAndTime(taskId uint, start, end time.Time) ([]models.PingRecord, error) {
+	db := dbcore.GetDBInstance()
+	var records []models.PingRecord
+	if err := db.Where("task_id = ? AND time >= ? AND time <= ?", taskId, start, end).Order("time DESC").Find(&records).Error; err != nil {
+		return nil, err
+	}
+	return records, nil
+}
