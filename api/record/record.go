@@ -67,14 +67,14 @@ func GetRecordsByUUID(c *gin.Context) {
 	})
 }
 
-// GET query: uuid string OR task_id int, hours int
+// GET query: uuid string OR task_id int, hours int, gs int
 func GetPingRecords(c *gin.Context) {
 	uuid := c.Query("uuid")
 	taskIdStr := c.Query("task_id")
 
 	// 必须提供 uuid 或 task_id 其中之一
 	if uuid == "" && taskIdStr == "" {
-		api.RespondError(c, 400, "UUID or task_id is required")
+		api.RespondError(c, 400, "UUID or task_id error")
 		return
 	}
 
@@ -86,41 +86,48 @@ func GetPingRecords(c *gin.Context) {
 		isLogin = true
 	}
 
-	// 仅在未登录时需要 Hidden 信息做过滤（仅当按 uuid 查询时）
-	if uuid != "" && !isLogin {
-		var hiddenClients []models.Client
-		db := dbcore.GetDBInstance()
-		_ = db.Select("uuid").Where("hidden = ?", true).Find(&hiddenClients).Error
-		hiddenMap := map[string]bool{}
-		for _, cli := range hiddenClients {
-			hiddenMap[cli.UUID] = true
-		}
-
-		if hiddenMap[uuid] {
-			api.RespondError(c, 400, "UUID is required") //防止未登录用户获取隐藏客户端数据
-			return
-		}
-	}
-
-	hours := c.Query("hours")
 	type RecordsResp struct {
-		TaskId uint   `json:"task_id,omitempty"` // 按 task_id 查询时不返回
+		TaskId uint   `json:"task_id,omitempty"`
 		Time   string `json:"time"`
 		Value  int    `json:"value"`
-		Client string `json:"client,omitempty"` // 当按 task_id 查询时返回
+		Client string `json:"client,omitempty"`
 	}
 	type ClientBasicInfo struct {
 		Client string  `json:"client"`
 		Loss   float64 `json:"loss"`
-		Min    int     `json:"min"`  // 最小延迟（毫秒）
-		Max    int     `json:"max"`  // 最大延迟（毫秒）
+		Min    int     `json:"min"`
+		Max    int     `json:"max"`
 	}
 	type Resp struct {
-		Count      int               `json:"count"`
-		BasicInfo  []ClientBasicInfo `json:"basic_info,omitempty"`  // 各客户端基础信息（按 task_id 查询时返回）
-		Records    []RecordsResp     `json:"records"`
-		Tasks      []gin.H           `json:"tasks,omitempty"`       // 任务列表（按 uuid 查询时返回）
+		Count     int               `json:"count"`
+		BasicInfo []ClientBasicInfo `json:"basic_info,omitempty"`
+		Records   []RecordsResp     `json:"records"`
+		Tasks     []gin.H           `json:"tasks,omitempty"`
 	}
+	var records []models.PingRecord
+	hiddenMap := map[string]bool{}
+	response := &Resp{
+		Count:   0,
+		Records: []RecordsResp{},
+	}
+
+	// 仅在未登录时需要 Hidden 信息做过滤
+	if !isLogin {
+		var hiddenClients []models.Client
+		db := dbcore.GetDBInstance()
+		_ = db.Select("uuid").Where("hidden = ?", true).Find(&hiddenClients).Error
+		for _, cli := range hiddenClients {
+			hiddenMap[cli.UUID] = true
+		}
+		if uuid != "" {
+			if hiddenMap[uuid] {
+				api.RespondSuccess(c, response) // 对于尝试获取隐藏uuid一键哈气
+				return
+			}
+		}
+	}
+
+	hours := c.Query("hours")
 
 	if hours == "" {
 		hours = "4"
@@ -128,41 +135,56 @@ func GetPingRecords(c *gin.Context) {
 
 	hoursInt, err := strconv.Atoi(hours)
 	if err != nil {
-		api.RespondError(c, 400, "Invalid hours parameter")
-		return
+		hoursInt = 4
 	}
 
-	var records []models.PingRecord
-	startTime := time.Now().Add(-time.Duration(hoursInt) * time.Hour)
-	endTime := time.Now()
+	if hoursInt > 720 { // 最大查询30日内数据
+		hoursInt = 720
+	}
 
-	// 根据查询类型获取记录
-	if taskIdStr != "" {
-		// 按 task_id 查询
-		taskId, err := strconv.Atoi(taskIdStr)
-		if err != nil {
-			api.RespondError(c, 400, "Invalid task_id parameter")
-			return
-		}
-		records, err = tasks.GetPingRecordsByTaskAndTime(uint(taskId), startTime, endTime)
-		if err != nil {
-			api.RespondError(c, 500, "Failed to fetch records: "+err.Error())
-			return
+	endTime := time.Now()
+	startTime := endTime.Add(-time.Duration(hoursInt) * time.Hour)
+
+	taskId := -1
+	taskId, err = strconv.Atoi(taskIdStr)
+	if err != nil {
+		taskId = -1
+	}
+
+	records, err = tasks.GetPingRecords(uuid, taskId, startTime, endTime)
+	if err != nil {
+		api.RespondError(c, 500, "Failed to fetch ping tasks: "+err.Error())
+	}
+
+	lenRecords := len(records)
+
+	// 切分数据优化获取速度
+	maxPerWindow := c.Query("gs")
+	maxPerWindowInt, err := strconv.Atoi(maxPerWindow)
+	if err != nil {
+		maxPerWindowInt = 5000
+	}
+	if maxPerWindowInt < 1 && maxPerWindowInt != -1 {
+		maxPerWindowInt = 5000
+	}
+	if maxPerWindowInt > lenRecords || maxPerWindowInt == -1 {
+		maxPerWindowInt = lenRecords
+	}
+	var granularitySeconds int
+	if maxPerWindowInt != lenRecords {
+		// 自动切分粒度
+		totalSeconds := hoursInt * 3600
+		secondsPerRecord := float64(totalSeconds) / float64(lenRecords)     // 平均记录时间差
+		densityRecord := float64(lenRecords) / float64(maxPerWindowInt)     // 记录密度
+		granularitySeconds = int(float64(secondsPerRecord) * densityRecord) // 平均采样时间差
+
+		// 保证最小粒度是1秒
+		if granularitySeconds < 1 {
+			granularitySeconds = 1
 		}
 	} else {
-		// 按 uuid 查询（原有逻辑）
-		records, err = tasks.GetPingRecordsByClientAndTime(uuid, startTime, endTime)
-		if err != nil {
-			api.RespondError(c, 500, "Failed to fetch records: "+err.Error())
-			return
-		}
+		granularitySeconds = 0 // 绕过计算 使其可以输出全部值
 	}
-
-	response := &Resp{
-		Count:   len(records),
-		Records: []RecordsResp{},
-	}
-	
 	// 用于统计每个客户端的信息（按 task_id 查询时使用）
 	clientStats := make(map[string]struct {
 		total int
@@ -170,45 +192,64 @@ func GetPingRecords(c *gin.Context) {
 		min   int
 		max   int
 	})
-	
+
+	granularityMap := make(map[string]time.Time)
 	for _, r := range records {
+		if r.Client != "" && !isLogin {
+			if hiddenMap[r.Client] {
+				continue // 跳过隐藏的节点
+			}
+		}
+		toTime := r.Time.ToTime()
+		if granularitySeconds > 0 {
+			windowStart, ok := granularityMap[r.Client]
+			if !ok {
+				granularityMap[r.Client] = toTime.Add(time.Second)
+			}
+			windowEnd := windowStart.Add(-time.Duration(granularitySeconds) * time.Second)
+			if !toTime.After(windowEnd) { // 防止粒度过小 值已经到达末尾之后
+				granularityMap[r.Client] = toTime.Add(time.Second)
+				windowStart = toTime.Add(time.Second)
+				windowEnd = windowStart.Add(-time.Duration(granularitySeconds) * time.Second)
+			}
+			if toTime.After(windowStart) {
+				continue
+			}
+			granularityMap[r.Client] = windowEnd // 更新起始位置
+		}
 		rec := RecordsResp{
-			Time:  r.Time.ToTime().Format(time.RFC3339),
+			Time:  toTime.Format(time.RFC3339),
 			Value: r.Value,
 		}
-		
-		// 如果是按 task_id 查询，返回 client 信息，不返回 task_id
-		if taskIdStr != "" {
-			rec.Client = r.Client
-			// 统计每个客户端的信息
-			stats := clientStats[r.Client]
-			stats.total++
-			
-			if r.Value < 0 {
-				// ping 失败
-				stats.loss++
-			} else {
-				// ping 成功，更新 min/max
-				if stats.min == 0 || r.Value < stats.min {
-					stats.min = r.Value
-				}
-				if r.Value > stats.max {
-					stats.max = r.Value
-				}
-			}
-			clientStats[r.Client] = stats
+		rec.Client = r.Client
+		stats := clientStats[r.Client]
+		stats.total++
+
+		if r.Value < 0 {
+			stats.loss++
 		} else {
-			// 按 uuid 查询时返回 task_id
-			rec.TaskId = r.TaskId
+			if stats.min == 0 || r.Value < stats.min {
+				stats.min = r.Value
+			}
+			if r.Value > stats.max {
+				stats.max = r.Value
+			}
 		}
-		
+		clientStats[r.Client] = stats
+		rec.TaskId = r.TaskId
+
 		response.Records = append(response.Records, rec)
 	}
-	
-	// 如果是按 task_id 查询，计算每个客户端的统计信息
-	if taskIdStr != "" && len(clientStats) > 0 {
+
+	// 都返回 BasicInfo
+	if len(clientStats) > 0 {
 		response.BasicInfo = make([]ClientBasicInfo, 0, len(clientStats))
 		for client, stats := range clientStats {
+			if client != "" && !isLogin {
+				if hiddenMap[client] {
+					continue // 跳过隐藏的节点
+				}
+			}
 			loss := float64(0)
 			if stats.total > 0 {
 				loss = float64(stats.loss) / float64(stats.total) * 100
@@ -222,7 +263,7 @@ func GetPingRecords(c *gin.Context) {
 		}
 	}
 
-	// 只有按 uuid 查询时才返回 tasks 列表
+	// uuid不为空返回全部 为空返回当前任务
 	if uuid != "" && len(records) >= 0 {
 		// 获取当前属于该 uuid 的 pingTasks
 		pingTasks, err := tasks.GetAllPingTasks()
@@ -231,13 +272,15 @@ func GetPingRecords(c *gin.Context) {
 			return
 		}
 
-		taskIdSet := make(map[uint]struct{})
-		for _, r := range records {
-			taskIdSet[r.TaskId] = struct{}{}
-		}
-
 		tasksList := make([]gin.H, 0, len(pingTasks))
 		for _, t := range pingTasks {
+			// 只保留当前请求的 taskInfo
+			if taskId != -1 && taskIdStr != "" {
+				if t.Id != uint(taskId) {
+					continue
+				}
+			}
+
 			// 只保留分配给该 uuid 的任务
 			found := slices.Contains(t.Clients, uuid)
 			if !found {
@@ -271,5 +314,6 @@ func GetPingRecords(c *gin.Context) {
 		response.Tasks = tasksList
 	}
 
+	response.Count = len(response.Records) // 计算最后结果保持计数一致
 	api.RespondSuccess(c, response)
 }

@@ -245,7 +245,6 @@ func GetDBInstance() *gorm.DB {
 				log.Fatalf("Failed to connect to MySQL database: %v", err)
 			}
 			log.Printf("Using MySQL database: %s@%s:%s/%s", flags.DatabaseUser, flags.DatabaseHost, flags.DatabasePort, flags.DatabaseName)
-
 		default:
 			log.Fatalf("Unsupported database type: %s", flags.DatabaseType)
 		}
