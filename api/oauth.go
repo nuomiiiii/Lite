@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/accounts"
@@ -9,7 +10,6 @@ import (
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/oauth"
-	"github.com/komari-monitor/komari/utils/oauth/cloudflare/handler"
 )
 
 // /api/oauth
@@ -17,12 +17,6 @@ func OAuth(c *gin.Context) {
 	cfg, _ := config.Get()
 	if !cfg.OAuthEnabled {
 		c.JSON(403, gin.H{"status": "error", "error": "OAuth is not enabled"})
-		return
-	}
-
-	// 对于 Cloudflare Access，使用专用处理器
-	if handler.IsCloudflareProvider() {
-		handler.HandleOAuth(c)
 		return
 	}
 
@@ -35,11 +29,6 @@ func OAuth(c *gin.Context) {
 
 // /api/oauth_callback
 func OAuthCallback(c *gin.Context) {
-	// 对于 Cloudflare Access，使用专用处理器
-	if handler.IsCloudflareProvider() {
-		handler.HandleOAuthCallback(c)
-		return
-	}
 
 	// 验证state防止CSRF攻击
 	state, _ := c.Cookie("oauth_state")
@@ -47,10 +36,11 @@ func OAuthCallback(c *gin.Context) {
 
 	// 获取当前OAuth提供商名称
 	providerName := oauth.CurrentProvider().GetName()
-	
-	// 对于QQ登录，由于是通过QQ聚合登录平台中转，state可能会不匹配
-	// 但我们仍然需要验证state的存在性（不能是空的）
-	if providerName == "qq" {
+
+	providersSkipStateCheck := []string{"qq"}
+	if slices.Contains(providersSkipStateCheck, providerName) {
+		// 对于QQ登录，由于是通过QQ聚合登录平台中转，state可能会不匹配
+		// 但我们仍然需要验证state的存在性（不能是空的）
 		if state == "" {
 			c.JSON(400, gin.H{"status": "error", "error": "Invalid state"})
 			return
@@ -69,7 +59,7 @@ func OAuthCallback(c *gin.Context) {
 			queries[key] = values[0]
 		}
 	}
-	oidcUser, err := oauth.CurrentProvider().OnCallback(c.Request.Context(), state, queries, utils.GetCallbackURL(c))
+	oidcUser, err := oauth.CurrentProvider().OnCallback(c, state, queries, utils.GetCallbackURL(c))
 	if err != nil {
 		c.JSON(500, gin.H{"status": "error", "error": "Failed to get user info: " + err.Error()})
 		return

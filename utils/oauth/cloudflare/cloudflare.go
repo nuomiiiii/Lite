@@ -1,16 +1,17 @@
 package cloudflare
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/oauth/factory"
 )
 
 func (c *Cloudflare) GetName() string {
-	return "cloudflare_access"
+	return "CloudflareAccess"
 }
 
 func (c *Cloudflare) GetConfiguration() factory.Configuration {
@@ -18,14 +19,20 @@ func (c *Cloudflare) GetConfiguration() factory.Configuration {
 }
 
 func (c *Cloudflare) GetAuthorizationURL(redirectURI string) (string, string) {
-	// Cloudflare Access 不需要跳转，直接返回回调 URL
-	// 前端应该直接调用回调接口
-	return redirectURI, ""
+	// 生成 state
+	state := utils.GenerateRandomString(8)
+	// 将 state 作为参数附加到回调 URL
+	sep := "?"
+	if strings.Contains(redirectURI, "?") {
+		sep = "&"
+	}
+	authURL := fmt.Sprintf("%s%sstate=%s", redirectURI, sep, state)
+	return authURL, state
 }
 
-func (c *Cloudflare) OnCallback(ctx context.Context, state string, query map[string]string, callbackURI string) (factory.OidcCallback, error) {
+func (c *Cloudflare) OnCallback(ctx *gin.Context, state string, query map[string]string, callbackURI string) (factory.OidcCallback, error) {
 	// 从请求头中获取 Cloudflare Access JWT
-	accessJWT := query["cf_access_jwt"]
+	accessJWT := ctx.GetHeader("Cf-Access-Jwt-Assertion")
 	if accessJWT == "" {
 		return factory.OidcCallback{}, fmt.Errorf("no Cloudflare Access JWT found")
 	}
@@ -38,43 +45,42 @@ func (c *Cloudflare) OnCallback(ctx context.Context, state string, query map[str
 	}
 
 	certsURL := fmt.Sprintf("%s/cdn-cgi/access/certs", teamDomain)
-	
+
 	config := &oidc.Config{
 		ClientID: c.Addition.PolicyAUD,
 	}
-	
-	keySet := oidc.NewRemoteKeySet(ctx, certsURL)
+
+	keySet := oidc.NewRemoteKeySet(ctx.Request.Context(), certsURL)
 	verifier := oidc.NewVerifier(teamDomain, keySet, config)
-	
+
 	// 验证 token
-	idToken, err := verifier.Verify(ctx, accessJWT)
+	idToken, err := verifier.Verify(ctx.Request.Context(), accessJWT)
 	if err != nil {
 		return factory.OidcCallback{}, fmt.Errorf("failed to verify Cloudflare Access token: %w", err)
 	}
-	
+
 	// 提取用户信息
 	var claims struct {
 		// Email string `json:"email"`
-		Sub   string `json:"sub"`
+		Sub string `json:"sub"`
 	}
-	
+
 	if err := idToken.Claims(&claims); err != nil {
 		return factory.OidcCallback{}, fmt.Errorf("failed to extract claims from token: %w", err)
 	}
-	
+
 	// 使用 sub 作为用户 ID
 	return factory.OidcCallback{UserId: claims.Sub}, nil
 }
 
 func (c *Cloudflare) Init() error {
-	// 验证配置
 	if c.Addition.TeamDomain == "" {
 		return fmt.Errorf("team_domain is required")
 	}
 	if c.Addition.PolicyAUD == "" {
 		return fmt.Errorf("policy_aud is required")
 	}
-	
+
 	return nil
 }
 
