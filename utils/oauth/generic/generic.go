@@ -1,7 +1,6 @@
 package generic
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/oauth/factory"
 	"github.com/patrickmn/go-cache"
@@ -36,7 +36,7 @@ func (g *Generic) GetAuthorizationURL(redirectURI string) (string, string) {
 	g.stateCache.Set(state, true, cache.DefaultExpiration)
 	return authURL, state
 }
-func (g *Generic) OnCallback(ctx context.Context, state string, query map[string]string, callbackURI string) (factory.OidcCallback, error) {
+func (g *Generic) OnCallback(ctx *gin.Context, state string, query map[string]string, callbackURI string) (factory.OidcCallback, error) {
 	code := query["code"]
 
 	// 验证state防止CSRF攻击

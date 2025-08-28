@@ -1,13 +1,13 @@
 package github
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/oauth/factory"
 	"github.com/patrickmn/go-cache"
@@ -36,7 +36,7 @@ func (g *Github) GetAuthorizationURL(_ string) (string, string) {
 	g.stateCache.Set(state, true, cache.NoExpiration)
 	return authURL, state
 }
-func (g *Github) OnCallback(ctx context.Context, state string, query map[string]string, _ string) (factory.OidcCallback, error) {
+func (g *Github) OnCallback(ctx *gin.Context, state string, query map[string]string, _ string) (factory.OidcCallback, error) {
 	code := query["code"]
 
 	// 验证state防止CSRF攻击

@@ -1,7 +1,6 @@
 package qq
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +8,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/oauth/factory"
 	"github.com/patrickmn/go-cache"
@@ -72,7 +72,7 @@ func (q *QQ) GetAuthorizationURL(redirectURI string) (string, string) {
 // OnCallback 处理QQ OAuth回调
 // 例如：http://localhost:25774/api/oauth_callback?type=qq&code=XXXXXXXXXXXXXXXX
 // 然后我们使用code参数向聚合登录平台请求用户信息
-func (q *QQ) OnCallback(ctx context.Context, state string, query map[string]string, callbackURI string) (factory.OidcCallback, error) {
+func (q *QQ) OnCallback(ctx *gin.Context, state string, query map[string]string, callbackURI string) (factory.OidcCallback, error) {
 	// 根据文档，回调地址会附带type和code参数
 	code := query["code"]
 	loginType := query["type"]

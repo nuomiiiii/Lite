@@ -1,6 +1,6 @@
 package factory
 
-import "context"
+import "github.com/gin-gonic/gin"
 
 type IOidcProvider interface {
 	GetName() string
@@ -8,7 +8,7 @@ type IOidcProvider interface {
 	GetConfiguration() Configuration
 	// 获取授权URL和状态
 	GetAuthorizationURL(redirectURI string) (string, string)
-	OnCallback(ctx context.Context, state string, query map[string]string, callbackURI string) (OidcCallback, error)
+	OnCallback(ctx *gin.Context, state string, query map[string]string, callbackURI string) (OidcCallback, error)
 	Init() error
 	Destroy() error
 }
