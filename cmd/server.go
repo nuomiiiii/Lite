@@ -20,6 +20,7 @@ import (
 	"github.com/komari-monitor/komari/api/admin/test"
 	"github.com/komari-monitor/komari/api/admin/update"
 	"github.com/komari-monitor/komari/api/client"
+	"github.com/komari-monitor/komari/api/jsonRpc"
 	"github.com/komari-monitor/komari/api/record"
 	"github.com/komari-monitor/komari/api/task"
 	"github.com/komari-monitor/komari/cmd/flags"
@@ -167,6 +168,7 @@ func RunServer() {
 	r.GET("/api/records/load", record.GetRecordsByUUID)
 	r.GET("/api/records/ping", record.GetPingRecords)
 	r.GET("/api/task/ping", task.GetPublicPingTasks)
+	r.GET("/api/rpc2", jsonRpc.OnRpcRequest)
 	// #region Agent
 	r.POST("/api/clients/register", client.RegisterClient)
 	tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())
@@ -317,6 +319,7 @@ func RunServer() {
 		Addr:    flags.Listen,
 		Handler: r,
 	}
+	log.Printf("Starting server on %s ...", flags.Listen)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			OnFatal(err)
