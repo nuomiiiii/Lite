@@ -36,7 +36,7 @@ func init() {
 		},
 		&rpc.MethodMeta{
 			Name:    "getNodesLatestStatus",
-			Summary: "Get latest status reports of nodes (live memory cache) in records-like format",
+			Summary: "Get latest status reports (single node or map).",
 			Params: []rpc.ParamMeta{
 				{
 					Name:        "uuid",
@@ -44,8 +44,14 @@ func init() {
 					Required:    false,
 					Type:        "string",
 				},
+				{
+					Name:        "uuids",
+					Description: "Specify multiple UUIDs (array) to get subset (ignored if uuid provided)",
+					Required:    false,
+					Type:        "string[]",
+				},
 			},
-			Returns: "{ records: Record[], count: number } | error; each Record mirrors /api/record fields (cpu, ram, ram_total, ...)",
+			Returns: "Record | { [uuid]: Record }",
 		},
 	)
 	Register("getPublicInfo", getPublicInfo)
@@ -104,7 +110,8 @@ func getPublicInfo(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcE
 
 func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	var params struct {
-		UUID string `json:"uuid"`
+		UUID  string   `json:"uuid"`
+		UUIDs []string `json:"uuids"`
 	}
 	req.BindParams(&params)
 
@@ -167,7 +174,7 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 		Online         bool             `json:"online"`
 	}
 
-	recordsResp := make([]recordLike, 0, len(latest))
+	respMap := make(map[string]recordLike, len(latest))
 	appendOne := func(uuid string, rep *common.Report) {
 		if rep == nil {
 			return
@@ -197,19 +204,28 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 			ConnectionsUdp: rep.Connections.UDP,
 			Online:         onlineSet[uuid],
 		}
-		recordsResp = append(recordsResp, rl)
+		respMap[uuid] = rl
 	}
 
-	if params.UUID != "" {
+	// 选择逻辑
+	if params.UUID != "" { // 单个
 		appendOne(params.UUID, latest[params.UUID])
-	} else {
-		for uuid, rep := range latest {
-			appendOne(uuid, rep)
-		}
+		return respMap[params.UUID], nil
 	}
-
-	return map[string]any{
-		"records": recordsResp,
-		"count":   len(recordsResp),
-	}, nil
+	selected := map[string]bool{}
+	if len(params.UUIDs) > 0 {
+		for _, id := range params.UUIDs {
+			selected[id] = true
+		}
+		for uuid, rep := range latest {
+			if selected[uuid] {
+				appendOne(uuid, rep)
+			}
+		}
+		return respMap, nil
+	}
+	for uuid, rep := range latest {
+		appendOne(uuid, rep)
+	}
+	return respMap, nil
 }
