@@ -169,6 +169,8 @@ func RunServer() {
 	r.GET("/api/records/ping", record.GetPingRecords)
 	r.GET("/api/task/ping", task.GetPublicPingTasks)
 	r.GET("/api/rpc2", jsonRpc.OnRpcRequest)
+	r.POST("/api/rpc2", jsonRpc.OnRpcRequest)
+
 	// #region Agent
 	r.POST("/api/clients/register", client.RegisterClient)
 	tokenAuthrized := r.Group("/api/clients", api.TokenAuthMiddleware())

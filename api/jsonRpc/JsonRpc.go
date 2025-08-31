@@ -1,6 +1,10 @@
 package jsonRpc
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -10,6 +14,7 @@ import (
 	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils/rpc"
 	"github.com/komari-monitor/komari/ws"
 )
@@ -17,76 +22,174 @@ import (
 // Json Rpc2 over websocket, /api/rpc2
 func OnRpcRequest(c *gin.Context) {
 	cfg, _ := config.Get()
-	// Upgrade
-	_conn, err := ws.UpgradeRequest(c, func(r *http.Request) bool {
-		if cfg.AllowCors {
-			return true
+
+	// 如果是 WebSocket Upgrade (常见于 GET) 则走原有逻辑
+	if strings.EqualFold(c.GetHeader("Upgrade"), "websocket") || strings.Contains(strings.ToLower(c.GetHeader("Connection")), "upgrade") {
+		_conn, err := ws.UpgradeRequest(c, func(r *http.Request) bool {
+			if cfg.AllowCors {
+				return true
+			}
+			return ws.CheckOrigin(r)
+		})
+		conn := ws.NewSafeConn(_conn)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to upgrade to WebSocket"})
+			return
 		}
-		return ws.CheckOrigin(r)
-	})
-	conn := ws.NewSafeConn(_conn)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to upgrade to WebSocket"})
+		permissionGroup := detectPermissionGroup(c, cfg)
+		meta := buildContextMeta(c, permissionGroup)
+		defer conn.Close()
+		for {
+			var req rpc.JsonRpcRequest
+			err := conn.ReadJSON(&req)
+			if err != nil {
+				// JSON 解析
+				var se *json.SyntaxError
+				var ute *json.UnmarshalTypeError
+				if errors.As(err, &se) || errors.As(err, &ute) {
+					conn.WriteJSON(rpc.ErrorResponse(nil, rpc.InvalidRequest, "bad request: "+err.Error(), nil))
+					continue
+				}
+				// 其它视为连接/IO 错误
+				break
+			}
+			if jerr := req.Validate(); jerr != nil {
+				conn.WriteJSON(jerr.ResponseWithID(req.ID))
+				continue
+			}
+			dispatchByPermissionWithMeta(conn, permissionGroup, meta, &req)
+		}
 		return
 	}
-	// 权限
-	permissionGroup := "guest"
 
-	// 节点端
+	// 否则按 HTTP POST JSON-RPC 处理 (支持单个或批量)
+	if c.Request.Method != http.MethodPost {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{"error": "method not allowed"})
+		return
+	}
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, rpc.ErrorResponse(nil, rpc.ParseError, "read body error", err.Error()))
+		return
+	}
+	requests, jerr := rpc.ParseRequests(body)
+	if jerr != nil {
+		c.JSON(http.StatusBadRequest, jerr.Response())
+		return
+	}
+	permissionGroup := detectPermissionGroup(c, cfg)
+	meta := buildContextMeta(c, permissionGroup)
+	// 批量
+	responses := make([]*rpc.JsonRpcResponse, 0, len(requests))
+	for _, rreq := range requests {
+		// 权限与命名空间
+		fc := strings.Split(rreq.Method, ":")
+		if len(fc) == 1 {
+			fc[0] = "common"
+		}
+		allowed := false
+		switch fc[0] {
+		case "guest", "", "rpc", "common":
+			allowed = true
+		case "client":
+			if permissionGroup == "client" || permissionGroup == "admin" {
+				allowed = true
+			}
+		case "admin":
+			if permissionGroup == "admin" {
+				allowed = true
+			}
+		default:
+			responses = append(responses, rpc.ErrorResponse(rreq.ID, 401, "Unauthorized", nil))
+			continue
+		}
+		if !allowed {
+			responses = append(responses, rpc.ErrorResponse(rreq.ID, 401, "Unauthorized", nil))
+			continue
+		}
+		responses = append(responses, rpc.CallWithContext(rpc.NewContextWithMeta(context.TODO(), meta), rreq.ID, rreq.Method, rreq.Params))
+	}
+	// 单个请求直接对象，批量请求数组 (符合 JSON-RPC 2.0)
+	if len(responses) == 1 {
+		c.JSON(http.StatusOK, responses[0])
+	} else {
+		c.JSON(http.StatusOK, responses)
+	}
+}
+
+// detectPermissionGroup 提取权限分组，与原逻辑保持一致
+func detectPermissionGroup(c *gin.Context, cfg models.Config) string {
+	permissionGroup := "guest"
 	token := c.Query("Authorization")
-	_, err = clients.GetClientUUIDByToken(token)
-	if err == nil {
+	if _, err := clients.GetClientUUIDByToken(token); err == nil {
 		permissionGroup = "client"
 	}
-	// 管理员
-	session_token, _ := c.Cookie("session_token")
-	_, err = accounts.GetUserBySession(session_token)
-	if err == nil {
-		permissionGroup = "admin"
+	if session_token, _ := c.Cookie("session_token"); session_token != "" {
+		if _, err := accounts.GetUserBySession(session_token); err == nil {
+			permissionGroup = "admin"
+		}
 	}
 	apiKey := c.GetHeader("Authorization")
 	if apiKey == "Bearer "+cfg.ApiKey {
 		permissionGroup = "admin"
 	}
+	return permissionGroup
+}
 
-	defer conn.Close()
-	for {
-		// 基础行为检查
-		var req rpc.JsonRpcRequest
-		err := conn.ReadJSON(&req)
-		if err != nil {
-			conn.WriteJSON(rpc.ErrorResponse(nil, rpc.InvalidRequest, "bad request: "+err.Error(), nil))
-			continue
+// buildContextMeta 从 gin.Context 构建 *rpc.ContextMeta
+func buildContextMeta(c *gin.Context, permissionGroup string) *rpc.ContextMeta {
+	meta := &rpc.ContextMeta{Permission: permissionGroup}
+	// 提取客户端 token (query Authorization / Header Authorization Bearer token)
+	token := c.Query("Authorization")
+	if token == "" {
+		// 兼容 header Bearer <token>
+		hAuth := c.GetHeader("Authorization")
+		if strings.HasPrefix(hAuth, "Bearer ") {
+			token = strings.TrimPrefix(hAuth, "Bearer ")
 		}
-		if jerr := req.Validate(); jerr != nil {
-			conn.WriteJSON(jerr.ResponseWithID(req.ID))
-			continue
+	}
+	if token != "" {
+		if uuid, err := clients.GetClientUUIDByToken(token); err == nil {
+			meta.ClientToken = token
+			meta.ClientUUID = uuid
 		}
-		// 按分组权限检查并调用
-		fc := strings.Split(req.Method, ":")
-		if len(fc) == 1 {
-			fc[0] = "common"
+	}
+	// 提取用户 (session cookie)
+	if session_token, _ := c.Cookie("session_token"); session_token != "" {
+		if user, err := accounts.GetUserBySession(session_token); err == nil {
+			meta.User = &user
+			meta.UserUUID = user.UUID
 		}
-		switch fc[0] {
-		case "guest":
-			fallthrough
-		case "":
-			fallthrough
-		case "rpc":
-			fallthrough
-		case "common":
-			go conn.WriteJSON(rpc.Call(req.ID, req.Method, req.Params))
-		case "client":
-			if permissionGroup == "client" || permissionGroup == "admin" {
-				go conn.WriteJSON(rpc.Call(req.ID, req.Method, req.Params))
-			}
-		case "admin":
-			if permissionGroup == "admin" {
-				go conn.WriteJSON(rpc.Call(req.ID, req.Method, req.Params))
-			}
-		default:
+	}
+	meta.RemoteIP = c.ClientIP()
+	meta.UserAgent = c.GetHeader("User-Agent")
+	return meta
+}
+
+// dispatchByPermissionWithMeta 与原函数类似，但会携带 meta 上下文给 handler
+func dispatchByPermissionWithMeta(conn *ws.SafeConn, permissionGroup string, meta *rpc.ContextMeta, req *rpc.JsonRpcRequest) {
+	fc := strings.Split(req.Method, ":")
+	if len(fc) == 1 {
+		fc[0] = "common"
+	}
+	ctx := rpc.NewContextWithMeta(context.TODO(), meta)
+	switch fc[0] {
+	case "guest", "", "rpc", "common":
+		go conn.WriteJSON(rpc.CallWithContext(ctx, req.ID, req.Method, req.Params))
+	case "client":
+		if permissionGroup == "client" || permissionGroup == "admin" {
+			go conn.WriteJSON(rpc.CallWithContext(ctx, req.ID, req.Method, req.Params))
+		} else {
 			conn.WriteJSON(rpc.ErrorResponse(req.ID, 401, "Unauthorized", nil))
 		}
+	case "admin":
+		if permissionGroup == "admin" {
+			go conn.WriteJSON(rpc.CallWithContext(ctx, req.ID, req.Method, req.Params))
+		} else {
+			conn.WriteJSON(rpc.ErrorResponse(req.ID, 401, "Unauthorized", nil))
+		}
+	default:
+		conn.WriteJSON(rpc.ErrorResponse(req.ID, 401, "Unauthorized", nil))
 	}
 }
 
@@ -106,9 +209,7 @@ func Register(name string, cb rpc.Handler) error {
 }
 
 // RegisterWithGroup 将回调按分组注册。
-// 支持两种形式:
-// 1) 传入函数:       Register("ns", someFunc) -> 注册 ns:SomeFunc
-// 2) 传入结构体指针: Register("ns", &MyService{}) -> 为其所有导出方法注册 ns:Method
+// 传入函数:       Register("ns", someFunc) -> 注册 ns:SomeFunc
 // group 为空时使用默认分组 "common"。
 func RegisterWithGroupAndMeta(name, group string, cb rpc.Handler, meta *rpc.MethodMeta) error {
 	return rpc.RegisterWithMeta(group+":"+name, cb, meta)

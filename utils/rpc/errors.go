@@ -20,6 +20,21 @@ const (
 	InternalError  = -32603
 )
 
+// Komari 定义错误码
+const (
+	NotFound         = -32044
+	AlreadyExists    = -32045
+	PermissionDenied = -32041
+	Unauthenticated  = -32040 // 未登录/无身份
+	Cancelled        = -32010 // 主动取消
+	DeadlineExceeded = -32011 // 超时
+	Aborted          = -32021 // 并发冲突/事务中断
+	OutOfRange       = -32022 // 数值/索引越界
+	Unimplemented    = -32050 // 尚未实现
+	Unavailable      = -32051 // 依赖服务暂不可用
+	DataLoss         = -32052 // 不可恢复的数据丢失
+)
+
 // MakeError 便捷创建错误对象
 func MakeError(code int, msg string, data any) *JsonRpcError {
 	return &JsonRpcError{Code: code, Message: msg, Data: data}
