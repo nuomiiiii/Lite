@@ -3,6 +3,7 @@ package jsonRpc
 import (
 	"context"
 
+	"github.com/komari-monitor/komari/database"
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils/rpc"
@@ -27,6 +28,7 @@ func init() {
 			Returns: "Client | { [uuid]: Client }",
 		},
 	)
+	Register("getPublicInfo", getPublicInfo)
 }
 
 func getNodes(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
@@ -70,4 +72,12 @@ func getNodes(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcEr
 		nodesMap[node.UUID] = node
 	}
 	return nodesMap, nil
+}
+
+func getPublicInfo(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	info, err := database.GetPublicInfo()
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, "Failed to get public info", err.Error())
+	}
+	return info, nil
 }
