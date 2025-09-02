@@ -54,6 +54,9 @@ func init() {
 			Returns: "Record | { [uuid]: Record }",
 		},
 	)
+	Register("getMe", func(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+		return getMe(ctx, req)
+	})
 	Register("getPublicInfo", getPublicInfo)
 }
 
@@ -228,4 +231,44 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 		appendOne(uuid, rep)
 	}
 	return respMap, nil
+}
+
+func getMe(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var resp struct {
+		TwoFAEnabled bool   `json:"2fa_enabled"`
+		LoggedIn     bool   `json:"logged_in"`
+		SSOId        string `json:"sso_id"`
+		SSOType      string `json:"sso_type"`
+		Username     string `json:"username"`
+		UUID         string `json:"uuid"`
+	}
+
+	meta := rpc.MetaFromContext(ctx)
+
+	switch meta.Permission {
+	case "admin":
+		resp.TwoFAEnabled = meta.User.TwoFactor != ""
+		resp.LoggedIn = true
+		resp.SSOId = meta.User.SSOID
+		resp.SSOType = meta.User.SSOType
+		resp.Username = meta.User.Username
+		resp.UUID = meta.User.UUID
+		return resp, nil
+	case "guest":
+		resp.LoggedIn = false
+		return resp, nil
+	case "client":
+		resp.LoggedIn = true
+		resp.SSOId = "client"
+		resp.SSOType = "client"
+		resp.Username = "client"
+		resp.UUID = meta.ClientToken
+		client, err := clients.GetClientUUIDByToken(meta.ClientToken)
+		if err != nil {
+			resp.UUID = client
+		}
+		return resp, nil
+	default:
+		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid user role", meta.Permission)
+	}
 }
