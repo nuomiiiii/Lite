@@ -82,7 +82,16 @@ func Update(cst map[string]interface{}) error {
 	if newDisablePasswordLogin && !newOAuthEnabled {
 		return errors.New("at least one login method must be enabled (password/oauth)")
 	}
-
+	// 没绑定账号也不能禁用
+	if newDisablePasswordLogin {
+		usr := &models.User{}
+		if err := db.Model(&models.User{}).First(usr).Error; err != nil {
+			return errors.Join(err, errors.New("failed to retrieve user"))
+		}
+		if usr.SSOID == "" {
+			return errors.New("cannot disable password login when no SSO-bound account exists")
+		}
+	}
 	err := db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&models.Config{}).Where("id = ?", oldConfig.ID).Updates(cst).Error; err != nil {
 			return errors.Join(err, errors.New("failed to update configuration"))
