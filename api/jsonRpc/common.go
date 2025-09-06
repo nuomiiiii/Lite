@@ -3,10 +3,13 @@ package jsonRpc
 import (
 	"context"
 
+	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/rpc"
 	"github.com/komari-monitor/komari/ws"
 )
@@ -58,6 +61,8 @@ func init() {
 		return getMe(ctx, req)
 	})
 	Register("getPublicInfo", getPublicInfo)
+	Register("getVersion", getVersion)
+	Register("getNodeRecentStatus", getNodeRecentStatus)
 }
 
 func getNodes(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
@@ -271,4 +276,111 @@ func getMe(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) 
 	default:
 		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid user role", meta.Permission)
 	}
+}
+
+func getVersion(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	return struct {
+		Version string `json:"version"`
+		Hash    string `json:"hash"`
+	}{
+		Version: utils.CurrentVersion,
+		Hash:    utils.VersionHash,
+	}, nil
+}
+
+func getNodeRecentStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		UUID string `json:"uuid"`
+	}
+	req.BindParams(&params)
+	if params.UUID == "" {
+		return nil, rpc.MakeError(rpc.InvalidParams, "UUID is required", params)
+	}
+	meta := rpc.MetaFromContext(ctx)
+	// 登录状态检查
+	isLogin := false
+	if meta.Permission == "admin" {
+		isLogin = true
+	}
+
+	// 仅在未登录时需要 Hidden 信息做过滤
+	hiddenMap := map[string]bool{}
+	if !isLogin {
+		var hiddenClients []models.Client
+		db := dbcore.GetDBInstance()
+		_ = db.Select("uuid").Where("hidden = ?", true).Find(&hiddenClients).Error
+		for _, cli := range hiddenClients {
+			hiddenMap[cli.UUID] = true
+		}
+
+		if hiddenMap[params.UUID] {
+			return nil, rpc.MakeError(rpc.InvalidParams, "UUID is required", params) //防止未登录用户获取隐藏客户端数据
+		}
+	}
+
+	raw, _ := api.Records.Get(params.UUID)
+	reports, _ := raw.([]common.Report)
+
+	// 扁平化为 { count, records: [] }
+	type flatRecord struct {
+		Client         string           `json:"client"`
+		Time           models.LocalTime `json:"time"`
+		Cpu            float32          `json:"cpu"`
+		Gpu            float32          `json:"gpu"`
+		Ram            int64            `json:"ram"`
+		RamTotal       int64            `json:"ram_total"`
+		Swap           int64            `json:"swap"`
+		SwapTotal      int64            `json:"swap_total"`
+		Load           float32          `json:"load"`
+		Temp           float32          `json:"temp"`
+		Disk           int64            `json:"disk"`
+		DiskTotal      int64            `json:"disk_total"`
+		NetIn          int64            `json:"net_in"`
+		NetOut         int64            `json:"net_out"`
+		NetTotalUp     int64            `json:"net_total_up"`
+		NetTotalDown   int64            `json:"net_total_down"`
+		Process        int              `json:"process"`
+		Connections    int              `json:"connections"`
+		ConnectionsUdp int              `json:"connections_udp"`
+	}
+
+	resp := struct {
+		Count   int          `json:"count"`
+		Records []flatRecord `json:"records"`
+	}{
+		Count:   0,
+		Records: []flatRecord{},
+	}
+
+	if len(reports) == 0 {
+		return resp, nil
+	}
+
+	resp.Records = make([]flatRecord, 0, len(reports))
+	for _, r := range reports {
+		fr := flatRecord{
+			Client:         params.UUID,
+			Time:           models.FromTime(r.UpdatedAt),
+			Cpu:            float32(r.CPU.Usage),
+			Gpu:            0,
+			Ram:            r.Ram.Used,
+			RamTotal:       r.Ram.Total,
+			Swap:           r.Swap.Used,
+			SwapTotal:      r.Swap.Total,
+			Load:           float32(r.Load.Load1),
+			Temp:           0,
+			Disk:           r.Disk.Used,
+			DiskTotal:      r.Disk.Total,
+			NetIn:          r.Network.Down,
+			NetOut:         r.Network.Up,
+			NetTotalUp:     r.Network.TotalUp,
+			NetTotalDown:   r.Network.TotalDown,
+			Process:        r.Process,
+			Connections:    r.Connections.TCP + r.Connections.UDP,
+			ConnectionsUdp: r.Connections.UDP,
+		}
+		resp.Records = append(resp.Records, fr)
+	}
+	resp.Count = len(resp.Records)
+	return resp, nil
 }
