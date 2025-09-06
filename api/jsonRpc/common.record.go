@@ -2,6 +2,7 @@ package jsonRpc
 
 import (
 	"context"
+	"math"
 	"sort"
 	"time"
 
@@ -27,6 +28,7 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 		End      string `json:"end"`       // RFC3339 end time (optional)
 		LoadType string `json:"load_type"` // for type=load: cpu|gpu|ram|swap|load|temp|disk|network|process|connections|all
 		TaskID   int    `json:"task_id"`   // for type=ping: optional task id; -1 or omitted means all
+		MaxCount int    `json:"maxCount"`  // max number of points; -1 unlimited; default 4000
 	}
 	req.BindParams(&params)
 
@@ -103,27 +105,88 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 			recs = filtered
 		}
 
-		// optional load_type filtering
+		// resolve maxCount default for load
+		maxCount := params.MaxCount
+		if maxCount == 0 {
+			maxCount = 4000
+		}
+
+		// optional load_type filtering -> group by client
 		if params.LoadType != "" && params.LoadType != "all" {
 			items := filterRecordsByLoadType(recs, params.LoadType)
-			// stable sort by time
-			sort.Slice(items, func(i, j int) bool { return items[i].Time.ToTime().Before(items[j].Time.ToTime()) })
+			grouped := make(map[string][]flatRecord)
+			for _, it := range items {
+				grouped[it.Client] = append(grouped[it.Client], it)
+			}
+			// sort and count
+			total := 0
+			groupsMeta := make([]struct {
+				name   string
+				length int
+			}, 0, len(grouped))
+			for name := range grouped {
+				arr := grouped[name]
+				sort.Slice(arr, func(i, j int) bool { return arr[i].Time.ToTime().Before(arr[j].Time.ToTime()) })
+				grouped[name] = arr
+				l := len(arr)
+				total += l
+				groupsMeta = append(groupsMeta, struct {
+					name   string
+					length int
+				}{name: name, length: l})
+			}
+			// downsample across all clients proportionally
+			if maxCount != -1 && total > maxCount {
+				targets := allocateTargets(groupsMeta, maxCount)
+				total = 0
+				for name, k := range targets {
+					grouped[name] = downsampleFlatRecords(grouped[name], k)
+					total += len(grouped[name])
+				}
+			}
 			return struct {
-				Count    int              `json:"count"`
-				Records  []flatRecord     `json:"records"`
-				LoadType string           `json:"load_type"`
-				From     models.LocalTime `json:"from"`
-				To       models.LocalTime `json:"to"`
-			}{Count: len(items), Records: items, LoadType: params.LoadType, From: models.FromTime(startTime), To: models.FromTime(endTime)}, nil
+				Count    int                     `json:"count"`
+				Records  map[string][]flatRecord `json:"records"`
+				LoadType string                  `json:"load_type"`
+				From     models.LocalTime        `json:"from"`
+				To       models.LocalTime        `json:"to"`
+			}{Count: total, Records: grouped, LoadType: params.LoadType, From: models.FromTime(startTime), To: models.FromTime(endTime)}, nil
 		}
-		// default: return full records
-		sort.Slice(recs, func(i, j int) bool { return recs[i].Time.ToTime().Before(recs[j].Time.ToTime()) })
+		// default: return full records, grouped by client
+		grouped := make(map[string][]models.Record)
+		for _, r := range recs {
+			grouped[r.Client] = append(grouped[r.Client], r)
+		}
+		total := 0
+		groupsMeta := make([]struct {
+			name   string
+			length int
+		}, 0, len(grouped))
+		for name := range grouped {
+			arr := grouped[name]
+			sort.Slice(arr, func(i, j int) bool { return arr[i].Time.ToTime().Before(arr[j].Time.ToTime()) })
+			grouped[name] = arr
+			l := len(arr)
+			total += l
+			groupsMeta = append(groupsMeta, struct {
+				name   string
+				length int
+			}{name: name, length: l})
+		}
+		if maxCount != -1 && total > maxCount {
+			targets := allocateTargets(groupsMeta, maxCount)
+			total = 0
+			for name, k := range targets {
+				grouped[name] = downsampleModelRecords(grouped[name], k)
+				total += len(grouped[name])
+			}
+		}
 		return struct {
-			Count   int              `json:"count"`
-			Records []models.Record  `json:"records"`
-			From    models.LocalTime `json:"from"`
-			To      models.LocalTime `json:"to"`
-		}{Count: len(recs), Records: recs, From: models.FromTime(startTime), To: models.FromTime(endTime)}, nil
+			Count   int                        `json:"count"`
+			Records map[string][]models.Record `json:"records"`
+			From    models.LocalTime           `json:"from"`
+			To      models.LocalTime           `json:"to"`
+		}{Count: total, Records: grouped, From: models.FromTime(startTime), To: models.FromTime(endTime)}, nil
 
 	case "ping":
 		taskId := params.TaskID
@@ -271,25 +334,26 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 						}
 					}
 				}
+
+				lossRate := 0.0
+				if total > 0 {
+					lossRate = float64(lossCount) / float64(total) * 100
+				}
 				avg := 0
 				if valid > 0 {
 					avg = sum / valid
 				}
+
 				info := map[string]any{
 					"id":       t.Id,
 					"name":     t.Name,
 					"type":     t.Type,
 					"interval": t.Interval,
-					"loss": func() float64 {
-						if total == 0 {
-							return 0
-						}
-						return float64(lossCount) / float64(total) * 100
-					}(),
-					"min":   minLat,
-					"max":   maxLat,
-					"avg":   avg,
-					"total": total,
+					"loss":     lossRate,
+					"min":      minLat,
+					"max":      maxLat,
+					"avg":      avg,
+					"total":    total,
 				}
 				if params.UUID == "" && taskId != -1 {
 					info["clients"] = t.Clients
@@ -297,6 +361,43 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 				tlist = append(tlist, info)
 			}
 			response.Tasks = tlist
+		}
+		// apply maxCount for ping
+		maxCount := params.MaxCount
+		if maxCount == 0 {
+			maxCount = 4000
+		}
+		if maxCount != -1 && len(response.Records) > maxCount {
+			// sort by time asc then downsample uniformly
+			sort.Slice(response.Records, func(i, j int) bool {
+				return response.Records[i].Time.ToTime().Before(response.Records[j].Time.ToTime())
+			})
+			// local downsample for ping record slice
+			sample := func(in []RecordsResp, k int) []RecordsResp {
+				n := len(in)
+				if k <= 0 || n == 0 {
+					return in[:0]
+				}
+				if k >= n {
+					return in
+				}
+				out := make([]RecordsResp, 0, k)
+				if k == 1 {
+					out = append(out, in[n-1])
+					return out
+				}
+				for i := 0; i < k; i++ {
+					idx := int(math.Round(float64(i) * float64(n-1) / float64(k-1)))
+					if idx < 0 {
+						idx = 0
+					} else if idx >= n {
+						idx = n - 1
+					}
+					out = append(out, in[idx])
+				}
+				return out
+			}
+			response.Records = sample(response.Records, maxCount)
 		}
 		response.Count = len(response.Records)
 		// sort by time asc
@@ -357,6 +458,166 @@ func getLoadRecordsCombined(uuid string, start, end time.Time) ([]models.Record,
 	sort.Slice(flat, func(i, j int) bool { return flat[i].Time.ToTime().Before(flat[j].Time.ToTime()) })
 	flat = append(flat, longTerm...)
 	return flat, nil
+}
+
+// ---------- downsampling helpers ----------
+
+// allocateTargets splits maxTotal across groups proportionally to their lengths.
+func allocateTargets(groups []struct {
+	name   string
+	length int
+}, maxTotal int) map[string]int {
+	result := make(map[string]int, len(groups))
+	if maxTotal < 0 {
+		for _, g := range groups {
+			result[g.name] = g.length
+		}
+		return result
+	}
+	total := 0
+	for _, g := range groups {
+		total += g.length
+	}
+	if total <= maxTotal {
+		for _, g := range groups {
+			result[g.name] = g.length
+		}
+		return result
+	}
+	// initial allocation based on proportion
+	type rem struct {
+		idx  int
+		frac float64
+	}
+	remainders := make([]rem, 0, len(groups))
+	sumTargets := 0
+	for i, g := range groups {
+		if g.length <= 0 {
+			result[g.name] = 0
+			continue
+		}
+		raw := float64(g.length) * float64(maxTotal) / float64(total)
+		t := int(math.Floor(raw))
+		if t > g.length {
+			t = g.length
+		}
+		result[groups[i].name] = t
+		sumTargets += t
+		remainders = append(remainders, rem{i, raw - float64(t)})
+	}
+	// distribute remaining by largest fractional parts
+	if sumTargets < maxTotal {
+		need := maxTotal - sumTargets
+		sort.Slice(remainders, func(i, j int) bool { return remainders[i].frac > remainders[j].frac })
+		for _, r := range remainders {
+			if need == 0 {
+				break
+			}
+			g := groups[r.idx]
+			cur := result[g.name]
+			if cur < g.length {
+				result[g.name] = cur + 1
+				need--
+			}
+		}
+		// if still left, second pass round-robin
+		if need > 0 {
+			for need > 0 {
+				for _, g := range groups {
+					if need == 0 {
+						break
+					}
+					if result[g.name] < g.length {
+						result[g.name]++
+						need--
+					}
+				}
+				if need > 0 {
+					break
+				}
+			}
+		}
+	} else if sumTargets > maxTotal {
+		over := sumTargets - maxTotal
+		sort.Slice(remainders, func(i, j int) bool { return remainders[i].frac < remainders[j].frac })
+		for _, r := range remainders {
+			if over == 0 {
+				break
+			}
+			g := groups[r.idx]
+			if result[g.name] > 0 {
+				result[g.name]--
+				over--
+			}
+		}
+		if over > 0 {
+			for over > 0 {
+				for _, g := range groups {
+					if over == 0 {
+						break
+					}
+					if result[g.name] > 0 {
+						result[g.name]--
+						over--
+					}
+				}
+				if over > 0 {
+					break
+				}
+			}
+		}
+	}
+	return result
+}
+
+func downsampleModelRecords(in []models.Record, k int) []models.Record {
+	n := len(in)
+	if k <= 0 || n == 0 {
+		return []models.Record{}
+	}
+	if k >= n {
+		return in
+	}
+	out := make([]models.Record, 0, k)
+	if k == 1 {
+		out = append(out, in[n-1])
+		return out
+	}
+	for i := 0; i < k; i++ {
+		idx := int(math.Round(float64(i) * float64(n-1) / float64(k-1)))
+		if idx < 0 {
+			idx = 0
+		} else if idx >= n {
+			idx = n - 1
+		}
+		out = append(out, in[idx])
+	}
+	return out
+}
+
+func downsampleFlatRecords(in []flatRecord, k int) []flatRecord {
+	n := len(in)
+	if k <= 0 || n == 0 {
+		return []flatRecord{}
+	}
+	if k >= n {
+		return in
+	}
+	out := make([]flatRecord, 0, k)
+	if k == 1 {
+		out = append(out, in[n-1])
+		return out
+	}
+	for i := 0; i < k; i++ {
+		idx := int(math.Round(float64(i) * float64(n-1) / float64(k-1)))
+		if idx < 0 {
+			idx = 0
+		} else if idx >= n {
+			idx = n - 1
+		}
+		out = append(out, in[idx])
+	}
+	return out
 }
 
 // flatRecord is a projection used when load_type is specified.
