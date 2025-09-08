@@ -328,6 +328,21 @@ func RunServer() {
 			log.Fatalf("listen: %s\n", err)
 		}
 	}()
+	// Optionally start Nezha gRPC compatibility server on separate port
+	if nzAddr := GetEnv("KOMARI_NEZHA_LISTEN", ""); nzAddr != "" {
+		go func() {
+			if err := StartNezhaCompatServer(nzAddr); err != nil {
+				log.Printf("Nezha compat server error: %v", err)
+				auditlog.EventLog("error", fmt.Sprintf("Nezha compat server error: %v", err))
+			}
+		}()
+	} else if conf.NezhaCompatEnabled && conf.NezhaCompatListen != "" {
+		go func() {
+			if err := StartNezhaCompatServer(conf.NezhaCompatListen); err != nil {
+				auditlog.EventLog("error", fmt.Sprintf("Nezha compat server error: %v", err))
+			}
+		}()
+	}
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit

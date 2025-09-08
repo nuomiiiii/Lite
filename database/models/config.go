@@ -12,6 +12,9 @@ type Config struct {
 	// GeoIP 配置
 	GeoIpEnabled  bool   `json:"geo_ip_enabled" gorm:"default:true"`
 	GeoIpProvider string `json:"geo_ip_provider" gorm:"type:varchar(20);default:'ip-api'"` // empty, mmdb, ip-api, geojs
+	// Nezha 兼容（Agent gRPC）
+	NezhaCompatEnabled bool   `json:"nezha_compat_enabled" gorm:"default:false"`
+	NezhaCompatListen  string `json:"nezha_compat_listen" gorm:"type:varchar(100);default:''"` // 例如 0.0.0.0:5555
 	// OAuth 配置
 	OAuthEnabled         bool   `json:"o_auth_enabled" gorm:"default:false"`
 	OAuthProvider        string `json:"o_auth_provider" gorm:"type:varchar(50);default:'github'"`
