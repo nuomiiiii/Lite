@@ -2,6 +2,7 @@ package ws
 
 import (
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/komari-monitor/komari/common"
@@ -11,7 +12,13 @@ var (
 	connectedClients = make(map[string]*SafeConn)
 	ConnectedUsers   = []*websocket.Conn{}
 	latestReport     = make(map[string]*common.Report)
-	mu               = sync.RWMutex{}
+	// presenceOnly stores online state for non-WebSocket agents (e.g., Nezha gRPC)
+	// value keeps connectionID and a soft expiration to avoid flicker
+	presenceOnly = make(map[string]struct {
+		id     int64
+		expire time.Time
+	})
+	mu = sync.RWMutex{}
 )
 
 func GetConnectedClients() map[string]*SafeConn {
@@ -43,6 +50,57 @@ func DeleteConnectedClients(uuid string) {
 	defer mu.Unlock()
 	// 只从 map 中删除，不再负责关闭连接
 	delete(connectedClients, uuid)
+}
+
+// SetPresence sets or clears presence for non-WebSocket agents.
+// When present=false, it only clears if the connectionID matches current one.
+// KeepAlivePresence sets presence with TTL for non-WebSocket agents.
+func KeepAlivePresence(uuid string, connectionID int64, ttl time.Duration) {
+	mu.Lock()
+	defer mu.Unlock()
+	presenceOnly[uuid] = struct {
+		id     int64
+		expire time.Time
+	}{id: connectionID, expire: time.Now().Add(ttl)}
+}
+
+var defaultPresenceTTL = 20 * time.Second
+
+// SetPresence keeps compatibility with existing callers.
+func SetPresence(uuid string, connectionID int64, present bool) {
+	mu.Lock()
+	defer mu.Unlock()
+	if present {
+		presenceOnly[uuid] = struct {
+			id     int64
+			expire time.Time
+		}{id: connectionID, expire: time.Now().Add(defaultPresenceTTL)}
+		return
+	}
+	if cur, ok := presenceOnly[uuid]; ok && cur.id == connectionID {
+		delete(presenceOnly, uuid)
+	}
+}
+
+// GetAllOnlineUUIDs returns a de-duplicated list of online UUIDs from both WebSocket and non-WebSocket agents.
+func GetAllOnlineUUIDs() []string {
+	mu.RLock()
+	defer mu.RUnlock()
+	set := make(map[string]struct{})
+	for k := range connectedClients {
+		set[k] = struct{}{}
+	}
+	now := time.Now()
+	for k, v := range presenceOnly {
+		if v.expire.After(now) {
+			set[k] = struct{}{}
+		}
+	}
+	res := make([]string, 0, len(set))
+	for k := range set {
+		res = append(res, k)
+	}
+	return res
 }
 func GetLatestReport() map[string]*common.Report {
 	mu.RLock()

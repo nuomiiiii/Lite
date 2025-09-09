@@ -109,9 +109,22 @@ sudo ./install-komari.sh
 Issues and Pull Requests are welcome!
 
 ## Acknowledgements
- - [DreamCloud - 极高性价比解锁直连亚太高防](https://as211392.com/)
- - Thanks to myself for being so idle
- - All the developers who submitted PRs and created themes
+
+### DreamCloud
+
+[DreamCloud - 极高性价比解锁直连亚太高防](https://as211392.com/)
+
+### 🚀 Sponsored by SharonNetworks
+
+<img src="https://raw.githubusercontent.com/komari-monitor/public/refs/heads/main/images/sharon-networks.webp" width="300" alt="Sharon Networks"/>
+
+SharonNetworks 为您的业务起飞保驾护航！
+
+亚太数据中心提供顶级的中国优化网络接入 · 低延时&高带宽&提供Tbps级本地清洗高防服务, 为您的业务保驾护航, 为您的客户提供极致体验. 加入社区 [Telegram群组](https://t.me/SharonNetwork) 可参与公益募捐或群内抽奖免费使用
+
+### The open source software community
+
+All the developers who submitted PRs and created themes
 
 ## Star History
 

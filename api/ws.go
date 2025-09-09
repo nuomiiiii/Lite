@@ -87,8 +87,8 @@ func GetClients(c *gin.Context) {
 			}
 		}
 
-		// 已建立连接的客户端uuid列表
-		for key := range ws.GetConnectedClients() {
+		// 在线客户端uuid列表（WebSocket 与非 WebSocket）
+		for _, key := range ws.GetAllOnlineUUIDs() {
 			if !isLogin && hiddenMap[key] {
 				continue
 			}
