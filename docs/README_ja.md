@@ -107,8 +107,24 @@ sudo ./install-komari.sh
 IssueやPull Requestを歓迎します！
 
 ## 謝辞
- - こんなに暇でいられる自分に感謝
- - PRを提出し、テーマを作成してくれたすべての開発者
+
+### DreamCloud
+
+[DreamCloud - コストパフォーマンスに優れたアジア太平洋向け高防御直通](https://as211392.com/)
+
+### 🚀 SharonNetworks スポンサー
+
+<img src="https://raw.githubusercontent.com/komari-monitor/public/refs/heads/main/images/sharon-networks.webp" width="300" alt="Sharon Networks"/>
+
+SharonNetworks は、あなたのビジネスの離陸を力強くサポートします！
+
+アジア太平洋のデータセンターから中国最適化ネットワーク接続を提供。低レイテンシー & 高帯域幅、Tbps 級のローカル洗浄 DDoS 防御で、ビジネスとお客様の体験を守ります。コミュニティ [Telegram グループ](https://t.me/SharonNetwork) に参加すると、チャリティまたはグループ内抽選で無料利用のチャンスがあります。
+
+### オープンソースコミュニティ
+
+PR を送ってくれた方、テーマを作成してくれた全ての開発者
+
+—— そして：こんなに暇でいられる自分に感謝
 
 ## Star履歴
 
