@@ -115,7 +115,7 @@ sudo ./install-komari.sh
 
 ### 🚀 由 SharonNetworks 赞助
 
-<img src="https://raw.githubusercontent.com/komari-monitor/public/refs/heads/main/images/sharon-networks.webp" width="300" alt="Sharon Networks"/>
+[![Sharon Networks](https://raw.githubusercontent.com/komari-monitor/public/refs/heads/main/images/sharon-networks.webp)](https://sharon.io) 
 
 SharonNetworks 为您的业务起飞保驾护航！
 

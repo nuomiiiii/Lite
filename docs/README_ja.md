@@ -114,7 +114,7 @@ IssueやPull Requestを歓迎します！
 
 ### 🚀 SharonNetworks スポンサー
 
-<img src="https://raw.githubusercontent.com/komari-monitor/public/refs/heads/main/images/sharon-networks.webp" width="300" alt="Sharon Networks"/>
+[![Sharon Networks](https://raw.githubusercontent.com/komari-monitor/public/refs/heads/main/images/sharon-networks.webp)](https://sharon.io) 
 
 SharonNetworks は、あなたのビジネスの離陸を力強くサポートします！
 
