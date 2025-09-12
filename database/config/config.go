@@ -25,17 +25,18 @@ func Get() (models.Config, error) {
 	if err := db.First(&config).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			config = models.Config{
-				ID:                 1,
-				Sitename:           "Komari",
-				Description:        "Komari Monitor, a simple server monitoring tool.",
-				AllowCors:          false,
-				OAuthEnabled:       false,
-				GeoIpEnabled:       true,
-				GeoIpProvider:      "ip-api",
-				NezhaCompatEnabled: false,
-				NezhaCompatListen:  "",
-				UpdatedAt:          models.FromTime(time.Now()),
-				CreatedAt:          models.FromTime(time.Now()),
+				ID:                   1,
+				Sitename:             "Komari",
+				Description:          "Komari Monitor, a simple server monitoring tool.",
+				AllowCors:            false,
+				OAuthEnabled:         false,
+				GeoIpEnabled:         true,
+				GeoIpProvider:        "ipinfo",
+				NezhaCompatEnabled:   false,
+				NezhaCompatListen:    "",
+				NotificationTemplate: "{{event}}: {{client}}\n{{time}}",
+				UpdatedAt:            models.FromTime(time.Now()),
+				CreatedAt:            models.FromTime(time.Now()),
 			}
 			if err := db.Create(&config).Error; err != nil {
 				log.Fatal("Failed to create default config:", err)
