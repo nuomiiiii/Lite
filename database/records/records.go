@@ -186,7 +186,7 @@ func migrateOldRecords(db *gorm.DB) error {
 		data.Process = append(data.Process, record.Process)
 		data.Connections = append(data.Connections, record.Connections)
 		data.ConnectionsUdp = append(data.ConnectionsUdp, record.ConnectionsUdp)
-		data.Uptime = append(data.Uptime, record.Uptime)
+		//data.Uptime = append(data.Uptime, record.Uptime)
 	}
 
 	getPercentile := func(values []float64, percentile float64) float64 {
@@ -281,7 +281,7 @@ func migrateOldRecords(db *gorm.DB) error {
 				Process:        getInt32Percentile(data.Process, high_percentile),
 				Connections:    getInt32Percentile(data.Connections, high_percentile),
 				ConnectionsUdp: getInt32Percentile(data.ConnectionsUdp, high_percentile),
-				Uptime:         getIntPercentile(data.Uptime, high_percentile),
+				//Uptime:         getIntPercentile(data.Uptime, high_percentile),
 			}
 
 			// 如果记录已存在则更新，否则创建新记录

@@ -652,10 +652,10 @@ func filterRecordsByLoadType(recs []models.Record, loadType string) []flatRecord
 	for _, r := range recs {
 		fr := flatRecord{Client: r.Client, Time: r.Time}
 		// always include uptime when present
-		if r.Uptime != 0 {
-			v := r.Uptime
-			fr.Uptime = &v
-		}
+		//if r.Uptime != 0 {
+		//	v := r.Uptime
+		//	fr.Uptime = &v
+		//}
 		switch loadType {
 		case "cpu":
 			v := r.Cpu

@@ -180,6 +180,7 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 		Connections    int              `json:"connections"`
 		ConnectionsUdp int              `json:"connections_udp"`
 		Online         bool             `json:"online"`
+		Uptime         int64            `json:"uptime"` // seconds
 	}
 
 	respMap := make(map[string]recordLike, len(latest))
@@ -211,6 +212,7 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 			Connections:    rep.Connections.TCP + rep.Connections.UDP,
 			ConnectionsUdp: rep.Connections.UDP,
 			Online:         onlineSet[uuid],
+			Uptime:         rep.Uptime,
 		}
 		respMap[uuid] = rl
 	}
