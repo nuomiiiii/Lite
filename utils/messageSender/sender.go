@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/komari-monitor/komari/database"
 	"github.com/komari-monitor/komari/database/auditlog"
@@ -88,4 +90,58 @@ func SendTextMessage(message string, title string) error {
 	}
 	auditlog.Log("", "", "Failed to send message after 3 attempts: "+err.Error()+","+title, "error")
 	return err
+}
+func SendEvent(event models.EventMessage) error {
+	if CurrentProvider() == nil {
+		return fmt.Errorf("message sender provider is not initialized")
+	}
+	var err error
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+	if !cfg.NotificationEnabled {
+		return nil
+	}
+	messageTemplate := cfg.NotificationTemplate
+	if messageTemplate == "" {
+		messageTemplate = "{{event}}: {{client}}\n{{time}}"
+	}
+	messageTemplate = parseTemplate(messageTemplate, event)
+
+	for i := 0; i < 3; i++ {
+		err = CurrentProvider().SendTextMessage(messageTemplate, event.Event)
+		if err == nil {
+			auditlog.Log("", "", "Event message sent: "+event.Event, "info")
+			return nil
+		}
+	}
+	auditlog.Log("", "", "Failed to send event message after 3 attempts: "+err.Error()+","+event.Event, "error")
+	return err
+}
+
+func parseTemplate(messageTemplate string, event models.EventMessage) string {
+	// Aggregate client names. If Name is empty, fall back to UUID.
+	clientNames := make([]string, 0, len(event.Clients))
+	for _, c := range event.Clients {
+		name := c.Name
+		if strings.TrimSpace(name) == "" {
+			// fallback to UUID when name is not set
+			name = c.UUID
+		}
+		clientNames = append(clientNames, name)
+	}
+	joinedClients := strings.Join(clientNames, ", ")
+
+	replaceMap := map[string]string{
+		"{{event}}":   event.Event,
+		"{{client}}":  joinedClients,
+		"{{time}}":    event.Time.Format(time.RFC3339),
+		"{{message}}": event.Message,
+	}
+	result := messageTemplate
+	for placeholder, value := range replaceMap {
+		result = strings.ReplaceAll(result, placeholder, value)
+	}
+	return result
 }
