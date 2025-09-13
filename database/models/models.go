@@ -90,6 +90,7 @@ type Record struct {
 	Process        int       `json:"process"`
 	Connections    int       `json:"connections"`
 	ConnectionsUdp int       `json:"connections_udp"`
+	Uptime         int64     `json:"uptime" gorm:"type:bigint"`
 }
 
 // StringArray represents a slice of strings stored as JSON in the database

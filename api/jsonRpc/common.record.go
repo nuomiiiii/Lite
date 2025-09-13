@@ -225,7 +225,7 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 			Count     int               `json:"count"`
 			BasicInfo []ClientBasicInfo `json:"basic_info,omitempty"`
 			Records   []RecordsResp     `json:"records"`
-			Tasks     []map[string]any  `json:"tasks,omitempty"`
+			Tasks     []map[string]any  `json:"tasks"`
 			From      models.LocalTime  `json:"from"`
 			To        models.LocalTime  `json:"to"`
 		}
@@ -282,86 +282,89 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 			}
 		}
 
-		// tasks summary
-		if params.UUID != "" || taskId != -1 {
-			pingTasks, err := tasks.GetAllPingTasks()
-			if err != nil {
-				return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch ping tasks", err.Error())
+		// tasks summary (always included for ping type; do not expose target field)
+		pingTasks, err := tasks.GetAllPingTasks()
+		if err != nil {
+			return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch ping tasks", err.Error())
+		}
+		toList := make([]map[string]any, 0, len(pingTasks))
+		for _, t := range pingTasks {
+			if taskId != -1 && t.Id != uint(taskId) {
+				continue
 			}
-			tlist := make([]map[string]any, 0, len(pingTasks))
-			for _, t := range pingTasks {
-				if taskId != -1 && t.Id != uint(taskId) {
+			if params.UUID != "" { // ensure task assigned to specific client when filtering by uuid
+				assigned := false
+				for _, c := range t.Clients {
+					if c == params.UUID {
+						assigned = true
+						break
+					}
+				}
+				if !assigned {
 					continue
 				}
-				if params.UUID != "" {
-					// check assignment
-					assigned := false
-					for _, c := range t.Clients {
-						if c == params.UUID {
-							assigned = true
-							break
-						}
-					}
-					if !assigned {
-						continue
-					}
-				}
-
-				total := 0
-				lossCount := 0
-				minLat := 0
-				maxLat := 0
-				sum := 0
-				valid := 0
-				for _, r := range recs {
-					if r.TaskId != t.Id {
-						continue
-					}
-					if params.UUID != "" && r.Client != params.UUID {
-						continue
-					}
-					total++
-					if r.Value < 0 {
-						lossCount++
-					} else {
-						valid++
-						sum += r.Value
-						if minLat == 0 || r.Value < minLat {
-							minLat = r.Value
-						}
-						if r.Value > maxLat {
-							maxLat = r.Value
-						}
-					}
-				}
-
-				lossRate := 0.0
-				if total > 0 {
-					lossRate = float64(lossCount) / float64(total) * 100
-				}
-				avg := 0
-				if valid > 0 {
-					avg = sum / valid
-				}
-
-				info := map[string]any{
-					"id":       t.Id,
-					"name":     t.Name,
-					"type":     t.Type,
-					"interval": t.Interval,
-					"loss":     lossRate,
-					"min":      minLat,
-					"max":      maxLat,
-					"avg":      avg,
-					"total":    total,
-				}
-				if params.UUID == "" && taskId != -1 {
-					info["clients"] = t.Clients
-				}
-				tlist = append(tlist, info)
 			}
-			response.Tasks = tlist
+			total := 0
+			lossCount := 0
+			minLat := 0
+			maxLat := 0
+			sum := 0
+			valid := 0
+			latestVal := -1
+			var latestTs time.Time
+			for _, r := range recs {
+				if r.TaskId != t.Id {
+					continue
+				}
+				if params.UUID != "" && r.Client != params.UUID {
+					continue
+				}
+				total++
+				if r.Value < 0 {
+					lossCount++
+				} else {
+					valid++
+					sum += r.Value
+					if minLat == 0 || r.Value < minLat {
+						minLat = r.Value
+					}
+					if r.Value > maxLat {
+						maxLat = r.Value
+					}
+					// track latest non-negative value
+					ts := r.Time.ToTime()
+					if latestTs.IsZero() || ts.After(latestTs) {
+						latestTs = ts
+						latestVal = r.Value
+					}
+				}
+			}
+			lossRate := 0.0
+			if total > 0 {
+				lossRate = float64(lossCount) / float64(total) * 100
+			}
+			avg := 0
+			if valid > 0 {
+				avg = sum / valid
+			}
+			info := map[string]any{
+				"id":       t.Id,
+				"name":     t.Name,
+				"type":     t.Type,
+				"interval": t.Interval,
+				"loss":     lossRate,
+				"min":      minLat,
+				"max":      maxLat,
+				"avg":      avg,
+				"latest":   latestVal,
+				"total":    total,
+			}
+			if params.UUID == "" && taskId != -1 { // retain existing behavior of exposing clients only when filtering by task
+				info["clients"] = t.Clients
+			}
+			toList = append(toList, info)
 		}
+		response.Tasks = toList
 		// apply maxCount for ping
 		maxCount := params.MaxCount
 		if maxCount == 0 {
@@ -641,12 +644,18 @@ type flatRecord struct {
 	Process        *int             `json:"process,omitempty"`
 	Connections    *int             `json:"connections,omitempty"`
 	ConnectionsUdp *int             `json:"connections_udp,omitempty"`
+	Uptime         *int64           `json:"uptime,omitempty"`
 }
 
 func filterRecordsByLoadType(recs []models.Record, loadType string) []flatRecord {
 	out := make([]flatRecord, 0, len(recs))
 	for _, r := range recs {
 		fr := flatRecord{Client: r.Client, Time: r.Time}
+		// always include uptime when present
+		if r.Uptime != 0 {
+			v := r.Uptime
+			fr.Uptime = &v
+		}
 		switch loadType {
 		case "cpu":
 			v := r.Cpu
