@@ -85,6 +85,16 @@ func RunServer() {
 	go messageSender.Initialize()
 	// oidcInit
 	go oauth.Initialize()
+
+	if conf.NezhaCompatEnabled {
+		go func() {
+			if err := StartNezhaCompat(conf.NezhaCompatListen); err != nil {
+				log.Printf("Nezha compat server error: %v", err)
+				auditlog.EventLog("error", fmt.Sprintf("Nezha compat server error: %v", err))
+			}
+		}()
+	}
+
 	config.Subscribe(func(event config.ConfigEvent) {
 		if event.New.OAuthProvider != event.Old.OAuthProvider {
 			oidcProvider, err := database.GetOidcConfigByName(event.New.OAuthProvider)
@@ -100,6 +110,19 @@ func RunServer() {
 		}
 		if event.New.NotificationMethod != event.Old.NotificationMethod {
 			messageSender.Initialize()
+		}
+		if event.New.NezhaCompatEnabled != event.Old.NezhaCompatEnabled {
+			if event.New.NezhaCompatEnabled {
+				if err := StartNezhaCompat(event.New.NezhaCompatListen); err != nil {
+					log.Printf("start Nezha compat server error: %v", err)
+					auditlog.EventLog("error", fmt.Sprintf("start Nezha compat server error: %v", err))
+				}
+			} else {
+				if err := StopNezhaCompat(); err != nil {
+					log.Printf("stop Nezha compat server error: %v", err)
+					auditlog.EventLog("error", fmt.Sprintf("stop Nezha compat server error: %v", err))
+				}
+			}
 		}
 
 	})
@@ -328,21 +351,6 @@ func RunServer() {
 			log.Fatalf("listen: %s\n", err)
 		}
 	}()
-	// Optionally start Nezha gRPC compatibility server on separate port
-	if nzAddr := GetEnv("KOMARI_NEZHA_LISTEN", ""); nzAddr != "" {
-		go func() {
-			if err := StartNezhaCompatServer(nzAddr); err != nil {
-				log.Printf("Nezha compat server error: %v", err)
-				auditlog.EventLog("error", fmt.Sprintf("Nezha compat server error: %v", err))
-			}
-		}()
-	} else if conf.NezhaCompatEnabled && conf.NezhaCompatListen != "" {
-		go func() {
-			if err := StartNezhaCompatServer(conf.NezhaCompatListen); err != nil {
-				auditlog.EventLog("error", fmt.Sprintf("Nezha compat server error: %v", err))
-			}
-		}()
-	}
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
 	<-quit

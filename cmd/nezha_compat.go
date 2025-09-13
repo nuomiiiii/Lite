@@ -8,10 +8,12 @@ import (
 	"math"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	apiClient "github.com/komari-monitor/komari/api/client"
 	"github.com/komari-monitor/komari/common"
+	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
@@ -26,7 +28,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// StartNezhaCompatServer starts a gRPC server compatible with Nezha Agent.
+// [Deprecated] Use StartNezhaCompat instead.
 func StartNezhaCompatServer(addr string) error {
 	boot := uint64(time.Now().Unix())
 	lis, err := net.Listen("tcp", addr)
@@ -59,6 +61,71 @@ func StartNezhaCompatServer(addr string) error {
 	proto.RegisterNezhaServiceServer(gs, srv)
 	log.Printf("Nezha compat gRPC listening on %s", addr)
 	return gs.Serve(lis)
+}
+
+// ---- Manual start/stop support ----
+var (
+	nezhaSrv   *grpc.Server
+	nezhaLis   net.Listener
+	nezhaOnceM sync.Mutex
+)
+
+// StartNezhaCompat starts the Nezha compatible gRPC server asynchronously.
+// Returns error if already started.
+func StartNezhaCompat(addr string) error {
+	nezhaOnceM.Lock()
+	defer nezhaOnceM.Unlock()
+	if nezhaSrv != nil {
+		return errors.New("nezha compat server already started")
+	}
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	boot := uint64(time.Now().Unix())
+	sImpl := &nezhaCompatServer{bootTime: boot}
+
+	unary := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		return handler(ctx, req)
+	}
+	stream := func(srvIface interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		return handler(srvIface, ss)
+	}
+	gs := grpc.NewServer(
+		grpc.UnaryInterceptor(unary),
+		grpc.StreamInterceptor(stream),
+		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 2 * time.Minute, Timeout: 20 * time.Second}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 20 * time.Second, PermitWithoutStream: true}),
+	)
+	proto.RegisterNezhaServiceServer(gs, sImpl)
+	nezhaSrv = gs
+	nezhaLis = lis
+	go func() {
+		if err := gs.Serve(lis); err != nil {
+			log.Printf("Nezha compat gRPC server stopped: %v", err)
+		}
+	}()
+	log.Printf("Nezha compat gRPC started on %s", addr)
+	return nil
+}
+
+// StopNezhaCompat stops the server if running.
+func StopNezhaCompat() error {
+	nezhaOnceM.Lock()
+	defer nezhaOnceM.Unlock()
+	if nezhaSrv == nil {
+		return errors.New("nezha compat server not running")
+	}
+	// 强制立即断开所有连接与流，不等待在途 RPC 完成。
+	nezhaSrv.Stop()
+	// Listener close (Serve already returns after GracefulStop, but close to be explicit)
+	if nezhaLis != nil {
+		_ = nezhaLis.Close()
+	}
+	nezhaSrv = nil
+	nezhaLis = nil
+	log.Printf("Nezha compat gRPC stopped")
+	return nil
 }
 
 type nezhaCompatServer struct {
@@ -265,6 +332,7 @@ func ingestState(uuid string, st *proto.State) error {
 	if err := db.Where("uuid = ?", uuid).First(&client).Error; err != nil {
 		// If missing, create with minimal defaults to avoid failing ingestion
 		client = models.Client{UUID: uuid, Token: "", Name: "nezha_" + uuid[0:8]}
+		auditlog.EventLog("info", "auto created client "+client.Name)
 		_ = db.Create(&client).Error
 	}
 	rep := common.Report{
