@@ -70,7 +70,7 @@ func (g *Generic) OnCallback(ctx *gin.Context, state string, query map[string]st
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return factory.OidcCallback{}, fmt.Errorf("failed to get access token: %v", err)
+		return factory.OidcCallback{}, fmt.Errorf("failed to get access token: %s", utils.DataMasking(err.Error(), []string{g.Addition.ClientSecret, g.Addition.ClientId}))
 	}
 	defer resp.Body.Close()
 
@@ -79,7 +79,7 @@ func (g *Generic) OnCallback(ctx *gin.Context, state string, query map[string]st
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return factory.OidcCallback{}, fmt.Errorf("failed to parse access token response: %v", err)
+		return factory.OidcCallback{}, fmt.Errorf("failed to parse access token response: %s", utils.DataMasking(err.Error(), []string{g.Addition.ClientSecret, g.Addition.ClientId}))
 	}
 
 	// 获取用户信息
