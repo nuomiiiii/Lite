@@ -12,6 +12,7 @@ import (
 
 	apiClient "github.com/komari-monitor/komari/api/client"
 	"github.com/komari-monitor/komari/common"
+	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
@@ -265,6 +266,7 @@ func ingestState(uuid string, st *proto.State) error {
 	if err := db.Where("uuid = ?", uuid).First(&client).Error; err != nil {
 		// If missing, create with minimal defaults to avoid failing ingestion
 		client = models.Client{UUID: uuid, Token: "", Name: "nezha_" + uuid[0:8]}
+		auditlog.EventLog("info", "auto created client "+client.Name)
 		_ = db.Create(&client).Error
 	}
 	rep := common.Report{
