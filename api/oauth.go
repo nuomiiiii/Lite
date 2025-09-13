@@ -86,7 +86,7 @@ func OAuthCallback(c *gin.Context) {
 			return
 		}
 		auditlog.Log(c.ClientIP(), user.UUID, "bound external account (OAuth)"+fmt.Sprintf(",sso_id: %s", sso_id), "login")
-		c.Redirect(302, "/manage")
+		c.Redirect(302, "/admin")
 		return
 	}
 
