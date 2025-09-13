@@ -28,7 +28,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// StartNezhaCompatServer starts a gRPC server compatible with Nezha Agent.
+// [Deprecated] Use StartNezhaCompat instead.
 func StartNezhaCompatServer(addr string) error {
 	boot := uint64(time.Now().Unix())
 	lis, err := net.Listen("tcp", addr)

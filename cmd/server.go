@@ -88,7 +88,7 @@ func RunServer() {
 
 	if conf.NezhaCompatEnabled {
 		go func() {
-			if err := StartNezhaCompatServer(conf.NezhaCompatListen); err != nil {
+			if err := StartNezhaCompat(conf.NezhaCompatListen); err != nil {
 				log.Printf("Nezha compat server error: %v", err)
 				auditlog.EventLog("error", fmt.Sprintf("Nezha compat server error: %v", err))
 			}
@@ -113,7 +113,7 @@ func RunServer() {
 		}
 		if event.New.NezhaCompatEnabled != event.Old.NezhaCompatEnabled {
 			if event.New.NezhaCompatEnabled {
-				if err := StartNezhaCompatServer(event.New.NezhaCompatListen); err != nil {
+				if err := StartNezhaCompat(event.New.NezhaCompatListen); err != nil {
 					log.Printf("start Nezha compat server error: %v", err)
 					auditlog.EventLog("error", fmt.Sprintf("start Nezha compat server error: %v", err))
 				}
