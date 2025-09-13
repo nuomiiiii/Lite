@@ -68,7 +68,6 @@ var (
 	nezhaSrv   *grpc.Server
 	nezhaLis   net.Listener
 	nezhaOnceM sync.Mutex
-	nezhaBoot  uint64
 )
 
 // StartNezhaCompat starts the Nezha compatible gRPC server asynchronously.
@@ -101,7 +100,6 @@ func StartNezhaCompat(addr string) error {
 	proto.RegisterNezhaServiceServer(gs, sImpl)
 	nezhaSrv = gs
 	nezhaLis = lis
-	nezhaBoot = boot
 	go func() {
 		if err := gs.Serve(lis); err != nil {
 			log.Printf("Nezha compat gRPC server stopped: %v", err)
@@ -118,15 +116,14 @@ func StopNezhaCompat() error {
 	if nezhaSrv == nil {
 		return errors.New("nezha compat server not running")
 	}
-	// GracefulStop allows inflight RPCs to finish.
-	nezhaSrv.GracefulStop()
+	// 强制立即断开所有连接与流，不等待在途 RPC 完成。
+	nezhaSrv.Stop()
 	// Listener close (Serve already returns after GracefulStop, but close to be explicit)
 	if nezhaLis != nil {
 		_ = nezhaLis.Close()
 	}
 	nezhaSrv = nil
 	nezhaLis = nil
-	nezhaBoot = 0
 	log.Printf("Nezha compat gRPC stopped")
 	return nil
 }
