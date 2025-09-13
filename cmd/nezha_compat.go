@@ -8,6 +8,7 @@ import (
 	"math"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	apiClient "github.com/komari-monitor/komari/api/client"
@@ -60,6 +61,74 @@ func StartNezhaCompatServer(addr string) error {
 	proto.RegisterNezhaServiceServer(gs, srv)
 	log.Printf("Nezha compat gRPC listening on %s", addr)
 	return gs.Serve(lis)
+}
+
+// ---- Manual start/stop support ----
+var (
+	nezhaSrv   *grpc.Server
+	nezhaLis   net.Listener
+	nezhaOnceM sync.Mutex
+	nezhaBoot  uint64
+)
+
+// StartNezhaCompat starts the Nezha compatible gRPC server asynchronously.
+// Returns error if already started.
+func StartNezhaCompat(addr string) error {
+	nezhaOnceM.Lock()
+	defer nezhaOnceM.Unlock()
+	if nezhaSrv != nil {
+		return errors.New("nezha compat server already started")
+	}
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	boot := uint64(time.Now().Unix())
+	sImpl := &nezhaCompatServer{bootTime: boot}
+
+	unary := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		return handler(ctx, req)
+	}
+	stream := func(srvIface interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		return handler(srvIface, ss)
+	}
+	gs := grpc.NewServer(
+		grpc.UnaryInterceptor(unary),
+		grpc.StreamInterceptor(stream),
+		grpc.KeepaliveParams(keepalive.ServerParameters{Time: 2 * time.Minute, Timeout: 20 * time.Second}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{MinTime: 20 * time.Second, PermitWithoutStream: true}),
+	)
+	proto.RegisterNezhaServiceServer(gs, sImpl)
+	nezhaSrv = gs
+	nezhaLis = lis
+	nezhaBoot = boot
+	go func() {
+		if err := gs.Serve(lis); err != nil {
+			log.Printf("Nezha compat gRPC server stopped: %v", err)
+		}
+	}()
+	log.Printf("Nezha compat gRPC started on %s", addr)
+	return nil
+}
+
+// StopNezhaCompat stops the server if running.
+func StopNezhaCompat() error {
+	nezhaOnceM.Lock()
+	defer nezhaOnceM.Unlock()
+	if nezhaSrv == nil {
+		return errors.New("nezha compat server not running")
+	}
+	// GracefulStop allows inflight RPCs to finish.
+	nezhaSrv.GracefulStop()
+	// Listener close (Serve already returns after GracefulStop, but close to be explicit)
+	if nezhaLis != nil {
+		_ = nezhaLis.Close()
+	}
+	nezhaSrv = nil
+	nezhaLis = nil
+	nezhaBoot = 0
+	log.Printf("Nezha compat gRPC stopped")
+	return nil
 }
 
 type nezhaCompatServer struct {
