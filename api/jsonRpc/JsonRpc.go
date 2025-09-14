@@ -23,8 +23,8 @@ import (
 func OnRpcRequest(c *gin.Context) {
 	cfg, _ := config.Get()
 
-	// 如果是 WebSocket Upgrade (常见于 GET) 则走原有逻辑
-	if strings.EqualFold(c.GetHeader("Upgrade"), "websocket") || strings.Contains(strings.ToLower(c.GetHeader("Connection")), "upgrade") {
+	// GET -> WebSocket
+	if c.Request.Method == http.MethodGet {
 		_conn, err := ws.UpgradeRequest(c, func(r *http.Request) bool {
 			if cfg.AllowCors {
 				return true
