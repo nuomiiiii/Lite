@@ -164,7 +164,7 @@ func SaveClientReport(clientUUID string, report common.Report) (err error) {
 		Process:        report.Process,
 		Connections:    report.Connections.TCP,
 		ConnectionsUdp: report.Connections.UDP,
-		Uptime:         report.Uptime,
+		//Uptime:         report.Uptime,
 	}
 
 	// 使用事务确保 Record 和 ClientsInfo 一致性

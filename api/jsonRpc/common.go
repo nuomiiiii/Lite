@@ -2,6 +2,10 @@ package jsonRpc
 
 import (
 	"context"
+	"fmt"
+	"math"
+	"sort"
+	"time"
 
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/common"
@@ -9,10 +13,157 @@ import (
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/rpc"
 	"github.com/komari-monitor/komari/ws"
+
+	cache "github.com/patrickmn/go-cache"
 )
+
+// pingstats:<uuid>
+var pingStatsCache = cache.New(1*time.Minute, 2*time.Minute)
+
+type pingStat struct {
+	Name   string  `json:"name"`
+	Latest int     `json:"latest"`
+	Avg    int     `json:"avg"`
+	Tail   float64 `json:"tail"` // (P99-P50)/P50
+	Loss   float64 `json:"loss"` // 丢包率 %
+	Min    int     `json:"min"`
+	Max    int     `json:"max"`
+}
+
+// getPingStatsForNode 计算并缓存节点最近 1 小时 ping 统计
+func getPingStatsForNode(uuid string, pingTasks []models.PingTask) map[string]pingStat {
+	if uuid == "" {
+		return map[string]pingStat{}
+	}
+	key := fmt.Sprintf("pingstats:%s", uuid)
+	if v, ok := pingStatsCache.Get(key); ok {
+		if m, ok2 := v.(map[string]pingStat); ok2 {
+			return m
+		}
+	}
+	// 筛选属于该节点的任务
+	assigned := make([]models.PingTask, 0, 4)
+	for _, t := range pingTasks {
+		for _, c := range t.Clients {
+			if c == uuid {
+				assigned = append(assigned, t)
+				break
+			}
+		}
+	}
+	if len(assigned) == 0 {
+		empty := map[string]pingStat{}
+		pingStatsCache.Set(key, empty, cache.DefaultExpiration)
+		return empty
+	}
+	end := time.Now()
+	start := end.Add(-1 * time.Hour)
+	recs, err := tasks.GetPingRecords(uuid, -1, start, end)
+	if err != nil || len(recs) == 0 {
+		empty := map[string]pingStat{}
+		pingStatsCache.Set(key, empty, cache.DefaultExpiration)
+		return empty
+	}
+	grouped := make(map[uint][]models.PingRecord)
+	for _, r := range recs {
+		for _, t := range assigned {
+			if r.TaskId == t.Id {
+				grouped[r.TaskId] = append(grouped[r.TaskId], r)
+				break
+			}
+		}
+	}
+	result := make(map[string]pingStat, len(grouped))
+	for _, t := range assigned {
+		records := grouped[t.Id]
+		if len(records) == 0 {
+			continue
+		}
+		latest := -1
+		var latestTs time.Time
+		values := make([]int, 0, len(records))
+		sum := 0
+		valid := 0
+		total := 0
+		lossCount := 0
+		minLat := 0
+		maxLat := 0
+		for _, r := range records {
+			total++
+			if r.Value < 0 { // 丢包
+				lossCount++
+				continue
+			}
+			values = append(values, r.Value)
+			sum += r.Value
+			valid++
+			if minLat == 0 || r.Value < minLat {
+				minLat = r.Value
+			}
+			if r.Value > maxLat {
+				maxLat = r.Value
+			}
+			ts := r.Time.ToTime()
+			if latestTs.IsZero() || ts.After(latestTs) {
+				latestTs = ts
+				latest = r.Value
+			}
+		}
+		avg := 0
+		if valid > 0 {
+			avg = sum / valid
+		}
+		p50, p99 := 0, 0
+		if len(values) > 0 {
+			sort.Ints(values)
+			percentile := func(vals []int, pct float64) int {
+				if len(vals) == 0 {
+					return 0
+				}
+				if pct <= 0 {
+					return vals[0]
+				}
+				if pct >= 1 {
+					return vals[len(vals)-1]
+				}
+				pos := (float64(len(vals) - 1)) * pct
+				lo := int(math.Floor(pos))
+				hi := int(math.Ceil(pos))
+				if lo == hi {
+					return vals[lo]
+				}
+				frac := pos - float64(lo)
+				v := float64(vals[lo]) + (float64(vals[hi])-float64(vals[lo]))*frac
+				return int(math.Round(v))
+			}
+			p50 = percentile(values, 0.50)
+			p99 = percentile(values, 0.99)
+		}
+		tail := 0.0
+		if p50 > 0 && p99 >= p50 {
+			tail = float64(p99-p50) / float64(p50)
+		}
+		lossRate := 0.0
+		if total > 0 {
+			lossRate = float64(lossCount) / float64(total) * 100
+		}
+		result[fmt.Sprintf("%d", t.Id)] = pingStat{
+			Name:   t.Name,
+			Latest: latest,
+			Avg:    avg,
+			Tail:   tail,
+			Loss:   lossRate,
+			Min:    minLat,
+			Max:    maxLat,
+		}
+	}
+	pingStatsCache.Set(key, result, cache.DefaultExpiration)
+	return result
+}
 
 func init() {
 	RegisterWithGroupAndMeta("getNodes", "common",
@@ -158,41 +309,47 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 	}
 
 	type recordLike struct {
-		Client         string           `json:"client"`
-		Time           models.LocalTime `json:"time"`
-		Cpu            float32          `json:"cpu"`
-		Gpu            float32          `json:"gpu"`
-		Ram            int64            `json:"ram"`
-		RamTotal       int64            `json:"ram_total"`
-		Swap           int64            `json:"swap"`
-		SwapTotal      int64            `json:"swap_total"`
-		Load           float32          `json:"load"`
-		Load5          float32          `json:"load5"`
-		Load15         float32          `json:"load15"`
-		Temp           float32          `json:"temp"`
-		Disk           int64            `json:"disk"`
-		DiskTotal      int64            `json:"disk_total"`
-		NetIn          int64            `json:"net_in"`
-		NetOut         int64            `json:"net_out"`
-		NetTotalUp     int64            `json:"net_total_up"`
-		NetTotalDown   int64            `json:"net_total_down"`
-		Process        int              `json:"process"`
-		Connections    int              `json:"connections"`
-		ConnectionsUdp int              `json:"connections_udp"`
-		Online         bool             `json:"online"`
+		Client         string              `json:"client"`
+		Time           models.LocalTime    `json:"time"`
+		Cpu            float32             `json:"cpu"`
+		Gpu            float32             `json:"gpu"`
+		Ram            int64               `json:"ram"`
+		RamTotal       int64               `json:"ram_total"`
+		Swap           int64               `json:"swap"`
+		SwapTotal      int64               `json:"swap_total"`
+		Load           float32             `json:"load"`
+		Load5          float32             `json:"load5"`
+		Load15         float32             `json:"load15"`
+		Temp           float32             `json:"temp"`
+		Disk           int64               `json:"disk"`
+		DiskTotal      int64               `json:"disk_total"`
+		NetIn          int64               `json:"net_in"`
+		NetOut         int64               `json:"net_out"`
+		NetTotalUp     int64               `json:"net_total_up"`
+		NetTotalDown   int64               `json:"net_total_down"`
+		Process        int                 `json:"process"`
+		Connections    int                 `json:"connections"`
+		ConnectionsUdp int                 `json:"connections_udp"`
+		Online         bool                `json:"online"`
+		Uptime         int64               `json:"uptime"`
+		Ping           map[string]pingStat `json:"ping"`
 	}
 
 	respMap := make(map[string]recordLike, len(latest))
+
+	// 预取所有 ping 任务
+	pingTasks, _ := tasks.GetAllPingTasks()
+
 	appendOne := func(uuid string, rep *common.Report) {
 		if rep == nil {
 			return
 		}
-		// time 使用 UpdatedAt
+		stats := getPingStatsForNode(uuid, pingTasks)
 		rl := recordLike{
 			Client:         uuid,
 			Time:           models.FromTime(rep.UpdatedAt),
 			Cpu:            float32(rep.CPU.Usage),
-			Gpu:            0, // 暂无实时 GPU 数据
+			Gpu:            0,
 			Ram:            rep.Ram.Used,
 			RamTotal:       rep.Ram.Total,
 			Swap:           rep.Swap.Used,
@@ -200,7 +357,7 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 			Load:           float32(rep.Load.Load1),
 			Load5:          float32(rep.Load.Load5),
 			Load15:         float32(rep.Load.Load15),
-			Temp:           0, // 没有温度字段
+			Temp:           0,
 			Disk:           rep.Disk.Used,
 			DiskTotal:      rep.Disk.Total,
 			NetIn:          rep.Network.Down,
@@ -211,6 +368,8 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 			Connections:    rep.Connections.TCP + rep.Connections.UDP,
 			ConnectionsUdp: rep.Connections.UDP,
 			Online:         onlineSet[uuid],
+			Uptime:         rep.Uptime,
+			Ping:           stats,
 		}
 		respMap[uuid] = rl
 	}

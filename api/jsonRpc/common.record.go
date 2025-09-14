@@ -312,6 +312,8 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 			valid := 0
 			latestVal := -1
 			var latestTs time.Time
+			// 收集该任务的所有有效(非丢包)延迟值以计算百分位
+			latencies := make([]int, 0, 64)
 			for _, r := range recs {
 				if r.TaskId != t.Id {
 					continue
@@ -320,24 +322,58 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 					continue
 				}
 				total++
-				if r.Value < 0 {
+				if r.Value < 0 { // 丢包
 					lossCount++
-				} else {
-					valid++
-					sum += r.Value
-					if minLat == 0 || r.Value < minLat {
-						minLat = r.Value
-					}
-					if r.Value > maxLat {
-						maxLat = r.Value
-					}
-					// track latest non-negative value
-					ts := r.Time.ToTime()
-					if latestTs.IsZero() || ts.After(latestTs) {
-						latestTs = ts
-						latestVal = r.Value
-					}
+					continue
 				}
+				valid++
+				sum += r.Value
+				latencies = append(latencies, r.Value)
+				if minLat == 0 || r.Value < minLat {
+					minLat = r.Value
+				}
+				if r.Value > maxLat {
+					maxLat = r.Value
+				}
+				// track latest non-negative value
+				ts := r.Time.ToTime()
+				if latestTs.IsZero() || ts.After(latestTs) {
+					latestTs = ts
+					latestVal = r.Value
+				}
+			}
+
+			// 计算 P50 / P99
+			p50 := 0
+			p99 := 0
+			if len(latencies) > 0 {
+				sort.Ints(latencies)
+				getPercentileInt := func(values []int, percentile float64) int {
+					if len(values) == 0 {
+						return 0
+					}
+					if percentile <= 0 {
+						return values[0]
+					}
+					if percentile >= 1 {
+						return values[len(values)-1]
+					}
+					pos := (float64(len(values) - 1)) * percentile
+					lo := int(math.Floor(pos))
+					hi := int(math.Ceil(pos))
+					if lo == hi {
+						return values[lo]
+					}
+					frac := pos - float64(lo)
+					v := float64(values[lo]) + (float64(values[hi])-float64(values[lo]))*frac
+					return int(math.Round(v))
+				}
+				p50 = getPercentileInt(latencies, 0.50)
+				p99 = getPercentileInt(latencies, 0.99)
+			}
+			ratio := 0.0
+			if p50 > 0 && p99 >= p50 {
+				ratio = float64(p99-p50) / float64(p50)
 			}
 			lossRate := 0.0
 			if total > 0 {
@@ -348,16 +384,19 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 				avg = sum / valid
 			}
 			info := map[string]any{
-				"id":       t.Id,
-				"name":     t.Name,
-				"type":     t.Type,
-				"interval": t.Interval,
-				"loss":     lossRate,
-				"min":      minLat,
-				"max":      maxLat,
-				"avg":      avg,
-				"latest":   latestVal,
-				"total":    total,
+				"id":            t.Id,
+				"name":          t.Name,
+				"type":          t.Type,
+				"interval":      t.Interval,
+				"loss":          lossRate,
+				"min":           minLat,
+				"max":           maxLat,
+				"avg":           avg,
+				"latest":        latestVal,
+				"total":         total,
+				"p50":           p50,
+				"p99":           p99,
+				"p99_p50_ratio": ratio,
 			}
 			if params.UUID == "" && taskId != -1 { // retain existing behavior of exposing clients only when filtering by task
 				info["clients"] = t.Clients
@@ -652,10 +691,10 @@ func filterRecordsByLoadType(recs []models.Record, loadType string) []flatRecord
 	for _, r := range recs {
 		fr := flatRecord{Client: r.Client, Time: r.Time}
 		// always include uptime when present
-		if r.Uptime != 0 {
-			v := r.Uptime
-			fr.Uptime = &v
-		}
+		//if r.Uptime != 0 {
+		//	v := r.Uptime
+		//	fr.Uptime = &v
+		//}
 		switch loadType {
 		case "cpu":
 			v := r.Cpu
