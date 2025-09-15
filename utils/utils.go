@@ -49,13 +49,19 @@ func AverageReport(uuid string, time time.Time, records []common.Report, topPerc
 		}
 	}
 
-	var sumCPU, sumLOAD float32
+	var sumCPU, sumLOAD, sumGPU float32
 	var sumRAM, sumRAMTotal, sumSWAP, sumSWAPTotal, sumDISK, sumDISKTotal, sumNETIn, sumNETOut, sumNETTotalUp, sumNETTotalDown int64
 	var sumPROCESS, sumConnections, sumConnectionsUDP int
 
 	if topPercentage > 0 && topPercentage <= 1 {
 		sumCPU, _ = sumAndSort(func(r common.Report) float32 { return float32(r.CPU.Usage) }, nil, true)
 		sumLOAD, _ = sumAndSort(func(r common.Report) float32 { return float32(r.Load.Load1) }, nil, true)
+		sumGPU, _ = sumAndSort(func(r common.Report) float32 {
+			if r.GPU != nil {
+				return float32(r.GPU.AverageUsage)
+			}
+			return 0
+		}, nil, true)
 
 		_, sumRAM = sumAndSort(nil, func(r common.Report) int64 { return r.Ram.Used }, false)
 		//_, sumRAMTotal = sumAndSort(nil, nil, func(r common.Report) int64 { return r.Ram.Total }, false)
@@ -79,6 +85,9 @@ func AverageReport(uuid string, time time.Time, records []common.Report, topPerc
 		for _, r := range records {
 			sumCPU += float32(r.CPU.Usage)
 			sumLOAD += float32(r.Load.Load1)
+			if r.GPU != nil {
+				sumGPU += float32(r.GPU.AverageUsage)
+			}
 			sumRAM += r.Ram.Used
 			sumRAMTotal += r.Ram.Total
 			sumSWAP += r.Swap.Used
@@ -100,7 +109,7 @@ func AverageReport(uuid string, time time.Time, records []common.Report, topPerc
 		Client:         uuid,
 		Time:           models.FromTime(time),
 		Cpu:            sumCPU / float32(recordsToAverageCount),
-		Gpu:            0, // 保持原始行为
+		Gpu:            sumGPU / float32(recordsToAverageCount), // 计算GPU平均使用率
 		Ram:            sumRAM / int64(recordsToAverageCount),
 		RamTotal:       records[0].Ram.Total,
 		Swap:           sumSWAP / int64(recordsToAverageCount),
@@ -118,6 +127,136 @@ func AverageReport(uuid string, time time.Time, records []common.Report, topPerc
 		ConnectionsUdp: sumConnectionsUDP / recordsToAverageCount,
 	}
 	return newRecord
+}
+
+// AverageGPUReports 使用与 AverageReport 相同的聚合逻辑处理GPU数据
+// 返回每个GPU设备的聚合记录
+func AverageGPUReports(uuid string, time time.Time, reports []common.Report, topPercentage float64) []models.GPURecord {
+	if len(reports) == 0 {
+		return []models.GPURecord{}
+	}
+
+	// 收集所有GPU设备数据
+	deviceData := make(map[int]struct {
+		DeviceName  string
+		MemTotal    []int64
+		MemUsed     []int64
+		Utilization []float64
+		Temperature []int
+	})
+
+	for _, report := range reports {
+		if report.GPU != nil && len(report.GPU.DetailedInfo) > 0 {
+			for idx, gpu := range report.GPU.DetailedInfo {
+				if _, exists := deviceData[idx]; !exists {
+					deviceData[idx] = struct {
+						DeviceName  string
+						MemTotal    []int64
+						MemUsed     []int64
+						Utilization []float64
+						Temperature []int
+					}{DeviceName: gpu.Name}
+				}
+				data := deviceData[idx]
+				data.MemTotal = append(data.MemTotal, gpu.MemoryTotal)
+				data.MemUsed = append(data.MemUsed, gpu.MemoryUsed)
+				data.Utilization = append(data.Utilization, gpu.Utilization)
+				data.Temperature = append(data.Temperature, gpu.Temperature)
+				deviceData[idx] = data
+			}
+		}
+	}
+
+	// 复用现有的聚合逻辑
+	sumAndSort := func(values []float64, topPerc float64) float64 {
+		if len(values) == 0 {
+			return 0
+		}
+		count := len(values)
+		recordsToAverageCount := count
+		if topPerc > 0 && topPerc <= 1 {
+			recordsToAverageCount = int(float64(count) * topPerc)
+			if recordsToAverageCount == 0 && count > 0 {
+				recordsToAverageCount = 1
+			}
+		}
+
+		if topPerc > 0 && topPerc <= 1 {
+			sort.Float64s(values)
+			// 取最高的值
+			var sum float64
+			for i := count - recordsToAverageCount; i < count; i++ {
+				sum += values[i]
+			}
+			return sum / float64(recordsToAverageCount)
+		} else {
+			var sum float64
+			for _, val := range values {
+				sum += val
+			}
+			return sum / float64(count)
+		}
+	}
+
+	sumAndSortInt64 := func(values []int64, topPerc float64) int64 {
+		if len(values) == 0 {
+			return 0
+		}
+		count := len(values)
+		recordsToAverageCount := count
+		if topPerc > 0 && topPerc <= 1 {
+			recordsToAverageCount = int(float64(count) * topPerc)
+			if recordsToAverageCount == 0 && count > 0 {
+				recordsToAverageCount = 1
+			}
+		}
+
+		if topPerc > 0 && topPerc <= 1 {
+			sort.Slice(values, func(i, j int) bool { return values[i] > values[j] })
+			var sum int64
+			for i := 0; i < recordsToAverageCount; i++ {
+				sum += values[i]
+			}
+			return sum / int64(recordsToAverageCount)
+		} else {
+			var sum int64
+			for _, val := range values {
+				sum += val
+			}
+			return sum / int64(count)
+		}
+	}
+
+	sumAndSortInt := func(values []int, topPerc float64) int {
+		if len(values) == 0 {
+			return 0
+		}
+		int64Values := make([]int64, len(values))
+		for i, v := range values {
+			int64Values[i] = int64(v)
+		}
+		return int(sumAndSortInt64(int64Values, topPerc))
+	}
+
+	// 生成每个设备的聚合记录
+	var result []models.GPURecord
+	for deviceIndex, data := range deviceData {
+		if len(data.MemTotal) > 0 {
+			record := models.GPURecord{
+				Client:      uuid,
+				Time:        models.FromTime(time),
+				DeviceIndex: deviceIndex,
+				DeviceName:  data.DeviceName,
+				MemTotal:    sumAndSortInt64(data.MemTotal, topPercentage),
+				MemUsed:     sumAndSortInt64(data.MemUsed, topPercentage),
+				Utilization: float32(sumAndSort(data.Utilization, topPercentage)),
+				Temperature: sumAndSortInt(data.Temperature, topPercentage),
+			}
+			result = append(result, record)
+		}
+	}
+
+	return result
 }
 
 func DataMasking(str string, private []string) string {
