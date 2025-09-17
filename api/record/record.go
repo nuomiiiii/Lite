@@ -59,37 +59,73 @@ func GetRecordsByUUID(c *gin.Context) {
 
 	// 验证 load_type 参数
 	validLoadTypes := map[string]bool{
-		"cpu": true, "gpu": true, "ram": true, "swap": true,
+		"cpu": true, "ram": true, "swap": true,
 		"load": true, "temp": true, "disk": true, "network": true,
 		"process": true, "connections": true, "all": true, "": true,
 	}
-	
+
 	if !validLoadTypes[loadType] {
 		api.RespondError(c, 400, "Invalid load_type parameter")
 		return
 	}
 
-	records, err := records.GetRecordsByClientAndTime(uuid, time.Now().Add(-time.Duration(hoursInt)*time.Hour), time.Now())
+	clientRecords, err := records.GetRecordsByClientAndTime(uuid, time.Now().Add(-time.Duration(hoursInt)*time.Hour), time.Now())
 	if err != nil {
 		api.RespondError(c, 500, "Failed to fetch records: "+err.Error())
 		return
 	}
 
-	// 根据 load_type 过滤返回的数据
+	// 准备基本响应
+	response := gin.H{
+		"records": clientRecords,
+		"count":   len(clientRecords),
+	}
+
+	// 如果有load_type过滤，应用过滤
 	if loadType != "" && loadType != "all" {
-		filteredRecords := filterRecordsByLoadType(records, loadType)
-		api.RespondSuccess(c, gin.H{
+		filteredRecords := filterRecordsByLoadType(clientRecords, loadType)
+		response = gin.H{
 			"records":   filteredRecords,
 			"count":     len(filteredRecords),
 			"load_type": loadType,
-		})
-	} else {
-		// 返回所有数据（向后兼容）
-		api.RespondSuccess(c, gin.H{
-			"records": records,
-			"count":   len(records),
-		})
+		}
 	}
+
+	// 自动检测是否有GPU数据并附加到响应中
+	if loadType == "" || loadType == "all" || loadType == "gpu" {
+		gpuRecords, err := records.GetGPURecordsByClientAndTime(uuid, time.Now().Add(-time.Duration(hoursInt)*time.Hour), time.Now())
+		if err == nil && len(gpuRecords) > 0 {
+			// 按设备索引分组数据，构建简化的设备结构
+			gpuDevices := make(map[string]interface{})
+
+			for _, record := range gpuRecords {
+				deviceKey := strconv.Itoa(record.DeviceIndex)
+
+				// 如果设备还没有初始化，创建设备信息
+				if gpuDevices[deviceKey] == nil {
+					gpuDevices[deviceKey] = gin.H{
+						"device_index": record.DeviceIndex,
+						"device_name":  record.DeviceName,
+						"records":      []models.GPURecord{},
+					}
+				}
+
+				// 添加记录到设备
+				device := gpuDevices[deviceKey].(gin.H)
+				records := device["records"].([]models.GPURecord)
+				device["records"] = append(records, record)
+				gpuDevices[deviceKey] = device
+			}
+
+			// 添加优化后的GPU数据结构到响应
+			response["gpu_devices"] = gpuDevices
+			response["has_gpu_data"] = true
+		} else {
+			response["has_gpu_data"] = false
+		}
+	}
+
+	api.RespondSuccess(c, response)
 }
 
 // filterRecordsByLoadType 根据 load_type 过滤记录，只返回相关字段

@@ -69,6 +69,7 @@ type Report struct {
 	Disk        DiskReport        `json:"disk"`
 	Network     NetworkReport     `json:"network"`
 	Connections ConnectionsReport `json:"connections"`
+	GPU         *GPUDetailReport  `json:"gpu,omitempty"` // 新增GPU详细信息
 	Uptime      int64             `json:"uptime"`
 	Process     int               `json:"process"`
 	Message     string            `json:"message"`
@@ -83,6 +84,23 @@ type CPUReport struct {
 	Usage float64 `json:"usage,omitempty"`
 }
 
+// GPUDetailReport 详细GPU信息报告
+type GPUDetailReport struct {
+	Count          int                 `json:"count"`          // GPU数量
+	AverageUsage   float64             `json:"average_usage"`  // 平均使用率
+	DetailedInfo   []GPUDeviceInfo     `json:"detailed_info"`  // 每个GPU的详细信息
+}
+
+// GPUDeviceInfo 单个GPU设备信息
+type GPUDeviceInfo struct {
+	Name         string  `json:"name"`          // GPU型号名称
+	MemoryTotal  int64   `json:"memory_total"`  // 显存总量(字节)
+	MemoryUsed   int64   `json:"memory_used"`   // 显存已用(字节)
+	Utilization  float64 `json:"utilization"`   // GPU使用率(%)
+	Temperature  int     `json:"temperature"`   // GPU温度(°C)
+}
+
+// 保持向后兼容的旧GPUReport结构
 type GPUReport struct {
 	Name  string  `json:"name,omitempty"`
 	Usage float64 `json:"usage,omitempty"`

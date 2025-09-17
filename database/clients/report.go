@@ -144,11 +144,37 @@ func SaveClientReport(clientUUID string, report common.Report) (err error) {
 		return fmt.Errorf("failed to save Record: %v", err)
 	}
 
+	// 保存GPU详细记录到独立表
+	currentTime := time.Now()
+	if report.GPU != nil && len(report.GPU.DetailedInfo) > 0 {
+		for idx, gpu := range report.GPU.DetailedInfo {
+			gpuRecord := models.GPURecord{
+				Client:      clientUUID,
+				Time:        models.FromTime(currentTime),
+				DeviceIndex: idx,
+				DeviceName:  gpu.Name,
+				MemTotal:    gpu.MemoryTotal,
+				MemUsed:     gpu.MemoryUsed,
+				Utilization: float32(gpu.Utilization),
+				Temperature: gpu.Temperature,
+			}
+			if err := db.Create(&gpuRecord).Error; err != nil {
+				return fmt.Errorf("failed to save GPU record: %v", err)
+			}
+		}
+	}
+
+	// 计算平均GPU使用率，用于向后兼容
+	averageGPUUsage := float32(0)
+	if report.GPU != nil && len(report.GPU.DetailedInfo) > 0 {
+		averageGPUUsage = float32(report.GPU.AverageUsage)
+	}
+
 	Record := models.Record{
 		Client:         clientUUID,
-		Time:           models.FromTime(time.Now()),
+		Time:           models.FromTime(currentTime),
 		Cpu:            float32(report.CPU.Usage),
-		Gpu:            0, // Report 未提供 GPU Usage，设为 0（与原 nil 行为类似）
+		Gpu:            averageGPUUsage, // 使用平均GPU使用率
 		Ram:            report.Ram.Used,
 		RamTotal:       report.Ram.Total,
 		Swap:           report.Swap.Used,
