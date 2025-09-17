@@ -34,7 +34,7 @@ func Get() (models.Config, error) {
 				GeoIpProvider:        "ipinfo",
 				NezhaCompatEnabled:   false,
 				NezhaCompatListen:    "",
-				NotificationTemplate: "{{event}}: {{client}}\n{{time}}",
+				NotificationTemplate: "{{emoji}}{{emoji}}{{emoji}}\nEvent: {{event}}\nClients: {{client}}\nMessage: {{message}}\nTime: {{time}}",
 				UpdatedAt:            models.FromTime(time.Now()),
 				CreatedAt:            models.FromTime(time.Now()),
 			}
