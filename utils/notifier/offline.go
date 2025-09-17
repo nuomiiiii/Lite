@@ -10,6 +10,7 @@ import (
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
+	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
 	"github.com/komari-monitor/komari/utils/messageSender"
 	"github.com/komari-monitor/komari/utils/renewal"
 )
@@ -95,7 +96,7 @@ func OfflineNotification(clientID string, endedConnectionID int64) {
 		// 若为零值，说明客户端已重连。
 		// 当前的 connectionID 是否还是我们触发离线时的那个ID。如果不是，说明客户端重连过，本次离线通知已失效。
 		if state.pendingOfflineSince.IsZero() || state.connectionID != expectedConnectionID {
-			log.Println("%s is reconnected new connID: %d, old connID: %d", clientID, state.connectionID, expectedConnectionID)
+			log.Printf("%s is reconnected new connID: %d, old connID: %d", clientID, state.connectionID, expectedConnectionID)
 			return
 		}
 
@@ -107,7 +108,13 @@ func OfflineNotification(clientID string, endedConnectionID int64) {
 		// Send notification
 		message := fmt.Sprintf("🔴%s is offline", client.Name)
 		go func(msg string) {
-			if err := messageSender.SendTextMessage(msg, "Komari Offline Notification"); err != nil {
+			if err := messageSender.SendEvent(models.EventMessage{
+				Event:   messageevent.Offline,
+				Clients: []models.Client{client},
+				Time:    time.Now(),
+				//Message: msg,
+				Emoji: "🔴",
+			}); err != nil {
 				log.Println("Failed to send offline notification:", err)
 			}
 		}(message)
@@ -161,7 +168,7 @@ func OnlineNotification(clientID string, connectionID int64) {
 	// 规则3: 没断开后重连, 不通知
 	// 为了解决OfflineNotify中不是全程加锁
 	if state.isConnExist {
-		log.Println("%s has connection exist: %d", clientID, connectionID)
+		log.Printf("%s has connection exist: %d", clientID, connectionID)
 		return
 	} else {
 		state.isConnExist = true
@@ -170,7 +177,13 @@ func OnlineNotification(clientID string, connectionID int64) {
 	// 规则4：客户端离线足够久已通知（或未待离线），现在重新上线，发送上线通知。
 	message := fmt.Sprintf("🟢%s is online", client.Name)
 	go func(msg string) {
-		if err := messageSender.SendTextMessage(msg, "Komari Online Notification"); err != nil {
+		if err := messageSender.SendEvent(models.EventMessage{
+			Event:   messageevent.Online,
+			Clients: []models.Client{client},
+			Time:    time.Now(),
+			//Message: msg,
+			Emoji: "🟢",
+		}); err != nil {
 			log.Println("Failed to send online notification:", err)
 		}
 	}(message)

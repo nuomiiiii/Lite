@@ -9,6 +9,7 @@ import (
 	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
+	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/utils/messageSender"
@@ -46,7 +47,12 @@ func CreateSession(uuid string, expires int, userAgent, ip, login_method string)
 		if ipinfo != nil {
 			loc = ipinfo.Name
 		}
-		messageSender.SendTextMessage(fmt.Sprintf("From: %s,(%s)\nMethod: %s\nUser Agent: %s\n\n%s", ip, loc, login_method, userAgent, time.Now().Format(time.RFC3339)), "New Login on Komari")
+		messageSender.SendEvent(models.EventMessage{
+			Event:   messageevent.Login,
+			Time:    time.Now(),
+			Message: fmt.Sprintf("%s: %s (%s)\n%s", login_method, ip, loc, userAgent),
+			Emoji:   "🔑",
+		})
 	}
 
 	err := db.Create(&sessionRecord).Error
