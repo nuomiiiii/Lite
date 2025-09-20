@@ -7,17 +7,18 @@ import (
 	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/models"
+	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
 	"github.com/komari-monitor/komari/utils/messageSender"
 	"github.com/komari-monitor/komari/ws"
 )
 
 func CheckAndAutoRenewal(client models.Client) {
 	// 自动续费检查
-	type renewedClient struct {
-		Name          string
-		NewExpireTime time.Time
-	}
-	var renewedClients []renewedClient
+	//type renewedClient struct {
+	//	Name          string
+	//	NewExpireTime time.Time
+	//}
+	//var renewedClients []renewedClient
 
 	if !client.AutoRenewal {
 		return
@@ -96,22 +97,36 @@ func CheckAndAutoRenewal(client models.Client) {
 				return
 			}
 
-			renewedClients = append(renewedClients, renewedClient{
-				Name:          client.Name,
-				NewExpireTime: newExpireTime,
-			})
+			//renewedClients = append(renewedClients, renewedClient{
+			//	Name:          client.Name,
+			//	NewExpireTime: newExpireTime,
+			//})
 
 			auditlog.EventLog("renewal", fmt.Sprintf("Auto-renewed client: %s until %s",
 				client.Name, newExpireTime.Format("2006-01-02")))
+
+			messageSender.SendEvent(models.EventMessage{
+				Event:   messageevent.Renew,
+				Clients: []models.Client{client},
+				Time:    time.Now(),
+				Emoji:   "🔄",
+				Message: fmt.Sprintf("• %s until %s\n", client.Name, newExpireTime.Format("2006-01-02")),
+			})
 		}
 	}
 
 	// 发送续费通知
-	if len(renewedClients) > 0 {
-		message := "The following clients have been automatically renewed: \n\n"
-		for _, clientInfo := range renewedClients {
-			message += fmt.Sprintf("• %s until %s\n", clientInfo.Name, clientInfo.NewExpireTime.Format("2006-01-02"))
-		}
-		messageSender.SendTextMessage(message, "Komari Auto-Renewal Notification")
-	}
+	// if len(renewedClients) > 0 {
+	// 	message := ""
+	// 	for _, clientInfo := range renewedClients {
+	// 		message += fmt.Sprintf("• %s until %s\n", clientInfo.Name, clientInfo.NewExpireTime.Format("2006-01-02"))
+	// 	}
+	// 	messageSender.SendEvent(models.EventMessage{
+	// 		Event:   messageevent.Renew,
+	// 		Clients: []models.Client{client},
+	// 		Time:    time.Now(),
+	// 		Emoji:   "🔄",
+	// 		Message: message,
+	// 	})
+	// }
 }

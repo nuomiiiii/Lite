@@ -105,7 +105,7 @@ func SendEvent(event models.EventMessage) error {
 	}
 	messageTemplate := cfg.NotificationTemplate
 	if messageTemplate == "" {
-		messageTemplate = "{{event}}: {{client}}\n{{time}}"
+		messageTemplate = "{{emoji}}{{emoji}}{{emoji}}\nEvent: {{event}}\nClients: {{client}}\nMessage: {{message}}\nTime: {{time}}"
 	}
 	messageTemplate = parseTemplate(messageTemplate, event)
 
@@ -138,6 +138,7 @@ func parseTemplate(messageTemplate string, event models.EventMessage) string {
 		"{{client}}":  joinedClients,
 		"{{time}}":    event.Time.Format(time.RFC3339),
 		"{{message}}": event.Message,
+		"{{emoji}}":   event.Emoji,
 	}
 	result := messageTemplate
 	for placeholder, value := range replaceMap {

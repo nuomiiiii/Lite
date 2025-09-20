@@ -7,6 +7,8 @@ import (
 
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/models"
+	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
 	"github.com/komari-monitor/komari/utils/messageSender"
 	"github.com/komari-monitor/komari/utils/renewal"
 )
@@ -67,11 +69,16 @@ func CheckExpireScheduledWork() {
 			}
 
 			if len(clientLeadToExpire) > 0 {
-				message := "The following clients are about to expire: \n\n"
+				message := ""
 				for _, clientInfo := range clientLeadToExpire {
-					message += fmt.Sprintf("• %s in %d days\n", clientInfo.Name, clientInfo.DaysLeft)
+					message += fmt.Sprintf("• %s (%dd)\n", clientInfo.Name, clientInfo.DaysLeft)
 				}
-				messageSender.SendTextMessage(message, "Komari Expiration Notification")
+				messageSender.SendEvent(models.EventMessage{
+					Event:   messageevent.Expire,
+					Time:    time.Now(),
+					Message: message,
+					Emoji:   "⏳",
+				})
 			}
 		}
 

@@ -1,7 +1,6 @@
 package notifier
 
 import (
-	"fmt"
 	"log"
 	"reflect"
 	"sync"
@@ -10,6 +9,7 @@ import (
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
+	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/utils/messageSender"
 )
@@ -189,20 +189,24 @@ func getMetricValue(record models.Record, metric string) float32 {
 
 // sendLoadNotification 发送负载通知
 func sendLoadNotification(clientUUIDs []string, task models.LoadNotification) {
-	message := "The following clients have exceeded the load threshold:\n\n"
+	ex_clients := []models.Client{}
 	for _, clientUUID := range clientUUIDs {
-		client, err := clients.GetClientByUUID(clientUUID)
-		if err != nil {
-			log.Printf("Failed to get client info for %s: %v", clientUUID, err)
-			continue
+		cl, err := clients.GetClientByUUID(clientUUID)
+		if err == nil {
+			ex_clients = append(ex_clients, cl)
 		}
-		message += fmt.Sprintf("%s\n", client.Name)
 	}
-	if len(clientUUIDs) == 0 {
+	if len(ex_clients) == 0 {
 		return
 	}
 	go func() {
-		messageSender.SendTextMessage(message, fmt.Sprintf("%s - Komari Load Alert", task.Name))
+		messageSender.SendEvent(models.EventMessage{
+			Event:   messageevent.Alert,
+			Clients: ex_clients,
+			Time:    time.Now(),
+			Emoji:   "⚠️",
+			Message: task.Name,
+		})
 	}()
 }
 

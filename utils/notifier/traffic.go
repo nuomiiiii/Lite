@@ -8,6 +8,7 @@ import (
 
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils/messageSender"
 	"github.com/komari-monitor/komari/ws"
 	cache "github.com/patrickmn/go-cache"
@@ -87,10 +88,15 @@ func CheckTraffic() {
 		if curStep > lastStep { // 只在进入新步进时提醒一次
 			trafficCache.SetDefault(key, curStep)
 
-			title := "Komari Traffic Alert"
-			msg := fmt.Sprintf("%s traffic used %d%% (%s / %s), type=%s", c.Name, curStep, humanBytes(used), humanBytes(c.TrafficLimit), strings.ToLower(c.TrafficLimitType))
+			msg := fmt.Sprintf("used %d%% (%s / %s), type=%s", curStep, humanBytes(used), humanBytes(c.TrafficLimit), strings.ToLower(c.TrafficLimitType))
 			// 发送通知（内部会检查 NotificationEnabled）
-			_ = messageSender.SendTextMessage(msg, title)
+			_ = messageSender.SendEvent(models.EventMessage{
+				Event:   "Traffic",
+				Clients: []models.Client{c},
+				Time:    time.Now(),
+				Emoji:   "⚠️",
+				Message: msg,
+			})
 		}
 	}
 }
