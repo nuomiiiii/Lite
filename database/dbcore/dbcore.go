@@ -254,6 +254,7 @@ func GetDBInstance() *gorm.DB {
 			&models.User{},
 			&models.Client{},
 			&models.Record{},
+			&models.GPURecord{},
 			&models.Config{},
 			&models.Log{},
 			&models.Clipboard{},
@@ -273,6 +274,12 @@ func GetDBInstance() *gorm.DB {
 		)
 		if err != nil {
 			log.Printf("Failed to create records_long_term table, it may already exist: %v", err)
+		}
+		err = instance.Table("gpu_records_long_term").AutoMigrate(
+			&models.GPURecord{},
+		)
+		if err != nil {
+			log.Printf("Failed to create gpu_records_long_term table, it may already exist: %v", err)
 		}
 		err = instance.AutoMigrate(
 			&models.Session{},
