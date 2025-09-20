@@ -2,6 +2,7 @@ package jsonRpc
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -373,7 +374,9 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 			}
 			ratio := 0.0
 			if p50 > 0 && p99 >= p50 {
-				ratio = float64(p99-p50) / float64(p50)
+				jitterMs := float64(p99 - p50)
+				adjustedBase := math.Max(math.Min(float64(p50), 50.0), 10.0)
+				ratio = jitterMs / adjustedBase
 			}
 			lossRate := 0.0
 			if total > 0 {
@@ -410,15 +413,59 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 			maxCount = 4000
 		}
 		if maxCount != -1 && len(response.Records) > maxCount {
-			// sort by time asc then downsample uniformly
-			sort.Slice(response.Records, func(i, j int) bool {
-				return response.Records[i].Time.ToTime().Before(response.Records[j].Time.ToTime())
-			})
-			// local downsample for ping record slice
-			sample := func(in []RecordsResp, k int) []RecordsResp {
+			// group records by TaskId for proportional downsampling
+			taskGroups := make(map[uint][]RecordsResp)
+			for _, r := range response.Records {
+				taskGroups[r.TaskId] = append(taskGroups[r.TaskId], r)
+			}
+
+			// sort each group by time
+			for taskId := range taskGroups {
+				sort.Slice(taskGroups[taskId], func(i, j int) bool {
+					return taskGroups[taskId][i].Time.ToTime().Before(taskGroups[taskId][j].Time.ToTime())
+				})
+			}
+
+			// calculate proportional allocation for each task
+			type taskMeta struct {
+				taskId uint
+				length int
+			}
+			groupsMeta := make([]taskMeta, 0, len(taskGroups))
+			for taskId, records := range taskGroups {
+				groupsMeta = append(groupsMeta, taskMeta{
+					taskId: taskId,
+					length: len(records),
+				})
+			}
+
+			// use existing allocateTargets function (create compatible struct)
+			strTargets := allocateTargets(
+				func() []struct {
+					name   string
+					length int
+				} {
+					result := make([]struct {
+						name   string
+						length int
+					}, len(groupsMeta))
+					for i, meta := range groupsMeta {
+						result[i] = struct {
+							name   string
+							length int
+						}{name: fmt.Sprintf("%d", meta.taskId), length: meta.length}
+					}
+					return result
+				}(),
+				maxCount,
+			)
+
+			// downsample each task group
+			downsampledRecords := make([]RecordsResp, 0, maxCount)
+			samplePingRecords := func(in []RecordsResp, k int) []RecordsResp {
 				n := len(in)
 				if k <= 0 || n == 0 {
-					return in[:0]
+					return []RecordsResp{}
 				}
 				if k >= n {
 					return in
@@ -439,7 +486,15 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 				}
 				return out
 			}
-			response.Records = sample(response.Records, maxCount)
+
+			for taskId, records := range taskGroups {
+				targetKey := fmt.Sprintf("%d", taskId)
+				targetCount := strTargets[targetKey]
+				sampled := samplePingRecords(records, targetCount)
+				downsampledRecords = append(downsampledRecords, sampled...)
+			}
+
+			response.Records = downsampledRecords
 		}
 		response.Count = len(response.Records)
 		// sort by time asc
