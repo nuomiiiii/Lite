@@ -6,13 +6,16 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/database/config"
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils/geoip"
 	"github.com/komari-monitor/komari/utils/messageSender"
 )
 
 func TestSendMessage(c *gin.Context) {
-	message := "Komari test message."
-	err := messageSender.SendTextMessage(message, "Komari Test Notification")
+	err := messageSender.SendEvent(models.EventMessage{
+		Event:   "Test",
+		Message: "This is a test message from Komari.",
+	})
 	if err != nil {
 		api.RespondError(c, 500, "Failed to send message: "+err.Error())
 		return
