@@ -111,7 +111,7 @@ func SendEvent(event models.EventMessage) error {
 
 	for i := 0; i < 3; i++ {
 		err = CurrentProvider().SendTextMessage(messageTemplate, event.Event)
-		if err == nil {
+		if err == nil || err.Error() == "short response: \x00\x00\x00\x1a\x00\x00\x00" { // QQ 会返回这个错误，但实际上消息是发送成功的
 			auditlog.Log("", "", "Event message sent: "+event.Event, "info")
 			return nil
 		}
