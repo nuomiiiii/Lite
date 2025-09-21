@@ -93,12 +93,17 @@ func (w *WebhookSender) SendTextMessage(message, title string) error {
 }
 
 func (w *WebhookSender) createPOSTRequest(message, title string) (*http.Request, error) {
-	// 替换模板中的占位符
-	body := w.replaceTemplate(w.Addition.Body, message, title)
-
 	contentType := w.Addition.ContentType
 	if contentType == "" {
 		contentType = "application/json"
+	}
+
+	// 用户自定义模板，按 Content-Type 决定如何替换占位符
+	var body string
+	if isJSONContentType(contentType) {
+		body = w.replaceTemplateJSON(w.Addition.Body, message, title)
+	} else {
+		body = w.replaceTemplate(w.Addition.Body, message, title)
 	}
 
 	req, err := http.NewRequest("POST", w.Addition.URL, bytes.NewBufferString(body))
@@ -125,10 +130,56 @@ func (w *WebhookSender) createGETRequest(message, title string) (*http.Request, 
 	return req, nil
 }
 
-// replaceTemplate 替换模板中的 {{message}} 和 {{title}} 占位符
+// replaceTemplate 替换模板中的 {{message}} 和 {{title}} 占位符（不做转义）
 func (w *WebhookSender) replaceTemplate(template, message, title string) string {
 	result := template
 	result = strings.ReplaceAll(result, "{{message}}", message)
 	result = strings.ReplaceAll(result, "{{title}}", title)
 	return result
+}
+
+// replaceTemplateJSON 在 JSON 场景下替换占位符，使用 \uXXXX 形式进行转义（尤其换行/控制字符）
+func (w *WebhookSender) replaceTemplateJSON(template, message, title string) string {
+	result := template
+	result = strings.ReplaceAll(result, "{{message}}", jsonUnicodeEscapeString(message))
+	result = strings.ReplaceAll(result, "{{title}}", jsonUnicodeEscapeString(title))
+	return result
+}
+
+// isJSONContentType 判断是否为 JSON 内容类型
+func isJSONContentType(ct string) bool {
+	return strings.Contains(strings.ToLower(ct), "application/json")
+}
+
+// jsonUnicodeEscapeString 将字符串按 JSON 规则进行转义，并尽量使用 \uXXXX 形式（尤其控制字符、引号和反斜杠）
+// 注意：该结果适合放入 JSON 字符串字面量的引号内部。
+func jsonUnicodeEscapeString(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString("\\u0022")
+		case '\\':
+			b.WriteString("\\u005C")
+		case '\b':
+			b.WriteString("\\u0008")
+		case '\f':
+			b.WriteString("\\u000C")
+		case '\n':
+			b.WriteString("\\u000A")
+		case '\r':
+			b.WriteString("\\u000D")
+		case '\t':
+			b.WriteString("\\u0009")
+		default:
+			if r < 0x20 {
+				// 其他控制字符
+				b.WriteString(fmt.Sprintf("\\u%04X", r))
+			} else {
+				// 其余字符按原样输出（UTF-8），JSON 允许非 ASCII 字符
+				b.WriteRune(r)
+			}
+		}
+	}
+	return b.String()
 }
