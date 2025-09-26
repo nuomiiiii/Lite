@@ -9,6 +9,7 @@ type Config struct {
 	PrivateSite      bool   `json:"private_site" gorm:"default:false"`                // 是否为私有站点，默认 false
 	ApiKey           string `json:"api_key" gorm:"type:varchar(255);default:''"`
 	AutoDiscoveryKey string `json:"auto_discovery_key" gorm:"type:varchar(255);default:''"` // 自动发现密钥
+	ScriptDomain     string `json:"script_domain" gorm:"type:varchar(255);default:''"`      // 自定义脚本域名
 	// GeoIP 配置
 	GeoIpEnabled  bool   `json:"geo_ip_enabled" gorm:"default:true"`
 	GeoIpProvider string `json:"geo_ip_provider" gorm:"type:varchar(20);default:'ip-api'"` // empty, mmdb, ip-api, geojs
