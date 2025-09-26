@@ -25,7 +25,7 @@ type Config struct {
 	// 通知
 	NotificationEnabled        bool    `json:"notification_enabled" gorm:"default:false"` // 通知总开关
 	NotificationMethod         string  `json:"notification_method" gorm:"type:varchar(64);default:'none'"`
-	NotificationTemplate       string  `json:"notification_template" gorm:"type:longtext;default:'{{event}}: {{client}}\n{{time}}'"`
+	NotificationTemplate       string  `json:"notification_template" gorm:"type:longtext;default:'{{emoji}}{{emoji}}{{emoji}}\nEvent: {{event}}\nClients: {{client}}\nMessage: {{message}}\nTime: {{time}}'"`
 	ExpireNotificationEnabled  bool    `json:"expire_notification_enabled" gorm:"default:false"` // 是否启用过期通知
 	ExpireNotificationLeadDays int     `json:"expire_notification_lead_days" gorm:"default:7"`   // 过期前多少天通知，默认7天
 	LoginNotification          bool    `json:"login_notification" gorm:"default:false"`          // 登录通知
