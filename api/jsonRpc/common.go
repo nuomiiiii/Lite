@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/komari-monitor/komari/api"
 	"github.com/komari-monitor/komari/common"
 	"github.com/komari-monitor/komari/database"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/config"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/tasks"
@@ -227,6 +229,7 @@ func getNodes(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcEr
 	}
 	meta := rpc.MetaFromContext(ctx)
 
+	cfg, _ := config.Get()
 	if meta.Permission != "admin" {
 		// 过滤 Hidden 节点并隐藏敏感字段
 		filtered := make([]models.Client, 0, len(cinfo))
@@ -234,8 +237,18 @@ func getNodes(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcEr
 			if node.Hidden { // 非 admin 不显示隐藏节点
 				continue
 			}
-			node.IPv4 = ""
-			node.IPv6 = ""
+			if cfg.SendIpAddrToGuest {
+				if node.IPv4 != "" {
+					node.IPv4 = strings.Split(node.IPv4, ".")[0] + ".*.*.*"
+				}
+				if node.IPv6 != "" {
+					node.IPv6 = strings.Split(node.IPv6, ":")[0] + ":*:*:*:*:*:*:*"
+				}
+			} else {
+				node.IPv4 = ""
+				node.IPv6 = ""
+			}
+
 			node.Remark = ""
 			node.Version = ""
 			node.Token = ""
