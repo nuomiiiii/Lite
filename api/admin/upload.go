@@ -14,7 +14,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/api"
-	"github.com/komari-monitor/komari/cmd/flags"
 )
 
 // 只有一个备份恢复操作在进行
@@ -43,8 +42,14 @@ func UploadBackup(c *gin.Context) {
 		return
 	}
 
-	// 创建临时文件保存上传的zip
-	tempFile, err := os.CreateTemp("", "backup-*.zip")
+	// 确保data目录存在
+	if err := os.MkdirAll("./data", 0755); err != nil {
+		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error creating data directory: %v", err))
+		return
+	}
+
+	// 创建临时文件保存上传的zip（先校验，再落地到固定位置）
+	tempFile, err := os.CreateTemp("", "backup-upload-*.zip")
 	if err != nil {
 		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error creating temporary file: %v", err))
 		return
@@ -61,112 +66,59 @@ func UploadBackup(c *gin.Context) {
 	}
 	tempFile.Close() // 关闭文件以便后续操作
 
-	// 打开zip文件准备解压
-	zipReader, err := zip.OpenReader(tempFilePath)
-	if err != nil {
+	// 基础校验：检查是否包含标记文件
+	if zr, err := zip.OpenReader(tempFilePath); err == nil {
+		hasMarkup := false
+		for _, f := range zr.File {
+			if f.Name == "komari-backup-markup" {
+				hasMarkup = true
+				break
+			}
+		}
+		zr.Close()
+		if !hasMarkup {
+			api.RespondError(c, http.StatusBadRequest, "Invalid backup file: missing komari-backup-markup file")
+			return
+		}
+	} else {
 		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error opening zip file: %v", err))
 		return
 	}
-	defer zipReader.Close()
 
-	// 检查是否包含备份标记文件
-	hasMarkupFile := false
-	for _, zipFile := range zipReader.File {
-		if zipFile.Name == "komari-backup-markup" {
-			hasMarkupFile = true
-			break
+	// 将校验通过的临时文件移动到固定路径 ./data/backup.zip
+	finalPath := filepath.Join(".", "data", "backup.zip")
+	// 如存在旧文件，先删除
+	_ = os.Remove(finalPath)
+	if err := os.Rename(tempFilePath, finalPath); err != nil {
+		// fallback：拷贝
+		in, err2 := os.Open(tempFilePath)
+		if err2 != nil {
+			api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error preparing backup file: %v", err))
+			return
 		}
-	}
-	if !hasMarkupFile {
-		api.RespondError(c, http.StatusBadRequest, "Invalid backup file: missing komari-backup-markup file")
-		return
-	}
-
-	// 确保data目录存在
-	if err := os.MkdirAll("./data", 0755); err != nil {
-		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error creating data directory: %v", err))
-		return
-	}
-
-	// 获取数据库文件名
-	dbFileName := filepath.Base(flags.DatabaseFile)
-
-	// 解压文件
-	for _, zipFile := range zipReader.File {
-		// 检查文件路径是否安全（防止路径遍历攻击）
-		filePath := zipFile.Name
-		if strings.Contains(filePath, "..") {
-			log.Printf("Potentially unsafe path in zip: %s, skipping", filePath)
-			continue
+		defer in.Close()
+		out, err2 := os.Create(finalPath)
+		if err2 != nil {
+			api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error creating target backup file: %v", err2))
+			return
 		}
-
-		// 跳过备份标记文件
-		if filePath == "komari-backup-markup" {
-			continue
+		if _, err2 = io.Copy(out, in); err2 != nil {
+			out.Close()
+			api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("Error writing target backup file: %v", err2))
+			return
 		}
-
-		// 确定目标路径
-		var destPath string
-		if filePath == dbFileName {
-			// 如果是数据库文件，恢复到数据库文件路径
-			destPath = flags.DatabaseFile
-		} else {
-			// 其他文件恢复到data目录
-			destPath = filepath.Join("./data", filePath)
-		}
-
-		// 如果是目录，创建目录
-		if zipFile.FileInfo().IsDir() {
-			if err := os.MkdirAll(destPath, 0755); err != nil {
-				log.Printf("Error creating directory %s: %v", destPath, err)
-			}
-			continue
-		}
-
-		// 确保目标文件的目录存在
-		destDir := filepath.Dir(destPath)
-		if err := os.MkdirAll(destDir, 0755); err != nil {
-			log.Printf("Error creating directory %s: %v", destDir, err)
-			continue
-		}
-
-		// 打开zip中的文件
-		srcFile, err := zipFile.Open()
-		if err != nil {
-			log.Printf("Error opening file from zip %s: %v", filePath, err)
-			continue
-		}
-
-		// 创建目标文件
-		destFile, err := os.Create(destPath)
-		if err != nil {
-			srcFile.Close()
-			log.Printf("Error creating file %s: %v", destPath, err)
-			continue
-		}
-
-		// 复制内容
-		_, err = io.Copy(destFile, srcFile)
-		srcFile.Close()
-		destFile.Close()
-		if err != nil {
-			log.Printf("Error extracting file %s: %v", destPath, err)
-			continue
-		}
-
-		// 保持原始文件的修改时间
-		if err := os.Chtimes(destPath, zipFile.Modified, zipFile.Modified); err != nil {
-			log.Printf("Error setting file time for %s: %v", destPath, err)
-		}
+		out.Close()
 	}
 
+	// 返回：已保存备份，重启后将自动恢复
 	c.JSON(http.StatusOK, gin.H{
 		"status":  "success",
-		"message": "Backup restored successfully. The service will restart shortly.",
+		"message": "Backup uploaded successfully. The service will restart and apply the backup.",
+		"path":    "./data/backup.zip",
 	})
 
 	go func() {
-		log.Println("Backup restored, restarting service in 2 seconds...")
+		log.Println("Backup uploaded, restarting service in 2 seconds to apply on startup...")
 		time.Sleep(2 * time.Second)
 		os.Exit(0)
 	}()
