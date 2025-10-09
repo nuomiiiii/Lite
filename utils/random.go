@@ -1,19 +1,33 @@
 package utils
 
 import (
-	"encoding/base64"
-	"math/rand"
-	"time"
+	"crypto/rand"
 )
 
 func GenerateRandomString(length int) string {
-	b := make([]byte, length)
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	_, err := r.Read(b)
-	if err != nil {
+	if length <= 0 {
 		return ""
 	}
-	return base64.URLEncoding.EncodeToString(b)[:length]
+	const charset = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+	const n = byte(len(charset))                       // 62
+	const threshold = byte(256 - (256 % len(charset))) // 248
+
+	out := make([]byte, 0, length)
+	buf := make([]byte, length)
+	for len(out) < length {
+		if _, err := rand.Read(buf); err != nil {
+			return ""
+		}
+		for _, b := range buf {
+			if b < threshold {
+				out = append(out, charset[int(b%n)])
+				if len(out) == length {
+					break
+				}
+			}
+		}
+	}
+	return string(out)
 }
 
 func GeneratePassword() string {
@@ -21,5 +35,5 @@ func GeneratePassword() string {
 }
 
 func GenerateToken() string {
-	return GenerateRandomString(16)
+	return GenerateRandomString(22)
 }
