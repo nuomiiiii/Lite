@@ -100,8 +100,6 @@ sudo ./install-komari.sh
 ## Frontend Development Guide
 [Komari Theme Development Guide | Komari](https://komari-document.pages.dev/dev/theme.html)
 
-[Translate Komari on Crowdin](https://crowdin.com/project/komari/invite?h=cd051bf172c9a9f7f1360e87ffb521692507706)
-
 ## Client Agent Development Guide
 [Komari Agent Information Reporting and Event Handling Documentation](https://komari-document.pages.dev/dev/agent.html)
 
