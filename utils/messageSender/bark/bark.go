@@ -77,7 +77,7 @@ func (b *BarkSender) SendTextMessage(message, title string) error {
 	if serverURL == "" {
 		serverURL = "https://api.day.app"
 	}
-	
+
 	// 确保 URL 以正确的格式结尾
 	serverURL = strings.TrimRight(serverURL, "/")
 	requestURL := fmt.Sprintf("%s/push", serverURL)
@@ -96,8 +96,8 @@ func (b *BarkSender) SendTextMessage(message, title string) error {
 
 	// 解析响应
 	var result struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
+		Code    int         `json:"code"`
+		Message string      `json:"message"`
 		Data    interface{} `json:"data"`
 	}
 
@@ -112,12 +112,6 @@ func (b *BarkSender) SendTextMessage(message, title string) error {
 	}
 
 	return nil
-}
-
-func init() {
-	factory.RegisterMessageSender(func() factory.IMessageSender {
-		return &BarkSender{}
-	})
 }
 
 // 确保实现了 IMessageSender 接口
