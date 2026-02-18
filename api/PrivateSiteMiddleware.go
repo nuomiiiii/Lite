@@ -63,21 +63,24 @@ func PrivateSiteMiddleware() gin.HandlerFunc {
 			if err != nil {
 				return false
 			}
+
+			tempKeyExpireTime, err := config.GetAs[int64]("tempory_share_token_expire_at", 0)
+			if err != nil {
+				return false
+			}
 			allowTempKey, err := config.GetAs[string]("tempory_share_token", "")
 			if err != nil {
 				return false
 			}
-			if tempKey != allowTempKey || allowTempKey == "" {
+
+			if allowTempKey == "" || tempKey != allowTempKey {
 				return false
 			}
-			tempKeyExipreTime, err := config.GetAs[int64]("tempory_share_token_expire_at", 0)
-			if err != nil {
+			now := time.Now().Unix()
+			if tempKeyExpireTime < now {
 				return false
 			}
-			if tempKeyExipreTime < time.Now().Unix() {
-				return false
-			}
-			c.SetCookie("temp_key", tempKey, int(tempKeyExipreTime-time.Now().Unix()), "/", "", false, false)
+
 			return true
 		}() {
 			c.Next()

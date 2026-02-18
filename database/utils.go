@@ -13,8 +13,8 @@ import (
 	"github.com/komari-monitor/komari/database/models"
 )
 
-func GetPublicInfo() (any, error) {
-	cstPtr, err := config.GetManyAs[models.Config]()
+func GetPublicInfo() (map[string]interface{}, error) {
+	cstPtr, err := config.GetManyAs[config.Legacy]()
 	if err != nil {
 		return nil, err
 	}
@@ -42,15 +42,6 @@ func GetPublicInfo() (any, error) {
 	if !hasKey("o_auth_provider") {
 		cst.OAuthProvider = "github"
 	}
-	if !hasKey("geo_ip_enabled") {
-		cst.GeoIpEnabled = true
-	}
-	if !hasKey("geo_ip_provider") {
-		cst.GeoIpProvider = "ip-api"
-	}
-	if !hasKey("notification_method") {
-		cst.NotificationMethod = "none"
-	}
 	if !hasKey("record_enabled") {
 		cst.RecordEnabled = true
 	}
@@ -68,18 +59,6 @@ func GetPublicInfo() (any, error) {
 		}
 		if cst.Description == "" {
 			cst.Description = "Komari Monitor, a simple server monitoring tool."
-		}
-		if cst.Theme == "" {
-			cst.Theme = "default"
-		}
-		if cst.OAuthProvider == "" {
-			cst.OAuthProvider = "github"
-		}
-		if cst.RecordPreserveTime == 0 {
-			cst.RecordPreserveTime = 720
-		}
-		if cst.PingRecordPreserveTime == 0 {
-			cst.PingRecordPreserveTime = 24
 		}
 	}
 
