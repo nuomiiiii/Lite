@@ -594,6 +594,148 @@ func UpdateTheme(c *gin.Context) {
 	api.RespondSuccessMessage(c, "主题更新成功", updatedThemeInfo)
 }
 
+// peekThemeFromZip 仅从ZIP文件中读取komari-theme.json并解析主题信息
+// 不执行解压安装，用于preview模式
+func peekThemeFromZip(zipPath string) (models.Theme, error) {
+	var themeInfo models.Theme
+
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return themeInfo, fmt.Errorf("无法打开ZIP文件: %v", err)
+	}
+	defer r.Close()
+
+	var themeConfigFile *zip.File
+	for _, f := range r.File {
+		if f.Name == "komari-theme.json" {
+			themeConfigFile = f
+			break
+		}
+	}
+
+	if themeConfigFile == nil {
+		return themeInfo, fmt.Errorf("主题配置文件 komari-theme.json 不存在，不是合法的主题包")
+	}
+
+	rc, err := themeConfigFile.Open()
+	if err != nil {
+		return themeInfo, fmt.Errorf("无法读取主题配置文件: %v", err)
+	}
+	defer rc.Close()
+
+	configData, err := io.ReadAll(rc)
+	if err != nil {
+		return themeInfo, fmt.Errorf("读取主题配置失败: %v", err)
+	}
+
+	if err := json.Unmarshal(configData, &themeInfo); err != nil {
+		return themeInfo, fmt.Errorf("主题配置格式错误: %v", err)
+	}
+
+	if themeInfo.Name == "" || themeInfo.Short == "" {
+		return themeInfo, fmt.Errorf("主题配置缺少必填字段（name、short）")
+	}
+
+	if !isValidThemeShort(themeInfo.Short) {
+		return themeInfo, fmt.Errorf("主题short字段格式无效，只允许字母、数字、下划线和连字符")
+	}
+
+	return themeInfo, nil
+}
+
+// ImportTheme 导入远程主题
+// 支持preview查询参数：preview=true时仅返回主题信息，否则下载安装
+// 请求body: {"url": "https://..."}
+// URL支持GitHub仓库地址（自动取latest release）和直接ZIP下载链接
+func ImportTheme(c *gin.Context) {
+	var req struct {
+		URL string `json:"url" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "参数错误: "+err.Error())
+		return
+	}
+
+	// 解析下载链接
+	downloadURL := req.URL
+	isGitHub, owner, repo := isGitHubRepoURL(req.URL)
+	if isGitHub {
+		gitHubURL, err := getGitHubReleaseDownloadURL(owner, repo)
+		if err != nil {
+			api.RespondError(c, http.StatusBadRequest, "从GitHub获取下载链接失败: "+err.Error())
+			return
+		}
+		downloadURL = gitHubURL
+	}
+
+	// 下载主题ZIP
+	themeData, err := downloadThemeFromURL(downloadURL)
+	if err != nil {
+		api.RespondError(c, http.StatusBadRequest, "下载主题失败: "+err.Error())
+		return
+	}
+
+	// 保存到临时文件
+	tempFile := filepath.Join(os.TempDir(), "import_theme.zip")
+	if err := os.WriteFile(tempFile, themeData, 0644); err != nil {
+		api.RespondError(c, http.StatusInternalServerError, "保存文件失败: "+err.Error())
+		return
+	}
+	defer os.Remove(tempFile)
+
+	// preview模式：仅解析并返回主题信息
+	preview := c.Query("preview")
+	if preview == "true" {
+		themeInfo, err := peekThemeFromZip(tempFile)
+		if err != nil {
+			api.RespondError(c, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		// 检查是否已存在同名主题
+		exists := false
+		themeDir := filepath.Join("./data/theme", themeInfo.Short)
+		if _, err := os.Stat(themeDir); err == nil {
+			exists = true
+		}
+
+		api.RespondSuccess(c, gin.H{
+			"theme":  themeInfo,
+			"exists": exists,
+		})
+		return
+	}
+
+	// 安装模式：检查是否存在同名主题
+	// 先peek一下获取short名称用于检测冲突
+	themeInfo, err := peekThemeFromZip(tempFile)
+	if err != nil {
+		api.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	overwritten := false
+	themeDir := filepath.Join("./data/theme", themeInfo.Short)
+	if _, err := os.Stat(themeDir); err == nil {
+		overwritten = true
+	}
+
+	// 解压安装
+	installedTheme, err := extractAndValidateTheme(tempFile)
+	if err != nil {
+		api.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	msg := "主题导入成功"
+	if overwritten {
+		msg = "主题导入成功（已覆盖同名主题）"
+	}
+
+	api.RespondSuccessMessage(c, msg, installedTheme)
+}
+
 func UpdateThemeSettings(c *gin.Context) {
 	theme := c.Query("theme")
 	if theme == "" {
