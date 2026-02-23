@@ -289,9 +289,9 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 
 	meta := rpc.MetaFromContext(ctx)
 	latest := ws.GetLatestReport() // map[string]*common.Report (copy)
-	connected := ws.GetConnectedClients()
-	onlineSet := make(map[string]bool, len(connected))
-	for uuid := range connected {
+	onlineUUIDs := ws.GetAllOnlineUUIDs()
+	onlineSet := make(map[string]bool, len(onlineUUIDs))
+	for _, uuid := range onlineUUIDs {
 		onlineSet[uuid] = true
 	}
 
