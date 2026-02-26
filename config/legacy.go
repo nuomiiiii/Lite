@@ -14,6 +14,7 @@ type Legacy struct {
 	ScriptDomain      string `json:"script_domain" default:""`                            // 自定义脚本域名
 	SendIpAddrToGuest bool   `json:"send_ip_addr_to_guest" default:"false"`               // 是否向访客页面发送 IP 地址，默认 false
 	EulaAccepted      bool   `json:"eula_accepted" default:"false"`
+	BaseScriptsURLKey string `json:"base_scripts_url" default:""`
 	// GeoIP 配置
 	GeoIpEnabled  bool   `json:"geo_ip_enabled" default:"true"`
 	GeoIpProvider string `json:"geo_ip_provider" default:"ipinfo"` // empty, mmdb, ip-api, geojs
@@ -53,6 +54,7 @@ const (
 	ScriptDomainKey               = "script_domain"
 	SendIpAddrToGuestKey          = "send_ip_addr_to_guest"
 	EulaAcceptedKey               = "eula_accepted"
+	BaseScriptsURLKey             = "base_scripts_url"
 	GeoIpEnabledKey               = "geo_ip_enabled"
 	GeoIpProviderKey              = "geo_ip_provider"
 	NezhaCompatEnabledKey         = "nezha_compat_enabled"
