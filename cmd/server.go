@@ -210,6 +210,8 @@ func RunServer() {
 		tokenAuthrized.POST("/report", client.UploadReport)
 		tokenAuthrized.GET("/terminal", client.EstablishConnection)
 		tokenAuthrized.POST("/task/result", client.TaskResult)
+		tokenAuthrized.GET("/ping/tasks", client.GetPingTasks)
+		tokenAuthrized.POST("/ping/result", client.UploadPingResult)
 	}
 	// #region 管理员
 	adminAuthrized := r.Group("/api/admin", api.AdminAuthMiddleware())

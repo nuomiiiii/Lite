@@ -56,6 +56,15 @@ func GetAllPingTasks() ([]models.PingTask, error) {
 	return tasks, nil
 }
 
+func GetPingTasksByClient(uuid string) []models.PingTask {
+	db := dbcore.GetDBInstance()
+	var tasks []models.PingTask
+	if err := db.Where("clients LIKE ?", `%"`+uuid+`"%`).Find(&tasks).Error; err != nil {
+		return nil
+	}
+	return tasks
+}
+
 func SavePingRecord(record models.PingRecord) error {
 	db := dbcore.GetDBInstance()
 	return db.Create(&record).Error

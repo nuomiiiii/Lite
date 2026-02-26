@@ -59,31 +59,32 @@ func TokenAuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		exists, err := checkTokenExists(token)
+		uuid, err := checkTokenAndGetUUID(token)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "failed to validate token"})
 			return
 		}
-		if !exists {
+		if uuid == "" {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "invalid token"})
 			return
 		}
 
+		c.Set("client_uuid", uuid)
 		c.Next()
 	}
 }
 
-func checkTokenExists(token string) (bool, error) {
-	_, err := clients.GetClientUUIDByToken(token)
+func checkTokenAndGetUUID(token string) (string, error) {
+	uuid, err := clients.GetClientUUIDByToken(token)
 
 	if err == sql.ErrNoRows {
-		return false, nil
+		return "", nil
 	}
 	if err == gorm.ErrRecordNotFound {
-		return false, nil
+		return "", nil
 	}
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return true, nil
+	return uuid, nil
 }
