@@ -260,6 +260,7 @@ func RunServer() {
 			themeGroup.POST("/delete", admin.DeleteTheme)
 			themeGroup.GET("/set", admin.SetTheme)
 			themeGroup.POST("/update", admin.UpdateTheme)
+			themeGroup.POST("/import", admin.ImportTheme)
 			themeGroup.POST("/settings", admin.UpdateThemeSettings)
 		}
 		// clients
