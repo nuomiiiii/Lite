@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -291,9 +292,39 @@ func isValidThemeShort(short string) bool {
 }
 
 // downloadThemeFromURL 从URL下载主题文件
-func downloadThemeFromURL(url string) ([]byte, error) {
+// isPrivateIP checks if the resolved IP addresses are private/internal
+func isPrivateIP(host string) bool {
+	ips, err := net.LookupHost(host)
+	if err != nil {
+		return true // fail closed
+	}
+	for _, ipStr := range ips {
+		ip := net.ParseIP(ipStr)
+		if ip == nil {
+			continue
+		}
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return true
+		}
+	}
+	return false
+}
+
+func downloadThemeFromURL(rawURL string) ([]byte, error) {
+	// SSRF protection: block requests to private/internal IPs
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid URL: %v", err)
+	}
+	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
+		return nil, fmt.Errorf("only http and https schemes are allowed")
+	}
+	if isPrivateIP(parsedURL.Hostname()) {
+		return nil, fmt.Errorf("requests to private/internal addresses are not allowed")
+	}
+
 	// 发送HTTP GET请求
-	resp, err := http.Get(url)
+	resp, err := http.Get(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("下载主题文件失败: %v", err)
 	}
