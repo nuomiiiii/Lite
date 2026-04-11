@@ -1462,10 +1462,6 @@ func formatRemaining(expiredAt time.Time, autoRenewal bool) string {
 }
 
 func formatRemainingL(expiredAt time.Time, autoRenewal bool, lp langPack) string {
-	if autoRenewal {
-		return lp.LongTerm
-	}
-
 	now := time.Now()
 	if expiredAt.IsZero() || expiredAt.Year() > 2200 {
 		return lp.LongTerm
