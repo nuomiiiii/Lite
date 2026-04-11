@@ -78,7 +78,7 @@ type langPack struct {
 	Quarter         string
 	HalfYear        string
 	Free            string
-	FreeOneTime     string
+	Once            string
 	LongTerm        string
 	Expired         string
 	LastUpdate      string
@@ -118,7 +118,7 @@ var langEN = langPack{
 	Quarter:         "q",
 	HalfYear:        "6mo",
 	Free:            "Free",
-	FreeOneTime:     "Free/Once",
+	Once:            "Once",
 	LongTerm:        "Long-term",
 	Expired:         "Expired",
 	LastUpdate:      "Last Update: ",
@@ -158,7 +158,7 @@ var langZH = langPack{
 	Quarter:         "季",
 	HalfYear:        "半年",
 	Free:            "免费",
-	FreeOneTime:     "免费/一次性",
+	Once:            "一次性",
 	LongTerm:        "长期",
 	Expired:         "已过期",
 	LastUpdate:      "最后更新：",
@@ -1405,13 +1405,6 @@ func formatPrice(price float64, cycle int, currency string) string {
 }
 
 func formatPriceL(price float64, cycle int, currency string, lp langPack) string {
-	if price < 0 {
-		return lp.FreeOneTime
-	}
-	if price == 0 {
-		return lp.Free
-	}
-
 	if currency == "" {
 		currency = "$"
 	}
@@ -1427,15 +1420,17 @@ func formatPriceL(price float64, cycle int, currency string, lp langPack) string
 	case 360, 365:
 		cycleStr = lp.Year
 	case -1:
-		cycleStr = lp.Year
+		cycleStr = lp.Once
 	default:
 		if cycle > 0 {
 			cycleStr = fmt.Sprintf("%d%s", cycle, lp.Days)
 		} else {
-			cycleStr = lp.Year
+			cycleStr = lp.Once
 		}
 	}
-
+	if price <= 0 {
+		return fmt.Sprintf("%s/%s", lp.Free, cycleStr)
+	}
 	// 如果是整数，不显示小数点
 	if price == float64(int(price)) {
 		return fmt.Sprintf("%s%d/%s", currency, int(price), cycleStr)
