@@ -18,7 +18,7 @@ func TaskResult(c *gin.Context) {
 	}
 	var req struct {
 		TaskId     string    `json:"task_id" binding:"required"`
-		Result     string    `json:"result" binding:"required"`
+		Result     string    `json:"result"`
 		ExitCode   int       `json:"exit_code"`
 		FinishedAt time.Time `json:"finished_at" binding:"required"`
 	}
