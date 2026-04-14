@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -127,11 +126,8 @@ func RunServer() {
 
 	})
 	// 初始化 cloudflared
-	if strings.ToLower(GetEnv("KOMARI_ENABLE_CLOUDFLARED", "false")) == "true" {
-		err := cloudflared.RunCloudflared() // 阻塞，确保cloudflared跑起来
-		if err != nil {
-			log.Fatalf("Failed to run cloudflared: %v", err)
-		}
+	if err := cloudflared.AutoStart(GetEnv("KOMARI_CLOUDFLARED_TOKEN", "")); err != nil {
+		log.Printf("failed to auto start cloudflared: %v", err)
 	}
 
 	r := gin.New()
@@ -251,6 +247,11 @@ func RunServer() {
 			settingsGroup.GET("/oidc", admin.GetOidcProvider)
 			settingsGroup.POST("/message-sender", admin.SetMessageSenderProvider)
 			settingsGroup.GET("/message-sender", admin.GetMessageSenderProvider)
+			settingsGroup.GET("/cloudflared", admin.GetCloudflaredStatus)
+			settingsGroup.POST("/cloudflared/token", admin.SaveCloudflaredToken)
+			settingsGroup.POST("/cloudflared/start", admin.StartCloudflared)
+			settingsGroup.POST("/cloudflared/stop", admin.StopCloudflared)
+			settingsGroup.POST("/cloudflared/remove-token", admin.RemoveCloudflaredToken)
 		}
 		// themes
 		themeGroup := adminAuthrized.Group("/theme")
@@ -425,10 +426,10 @@ func DoScheduledWork() {
 
 func OnShutdown() {
 	auditlog.Log("", "", "server is shutting down", "info")
-	cloudflared.Kill()
+	cloudflared.Shutdown()
 }
 
 func OnFatal(err error) {
 	auditlog.Log("", "", "server encountered a fatal error: "+err.Error(), "error")
-	cloudflared.Kill()
+	cloudflared.Shutdown()
 }
