@@ -248,7 +248,6 @@ func RunServer() {
 			settingsGroup.POST("/message-sender", admin.SetMessageSenderProvider)
 			settingsGroup.GET("/message-sender", admin.GetMessageSenderProvider)
 			settingsGroup.GET("/cloudflared", admin.GetCloudflaredStatus)
-			settingsGroup.POST("/cloudflared/token", admin.SaveCloudflaredToken)
 			settingsGroup.POST("/cloudflared/start", admin.StartCloudflared)
 			settingsGroup.POST("/cloudflared/stop", admin.StopCloudflared)
 			settingsGroup.POST("/cloudflared/remove-token", admin.RemoveCloudflaredToken)

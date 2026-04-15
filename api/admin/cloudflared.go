@@ -18,29 +18,6 @@ func GetCloudflaredStatus(c *gin.Context) {
 	api.RespondSuccess(c, cloudflared.Status())
 }
 
-func SaveCloudflaredToken(c *gin.Context) {
-	var req struct {
-		Token string `json:"token"`
-	}
-
-	if err := c.ShouldBindJSON(&req); err != nil {
-		api.RespondError(c, http.StatusBadRequest, "Invalid request body: "+err.Error())
-		return
-	}
-	if strings.TrimSpace(req.Token) == "" {
-		api.RespondError(c, http.StatusBadRequest, "Cloudflare Tunnel token cannot be empty")
-		return
-	}
-	if err := cloudflared.SaveToken(req.Token); err != nil {
-		api.RespondError(c, http.StatusInternalServerError, "Failed to save Cloudflare Tunnel token: "+err.Error())
-		return
-	}
-	if uuid, ok := c.Get("uuid"); ok {
-		auditlog.Log(c.ClientIP(), uuid.(string), "saved cloudflared tunnel token", "warn")
-	}
-	api.RespondSuccess(c, cloudflared.Status())
-}
-
 func StartCloudflared(c *gin.Context) {
 	var req struct {
 		Token string `json:"token"`

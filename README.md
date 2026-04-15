@@ -62,9 +62,6 @@ sudo ./install-komari.sh
 > [!NOTE]
 > You can also customize the initial username and password through the environment variables `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
 
-> [!TIP]
-> The Docker image bundles `cloudflared`, so you can configure and start a Cloudflare Tunnel directly from the admin panel without installing `cloudflared` separately inside the container.
-
 ### 3. Binary File Deployment
 
 1. Visit Komari's [GitHub Release page](https://github.com/komari-monitor/komari/releases) to download the latest binary for your operating system.
@@ -77,38 +74,6 @@ sudo ./install-komari.sh
 
 > [!NOTE]
 > Ensure the binary has execute permissions (`chmod +x komari`). Data will be saved in the `data` folder in the running directory.
-
-> [!TIP]
-> For non-Docker deployments, install `cloudflared` manually or point `KOMARI_CLOUDFLARED_BIN` to the `cloudflared` binary path before using the built-in Cloudflare Tunnel controls.
-
-## Cloudflare Tunnel
-
-Komari includes an admin-facing Reverse Proxy page at `/admin/settings/reverse-proxy` for managing `cloudflared`.
-
-You can:
-
-- Save a Cloudflare Tunnel token securely
-- Start and stop `cloudflared` from the settings page
-- Check whether `cloudflared` is installed
-- View runtime status, recent logs, and error messages
-- Restore `cloudflared` automatically after restart when a token is stored or passed by environment variable
-
-### Environment Variables
-
-- `KOMARI_CLOUDFLARED_TOKEN`
-  Provide a Cloudflare Tunnel token at startup. Komari will persist it and try to auto-start `cloudflared`.
-- `KOMARI_CLOUDFLARED_BIN`
-  Optional custom path to the `cloudflared` binary, mainly for non-Docker deployments.
-- `KOMARI_SECRET_KEY`
-  Optional secret used to encrypt stored Cloudflare Tunnel tokens. If unset, Komari creates a local key under `./data/secret.key`.
-
-### Security Notes
-
-- Komari starts `cloudflared` with the token passed through the process environment instead of CLI arguments.
-- The settings API never returns the raw token to the browser. The frontend only receives whether a token is stored.
-- Stopping `cloudflared` requires re-validating the current admin identity:
-  - current password when password login is enabled
-  - exact confirmation text `STOP CLOUDFLARED` when password login is disabled
 
 ### Manual Build
 

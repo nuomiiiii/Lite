@@ -1,13 +1,12 @@
-FROM debian:bookworm-slim
+FROM alpine:3.21
 
 WORKDIR /app
 
+# Docker buildx 会在构建时自动填充这些变量
 ARG TARGETOS
 ARG TARGETARCH
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tzdata \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ca-certificates curl tzdata
 
 RUN set -eux; \
     case "${TARGETARCH}" in \
