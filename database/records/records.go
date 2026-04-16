@@ -173,10 +173,7 @@ func CompactRecord() error {
 	}
 
 	if flags.DatabaseType == "sqlite" {
-		if err := db.Exec("VACUUM").Error; err != nil {
-			log.Printf("Error vacuuming database: %v", err)
-		}
-		db.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
+		db.Exec("PRAGMA wal_checkpoint(PASSIVE);")
 	}
 	//log.Printf("Record compaction completed")
 	return nil
