@@ -294,14 +294,7 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 				continue
 			}
 			if params.UUID != "" { // ensure task assigned to specific client when filtering by uuid
-				assigned := false
-				for _, c := range t.Clients {
-					if c == params.UUID {
-						assigned = true
-						break
-					}
-				}
-				if !assigned {
+				if !t.AppliesToClient(params.UUID) {
 					continue
 				}
 			}
@@ -391,6 +384,7 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 				"name":          t.Name,
 				"type":          t.Type,
 				"interval":      t.Interval,
+				"default_on":    t.DefaultOn,
 				"loss":          lossRate,
 				"min":           minLat,
 				"max":           maxLat,

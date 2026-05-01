@@ -1,7 +1,6 @@
 package public
 
 import (
-	"slices"
 	"strconv"
 	"time"
 
@@ -372,8 +371,7 @@ func GetPingRecords(c *gin.Context) {
 
 			// 如果指定了 uuid，检查任务是否分配给该客户端
 			if uuid != "" {
-				found := slices.Contains(t.Clients, uuid)
-				if !found {
+				if !t.AppliesToClient(uuid) {
 					continue
 				}
 			}
@@ -421,15 +419,16 @@ func GetPingRecords(c *gin.Context) {
 			}
 
 			taskInfo := gin.H{
-				"id":       t.Id,
-				"name":     t.Name,
-				"type":     t.Type,
-				"interval": t.Interval,
-				"loss":     lossRate,
-				"min":      minLatency,
-				"max":      maxLatency,
-				"avg":      avgLatency,
-				"total":    totalCount,
+				"id":         t.Id,
+				"name":       t.Name,
+				"type":       t.Type,
+				"interval":   t.Interval,
+				"default_on": t.DefaultOn,
+				"loss":       lossRate,
+				"min":        minLatency,
+				"max":        maxLatency,
+				"avg":        avgLatency,
+				"total":      totalCount,
 			}
 
 			// 如果是仅 task_id 查询，添加客户端列表信息
