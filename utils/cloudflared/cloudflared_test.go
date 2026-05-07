@@ -1,21 +1,28 @@
 package cloudflared_test
 
 import (
-	"os"
+	"encoding/json"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/komari-monitor/komari/utils/cloudflared"
 )
 
-func TestRunCloudflared(t *testing.T) {
-	os.Setenv("KOMARI_CLOUDFLARED_TOKEN", "test-token")
+func TestStatusDoesNotExposeToken(t *testing.T) {
+	const token = "test-cloudflare-token"
+	t.Setenv("KOMARI_CLOUDFLARED_TOKEN", token)
 
-	err := cloudflared.RunCloudflared()
-	if err != nil {
-		t.Fatalf("RunCloudflared failed: %v", err)
+	status := cloudflared.Status()
+	if !status.EnvTokenPresent {
+		t.Fatalf("expected environment token to be detected")
 	}
 
-	// 等待一段时间，确保子进程已启动
-	time.Sleep(2 * time.Second)
+	payload, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("failed to marshal status: %v", err)
+	}
+
+	if strings.Contains(string(payload), token) {
+		t.Fatalf("expected status payload not to contain the raw token")
+	}
 }
