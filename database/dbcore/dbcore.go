@@ -424,7 +424,9 @@ func GetDBInstance() *gorm.DB {
 			if err := instance.Exec("PRAGMA journal_mode = WAL;").Error; err != nil {
 				log.Printf("Failed to enable WAL mode for SQLite: %v", err)
 			}
-			instance.Exec("VACUUM;")
+			instance.Exec("PRAGMA synchronous = NORMAL;")
+			instance.Exec("PRAGMA cache_size = -65536;")
+			instance.Exec("PRAGMA temp_store = MEMORY;")
 			instance.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
 		// case "mysql":
 		// 	// MySQL 连接
@@ -488,6 +490,15 @@ func GetDBInstance() *gorm.DB {
 		)
 		if err != nil {
 			log.Printf("Failed to create Task and TaskResult table, it may already exist: %v", err)
+		}
+
+		// Manually create composite indexes
+		if flags.DatabaseType == "sqlite" || flags.DatabaseType == "" {
+			instance.Exec("CREATE INDEX IF NOT EXISTS idx_record_client_time ON records(client, time)")
+			instance.Exec("CREATE INDEX IF NOT EXISTS idx_record_lt_client_time ON records_long_term(client, time)")
+			instance.Exec("CREATE INDEX IF NOT EXISTS idx_gpu_record_client_time ON gpu_records(client, time)")
+			instance.Exec("CREATE INDEX IF NOT EXISTS idx_gpu_record_lt_client_time ON gpu_records_long_term(client, time)")
+			instance.Exec("CREATE INDEX IF NOT EXISTS idx_ping_record_client_time ON ping_records(client, time)")
 		}
 
 	})
