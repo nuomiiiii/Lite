@@ -133,3 +133,12 @@ func UpdateLatest(session, useragent, ip string) error {
 		"latest_ip":         ip,
 	}).Error
 }
+
+func RemoveExpiredSessions() error {
+	db := dbcore.GetDBInstance()
+	result := db.Where("expires < ?", time.Now()).Delete(&models.Session{})
+	if result.Error != nil {
+		return result.Error
+	}
+	return nil
+}

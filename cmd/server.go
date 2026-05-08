@@ -413,6 +413,7 @@ func DoScheduledWork() {
 			tasks.ClearTaskResultsByTimeBefore(time.Now().Add(-time.Hour * time.Duration(cfg.RecordPreserveTime)))
 			tasks.DeletePingRecordsBefore(time.Now().Add(-time.Hour * time.Duration(cfg.PingRecordPreserveTime)))
 			auditlog.RemoveOldLogs()
+			accounts.RemoveExpiredSessions()
 		case <-minute.C:
 			api.SaveClientReportToDB()
 			if !cfg.RecordEnabled {
