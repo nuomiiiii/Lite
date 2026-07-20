@@ -2,13 +2,8 @@ name: Publish Stable Release
 
 on:
   push:
-    branches:
-      - main
     tags:
-      - "2.0.2-27gd189"
-    paths:
-      - ".github/workflows/publish-stable-release.yml"
-      - ".github/workflows/release.yml"
+      - "2.0.2"
 
 permissions:
   actions: write
@@ -22,7 +17,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="2.0.2-27gd189"
+          TAG="2.0.2"
           if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release create "${TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
@@ -40,5 +35,6 @@ jobs:
 
           gh workflow run release.yml \
             --repo "${GITHUB_REPOSITORY}" \
-            --ref main \
-            -f tag="${TAG}"
+            --ref "${TAG}" \
+            -f tag="${TAG}" \
+            -f version_hash="27gd189"

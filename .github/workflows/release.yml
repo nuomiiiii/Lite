@@ -9,6 +9,10 @@ on:
         description: Release tag to build and upload
         required: true
         type: string
+      version_hash:
+        description: Seven-character version identifier
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -110,8 +114,11 @@ jobs:
           fi
           RELEASE_TAG="${{ env.RELEASE_TAG }}"
           VERSION="${RELEASE_TAG%%-*}"
-          VERSION_HASH="${GITHUB_SHA::7}"
-          if [[ "$RELEASE_TAG" == *-* ]]; then
+          VERSION_HASH="${{ inputs.version_hash }}"
+          if [ -z "$VERSION_HASH" ]; then
+            VERSION_HASH="${GITHUB_SHA::7}"
+          fi
+          if [[ "$RELEASE_TAG" == *-* ]] && [ -z "${{ inputs.version_hash }}" ]; then
             VERSION_HASH="${RELEASE_TAG##*-}"
           fi
           go build -trimpath -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}" -o $BINARY_NAME
@@ -189,3 +196,23 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           no-cache: true
           provenance: false
+
+  remove-legacy-release:
+    needs: build-and-push-docker
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Remove legacy suffixed release tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if [ "$RELEASE_TAG" = "2.0.2" ] && \
+            gh release view "2.0.2-27gd189" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "2.0.2-27gd189" \
+              --repo "$GITHUB_REPOSITORY" \
+              --cleanup-tag \
+              --yes
+          fi
