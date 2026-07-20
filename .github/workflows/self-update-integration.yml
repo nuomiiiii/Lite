@@ -48,7 +48,8 @@ jobs:
           set -euo pipefail
           for image in ubuntu:20.04 debian:11-slim quay.io/centos/centos:7; do
             echo "Testing $image"
-            docker run --rm -v "$PWD/self-update-test/komari-new:/komari:ro" "$image" /komari version --json | grep -q '"version":"2.0.5"'
+            output="$(docker run --rm -v "$PWD/self-update-test/komari-new:/komari:ro" "$image" /komari version --json)"
+            jq -e '.version == "2.0.5" and .hash == "new1234"' <<<"$output"
           done
 
       - name: Verify systemd update and automatic rollback
