@@ -4,156 +4,107 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing GitHub Release tag whose assets and version image will be replaced.
+        description: Existing version-only GitHub Release tag, for example 2.0.4.
         required: true
+        type: string
+      version_hash:
+        description: Optional seven-character identifier. Leave empty to generate one.
+        required: false
         type: string
       server_ref:
-        description: Server commit, branch, or tag to build.
+        description: Server branch or tag to build.
         required: true
+        default: main
         type: string
       frontend_ref:
-        description: komari-web commit, branch, or tag to build.
+        description: komari-web branch or tag to build.
         required: true
+        default: komari-2.0.4
         type: string
 
 permissions:
+  actions: write
   contents: write
-  packages: write
 
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+concurrency:
+  group: rebuild-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
 
 jobs:
-  build-frontend:
+  prepare-and-dispatch:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout workflow source
-        uses: actions/checkout@v4
-
-      - name: Build selected frontend artifact
-        uses: ./.github/actions/build-frontend
-        with:
-          artifact-name: komari-frontend
-          ref: ${{ inputs.frontend_ref }}
-
-  build-and-attach-binaries:
-    needs: build-frontend
-    runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        include:
-          - goos: windows
-            goarch: amd64
-            zig_target_triple: x86_64-windows-gnu
-            binary_extension: .exe
-          - goos: windows
-            goarch: arm64
-            zig_target_triple: aarch64-windows-gnu
-            binary_extension: .exe
-          - goos: windows
-            goarch: 386
-            zig_target_triple: x86-windows-gnu
-            binary_extension: .exe
-          - goos: linux
-            goarch: amd64
-            zig_target_triple: x86_64-linux-musl
-            binary_extension: ""
-          - goos: linux
-            goarch: arm64
-            zig_target_triple: aarch64-linux-musl
-            binary_extension: ""
-          - goos: linux
-            goarch: 386
-            zig_target_triple: x86-linux-musl
-            binary_extension: ""
-          - goos: linux
-            goarch: riscv64
-            zig_target_triple: riscv64-linux-musl
-            binary_extension: ""
-
-    steps:
-      - name: Checkout server source
+      - name: Checkout selected server source
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.server_ref }}
+          fetch-depth: 0
 
-      - name: Restore frontend artifact
-        uses: komari-monitor/komari/.github/actions/restore-frontend@main
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.23"
-
-      - name: Install Zig cross-compiler toolchain
-        uses: komari-monitor/komari/.github/actions/setup-zig@main
-
-      - name: Build binary
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 1
-          CC: zig cc -target ${{ matrix.zig_target_triple }}
-          GIN_MODE: release
-          RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          BINARY_NAME=komari-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.binary_extension }}
-          VERSION_HASH="$(git rev-parse HEAD)"
-          go build -trimpath -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${RELEASE_TAG} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}" -o "$BINARY_NAME"
-
-      - name: Upload binary to release
+      - name: Validate and prepare release metadata
+        id: metadata
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          VERSION: ${{ inputs.release_tag }}
+          REQUESTED_HASH: ${{ inputs.version_hash }}
+          FRONTEND_REF: ${{ inputs.frontend_ref }}
+        shell: bash
         run: |
-          BINARY_NAME=komari-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.binary_extension }}
-          gh release upload "$RELEASE_TAG" "$BINARY_NAME" --clobber --repo "$GITHUB_REPOSITORY"
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version: $VERSION" >&2; exit 1; }
+          [ -n "$FRONTEND_REF" ] || { echo "Frontend ref cannot be empty." >&2; exit 1; }
+          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null
 
-      - name: Upload binary as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: komari-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: komari-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.binary_extension }}
+          VERSION_HASH="$REQUESTED_HASH"
+          if [ -z "$VERSION_HASH" ]; then
+            VERSION_HASH="$(node -e 'const c=require("crypto"),a="abcdefghijklmnopqrstuvwxyz0123456789";let s;do{s=Array.from(c.randomBytes(7),b=>a[b%a.length]).join("")}while(!/[a-z]/.test(s)||!/[0-9]/.test(s));process.stdout.write(s)')"
+          fi
+          [[ "$VERSION_HASH" =~ ^[A-Za-z0-9]{7}$ ]] || { echo "Invalid version identifier: $VERSION_HASH" >&2; exit 1; }
 
-  build-and-push-docker:
-    needs: build-and-attach-binaries
-    runs-on: ubuntu-latest
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_hash=$VERSION_HASH" >> "$GITHUB_OUTPUT"
+          echo "frontend_ref=$FRONTEND_REF" >> "$GITHUB_OUTPUT"
 
-    steps:
-      - name: Checkout server source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.server_ref }}
+      - name: Move version tag to selected source
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag -f "$VERSION" "$(git rev-parse HEAD)"
+          git push origin "refs/tags/$VERSION" --force
 
-      - name: Download Docker binaries
-        uses: actions/download-artifact@v4
-        with:
-          pattern: komari-linux-*
-          path: .
-          merge-multiple: true
+      - name: Update release build identifier
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          VERSION_HASH: ${{ steps.metadata.outputs.version_hash }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BODY_FILE="$RUNNER_TEMP/release-body.md"
+          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$BODY_FILE"
+          BODY_FILE="$BODY_FILE" VERSION_HASH="$VERSION_HASH" node <<'NODE'
+          const fs = require("fs");
+          const path = process.env.BODY_FILE;
+          const marker = `<!-- komari-version-hash: ${process.env.VERSION_HASH} -->`;
+          const body = fs.readFileSync(path, "utf8");
+          const pattern = /<!--\s*komari-version-hash:\s*[A-Za-z0-9]{7}\s*-->/i;
+          fs.writeFileSync(path, pattern.test(body) ? body.replace(pattern, marker) : `${marker}\n\n${body}`);
+          NODE
+          gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --title "$VERSION" --notes-file "$BODY_FILE"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ github.token }}
-
-      - name: Build and push version Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ inputs.release_tag }}
-          no-cache: true
-          provenance: false
+      - name: Dispatch unified release build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          VERSION_HASH: ${{ steps.metadata.outputs.version_hash }}
+          FRONTEND_REF: ${{ steps.metadata.outputs.frontend_ref }}
+          SERVER_REF: ${{ inputs.server_ref }}
+        shell: bash
+        run: |
+          gh workflow run release.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$SERVER_REF" \
+            -f tag="$VERSION" \
+            -f version_hash="$VERSION_HASH" \
+            -f web_ref="$FRONTEND_REF"
