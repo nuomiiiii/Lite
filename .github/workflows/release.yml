@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Version-only release tag, for example 2.0.3
+        description: Version-only release tag, for example 2.0.4
         required: true
         type: string
       version_hash:
@@ -14,7 +14,7 @@ on:
       web_ref:
         description: Branch or tag in nuomiiiii/komari-web
         required: true
-        default: komari-2.0.3
+        default: komari-2.0.4
         type: string
 
 permissions:
@@ -179,6 +179,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check whether this is the latest GitHub release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.version }}
+        run: |
+          is_latest="$(gh api graphql \
+            -f 'query=query($owner: String!, $name: String!, $tag: String!) { repository(owner: $owner, name: $name) { release(tagName: $tag) { isLatest } } }' \
+            -F owner="${{ github.repository_owner }}" \
+            -F name="${{ github.event.repository.name }}" \
+            -F tag="$TAG" \
+            --jq '.data.repository.release.isLatest')"
+          echo "is_latest=$is_latest" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -186,7 +200,6 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ needs.prepare.outputs.version }}
-            type=raw,value=latest
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -198,6 +211,12 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           no-cache: true
           provenance: false
+
+      - name: Promote Docker latest tag
+        if: steps.release.outputs.is_latest == 'true'
+        env:
+          TAG: ${{ needs.prepare.outputs.version }}
+        run: docker buildx imagetools create --tag "${REGISTRY}/${IMAGE_NAME}:latest" "${REGISTRY}/${IMAGE_NAME}:${TAG}"
 
   update-release-notes:
     needs: [prepare, build-and-push-docker]

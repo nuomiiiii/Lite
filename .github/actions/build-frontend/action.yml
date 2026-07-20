@@ -9,8 +9,8 @@ inputs:
     description: komari-web repository URL.
     default: https://github.com/nuomiiiii/komari-web
   ref:
-    description: komari-web branch or tag to build.
-    default: komari-2.0.3
+    description: Optional komari-web ref to build. Uses the repository default branch when empty.
+    default: komari-2.0.4
   artifact-name:
     description: Optional artifact name for the packed frontend theme.
     default: ""
@@ -28,7 +28,11 @@ runs:
       run: |
         set -euxo pipefail
         rm -rf komari-web
-        git clone --depth=1 --branch "${{ inputs.ref }}" "${{ inputs.repository }}" komari-web
+        if [ -n "${{ inputs.ref }}" ]; then
+          git clone --depth=1 --branch "${{ inputs.ref }}" "${{ inputs.repository }}" komari-web
+        else
+          git clone --depth=1 "${{ inputs.repository }}" komari-web
+        fi
         cd komari-web
         npm ci
         npm run build
