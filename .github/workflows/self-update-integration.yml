@@ -21,6 +21,11 @@ jobs:
       - name: Install Zig
         uses: ./.github/actions/setup-zig
 
+      - name: Build frontend assets
+        uses: ./.github/actions/build-frontend
+        with:
+          ref: komari-2.0.4
+
       - name: Run updater unit tests
         run: go test ./pkg/selfupdate ./web/rpc/jsonrpc
 
