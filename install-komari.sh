@@ -31,7 +31,7 @@ SERVICE_NAME="komari"
 BINARY_PATH="$INSTALL_DIR/komari"
 DEFAULT_PORT="25774"
 LISTEN_PORT=""
-REPO="komari-monitor/komari"
+REPO="nuomiiiii/komari"
 # 发布通道: stable（稳定版）或 snapshot（快照版）
 CHANNEL="stable"
 # TUI 工具: whiptail / dialog / 空（回退纯文本）
@@ -346,7 +346,7 @@ install_binary() {
     log_step "下载 Komari 二进制文件..."
     log_info "URL: $download_url"
 
-    if ! curl -L -o "$BINARY_PATH" "$download_url"; then
+    if ! curl -fL -o "$BINARY_PATH" "$download_url"; then
         ui_msgbox "错误" "下载失败，请检查网络连接。"
         return 1
     fi
@@ -462,7 +462,7 @@ upgrade_komari() {
     fi
 
     log_step "下载最新版本..."
-    if ! curl -L -o "$BINARY_PATH" "$download_url"; then
+    if ! curl -fL -o "$BINARY_PATH" "$download_url"; then
         log_error "下载失败，正在从备份恢复"
         mv "${BINARY_PATH}.backup."* "$BINARY_PATH"
         systemctl start ${SERVICE_NAME}.service

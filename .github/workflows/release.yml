@@ -101,8 +101,12 @@ jobs:
           if [ "${{ matrix.binary_extension }}" != "" ]; then
             BINARY_NAME=${BINARY_NAME}${{ matrix.binary_extension }}
           fi
-          VERSION="${{ github.event.release.tag_name }}"
-          VERSION_HASH="${{ github.sha }}" # Use commit SHA for hash
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          VERSION="${RELEASE_TAG%%-*}"
+          VERSION_HASH="${GITHUB_SHA::7}"
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            VERSION_HASH="${RELEASE_TAG##*-}"
+          fi
           go build -trimpath -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}" -o $BINARY_NAME
 
       - name: Upload binary as artifact
