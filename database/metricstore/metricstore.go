@@ -830,24 +830,37 @@ func GetGPURecordsByClientAndTime(ctx context.Context, clientUUID string, start,
 
 	// 按设备索引和时间组织数据
 	type gpuKey struct {
+		entityID    string
 		deviceIndex int
 		timestamp   int64
 	}
 	recordMap := make(map[gpuKey]*models.GPURecord)
+	now := time.Now().UTC()
+	interval := pingQueryInterval(end.Sub(start), 4000)
+	interval = s.CompatibleSeriesInterval(start, now, interval)
 
 	for _, metricName := range gpuMetrics {
-		points, err := s.Query(ctx, metric.Query{
-			MetricName: metricName,
-			EntityID:   clientUUID,
-			Start:      start,
-			End:        end,
-			Order:      metric.OrderAsc,
-		})
+		points, err := s.Series(ctx, metric.AggregateQuery{
+			Query: metric.Query{
+				MetricName: metricName,
+				EntityID:   clientUUID,
+				Start:      start,
+				End:        end,
+				Order:      metric.OrderAsc,
+			},
+			Aggregation:    metric.AggAvg,
+			Interval:       interval,
+			PreserveSeries: true,
+		}, now)
 		if err != nil {
 			continue // GPU 数据可能不存在
 		}
 
 		for _, p := range points {
+			entityID := p.EntityID
+			if entityID == "" {
+				entityID = clientUUID
+			}
 			deviceIndex := 0
 			deviceName := ""
 			if idx, ok := p.Tags["device_index"]; ok {
@@ -857,16 +870,19 @@ func GetGPURecordsByClientAndTime(ctx context.Context, clientUUID string, start,
 				deviceName = name
 			}
 
-			key := gpuKey{deviceIndex: deviceIndex, timestamp: p.Timestamp.Unix()}
+			key := gpuKey{entityID: entityID, deviceIndex: deviceIndex, timestamp: p.Bucket.Unix()}
 			if recordMap[key] == nil {
 				recordMap[key] = &models.GPURecord{
-					Client:      clientUUID,
-					Time:        p.Timestamp.UTC(),
+					Client:      entityID,
+					Time:        p.Bucket.UTC(),
 					DeviceIndex: deviceIndex,
 					DeviceName:  deviceName,
 				}
 			}
 			rec := recordMap[key]
+			if rec.DeviceName == "" && deviceName != "" {
+				rec.DeviceName = deviceName
+			}
 
 			switch metricName {
 			case MetricGPUDeviceUsage:
@@ -886,6 +902,15 @@ func GetGPURecordsByClientAndTime(ctx context.Context, clientUUID string, start,
 	for _, rec := range recordMap {
 		records = append(records, *rec)
 	}
+	sort.Slice(records, func(i, j int) bool {
+		if !records[i].Time.Equal(records[j].Time) {
+			return records[i].Time.Before(records[j].Time)
+		}
+		if records[i].Client != records[j].Client {
+			return records[i].Client < records[j].Client
+		}
+		return records[i].DeviceIndex < records[j].DeviceIndex
+	})
 
 	return records, nil
 }

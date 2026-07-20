@@ -181,6 +181,76 @@ func TestGetPingRecordsReadsRollupsAfterRawCompaction(t *testing.T) {
 	}
 }
 
+func TestGetGPURecordsReadsRollupsAfterRawCompaction(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	s, err := metric.Open(ctx, metric.SQLite(":memory:",
+		metric.WithMaxOpenConns(1),
+		metric.WithRollupPolicy(defaultRollupPolicy()),
+	))
+	if err != nil {
+		t.Fatalf("open metric store: %v", err)
+	}
+	defer s.Close()
+
+	metricNames := []string{MetricGPUDeviceUsage, MetricGPUMem, MetricGPUMemTotal, MetricGPUTemp}
+	for _, name := range metricNames {
+		if err := s.UpsertMetric(ctx, metric.Definition{Name: name, Type: metric.TypeGauge, RetentionDays: 30}); err != nil {
+			t.Fatalf("create GPU metric %s: %v", name, err)
+		}
+	}
+
+	tags := map[string]string{"device_index": "1", "device_name": "GPU 1"}
+	oldTime := now.Add(-20*time.Minute + 10*time.Second)
+	recentTime := now.Add(-5*time.Minute + 10*time.Second)
+	values := map[string][2]float64{
+		MetricGPUDeviceUsage: {30, 50},
+		MetricGPUMem:         {1000, 2000},
+		MetricGPUMemTotal:    {4000, 4000},
+		MetricGPUTemp:        {60, 70},
+	}
+	points := make([]metric.Point, 0, len(metricNames)*2)
+	for _, name := range metricNames {
+		points = append(points,
+			metric.Point{MetricName: name, EntityID: "node-a", Timestamp: oldTime, Value: values[name][0], Tags: tags},
+			metric.Point{MetricName: name, EntityID: "node-a", Timestamp: recentTime, Value: values[name][1], Tags: tags},
+		)
+	}
+	if err := s.WriteBatch(ctx, points); err != nil {
+		t.Fatalf("write GPU points: %v", err)
+	}
+	if _, err := s.Compact(ctx, now); err != nil {
+		t.Fatalf("compact GPU points: %v", err)
+	}
+
+	storeMu.Lock()
+	oldStore := store
+	store = s
+	storeMu.Unlock()
+	defer func() {
+		storeMu.Lock()
+		store = oldStore
+		storeMu.Unlock()
+	}()
+
+	records, err := GetGPURecordsByClientAndTime(ctx, "node-a", now.Add(-30*time.Minute), now)
+	if err != nil {
+		t.Fatalf("get GPU records: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("expected old rollup and recent raw GPU records, got %d: %#v", len(records), records)
+	}
+	if records[0].Utilization != 30 || records[0].MemUsed != 1000 || records[0].MemTotal != 4000 || records[0].Temperature != 60 {
+		t.Fatalf("unexpected compacted GPU record: %#v", records[0])
+	}
+	if records[1].Utilization != 50 || records[1].MemUsed != 2000 || records[1].MemTotal != 4000 || records[1].Temperature != 70 {
+		t.Fatalf("unexpected recent GPU record: %#v", records[1])
+	}
+	if records[0].DeviceIndex != 1 || records[0].DeviceName != "GPU 1" || records[0].Client != "node-a" {
+		t.Fatalf("GPU series identity was not preserved: %#v", records[0])
+	}
+}
+
 func TestCreateMetricDefinitionsUsesExplicitRetentionAndPreservesOverrides(t *testing.T) {
 	if defaultBuiltinMetricRetentionDays != 1 {
 		t.Fatalf("default built-in metric retention = %d, want 1 day", defaultBuiltinMetricRetentionDays)
