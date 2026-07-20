@@ -1,0 +1,55 @@
+package clients
+
+import (
+	"testing"
+
+	"github.com/komari-monitor/komari/database/models"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+func TestDeleteClientCleansPingLossNotificationsAndTaskAssignments(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:delete-client-cleanup?mode=memory&cache=shared&_foreign_keys=off"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Client{},
+		&models.PingTask{},
+		&models.PingLossNotification{},
+	))
+	require.NoError(t, db.Create([]models.Client{
+		{UUID: "client-a", Token: "token-a", Name: "Server A"},
+		{UUID: "client-b", Token: "token-b", Name: "Server B"},
+	}).Error)
+
+	task := models.PingTask{
+		Name: "Public DNS", Clients: models.StringArray{"client-a", "client-b"},
+		Type: "icmp", Target: "1.1.1.1", Interval: 10,
+	}
+	require.NoError(t, db.Create(&task).Error)
+	require.NoError(t, db.Create([]models.PingLossNotification{
+		{Client: "client-a", TaskId: task.Id, Enable: true, WindowSeconds: 60, LossThreshold: 5, MinimumSamples: 1, CooldownSeconds: 300},
+		{Client: "client-b", TaskId: task.Id, Enable: true, WindowSeconds: 60, LossThreshold: 5, MinimumSamples: 1, CooldownSeconds: 300},
+	}).Error)
+
+	changed, err := deleteClient(db, "client-a")
+	require.NoError(t, err)
+	assert.True(t, changed)
+
+	var clientCount int64
+	require.NoError(t, db.Model(&models.Client{}).Where("uuid = ?", "client-a").Count(&clientCount).Error)
+	assert.Zero(t, clientCount)
+
+	var notifications []models.PingLossNotification
+	require.NoError(t, db.Order("client ASC").Find(&notifications).Error)
+	require.Len(t, notifications, 1)
+	assert.Equal(t, "client-b", notifications[0].Client)
+
+	var gotTask models.PingTask
+	require.NoError(t, db.First(&gotTask, task.Id).Error)
+	assert.Equal(t, models.StringArray{"client-b"}, gotTask.Clients)
+}

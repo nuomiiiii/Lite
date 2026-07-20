@@ -452,6 +452,9 @@ func doInitialize() error {
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
+	if err := cleanupOrphanedPingLossNotifications(instance); err != nil {
+		return fmt.Errorf("failed to clean orphaned ping loss notifications: %w", err)
+	}
 	if err := instance.AutoMigrate(
 		&models.Session{},
 	); err != nil {
@@ -465,6 +468,19 @@ func doInitialize() error {
 	}
 
 	return nil
+}
+
+func cleanupOrphanedPingLossNotifications(db *gorm.DB) error {
+	return db.Where(`
+		NOT EXISTS (
+			SELECT 1 FROM clients
+			WHERE clients.uuid = ping_loss_notifications.client
+		)
+		OR NOT EXISTS (
+			SELECT 1 FROM ping_tasks
+			WHERE ping_tasks.id = ping_loss_notifications.task_id
+		)`,
+	).Delete(&models.PingLossNotification{}).Error
 }
 
 // ConfigureLowResourceMode updates connection-local SQLite memory settings.

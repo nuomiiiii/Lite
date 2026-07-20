@@ -13,15 +13,57 @@ import (
 	"github.com/komari-monitor/komari/utils"
 
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 func DeleteClient(clientUuid string) error {
 	db := dbcore.GetDBInstance()
-	err := db.Delete(&models.Client{}, "uuid = ?", clientUuid).Error
+	pingTasksChanged, err := deleteClient(db, clientUuid)
 	if err != nil {
 		return err
 	}
+	if pingTasksChanged {
+		return tasks.ReloadPingSchedule()
+	}
 	return nil
+}
+
+func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
+	pingTasksChanged := false
+	err := db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("client = ?", clientUuid).Delete(&models.PingLossNotification{}).Error; err != nil {
+			return fmt.Errorf("delete client ping loss notifications: %w", err)
+		}
+
+		var pingTasks []models.PingTask
+		if err := tx.Select("id", "clients").Find(&pingTasks).Error; err != nil {
+			return fmt.Errorf("find client ping tasks: %w", err)
+		}
+		for _, task := range pingTasks {
+			clients := make(models.StringArray, 0, len(task.Clients))
+			changed := false
+			for _, assignedClient := range task.Clients {
+				if assignedClient == clientUuid {
+					changed = true
+					continue
+				}
+				clients = append(clients, assignedClient)
+			}
+			if !changed {
+				continue
+			}
+			if err := tx.Model(&models.PingTask{}).Where("id = ?", task.Id).Update("clients", clients).Error; err != nil {
+				return fmt.Errorf("remove client from ping task %d: %w", task.Id, err)
+			}
+			pingTasksChanged = true
+		}
+
+		if err := tx.Delete(&models.Client{}, "uuid = ?", clientUuid).Error; err != nil {
+			return fmt.Errorf("delete client: %w", err)
+		}
+		return nil
+	})
+	return pingTasksChanged, err
 }
 
 func SaveClientInfo(update map[string]interface{}) error {
