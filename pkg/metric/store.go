@@ -127,9 +127,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 		s.db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 	}
 
-	pingCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
-	defer cancel()
-	if err := s.db.PingContext(pingCtx); err != nil {
+	if err := pingDatabaseWithTimeout(ctx, s.db, cfg.ConnectTimeout); err != nil {
 		if s.ownedDB {
 			_ = s.db.Close()
 		}
@@ -180,7 +178,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 		if cfg.ConnMaxLifetime > 0 {
 			readDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 		}
-		if err := readDB.PingContext(pingCtx); err != nil {
+		if err := pingDatabaseWithTimeout(ctx, readDB, cfg.ConnectTimeout); err != nil {
 			_ = readDB.Close()
 			if s.ownedDB {
 				_ = s.db.Close()
@@ -199,6 +197,12 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	}
 
 	return s, nil
+}
+
+func pingDatabaseWithTimeout(ctx context.Context, db *sql.DB, timeout time.Duration) error {
+	pingCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return db.PingContext(pingCtx)
 }
 
 // reader returns the connection pool to use for read-only queries: the

@@ -10,6 +10,24 @@ import (
 	"time"
 )
 
+func TestPingDatabaseWithTimeoutUsesFreshDeadline(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, SQLite("file:ping-timeout?mode=memory&cache=shared"))
+	if err != nil {
+		t.Fatalf("open SQLite store: %v", err)
+	}
+	defer store.Close()
+
+	const timeout = 50 * time.Millisecond
+	if err := pingDatabaseWithTimeout(ctx, store.db, timeout); err != nil {
+		t.Fatalf("initial ping: %v", err)
+	}
+	time.Sleep(2 * timeout)
+	if err := pingDatabaseWithTimeout(ctx, store.db, timeout); err != nil {
+		t.Fatalf("ping after previous deadline elapsed: %v", err)
+	}
+}
+
 // TestSQLiteStoreWriteQueryAggregate verifies SQLite write, query, aggregate, and stats.
 //
 // TestSQLiteStoreWriteQueryAggregate 验证 SQLite 写入、查询、聚合和统计。
