@@ -154,6 +154,100 @@ func TestSQLiteStorageV3MigratesLegacyDataAndPreservesQueries(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorageV3ContinuesWritingAndCompactingAfterLegacyMigration(t *testing.T) {
+	ctx := context.Background()
+	dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
+	base := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+
+	legacy, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createLegacySQLiteMetricSchema(t, ctx, legacy)
+	if _, err := legacy.ExecContext(ctx, `INSERT INTO metric_definitions
+		(name, type, unit, description, retention_days, metadata, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"traffic", TypeGauge, "bytes", "traffic report source", 35, `{}`, base.UnixNano(), base.UnixNano(),
+	); err != nil {
+		t.Fatalf("insert legacy definition: %v", err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := RollupPolicy{
+		RawRetention: 15 * time.Minute,
+		Tiers:        []RollupTier{{Interval: time.Minute, Retention: 35 * 24 * time.Hour}},
+	}
+	store, err := Open(ctx, SQLite(dsn, WithRollupPolicy(policy), WithSQLiteReadPool(4)))
+	if err != nil {
+		t.Fatalf("migrate legacy database: %v", err)
+	}
+
+	points := make([]Point, 0, 120)
+	for i := 0; i < 120; i++ {
+		points = append(points, Point{
+			MetricName: "traffic",
+			EntityID:   "node-a",
+			Timestamp:  base.Add(time.Duration(i) * time.Second),
+			Value:      float64(i % 60),
+			Tags:       map[string]string{"source": "report"},
+			Labels:     map[string]string{"phase": "after-migration"},
+		})
+	}
+	if err := store.WriteBatch(ctx, points); err != nil {
+		_ = store.Close()
+		t.Fatalf("write after migration: %v", err)
+	}
+	if compacted, err := store.CompactMetric(ctx, "traffic", base.Add(3*time.Hour)); err != nil || compacted == 0 {
+		_ = store.Close()
+		t.Fatalf("compact after migration: rows=%d err=%v", compacted, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err = Open(ctx, SQLite(dsn, WithRollupPolicy(policy), WithSQLiteReadPool(4)))
+	if err != nil {
+		t.Fatalf("reopen migrated database: %v", err)
+	}
+	defer store.Close()
+	recent := Point{
+		MetricName: "traffic", EntityID: "node-a", Timestamp: base.Add(3 * time.Hour), Value: 777,
+		Tags: map[string]string{"source": "report"}, Labels: map[string]string{"phase": "after-restart"},
+	}
+	if err := store.Write(ctx, recent); err != nil {
+		t.Fatalf("write after restart: %v", err)
+	}
+	raw, err := store.Query(ctx, Query{
+		MetricName: "traffic", EntityID: "node-a", Start: recent.Timestamp, End: recent.Timestamp,
+		Tags: map[string]string{"source": "report"},
+	})
+	if err != nil || len(raw) != 1 || raw[0].Value != 777 || raw[0].Labels["phase"] != "after-restart" {
+		t.Fatalf("raw query after restart: points=%#v err=%v", raw, err)
+	}
+
+	series, err := store.Series(ctx, AggregateQuery{
+		Query: Query{
+			MetricName: "traffic", EntityID: "node-a", Start: base,
+			End: base.Add(2*time.Minute - time.Nanosecond), Tags: map[string]string{"source": "report"},
+		},
+		Aggregation: AggP99,
+		Interval:    time.Minute,
+	}, base.Add(3*time.Hour))
+	if err != nil {
+		t.Fatalf("percentile query after restart: %v", err)
+	}
+	if len(series) != 2 {
+		t.Fatalf("reconstructed percentile buckets = %d, want 2: %#v", len(series), series)
+	}
+	for _, bucket := range series {
+		if bucket.Count != 60 || bucket.Value < 55 || bucket.Value > 59 {
+			t.Fatalf("unexpected reconstructed P99 bucket: %#v", bucket)
+		}
+	}
+}
+
 func TestSQLiteStorageV3UsedForNewDatabase(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, SQLiteInDir(t.TempDir()))

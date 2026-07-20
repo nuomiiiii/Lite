@@ -139,3 +139,26 @@ func TestRequiredTrafficReportRetentionDays(t *testing.T) {
 		})
 	}
 }
+
+func TestTrafficReportRetentionNeverDropsWhenCadenceIsDisabled(t *testing.T) {
+	tests := []struct {
+		name         string
+		currentDays  int
+		requiredDays int
+		wantDays     int
+		wantChanged  bool
+	}{
+		{name: "monthly enables 35 days", currentDays: 1, requiredDays: 35, wantDays: 35, wantChanged: true},
+		{name: "monthly disabled keeps 35 days", currentDays: 35, requiredDays: 0, wantDays: 35},
+		{name: "monthly to weekly keeps 35 days", currentDays: 35, requiredDays: 8, wantDays: 35},
+		{name: "manual longer retention is preserved", currentDays: 90, requiredDays: 35, wantDays: 90},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			gotDays, gotChanged := trafficReportRetentionTarget(test.currentDays, test.requiredDays)
+			assert.Equal(t, test.wantDays, gotDays)
+			assert.Equal(t, test.wantChanged, gotChanged)
+		})
+	}
+}

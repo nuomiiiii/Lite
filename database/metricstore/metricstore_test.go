@@ -112,6 +112,24 @@ func TestBuildMetricConfigUsesSmallSQLiteProfileInLowResourceMode(t *testing.T) 
 	}
 }
 
+func TestBuildMetricConfigUsesFixedSQLiteConnectionStrategy(t *testing.T) {
+	cfg, err := buildMetricConfig(&MetricStoreConfig{
+		Driver:       "sqlite",
+		DSN:          "./data/metrics.db",
+		MaxOpenConns: 99,
+		MaxIdleConns: 88,
+	}, false)
+	if err != nil {
+		t.Fatalf("build metric config: %v", err)
+	}
+	if cfg.MaxOpenConns != 1 || cfg.MaxIdleConns != 1 {
+		t.Fatalf("SQLite primary pool = open:%d idle:%d, want 1/1", cfg.MaxOpenConns, cfg.MaxIdleConns)
+	}
+	if cfg.SQLite.ReadPoolSize != 4 {
+		t.Fatalf("SQLite read pool size = %d, want 4", cfg.SQLite.ReadPoolSize)
+	}
+}
+
 func TestGetPingRecordsReadsRollupsAfterRawCompaction(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)

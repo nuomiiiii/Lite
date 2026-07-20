@@ -202,6 +202,16 @@ func RequiredTrafficReportRetentionDays(notifications []models.TrafficReportNoti
 	return required
 }
 
+// trafficReportRetentionTarget only raises retention to satisfy enabled
+// reports. Disabling a longer cadence must not silently discard history that
+// was retained for it or explicitly configured by an administrator.
+func trafficReportRetentionTarget(currentDays, requiredDays int) (int, bool) {
+	if requiredDays <= 0 || currentDays >= requiredDays {
+		return currentDays, false
+	}
+	return requiredDays, true
+}
+
 // EnsureTrafficReportMetricRetention raises the four traffic metrics to the
 // minimum history required by enabled daily, weekly, or monthly reports.
 func EnsureTrafficReportMetricRetention(ctx context.Context) error {
@@ -228,10 +238,11 @@ func EnsureTrafficReportMetricRetention(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("get retention for %s: %w", metricName, err)
 		}
-		if definition.RetentionDays >= requiredDays {
+		targetDays, changed := trafficReportRetentionTarget(definition.RetentionDays, requiredDays)
+		if !changed {
 			continue
 		}
-		if _, err := store.SetMetricRetention(ctx, metricName, requiredDays); err != nil {
+		if _, err := store.SetMetricRetention(ctx, metricName, targetDays); err != nil {
 			return fmt.Errorf("set retention for %s: %w", metricName, err)
 		}
 	}
