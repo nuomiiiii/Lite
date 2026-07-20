@@ -2,10 +2,16 @@ name: Publish Stable Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "2.0.2-27gd189"
+    paths:
+      - ".github/workflows/publish-stable-release.yml"
+      - ".github/workflows/release.yml"
 
 permissions:
+  actions: write
   contents: write
 
 jobs:
@@ -16,9 +22,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
+          TAG="2.0.2-27gd189"
+          if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release create "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "2.0.2 (27gd189)" \
+              --generate-notes \
+              --verify-tag
+          fi
+
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" \
+            --json assets --jq '.assets[].name' | grep -Fxq 'komari-linux-amd64'; then
+            echo "Release assets already exist; no build dispatch needed."
+            exit 0
+          fi
+
+          gh workflow run release.yml \
             --repo "${GITHUB_REPOSITORY}" \
-            --target "${GITHUB_SHA}" \
-            --title "2.0.2 (27gd189)" \
-            --generate-notes \
-            --verify-tag
+            --ref main \
+            -f tag="${TAG}"

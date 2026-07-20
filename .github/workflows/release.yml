@@ -3,6 +3,12 @@ name: Attach Release Binaries
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and upload
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -11,6 +17,7 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
   build-frontend:
@@ -101,7 +108,7 @@ jobs:
           if [ "${{ matrix.binary_extension }}" != "" ]; then
             BINARY_NAME=${BINARY_NAME}${{ matrix.binary_extension }}
           fi
-          RELEASE_TAG="${{ github.event.release.tag_name }}"
+          RELEASE_TAG="${{ env.RELEASE_TAG }}"
           VERSION="${RELEASE_TAG%%-*}"
           VERSION_HASH="${GITHUB_SHA::7}"
           if [[ "$RELEASE_TAG" == *-* ]]; then
@@ -125,7 +132,7 @@ jobs:
             BINARY_NAME=${BINARY_NAME}.exe
           fi
           # Upload the binary as a release asset using GitHub CLI
-          gh release upload ${{ github.event.release.tag_name }} $BINARY_NAME --repo ${{ github.repository }}
+          gh release upload "${{ env.RELEASE_TAG }}" "$BINARY_NAME" --repo "${{ github.repository }}"
         shell: bash
 
   build-and-push-docker:
@@ -165,7 +172,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ github.event.release.tag_name }}
+            type=raw,value=${{ env.RELEASE_TAG }}
             type=raw,value=latest
 
       - name: Build and push Docker image
