@@ -218,8 +218,63 @@ jobs:
           TAG: ${{ needs.prepare.outputs.version }}
         run: docker buildx imagetools create --tag "${REGISTRY}/${IMAGE_NAME}:latest" "${REGISTRY}/${IMAGE_NAME}:${TAG}"
 
+  publish-update-manifest:
+    needs: [prepare, build-and-attach-binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: komari-*-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums and machine-readable update manifest
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION_HASH: ${{ needs.prepare.outputs.version_hash }}
+        working-directory: release-assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum komari-* | sort -k2 > SHA256SUMS
+          node <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const files = fs.readdirSync(".")
+            .filter((name) => /^komari-(windows|linux)-[A-Za-z0-9]+(?:\.exe)?$/.test(name))
+            .sort();
+          const assets = files.map((name) => {
+            const match = name.match(/^komari-(windows|linux)-([A-Za-z0-9]+)(?:\.exe)?$/);
+            const content = fs.readFileSync(name);
+            return {
+              name,
+              os: match[1],
+              arch: match[2],
+              size: content.length,
+              sha256: crypto.createHash("sha256").update(content).digest("hex"),
+            };
+          });
+          fs.writeFileSync("komari-update.json", JSON.stringify({
+            schema: 1,
+            version: process.env.VERSION,
+            version_hash: process.env.VERSION_HASH,
+            assets,
+          }, null, 2) + "\n");
+          NODE
+
+      - name: Upload update metadata to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        working-directory: release-assets
+        shell: bash
+        run: gh release upload "$VERSION" SHA256SUMS komari-update.json --repo "$GITHUB_REPOSITORY" --clobber
+
   update-release-notes:
-    needs: [prepare, build-and-push-docker]
+    needs: [prepare, build-and-push-docker, publish-update-manifest]
     runs-on: ubuntu-latest
     steps:
       - name: Generate release notes

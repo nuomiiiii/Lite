@@ -15,6 +15,7 @@ import (
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/pkg/config"
 	"github.com/komari-monitor/komari/pkg/rpc"
+	"github.com/komari-monitor/komari/pkg/selfupdate"
 	"github.com/komari-monitor/komari/protocol/v1"
 	"github.com/komari-monitor/komari/utils"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
@@ -455,11 +456,13 @@ func getMe(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) 
 
 func getVersion(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	return struct {
-		Version string `json:"version"`
-		Hash    string `json:"hash"`
+		Version    string `json:"version"`
+		Hash       string `json:"hash"`
+		Deployment string `json:"deployment"`
 	}{
-		Version: utils.CurrentVersion,
-		Hash:    utils.VersionHash,
+		Version:    utils.CurrentVersion,
+		Hash:       utils.VersionHash,
+		Deployment: selfupdate.DeploymentType(),
 	}, nil
 }
 

@@ -398,6 +398,8 @@ ExecStart=${BINARY_PATH} server -l 0.0.0.0:${port}
 WorkingDirectory=${DATA_DIR}
 Restart=always
 User=root
+Environment=KOMARI_DEPLOYMENT=linux
+Environment=KOMARI_SERVICE_NAME=${SERVICE_NAME}.service
 
 [Install]
 WantedBy=multi-user.target

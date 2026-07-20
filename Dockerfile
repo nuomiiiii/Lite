@@ -15,6 +15,7 @@ RUN chmod +x /app/komari
 
 ENV GIN_MODE=release
 ENV KOMARI_LISTEN=0.0.0.0:25774
+ENV KOMARI_DEPLOYMENT=docker
 
 EXPOSE 25774
 

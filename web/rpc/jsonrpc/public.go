@@ -12,6 +12,7 @@ import (
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/pkg/rpc"
+	"github.com/komari-monitor/komari/pkg/selfupdate"
 	"github.com/komari-monitor/komari/utils"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
 )
@@ -81,8 +82,9 @@ func publicGetPublicSettings(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *
 
 func publicGetVersion(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	return map[string]any{
-		"version": utils.CurrentVersion,
-		"hash":    utils.VersionHash,
+		"version":    utils.CurrentVersion,
+		"hash":       utils.VersionHash,
+		"deployment": selfupdate.DeploymentType(),
 	}, nil
 }
 

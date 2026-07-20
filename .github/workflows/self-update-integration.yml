@@ -1,0 +1,167 @@
+name: Verify Linux Self Update
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Zig
+        uses: ./.github/actions/setup-zig
+
+      - name: Run updater unit tests
+        run: go test ./pkg/selfupdate ./web/rpc/jsonrpc
+
+      - name: Build old and candidate static binaries
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: 1
+          CC: zig cc -target x86_64-linux-musl
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p self-update-test
+          go build -trimpath -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.0.4 -X github.com/komari-monitor/komari/utils.VersionHash=old1234' -o self-update-test/komari-old .
+          go build -trimpath -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.0.5 -X github.com/komari-monitor/komari/utils.VersionHash=new1234' -o self-update-test/komari-new .
+
+      - name: Smoke test static binary on mainstream distributions
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image in ubuntu:20.04 debian:11-slim quay.io/centos/centos:7; do
+            echo "Testing $image"
+            docker run --rm -v "$PWD/self-update-test/komari-new:/komari:ro" "$image" /komari version --json | grep -q '"version":"2.0.5"'
+          done
+
+      - name: Verify systemd update and automatic rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=/tmp/komari-self-update-integration
+          SUCCESS_SERVICE=komari-update-success.service
+          ROLLBACK_SERVICE=komari-update-rollback.service
+
+          cleanup() {
+            sudo systemctl stop "$SUCCESS_SERVICE" "$ROLLBACK_SERVICE" >/dev/null 2>&1 || true
+            sudo rm -f "/etc/systemd/system/$SUCCESS_SERVICE" "/etc/systemd/system/$ROLLBACK_SERVICE"
+            sudo systemctl daemon-reload
+            sudo rm -rf "$ROOT"
+          }
+          trap cleanup EXIT
+
+          create_case() {
+            local name=$1 service=$2 port=$3
+            local case_root="$ROOT/$name"
+            sudo mkdir -p "$case_root/data" "$case_root/.komari-update/jobs/test"
+            sudo cp self-update-test/komari-old "$case_root/komari"
+            sudo cp self-update-test/komari-new "$case_root/.komari-update/jobs/test/candidate"
+            sudo chmod 0755 "$case_root/komari" "$case_root/.komari-update/jobs/test/candidate"
+            sudo tee "/etc/systemd/system/$service" >/dev/null <<UNIT
+          [Unit]
+          Description=Komari self-update integration case
+          After=network.target
+
+          [Service]
+          Type=simple
+          WorkingDirectory=$case_root
+          ExecStart=$case_root/komari server -l 127.0.0.1:$port
+          Restart=always
+          User=root
+          Environment=KOMARI_DEPLOYMENT=linux
+          Environment=KOMARI_SERVICE_NAME=$service
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+            sudo systemctl daemon-reload
+            sudo systemctl start "$service"
+            for _ in $(seq 1 30); do
+              curl -fsS "http://127.0.0.1:$port/api/version" >/dev/null && return 0
+              sleep 1
+            done
+            return 1
+          }
+
+          schedule_helper() {
+            local name=$1 unit=$2
+            local case_root="$ROOT/$name"
+            sudo systemd-run \
+              --unit="$unit" \
+              --no-block \
+              --property=Restart=on-failure \
+              --property=RestartSec=3s \
+              "$case_root/.komari-update/jobs/test/candidate" \
+              _self-update-helper "$case_root/.komari-update/jobs/test/helper.json"
+          }
+
+          wait_result() {
+            local name=$1 expected=$2
+            local result="$ROOT/$name/.komari-update/last-result.json"
+            for _ in $(seq 1 120); do
+              if sudo test -f "$result" && sudo grep -q '"status": "'"$expected"'"' "$result"; then
+                return 0
+              fi
+              sleep 1
+            done
+            sudo cat "$result" || true
+            return 1
+          }
+
+          create_case success "$SUCCESS_SERVICE" 28774
+          sudo tee "$ROOT/success/.komari-update/jobs/test/helper.json" >/dev/null <<JSON
+          {
+            "job_id": "integration-success",
+            "current_executable": "$ROOT/success/komari",
+            "candidate_executable": "$ROOT/success/.komari-update/jobs/test/candidate",
+            "data_dir": "$ROOT/success/data",
+            "service": "$SUCCESS_SERVICE",
+            "health_url": "http://127.0.0.1:28774/api/version",
+            "expected_version": "2.0.5",
+            "expected_hash": "new1234",
+            "previous_version": "2.0.4",
+            "previous_hash": "old1234",
+            "update_root": "$ROOT/success/.komari-update",
+            "backup_root": "$ROOT/success/backup/self-update-integration-success",
+            "health_timeout": 30000000000,
+            "stable_window": 3000000000
+          }
+          JSON
+          schedule_helper success komari-self-update-integration-success
+          wait_result success succeeded
+          curl -fsS http://127.0.0.1:28774/api/version | grep -q '2.0.5'
+
+          create_case rollback "$ROLLBACK_SERVICE" 28775
+          sudo tee "$ROOT/rollback/.komari-update/jobs/test/helper.json" >/dev/null <<JSON
+          {
+            "job_id": "integration-rollback",
+            "current_executable": "$ROOT/rollback/komari",
+            "candidate_executable": "$ROOT/rollback/.komari-update/jobs/test/candidate",
+            "data_dir": "$ROOT/rollback/data",
+            "service": "$ROLLBACK_SERVICE",
+            "health_url": "http://127.0.0.1:28775/api/version",
+            "expected_version": "9.9.9",
+            "expected_hash": "bad9999",
+            "previous_version": "2.0.4",
+            "previous_hash": "old1234",
+            "update_root": "$ROOT/rollback/.komari-update",
+            "backup_root": "$ROOT/rollback/backup/self-update-integration-rollback",
+            "health_timeout": 8000000000,
+            "stable_window": 2000000000
+          }
+          JSON
+          schedule_helper rollback komari-self-update-integration-rollback
+          wait_result rollback rolled_back
+          curl -fsS http://127.0.0.1:28775/api/version | grep -q '2.0.4'
