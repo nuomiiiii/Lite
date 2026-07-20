@@ -295,6 +295,8 @@ func (s *Store) configureSQLite(ctx context.Context, db *sql.DB) error {
 	}
 	if s.cfg.SQLite.TempStoreMemory {
 		pragmas = append(pragmas, "PRAGMA temp_store = MEMORY")
+	} else {
+		pragmas = append(pragmas, "PRAGMA temp_store = FILE")
 	}
 
 	for _, pragma := range pragmas {
@@ -542,9 +544,55 @@ func (s *Store) DeleteMetric(ctx context.Context, name string) error {
 	return tx.Commit()
 }
 
+// UpdateMetricRetention updates one metric's retention policy without deleting
+// its existing data. A value of zero disables subsequent persistence. Negative
+// values are invalid.
+func (s *Store) UpdateMetricRetention(ctx context.Context, name string, retentionDays int) (Definition, error) {
+	if err := s.ensureOpen(); err != nil {
+		return Definition{}, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Definition{}, fmt.Errorf("%w: metric name is required", ErrInvalidArgument)
+	}
+	if retentionDays < 0 {
+		return Definition{}, fmt.Errorf("%w: retention days cannot be negative", ErrInvalidArgument)
+	}
+
+	s.retentionMu.Lock()
+	defer s.retentionMu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Definition{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	updatedAt := time.Now().UTC().UnixNano()
+	result, err := tx.ExecContext(ctx,
+		fmt.Sprintf(`UPDATE %s SET retention_days = %s, updated_at = %s WHERE name = %s`,
+			s.tables.definitions, s.dialect.placeholder(1), s.dialect.placeholder(2), s.dialect.placeholder(3)),
+		retentionDays, updatedAt, name,
+	)
+	if err != nil {
+		return Definition{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return Definition{}, err
+	}
+	if affected == 0 {
+		return Definition{}, fmt.Errorf("%w: metric %q", ErrNotFound, name)
+	}
+	if err := tx.Commit(); err != nil {
+		return Definition{}, err
+	}
+	return s.GetMetric(ctx, name)
+}
+
 // SetMetricRetention updates one metric's retention policy. A value of zero
-// disables persistence for that metric and atomically removes its raw and
-// rollup data. Negative values are invalid.
+// disables persistence for that metric and removes its raw and rollup data.
+// Negative values are invalid.
 func (s *Store) SetMetricRetention(ctx context.Context, name string, retentionDays int) (Definition, error) {
 	if err := s.ensureOpen(); err != nil {
 		return Definition{}, err
@@ -583,23 +631,93 @@ func (s *Store) SetMetricRetention(ctx context.Context, name string, retentionDa
 		return Definition{}, fmt.Errorf("%w: metric %q", ErrNotFound, name)
 	}
 	if retentionDays == 0 {
-		for _, table := range []string{s.tables.points, s.tables.rollups} {
+		for _, table := range []string{s.tables.points, s.tables.rollups, s.tables.watermarks} {
 			if _, err := tx.ExecContext(ctx,
 				fmt.Sprintf(`DELETE FROM %s WHERE metric_name = %s`, table, s.dialect.placeholder(1)), name,
 			); err != nil {
 				return Definition{}, err
 			}
 		}
-		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf(`DELETE FROM %s WHERE metric_name = %s`, s.tables.watermarks, s.dialect.placeholder(1)), name,
-		); err != nil {
-			return Definition{}, err
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return Definition{}, err
 	}
 	return s.GetMetric(ctx, name)
+}
+
+// DeleteMetricData removes all raw, rollup, and watermark data for one metric.
+func (s *Store) DeleteMetricData(ctx context.Context, name string) error {
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("%w: metric name is required", ErrInvalidArgument)
+	}
+
+	s.retentionMu.Lock()
+	defer s.retentionMu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, table := range []string{s.tables.points, s.tables.rollups, s.tables.watermarks} {
+		if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM %s WHERE metric_name = %s`, table, s.dialect.placeholder(1)), name,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteMetricDataIfDisabled removes a metric's data only while its retention
+// policy is still disabled. It prevents a delayed background cleanup from
+// deleting data after an administrator has re-enabled the metric.
+func (s *Store) DeleteMetricDataIfDisabled(ctx context.Context, name string) (bool, error) {
+	if err := s.ensureOpen(); err != nil {
+		return false, err
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false, fmt.Errorf("%w: metric name is required", ErrInvalidArgument)
+	}
+
+	s.retentionMu.Lock()
+	defer s.retentionMu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var retentionDays int
+	if err := tx.QueryRowContext(ctx,
+		fmt.Sprintf(`SELECT retention_days FROM %s WHERE name = %s`, s.tables.definitions, s.dialect.placeholder(1)),
+		name,
+	).Scan(&retentionDays); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, fmt.Errorf("%w: metric %q", ErrNotFound, name)
+		}
+		return false, err
+	}
+	if retentionDays != 0 {
+		return false, nil
+	}
+	for _, table := range []string{s.tables.points, s.tables.rollups, s.tables.watermarks} {
+		if _, err := tx.ExecContext(ctx,
+			fmt.Sprintf(`DELETE FROM %s WHERE metric_name = %s`, table, s.dialect.placeholder(1)), name,
+		); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // DeleteEntity deletes all raw and rollup data for one entity across every metric.
@@ -742,25 +860,26 @@ func (s *Store) WriteBatch(ctx context.Context, points []Point) error {
 	return tx.Commit()
 }
 
-// filterDisabledMetricPoints preserves the historic behavior for unknown
-// metrics while dropping points whose known definition has zero retention.
+// filterDisabledMetricPoints rejects points without a definition and drops
+// points whose definition has zero retention. Definitions are the source of
+// truth for a metric's retention and lifecycle, so accepting an unknown name
+// would create data that compaction and retention cleanup cannot manage.
 func (s *Store) filterDisabledMetricPoints(ctx context.Context, points []Point) ([]Point, error) {
 	defs, err := s.ListMetrics(ctx)
 	if err != nil {
 		return nil, err
 	}
-	disabled := make(map[string]struct{})
+	definitions := make(map[string]Definition, len(defs))
 	for _, def := range defs {
-		if def.RetentionDays == 0 {
-			disabled[def.Name] = struct{}{}
-		}
-	}
-	if len(disabled) == 0 {
-		return points, nil
+		definitions[def.Name] = def
 	}
 	filtered := make([]Point, 0, len(points))
 	for _, point := range points {
-		if _, ok := disabled[point.MetricName]; !ok {
+		def, ok := definitions[point.MetricName]
+		if !ok {
+			return nil, fmt.Errorf("%w: metric %q", ErrNotFound, point.MetricName)
+		}
+		if def.RetentionDays > 0 {
 			filtered = append(filtered, point)
 		}
 	}

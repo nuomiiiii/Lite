@@ -94,6 +94,9 @@ func TestWriteRejectsNonFiniteValues(t *testing.T) {
 		t.Fatalf("open sqlite store: %v", err)
 	}
 	defer store.Close()
+	if err := store.CreateMetric(ctx, Definition{Name: "bad", Type: TypeGauge, RetentionDays: 1}); err != nil {
+		t.Fatalf("create metric: %v", err)
+	}
 
 	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
 		err := store.Write(ctx, Point{
@@ -105,6 +108,61 @@ func TestWriteRejectsNonFiniteValues(t *testing.T) {
 		if !errors.Is(err, ErrInvalidArgument) {
 			t.Fatalf("expected ErrInvalidArgument for %v, got %v", value, err)
 		}
+	}
+}
+
+func TestWriteBatchRequiresMetricDefinition(t *testing.T) {
+	ctx := context.Background()
+	store := newMemStore(t)
+	point := Point{MetricName: "custom.metric", EntityID: "server-1", Timestamp: time.Now().UTC(), Value: 1}
+
+	if err := store.Write(ctx, point); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("write undefined metric error = %v, want ErrNotFound", err)
+	}
+	if err := store.CreateMetric(ctx, Definition{Name: point.MetricName, Type: TypeGauge, RetentionDays: 1}); err != nil {
+		t.Fatalf("register dynamic metric: %v", err)
+	}
+	if err := store.Write(ctx, point); err != nil {
+		t.Fatalf("write registered dynamic metric: %v", err)
+	}
+}
+
+func TestUpdateMetricRetentionDefersDisabledMetricCleanup(t *testing.T) {
+	ctx := context.Background()
+	store := newMemStore(t)
+	const metricName = "deferred.cleanup"
+	if err := store.CreateMetric(ctx, Definition{Name: metricName, Type: TypeGauge, RetentionDays: 1}); err != nil {
+		t.Fatalf("create metric: %v", err)
+	}
+	point := Point{MetricName: metricName, EntityID: "server-1", Timestamp: time.Now().UTC(), Value: 1}
+	if err := store.Write(ctx, point); err != nil {
+		t.Fatalf("write point: %v", err)
+	}
+
+	if _, err := store.UpdateMetricRetention(ctx, metricName, 0); err != nil {
+		t.Fatalf("disable metric retention: %v", err)
+	}
+	points, err := store.Query(ctx, Query{MetricName: metricName, EntityID: point.EntityID, Start: point.Timestamp.Add(-time.Second), End: point.Timestamp.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("query retained point before cleanup: %v", err)
+	}
+	if len(points) != 1 {
+		t.Fatalf("points before cleanup = %d, want 1", len(points))
+	}
+
+	deleted, err := store.DeleteMetricDataIfDisabled(ctx, metricName)
+	if err != nil {
+		t.Fatalf("delete disabled metric data: %v", err)
+	}
+	if !deleted {
+		t.Fatal("expected disabled metric data to be deleted")
+	}
+	points, err = store.Query(ctx, Query{MetricName: metricName, EntityID: point.EntityID, Start: point.Timestamp.Add(-time.Second), End: point.Timestamp.Add(time.Second)})
+	if err != nil {
+		t.Fatalf("query cleaned metric: %v", err)
+	}
+	if len(points) != 0 {
+		t.Fatalf("points after cleanup = %d, want 0", len(points))
 	}
 }
 

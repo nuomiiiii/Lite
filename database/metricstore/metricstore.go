@@ -39,12 +39,13 @@ const (
 // 注意：metric store 现在始终启用（旧的 metric_store_enabled 开关已废弃）。
 // 未显式配置时默认使用 SQLite（./data/metrics.db）。
 type MetricStoreConfig struct {
-	Driver              string `json:"metric_db_driver" default:"sqlite"`           // 数据库类型: sqlite, mysql, postgresql
-	DSN                 string `json:"metric_db_dsn" default:"./data/metrics.db"`   // 数据库连接串
-	DownsamplingEnabled bool   `json:"metric_downsampling_enabled" default:"false"` // 是否启用分层降采样
-	TablePrefix         string `json:"metric_table_prefix" default:"metric_"`       // 表名前缀
-	MaxOpenConns        int    `json:"metric_max_open_conns" default:"25"`          // 最大连接数
-	MaxIdleConns        int    `json:"metric_max_idle_conns" default:"5"`           // 最大空闲连接数
+	Driver              string `json:"metric_db_driver" default:"sqlite"`          // 数据库类型: sqlite, mysql, postgresql
+	DSN                 string `json:"metric_db_dsn" default:"./data/metrics.db"`  // 数据库连接串
+	DownsamplingEnabled bool   `json:"metric_downsampling_enabled" default:"true"` // 是否启用分层降采样
+	LowResourceMode     bool   `json:"low_resource_mode"`                          // 低资源模式由首次探测或后台设置决定
+	TablePrefix         string `json:"metric_table_prefix" default:"metric_"`      // 表名前缀
+	MaxOpenConns        int    `json:"metric_max_open_conns" default:"25"`         // 最大连接数
+	MaxIdleConns        int    `json:"metric_max_idle_conns" default:"5"`          // 最大空闲连接数
 }
 
 // MetricStoreConfigKeys 配置键
@@ -100,11 +101,18 @@ func buildMetricConfig(cfg *MetricStoreConfig, autoMigrate bool) (metric.Config,
 		// 同时启用独立的 WAL 只读连接池提升前台查询并发（写仍走单主连接）。
 		// 这里刻意忽略 cfg.MaxOpenConns/MaxIdleConns —— 对 SQLite 而言多写连接
 		// 只会引入锁竞争而非提升吞吐。
-		opts = append(opts,
-			metric.WithMaxOpenConns(1),
-			metric.WithMaxIdleConns(1),
-			metric.WithSQLiteReadPool(4),
-		)
+		opts = append(opts, metric.WithMaxOpenConns(1), metric.WithMaxIdleConns(1))
+		if cfg.LowResourceMode {
+			opts = append(opts,
+				metric.WithSQLiteProfile(metric.SQLiteProfileBalanced),
+				metric.WithSQLiteCacheSizeKB(8*1024),
+				metric.WithSQLiteMMapSize(0),
+				metric.WithSQLiteTempStoreMemory(false),
+				metric.WithSQLiteReadPool(0),
+			)
+		} else {
+			opts = append(opts, metric.WithSQLiteReadPool(4))
+		}
 		return metric.SQLite(dsn, opts...), nil
 	case metric.DriverMySQL:
 		opts = append(opts,
@@ -334,6 +342,7 @@ func InitializeStore() error {
 		store = s
 		storeFingerprint = targetFingerprint(cfg)
 		storeMu.Unlock()
+		setLowResourceMode(cfg.LowResourceMode)
 		clearStoreClosing()
 
 		log.Printf("Metric store initialized successfully (driver=%s)", ResolveDriverFromConfig(cfg.Driver, cfg.DSN))
@@ -374,6 +383,7 @@ func Reload(ctx context.Context) error {
 	store = s
 	storeFingerprint = targetFingerprint(cfg)
 	storeMu.Unlock()
+	setLowResourceMode(cfg.LowResourceMode)
 
 	if old != nil {
 		if cerr := old.Close(); cerr != nil {
@@ -517,6 +527,12 @@ func createMetricDefinitions(ctx context.Context, s *metric.Store) error {
 	return createMetricDefinitionsWithDefaultRetention(ctx, s, defaultBuiltinMetricRetentionDays)
 }
 
+// EnsureBuiltinMetricDefinitions registers definitions for the server's
+// built-in report and ping writers before a standalone Store receives points.
+func EnsureBuiltinMetricDefinitions(ctx context.Context, s *metric.Store) error {
+	return createMetricDefinitions(ctx, s)
+}
+
 func createMetricDefinitionsWithDefaultRetention(ctx context.Context, s *metric.Store, defaultRetentionDays int) error {
 	if defaultRetentionDays < defaultBuiltinMetricRetentionDays {
 		defaultRetentionDays = defaultBuiltinMetricRetentionDays
@@ -529,13 +545,9 @@ func createMetricDefinitionsWithDefaultRetention(ctx context.Context, s *metric.
 		{Name: MetricGPUMemTotal, Type: metric.TypeGauge, Unit: "bytes", Description: "GPU memory total", RetentionDays: defaultRetentionDays},
 		{Name: MetricGPUTemp, Type: metric.TypeGauge, Unit: "°C", Description: "GPU temperature", RetentionDays: defaultRetentionDays},
 		{Name: MetricRAM, Type: metric.TypeGauge, Unit: "bytes", Description: "RAM used", RetentionDays: defaultRetentionDays},
-		{Name: MetricRAMTotal, Type: metric.TypeGauge, Unit: "bytes", Description: "RAM total", RetentionDays: defaultRetentionDays},
 		{Name: MetricSwap, Type: metric.TypeGauge, Unit: "bytes", Description: "Swap used", RetentionDays: defaultRetentionDays},
-		{Name: MetricSwapTotal, Type: metric.TypeGauge, Unit: "bytes", Description: "Swap total", RetentionDays: defaultRetentionDays},
 		{Name: MetricLoad, Type: metric.TypeGauge, Unit: "", Description: "System load average", RetentionDays: defaultRetentionDays},
-		{Name: MetricTemp, Type: metric.TypeGauge, Unit: "°C", Description: "System temperature", RetentionDays: defaultRetentionDays},
 		{Name: MetricDisk, Type: metric.TypeGauge, Unit: "bytes", Description: "Disk used", RetentionDays: defaultRetentionDays},
-		{Name: MetricDiskTotal, Type: metric.TypeGauge, Unit: "bytes", Description: "Disk total", RetentionDays: defaultRetentionDays},
 		{Name: MetricNetIn, Type: metric.TypeGauge, Unit: "bytes/s", Description: "Network in rate", RetentionDays: defaultRetentionDays},
 		{Name: MetricNetOut, Type: metric.TypeGauge, Unit: "bytes/s", Description: "Network out rate", RetentionDays: defaultRetentionDays},
 		{Name: MetricNetTotalUp, Type: metric.TypeCounter, Unit: "bytes", Description: "Network total upload", RetentionDays: defaultRetentionDays},
@@ -565,6 +577,11 @@ func createMetricDefinitionsWithDefaultRetention(ctx context.Context, s *metric.
 		}
 		if err := s.UpsertMetric(ctx, def); err != nil {
 			return fmt.Errorf("failed to create metric %s: %w", def.Name, err)
+		}
+	}
+	for _, name := range obsoleteBuiltinMetricNames {
+		if err := s.DeleteMetric(ctx, name); err != nil {
+			return fmt.Errorf("failed to remove obsolete metric %s: %w", name, err)
 		}
 	}
 
@@ -753,20 +770,12 @@ func applyRecordMetricValue(rec *models.Record, metricName string, value float64
 		rec.Gpu = float32(value)
 	case MetricRAM:
 		rec.Ram = int64(value)
-	case MetricRAMTotal:
-		rec.RamTotal = int64(value)
 	case MetricSwap:
 		rec.Swap = int64(value)
-	case MetricSwapTotal:
-		rec.SwapTotal = int64(value)
 	case MetricLoad:
 		rec.Load = float32(value)
-	case MetricTemp:
-		rec.Temp = float32(value)
 	case MetricDisk:
 		rec.Disk = int64(value)
-	case MetricDiskTotal:
-		rec.DiskTotal = int64(value)
 	case MetricNetIn:
 		rec.NetIn = int64(value)
 	case MetricNetOut:
@@ -1010,4 +1019,29 @@ func DeleteEntity(ctx context.Context, entityID string) error {
 	}
 	deleteReportTrafficState(entityID)
 	return nil
+}
+
+// DeleteEntityAsync clears one agent's metric history without delaying the
+// client deletion response.
+func DeleteEntityAsync(entityID string) {
+	go func() {
+		if err := DeleteEntity(context.Background(), entityID); err != nil {
+			log.Printf("Failed to delete metric records for entity %s: %v", entityID, err)
+		}
+	}()
+}
+
+// DeleteMetricDataAsync clears disabled metric history without delaying an
+// admin retention-policy update response.
+func DeleteMetricDataAsync(metricName string) {
+	go func() {
+		s := GetStore()
+		if s == nil {
+			log.Printf("Failed to delete disabled metric %s: metric store not enabled", metricName)
+			return
+		}
+		if _, err := s.DeleteMetricDataIfDisabled(context.Background(), metricName); err != nil {
+			log.Printf("Failed to delete disabled metric %s: %v", metricName, err)
+		}
+	}()
 }
