@@ -58,8 +58,8 @@ jobs:
 
           VERSION_HASH="$REQUESTED_HASH"
           if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            EXISTING_NAME="$(gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json name --jq .name)"
-            if [ -z "$VERSION_HASH" ] && [[ "$EXISTING_NAME" =~ \(([A-Za-z0-9]{7})\)$ ]]; then
+            EXISTING_BODY="$(gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
+            if [ -z "$VERSION_HASH" ] && [[ "$EXISTING_BODY" =~ komari-version-hash:[[:space:]]*([A-Za-z0-9]{7}) ]]; then
               VERSION_HASH="${BASH_REMATCH[1]}"
             fi
           fi
@@ -107,14 +107,14 @@ jobs:
           if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$VERSION" \
               --repo "$GITHUB_REPOSITORY" \
-              --title "$VERSION ($VERSION_HASH)" \
+              --title "$VERSION" \
               --latest
           else
             gh release create "$VERSION" \
               --repo "$GITHUB_REPOSITORY" \
               --target "$TARGET_SHA" \
-              --title "$VERSION ($VERSION_HASH)" \
-              --generate-notes \
+              --title "$VERSION" \
+              --notes "<!-- komari-version-hash: $VERSION_HASH -->" \
               --latest \
               --verify-tag
           fi

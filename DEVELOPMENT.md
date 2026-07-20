@@ -45,7 +45,7 @@
 
 - 页面和日志显示：`2.0.3 (a1b2c3d)`
 - Git 标签：`2.0.3`
-- GitHub Release 标签：`2.0.3`
+- GitHub Release 标题和标签：`2.0.3`
 - Docker 标签：`ghcr.io/nuomiiiii/komari:2.0.3` 和 `latest`
 - Docker 平台：`linux/amd64`、`linux/arm64`
 

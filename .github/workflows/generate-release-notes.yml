@@ -635,6 +635,7 @@ jobs:
             });
 
             const body = [
+              clean(release.body).match(/<!--\s*komari-version-hash:\s*[A-Za-z0-9]{7}\s*-->/i)?.[0] || "",
               releaseSummarySection,
               whatsChangedSection,
             ].filter(Boolean).join("\n\n");
