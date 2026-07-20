@@ -1,32 +1,58 @@
 name: Attach Release Binaries
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to build and upload
+        description: Version-only release tag, for example 2.0.3
         required: true
         type: string
       version_hash:
         description: Seven-character version identifier
-        required: false
+        required: true
+        type: string
+      web_ref:
+        description: Branch or tag in nuomiiiii/komari-web
+        required: true
+        default: komari-2.0.2-27gd189
         type: string
 
 permissions:
+  actions: write
   contents: write
   packages: write
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
-  build-frontend:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      version_hash: ${{ steps.validate.outputs.version_hash }}
+      web_ref: ${{ steps.validate.outputs.web_ref }}
+    steps:
+      - name: Validate release metadata
+        id: validate
+        env:
+          VERSION: ${{ inputs.tag }}
+          VERSION_HASH: ${{ inputs.version_hash }}
+          WEB_REF: ${{ inputs.web_ref }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version: $VERSION" >&2; exit 1; }
+          [[ "$VERSION_HASH" =~ ^[A-Za-z0-9]{7}$ ]] || { echo "Invalid version identifier: $VERSION_HASH" >&2; exit 1; }
+          [ -n "$WEB_REF" ] || { echo "Komari Web ref cannot be empty." >&2; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_hash=$VERSION_HASH" >> "$GITHUB_OUTPUT"
+          echo "web_ref=$WEB_REF" >> "$GITHUB_OUTPUT"
 
+  build-frontend:
+    needs: prepare
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -34,18 +60,15 @@ jobs:
       - name: Build frontend artifact
         uses: ./.github/actions/build-frontend
         with:
+          ref: ${{ needs.prepare.outputs.web_ref }}
           artifact-name: komari-frontend
 
   build-and-attach-binaries:
-    needs: build-frontend
+    needs: [prepare, build-frontend]
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
-        goos: [windows, linux]
-        goarch: [amd64, arm64, 386, riscv64]
         include:
-          # Windows
           - goos: windows
             goarch: amd64
             zig_target_triple: x86_64-windows-gnu
@@ -58,8 +81,6 @@ jobs:
             goarch: 386
             zig_target_triple: x86-windows-gnu
             binary_extension: .exe
-
-          # Linux
           - goos: linux
             goarch: amd64
             zig_target_triple: x86_64-linux-musl
@@ -81,10 +102,6 @@ jobs:
             zig_target_triple: loongarch64-linux-musl
             binary_extension: ""
 
-        exclude:
-          - goos: windows
-            goarch: riscv64
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -95,7 +112,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version-file: go.mod
 
       - name: Install Zig cross-compiler toolchain
         uses: ./.github/actions/setup-zig
@@ -107,21 +124,15 @@ jobs:
           CGO_ENABLED: 1
           CC: zig cc -target ${{ matrix.zig_target_triple }}
           GIN_MODE: release
+          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION_HASH: ${{ needs.prepare.outputs.version_hash }}
+        shell: bash
         run: |
-          BINARY_NAME=komari-${{ matrix.goos }}-${{ matrix.goarch }}
-          if [ "${{ matrix.binary_extension }}" != "" ]; then
-            BINARY_NAME=${BINARY_NAME}${{ matrix.binary_extension }}
-          fi
-          RELEASE_TAG="${{ env.RELEASE_TAG }}"
-          VERSION="${RELEASE_TAG%%-*}"
-          VERSION_HASH="${{ inputs.version_hash }}"
-          if [ -z "$VERSION_HASH" ]; then
-            VERSION_HASH="${GITHUB_SHA::7}"
-          fi
-          if [[ "$RELEASE_TAG" == *-* ]] && [ -z "${{ inputs.version_hash }}" ]; then
-            VERSION_HASH="${RELEASE_TAG##*-}"
-          fi
-          go build -trimpath -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}" -o $BINARY_NAME
+          set -euo pipefail
+          BINARY_NAME="komari-${GOOS}-${GOARCH}${{ matrix.binary_extension }}"
+          go build -trimpath \
+            -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}" \
+            -o "$BINARY_NAME"
 
       - name: Upload binary as artifact
         uses: actions/upload-artifact@v4
@@ -131,24 +142,19 @@ jobs:
 
       - name: Upload binary to release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Define the binary name for upload
-          BINARY_NAME=komari-${{ matrix.goos }}-${{ matrix.goarch }}
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME=${BINARY_NAME}.exe
-          fi
-          # Upload the binary as a release asset using GitHub CLI
-          gh release upload "${{ env.RELEASE_TAG }}" "$BINARY_NAME" --repo "${{ github.repository }}" --clobber
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         shell: bash
+        run: |
+          BINARY_NAME="komari-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.binary_extension }}"
+          gh release upload "$VERSION" "$BINARY_NAME" --repo "$GITHUB_REPOSITORY" --clobber
 
   build-and-push-docker:
-    needs: build-and-attach-binaries
+    needs: [prepare, build-and-attach-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -173,17 +179,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Derive Docker version tag
-        shell: bash
-        run: echo "DOCKER_VERSION=${RELEASE_TAG%%-*}" >> "$GITHUB_ENV"
-
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ env.DOCKER_VERSION }}
+            type=raw,value=${{ needs.prepare.outputs.version }}
             type=raw,value=latest
 
       - name: Build and push Docker image
@@ -197,22 +199,13 @@ jobs:
           no-cache: true
           provenance: false
 
-  remove-legacy-release:
-    needs: build-and-push-docker
+  update-release-notes:
+    needs: [prepare, build-and-push-docker]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
-      - name: Remove legacy suffixed release tag
+      - name: Generate release notes
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         shell: bash
-        run: |
-          if [ "$RELEASE_TAG" = "2.0.2" ] && \
-            gh release view "2.0.2-27gd189" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release delete "2.0.2-27gd189" \
-              --repo "$GITHUB_REPOSITORY" \
-              --cleanup-tag \
-              --yes
-          fi
+        run: gh workflow run generate-release-notes.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$VERSION"

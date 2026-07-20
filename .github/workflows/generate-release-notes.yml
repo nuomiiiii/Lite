@@ -32,7 +32,7 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const webRepo = { owner: "komari-monitor", repo: "komari-web" };
+            const webRepo = { owner, repo: "komari-web" };
 
             const AI_CONTEXT_CHAR_LIMIT = 120000;
             const AI_MAX_COMMITS = 160;
@@ -232,6 +232,54 @@ jobs:
                 : (commit.commit.author?.name ? ` ${commit.commit.author.name}` : "");
 
               return `- ${subject} ([${shortSha}](${commit.html_url}))${author}`;
+            }
+
+            function buildFallbackReleaseSummary(comparison) {
+              const groups = { main: [], bugfix: [], other: [] };
+              const prefixPattern = /^(?:feat|fix|hotfix|perf|refactor|build|ci|chore|docs|test|style|revert)(?:\([^)]+\))?!?:\s*/i;
+
+              for (const commit of comparison.commits) {
+                const subject = clean(commit.commit.message.split("\n")[0]);
+                if (!subject || /^merge\b/i.test(subject)) {
+                  continue;
+                }
+
+                const item = {
+                  commit,
+                  subject: subject.replace(prefixPattern, "") || subject,
+                };
+
+                if (/^(?:fix|hotfix)(?:\(|!|:)/i.test(subject) || /修复/.test(subject)) {
+                  groups.bugfix.push(item);
+                } else if (/^(?:build|ci|chore|docs|test|style|refactor|revert)(?:\(|!|:)/i.test(subject)) {
+                  groups.other.push(item);
+                } else {
+                  groups.main.push(item);
+                }
+              }
+
+              const sections = [];
+              const appendGroup = (heading, items) => {
+                if (!items.length) {
+                  return;
+                }
+
+                const lines = [heading, ""];
+                for (const item of items.slice(0, 40)) {
+                  const shortSha = item.commit.sha.slice(0, 7);
+                  lines.push(`- ${item.subject} ([${shortSha}](${item.commit.html_url}))`);
+                }
+                if (items.length > 40) {
+                  lines.push(`- 另有 ${items.length - 40} 项变更，详见下方完整提交列表。`);
+                }
+                sections.push(lines.join("\n"));
+              };
+
+              appendGroup("## 主要更新内容", groups.main);
+              appendGroup("## Bug修复", groups.bugfix);
+              appendGroup("## 其他", groups.other);
+
+              return sections.join("\n\n");
             }
 
             function buildWhatsChangedSection(baseRef, tag, comparison) {
@@ -462,8 +510,8 @@ jobs:
               const model = clean(process.env.OPENAI_MODEL);
 
               if (!apiKey || !baseUrl || !model) {
-                core.warning("OPENAI_API_KEY, OPENAI_BASE_URL, or OPENAI_MODEL is missing. Skipping generated release summary.");
-                return "";
+                core.info("OpenAI release-note settings are unavailable; using deterministic commit categories.");
+                return buildFallbackReleaseSummary(comparison);
               }
 
               const pullRequests = await getPullRequestContext(comparison.commits);
@@ -512,7 +560,7 @@ jobs:
                 return normalizeReleaseSummary(summary);
               } catch (error) {
                 core.warning(`Generated release summary failed: ${error.message}`);
-                return "";
+                return buildFallbackReleaseSummary(comparison);
               }
             }
 

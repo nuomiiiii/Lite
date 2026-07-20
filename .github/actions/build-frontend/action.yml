@@ -4,7 +4,7 @@ description: Clone komari-web, build the default theme, and optionally upload it
 inputs:
   node-version:
     description: Node.js version used to build komari-web.
-    default: "23"
+    default: "24"
   repository:
     description: komari-web repository URL.
     default: https://github.com/nuomiiiii/komari-web

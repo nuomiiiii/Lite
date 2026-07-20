@@ -1,40 +1,135 @@
 name: Publish Stable Release
 
 on:
-  push:
-    tags:
-      - "2.0.2"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Stable version number, for example 2.0.3
+        required: true
+        type: string
+      version_hash:
+        description: Optional seven-character identifier. Leave empty to generate one.
+        required: false
+        type: string
+      target_ref:
+        description: Git ref to release
+        required: true
+        default: main
+        type: string
+      web_ref:
+        description: Branch or tag in nuomiiiii/komari-web
+        required: true
+        default: komari-2.0.2-27gd189
+        type: string
 
 permissions:
   actions: write
   contents: write
 
+concurrency:
+  group: stable-release-${{ inputs.version }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - name: Create GitHub release
+      - name: Checkout release target
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref }}
+          fetch-depth: 0
+
+      - name: Prepare version metadata
+        id: metadata
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          REQUESTED_HASH: ${{ inputs.version_hash }}
+          WEB_REF: ${{ inputs.web_ref }}
+        shell: bash
         run: |
-          TAG="2.0.2"
-          if ! gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release create "${TAG}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --target "${GITHUB_SHA}" \
-              --title "2.0.2 (27gd189)" \
+          set -euo pipefail
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must contain only three numeric components, for example 2.0.3." >&2
+            exit 1
+          fi
+
+          VERSION_HASH="$REQUESTED_HASH"
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            EXISTING_NAME="$(gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json name --jq .name)"
+            if [ -z "$VERSION_HASH" ] && [[ "$EXISTING_NAME" =~ \(([A-Za-z0-9]{7})\)$ ]]; then
+              VERSION_HASH="${BASH_REMATCH[1]}"
+            fi
+          fi
+
+          if [ -z "$VERSION_HASH" ]; then
+            VERSION_HASH="$(node -e 'const c=require("crypto"),a="abcdefghijklmnopqrstuvwxyz0123456789";let s;do{s=Array.from(c.randomBytes(7),b=>a[b%a.length]).join("")}while(!/[a-z]/.test(s)||!/[0-9]/.test(s));process.stdout.write(s)')"
+          fi
+
+          if [[ ! "$VERSION_HASH" =~ ^[A-Za-z0-9]{7}$ ]]; then
+            echo "Version identifier must contain exactly seven letters or digits." >&2
+            exit 1
+          fi
+
+          if [ -z "$WEB_REF" ]; then
+            echo "Komari Web ref cannot be empty." >&2
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_hash=$VERSION_HASH" >> "$GITHUB_OUTPUT"
+          echo "web_ref=$WEB_REF" >> "$GITHUB_OUTPUT"
+          echo "Release display version: $VERSION ($VERSION_HASH)"
+
+      - name: Create version-only tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          VERSION_HASH: ${{ steps.metadata.outputs.version_hash }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGET_SHA="$(git rev-parse HEAD)"
+          if git rev-parse "refs/tags/$VERSION" >/dev/null 2>&1; then
+            TAG_SHA="$(git rev-list -n 1 "$VERSION")"
+            if [ "$TAG_SHA" != "$TARGET_SHA" ]; then
+              echo "Tag $VERSION already points to $TAG_SHA instead of $TARGET_SHA." >&2
+              exit 1
+            fi
+          else
+            git tag "$VERSION" "$TARGET_SHA"
+            git push origin "refs/tags/$VERSION"
+          fi
+
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$VERSION ($VERSION_HASH)" \
+              --latest
+          else
+            gh release create "$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$TARGET_SHA" \
+              --title "$VERSION ($VERSION_HASH)" \
               --generate-notes \
+              --latest \
               --verify-tag
           fi
 
-          DOCKER_VERSION="${TAG%%-*}"
-          if docker manifest inspect "ghcr.io/${GITHUB_REPOSITORY}:${DOCKER_VERSION}" >/dev/null 2>&1; then
-            echo "Docker image tag ${DOCKER_VERSION} already exists; no build dispatch needed."
-            exit 0
-          fi
-
+      - name: Build release assets and Docker image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          VERSION_HASH: ${{ steps.metadata.outputs.version_hash }}
+          WEB_REF: ${{ steps.metadata.outputs.web_ref }}
+        shell: bash
+        run: |
           gh workflow run release.yml \
-            --repo "${GITHUB_REPOSITORY}" \
-            --ref "${TAG}" \
-            -f tag="${TAG}" \
-            -f version_hash="27gd189"
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$VERSION" \
+            -f tag="$VERSION" \
+            -f version_hash="$VERSION_HASH" \
+            -f web_ref="$WEB_REF"
