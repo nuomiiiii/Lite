@@ -132,7 +132,7 @@ jobs:
             BINARY_NAME=${BINARY_NAME}.exe
           fi
           # Upload the binary as a release asset using GitHub CLI
-          gh release upload "${{ env.RELEASE_TAG }}" "$BINARY_NAME" --repo "${{ github.repository }}"
+          gh release upload "${{ env.RELEASE_TAG }}" "$BINARY_NAME" --repo "${{ github.repository }}" --clobber
         shell: bash
 
   build-and-push-docker:
@@ -166,13 +166,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Derive Docker version tag
+        shell: bash
+        run: echo "DOCKER_VERSION=${RELEASE_TAG%%-*}" >> "$GITHUB_ENV"
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ env.RELEASE_TAG }}
+            type=raw,value=${{ env.DOCKER_VERSION }}
             type=raw,value=latest
 
       - name: Build and push Docker image

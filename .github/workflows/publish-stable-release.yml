@@ -32,9 +32,9 @@ jobs:
               --verify-tag
           fi
 
-          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" \
-            --json assets --jq '.assets[].name' | grep -Fxq 'komari-linux-amd64'; then
-            echo "Release assets already exist; no build dispatch needed."
+          DOCKER_VERSION="${TAG%%-*}"
+          if docker manifest inspect "ghcr.io/${GITHUB_REPOSITORY}:${DOCKER_VERSION}" >/dev/null 2>&1; then
+            echo "Docker image tag ${DOCKER_VERSION} already exists; no build dispatch needed."
             exit 0
           fi
 
