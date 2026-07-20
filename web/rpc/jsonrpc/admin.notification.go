@@ -33,6 +33,7 @@ func init() {
 	reg("listPingLossNotifications", adminListPingLossNotifications, "List ping loss notifications")
 	reg("addPingLossNotification", adminAddPingLossNotification, "Create a ping loss notification")
 	reg("editPingLossNotifications", adminEditPingLossNotifications, "Edit ping loss notifications")
+	reg("upsertPingLossNotifications", adminUpsertPingLossNotifications, "Create or edit ping loss notifications in a batch")
 	reg("deletePingLossNotifications", adminDeletePingLossNotifications, "Delete ping loss notifications")
 }
 
@@ -249,6 +250,19 @@ func adminEditPingLossNotifications(_ context.Context, req *rpc.JsonRpcRequest) 
 		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid request body: "+err.Error(), nil)
 	}
 	if err := notification.EditPingLossNotifications(params.Notifications); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return nil, nil
+}
+
+func adminUpsertPingLossNotifications(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		Notifications []*models.PingLossNotification `json:"notifications"`
+	}
+	if err := req.BindParams(&params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid request body: "+err.Error(), nil)
+	}
+	if err := notification.UpsertPingLossNotifications(params.Notifications); err != nil {
 		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
 	}
 	return nil, nil

@@ -28,6 +28,14 @@ type pingLossStats struct {
 	Lost  int64
 }
 
+type pingLossNotificationAction uint8
+
+const (
+	pingLossNotificationNone pingLossNotificationAction = iota
+	pingLossNotificationAlert
+	pingLossNotificationRecovery
+)
+
 func (stats pingLossStats) LossRate() float64 {
 	if stats.Total == 0 {
 		return 0
@@ -73,17 +81,21 @@ func CheckPingLossNotifications() {
 			log.Printf("Failed to compute ping loss for notification %d: %v", notification.Id, err)
 			continue
 		}
-		if !shouldNotifyPingLoss(notification, stats, now) {
+		action := evaluatePingLossNotification(notification, stats, now)
+		if action == pingLossNotificationNone {
 			continue
 		}
 
-		if err := sendPingLossNotification(notification, stats, now); err != nil {
+		if err := sendPingLossNotification(notification, stats, now, action); err != nil {
 			log.Printf("Failed to send ping loss notification %d: %v", notification.Id, err)
 			continue
 		}
 		if err := db.Model(&models.PingLossNotification{}).
 			Where("id = ?", notification.Id).
-			Update("last_notified", now).Error; err != nil {
+			Updates(map[string]any{
+				"last_notified": now,
+				"alert_active":  action == pingLossNotificationAlert,
+			}).Error; err != nil {
 			log.Printf("Failed to update ping loss notification %d: %v", notification.Id, err)
 		}
 	}
@@ -132,20 +144,23 @@ func pingLossStatsFromPoints(points []metric.AggregatePoint) pingLossStats {
 	return stats
 }
 
-func shouldNotifyPingLoss(notification models.PingLossNotification, stats pingLossStats, now time.Time) bool {
+func evaluatePingLossNotification(notification models.PingLossNotification, stats pingLossStats, now time.Time) pingLossNotificationAction {
 	if !notification.Enable || stats.Total < int64(notification.MinimumSamples) {
-		return false
+		return pingLossNotificationNone
 	}
 	if stats.LossRate() <= notification.LossThreshold {
-		return false
+		if notification.AlertActive {
+			return pingLossNotificationRecovery
+		}
+		return pingLossNotificationNone
 	}
-	if notification.LastNotified != nil && now.Before(notification.LastNotified.Add(time.Duration(notification.CooldownSeconds)*time.Second)) {
-		return false
+	if notification.AlertActive && notification.LastNotified != nil && now.Before(notification.LastNotified.Add(time.Duration(notification.CooldownSeconds)*time.Second)) {
+		return pingLossNotificationNone
 	}
-	return true
+	return pingLossNotificationAlert
 }
 
-func formatPingLossMessage(notification models.PingLossNotification, stats pingLossStats) string {
+func formatPingLossMessage(notification models.PingLossNotification, stats pingLossStats, action pingLossNotificationAction) string {
 	clientName := strings.TrimSpace(notification.ClientInfo.Name)
 	if clientName == "" {
 		clientName = notification.Client
@@ -158,11 +173,15 @@ func formatPingLossMessage(notification models.PingLossNotification, stats pingL
 	if target == "" {
 		target = "-"
 	}
+	heading := "延迟监测异常"
+	if action == pingLossNotificationRecovery {
+		heading = "延迟监测恢复"
+	}
 	return fmt.Sprintf(
-		"延迟检测异常\n服务器：%s\n检测任务：%s (#%d)\n检测目标：%s\n统计窗口：最近 %s\n丢包：%.2f%%（%d/%d）\n告警阈值：%.2f%%",
+		"%s\n服务器：%s\n检测任务：%s\n检测目标：%s\n统计窗口：最近 %s\n丢包：%.2f%%（%d/%d）\n告警阈值：%.2f%%",
+		heading,
 		clientName,
 		taskName,
-		notification.TaskId,
 		target,
 		formatPingLossWindow(notification.WindowSeconds),
 		stats.LossRate(),
@@ -172,17 +191,21 @@ func formatPingLossMessage(notification models.PingLossNotification, stats pingL
 	)
 }
 
-func sendPingLossNotification(notification models.PingLossNotification, stats pingLossStats, now time.Time) error {
+func sendPingLossNotification(notification models.PingLossNotification, stats pingLossStats, now time.Time, action pingLossNotificationAction) error {
 	client := notification.ClientInfo
 	if client.UUID == "" {
 		client.UUID = notification.Client
+	}
+	emoji := "⚠️"
+	if action == pingLossNotificationRecovery {
+		emoji = "✅"
 	}
 	return messageSender.SendEvent(models.EventMessage{
 		Event:   messageevent.PingLoss,
 		Clients: []models.Client{client},
 		Time:    now,
-		Emoji:   "⚠️",
-		Message: formatPingLossMessage(notification, stats),
+		Emoji:   emoji,
+		Message: formatPingLossMessage(notification, stats, action),
 	})
 }
 

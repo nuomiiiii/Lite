@@ -1,6 +1,7 @@
 package notification
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/komari-monitor/komari/database/dbcore"
@@ -56,10 +57,23 @@ func AddPingLossNotification(notification models.PingLossNotification) (uint, er
 	}
 	notification.Id = 0
 	notification.LastNotified = nil
+	notification.AlertActive = false
 	if err := db.Create(&notification).Error; err != nil {
 		return 0, err
 	}
 	return notification.Id, nil
+}
+
+func pingLossNotificationUpdates(notification *models.PingLossNotification) map[string]any {
+	return map[string]any{
+		"client":           notification.Client,
+		"task_id":          notification.TaskId,
+		"enable":           notification.Enable,
+		"window_seconds":   notification.WindowSeconds,
+		"loss_threshold":   notification.LossThreshold,
+		"minimum_samples":  notification.MinimumSamples,
+		"cooldown_seconds": notification.CooldownSeconds,
+	}
 }
 
 func EditPingLossNotifications(notifications []*models.PingLossNotification) error {
@@ -78,21 +92,63 @@ func EditPingLossNotifications(notifications []*models.PingLossNotification) err
 			if err := validatePingLossTarget(tx, *notification); err != nil {
 				return err
 			}
-			updates := map[string]any{
-				"client":           notification.Client,
-				"task_id":          notification.TaskId,
-				"enable":           notification.Enable,
-				"window_seconds":   notification.WindowSeconds,
-				"loss_threshold":   notification.LossThreshold,
-				"minimum_samples":  notification.MinimumSamples,
-				"cooldown_seconds": notification.CooldownSeconds,
-			}
-			result := tx.Model(&models.PingLossNotification{}).Where("id = ?", notification.Id).Updates(updates)
+			result := tx.Model(&models.PingLossNotification{}).Where("id = ?", notification.Id).Updates(pingLossNotificationUpdates(notification))
 			if result.Error != nil {
 				return result.Error
 			}
 			if result.RowsAffected == 0 {
 				return gorm.ErrRecordNotFound
+			}
+		}
+		return nil
+	})
+}
+
+// UpsertPingLossNotifications applies one or more target-specific alert
+// configurations atomically. Existing targets keep their notification history.
+func UpsertPingLossNotifications(notifications []*models.PingLossNotification) error {
+	return upsertPingLossNotifications(dbcore.GetDBInstance(), notifications)
+}
+
+func upsertPingLossNotifications(db *gorm.DB, notifications []*models.PingLossNotification) error {
+	if len(notifications) == 0 {
+		return fmt.Errorf("at least one notification is required")
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, notification := range notifications {
+			if notification == nil {
+				return fmt.Errorf("notification cannot be null")
+			}
+			if err := ValidatePingLossNotification(*notification); err != nil {
+				return err
+			}
+			if err := validatePingLossTarget(tx, *notification); err != nil {
+				return err
+			}
+
+			var existing models.PingLossNotification
+			err := tx.Select("id").Where(
+				"client = ? AND task_id = ?",
+				notification.Client,
+				notification.TaskId,
+			).First(&existing).Error
+			switch {
+			case err == nil:
+				if err := tx.Model(&models.PingLossNotification{}).
+					Where("id = ?", existing.Id).
+					Updates(pingLossNotificationUpdates(notification)).Error; err != nil {
+					return err
+				}
+			case errors.Is(err, gorm.ErrRecordNotFound):
+				candidate := *notification
+				candidate.Id = 0
+				candidate.LastNotified = nil
+				candidate.AlertActive = false
+				if err := tx.Create(&candidate).Error; err != nil {
+					return err
+				}
+			default:
+				return err
 			}
 		}
 		return nil

@@ -47,4 +47,5 @@ type PingLossNotification struct {
 	MinimumSamples  int        `json:"minimum_samples" gorm:"type:int;not null;default:1"`
 	CooldownSeconds int        `json:"cooldown_seconds" gorm:"type:int;not null;default:300"`
 	LastNotified    *time.Time `json:"last_notified"`
+	AlertActive     bool       `json:"alert_active" gorm:"type:boolean;not null;default:false"`
 }

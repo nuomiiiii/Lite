@@ -219,6 +219,7 @@ func registerAdminRoutes(r *gin.Engine) {
 			pingLoss.GET("/", jsonRpc.Bind("admin:listPingLossNotifications"))
 			pingLoss.POST("/add", jsonRpc.Bind("admin:addPingLossNotification"))
 			pingLoss.POST("/edit", jsonRpc.Bind("admin:editPingLossNotifications"))
+			pingLoss.POST("/batch", jsonRpc.Bind("admin:upsertPingLossNotifications"))
 			pingLoss.POST("/delete", jsonRpc.Bind("admin:deletePingLossNotifications"))
 		}
 	}
