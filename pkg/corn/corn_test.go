@@ -33,3 +33,20 @@ func TestEverySchedulePreservesElapsedDuration(t *testing.T) {
 		t.Fatalf("interval = %s, want 90s", got.Sub(after))
 	}
 }
+
+func TestCronScheduleCanUseExplicitLocation(t *testing.T) {
+	originalLocal := time.Local
+	time.Local = time.FixedZone("UTC-7", -7*60*60)
+	t.Cleanup(func() { time.Local = originalLocal })
+
+	beijing := time.FixedZone("Asia/Shanghai", 8*60*60)
+	schedule, err := ParseInLocation("0 30 9 * * *", beijing)
+	if err != nil {
+		t.Fatalf("parse schedule: %v", err)
+	}
+	after := time.Date(2026, 7, 17, 1, 29, 59, 0, time.UTC)
+	want := time.Date(2026, 7, 17, 1, 30, 0, 0, time.UTC)
+	if got := schedule.Next(after); !got.Equal(want) {
+		t.Fatalf("next run = %s, want %s", got, want)
+	}
+}

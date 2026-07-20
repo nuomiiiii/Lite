@@ -31,12 +31,13 @@ func (s everySchedule) Next(t time.Time) time.Time {
 }
 
 type cronSchedule struct {
-	seconds map[int]struct{}
-	minutes map[int]struct{}
-	hours   map[int]struct{}
-	dom     map[int]struct{}
-	months  map[int]struct{}
-	dow     map[int]struct{}
+	seconds  map[int]struct{}
+	minutes  map[int]struct{}
+	hours    map[int]struct{}
+	dom      map[int]struct{}
+	months   map[int]struct{}
+	dow      map[int]struct{}
+	location *time.Location
 }
 
 func (s cronSchedule) Next(t time.Time) time.Time {
@@ -52,7 +53,11 @@ func (s cronSchedule) Next(t time.Time) time.Time {
 }
 
 func (s cronSchedule) match(t time.Time) bool {
-	t = t.In(time.Local)
+	location := s.location
+	if location == nil {
+		location = time.Local
+	}
+	t = t.In(location)
 	_, okSecond := s.seconds[t.Second()]
 	_, okMinute := s.minutes[t.Minute()]
 	_, okHour := s.hours[t.Hour()]
@@ -84,6 +89,11 @@ func AddContextFunc(name string, spec string, runImmediately bool, fn Func) erro
 	return defaultManager.AddContextFunc(name, spec, runImmediately, fn)
 }
 
+// AddFuncInLocation registers a cron job evaluated in the supplied wall-clock timezone.
+func AddFuncInLocation(name string, spec string, location *time.Location, fn func()) error {
+	return defaultManager.AddContextFuncInLocation(name, spec, location, false, func(context.Context) { fn() })
+}
+
 func Every(duration time.Duration) string {
 	return "@every " + duration.String()
 }
@@ -105,10 +115,14 @@ func (m *Manager) AddFunc(name string, spec string, fn func()) error {
 }
 
 func (m *Manager) AddContextFunc(name string, spec string, runImmediately bool, fn Func) error {
+	return m.AddContextFuncInLocation(name, spec, time.Local, runImmediately, fn)
+}
+
+func (m *Manager) AddContextFuncInLocation(name string, spec string, location *time.Location, runImmediately bool, fn Func) error {
 	if name == "" {
 		return fmt.Errorf("corn job name is empty")
 	}
-	s, err := Parse(spec)
+	s, err := ParseInLocation(spec, location)
 	if err != nil {
 		return fmt.Errorf("corn job %q spec is invalid: %w", name, err)
 	}
@@ -223,6 +237,14 @@ func safeRun(ctx context.Context, name string, fn Func) {
 //
 // 字段支持 *、*/n、a-b、a-b/n、逗号列表和具体数字。
 func Parse(spec string) (schedule, error) {
+	return ParseInLocation(spec, time.Local)
+}
+
+// ParseInLocation parses a cron expression using location for calendar fields.
+func ParseInLocation(spec string, location *time.Location) (schedule, error) {
+	if location == nil {
+		return nil, fmt.Errorf("location is nil")
+	}
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
 		return nil, fmt.Errorf("empty spec")
@@ -275,7 +297,7 @@ func Parse(spec string) (schedule, error) {
 		delete(dow, 7)
 	}
 
-	return cronSchedule{seconds: seconds, minutes: minutes, hours: hours, dom: dom, months: months, dow: dow}, nil
+	return cronSchedule{seconds: seconds, minutes: minutes, hours: hours, dom: dom, months: months, dow: dow, location: location}, nil
 }
 
 func parseField(field string, min int, max int) (map[int]struct{}, error) {

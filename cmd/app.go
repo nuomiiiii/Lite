@@ -365,6 +365,15 @@ func (a *App) registerReloadHandlers(cors *security.CorsController) {
 		}
 	})
 
+	// 流量报告发送时间切换（固定按北京时间解释）。
+	a.reload.Register("traffic-report-schedule", func(event config.ConfigEvent) {
+		if event.IsChanged(config.TrafficReportTimeKey) {
+			if err := notifier.ReloadTrafficReportSchedule(); err != nil {
+				log.Printf("Failed to reload traffic report schedule: %v", err)
+			}
+		}
+	})
+
 	// CORS 配置热更新。
 	a.reload.Register("cors", func(event config.ConfigEvent) {
 		cors.Update(event)

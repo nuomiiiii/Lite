@@ -10,7 +10,7 @@
 - Node.js 24
 - Zig 0.14.1（用于 CGO/SQLite 编译）
 
-后端仓库位于 `komari`，前端仓库位于同级目录 `komari-web`。前端当前使用分支 `komari-2.0.2-27gd189`。
+后端仓库位于 `komari`，前端仓库位于同级目录 `komari-web`。前端当前使用分支 `komari-2.0.3`。
 
 ## 常用命令
 

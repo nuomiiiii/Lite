@@ -8,12 +8,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPreviousTrafficReportRangesUseSystemTimezone(t *testing.T) {
+func TestPreviousTrafficReportRangesUseBeijingTimezone(t *testing.T) {
 	originalLocal := time.Local
-	time.Local = time.FixedZone("UTC+8", 8*60*60)
+	time.Local = time.FixedZone("UTC-7", -7*60*60)
 	t.Cleanup(func() { time.Local = originalLocal })
 
-	now := time.Date(2026, 6, 30, 16, 0, 0, 0, time.UTC) // 2026-07-01 00:00 local
+	now := time.Date(2026, 6, 30, 16, 0, 0, 0, time.UTC) // 2026-07-01 00:00 Beijing
 	tests := []struct {
 		period    string
 		wantStart time.Time
@@ -49,19 +49,11 @@ func TestPreviousTrafficReportRangesUseSystemTimezone(t *testing.T) {
 	}
 }
 
-func TestPreviousDailyTrafficReportRangeHandlesDST(t *testing.T) {
-	location, err := time.LoadLocation("America/New_York")
-	if err != nil {
-		t.Skipf("timezone database unavailable: %v", err)
-	}
-	originalLocal := time.Local
-	time.Local = location
-	t.Cleanup(func() { time.Local = originalLocal })
-
-	now := time.Date(2026, 3, 9, 4, 0, 0, 0, time.UTC) // 2026-03-09 00:00 EDT
+func TestPreviousDailyTrafficReportRangeIsAlwaysTwentyFourHours(t *testing.T) {
+	now := time.Date(2026, 3, 9, 4, 0, 0, 0, time.UTC)
 	start, end := previousTrafficReportRange(now, "daily")
-	if got := end.Add(time.Nanosecond).Sub(start); got != 23*time.Hour {
-		t.Fatalf("DST day duration = %s, want 23h", got)
+	if got := end.Add(time.Nanosecond).Sub(start); got != 24*time.Hour {
+		t.Fatalf("Beijing calendar day duration = %s, want 24h", got)
 	}
 }
 
@@ -129,11 +121,34 @@ func TestFormatTrafficReportLineSeparatesDirections(t *testing.T) {
 	line := formatTrafficReportLine(models.Client{Name: "server-a"}, "昨日流量", trafficUsage{
 		Up:   1024,
 		Down: 2 * 1024,
-	})
+	}, true, false)
 	assert.Equal(t, "server-a 昨日流量：上行 1.00 KB，下行 2.00 KB", line)
 
-	line = formatTrafficReportLine(models.Client{UUID: "client-a"}, "上周流量", trafficUsage{})
+	line = formatTrafficReportLine(models.Client{UUID: "client-a"}, "上周流量", trafficUsage{}, true, false)
 	assert.Equal(t, "client-a 上周流量：上行 0 B，下行 0 B", line)
+}
+
+func TestCurrentDailyTrafficReportRangeUsesBeijingMidnightThroughNow(t *testing.T) {
+	now := time.Date(2026, 7, 20, 7, 45, 12, 0, time.UTC) // 15:45:12 Beijing
+	start, end := currentDailyTrafficReportRange(now)
+	wantStart := time.Date(2026, 7, 19, 16, 0, 0, 0, time.UTC)
+	if !start.Equal(wantStart) || !end.Equal(now) {
+		t.Fatalf("range = [%s, %s], want [%s, %s]", start, end, wantStart, now)
+	}
+}
+
+func TestFormatTrafficReportLineSupportsBillingAndCombinedContent(t *testing.T) {
+	client := models.Client{Name: "server-a", TrafficLimitType: "sum"}
+	usage := trafficUsage{Up: 1024, Down: 2 * 1024}
+
+	assert.Equal(t,
+		"server-a 昨日流量：计费流量 3.00 KB（sum）",
+		formatTrafficReportLine(client, "昨日流量", usage, false, true),
+	)
+	assert.Equal(t,
+		"server-a 昨日流量：上行 1.00 KB，下行 2.00 KB，计费流量 3.00 KB（sum）",
+		formatTrafficReportLine(client, "昨日流量", usage, true, true),
+	)
 }
 
 func TestSumTrafficDeltasIgnoresTransientCounterRollback(t *testing.T) {

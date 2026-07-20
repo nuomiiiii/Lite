@@ -13,7 +13,7 @@ import (
 const (
 	dailyReportRetentionDays   = 2
 	weeklyReportRetentionDays  = 8
-	monthlyReportRetentionDays = 32
+	monthlyReportRetentionDays = 35
 )
 
 func validateTrafficReportNotification(notification models.TrafficReportNotification) error {
@@ -22,6 +22,9 @@ func validateTrafficReportNotification(notification models.TrafficReportNotifica
 	}
 	if notification.Enable && !notification.Daily && !notification.Weekly && !notification.Monthly {
 		return fmt.Errorf("at least one cadence must be selected when enabling traffic reports")
+	}
+	if notification.Enable && !notification.IncludeTraffic && !notification.IncludeBilling {
+		return fmt.Errorf("at least one report content type must be selected when enabling traffic reports")
 	}
 	return nil
 }
@@ -54,6 +57,9 @@ func buildEnabledTrafficReportNotifications(uuids []string, existing []models.Tr
 		if !ok || (!existingNotification.Daily && !existingNotification.Weekly && !existingNotification.Monthly) {
 			return nil, fmt.Errorf("at least one cadence must be selected when enabling traffic reports")
 		}
+		if !existingNotification.IncludeTraffic && !existingNotification.IncludeBilling {
+			return nil, fmt.Errorf("at least one report content type must be selected when enabling traffic reports")
+		}
 		notifications = append(notifications, models.TrafficReportNotification{
 			Client: uuid,
 			Enable: true,
@@ -80,9 +86,9 @@ func EditTrafficReportNotifications(notifications []models.TrafficReportNotifica
 	if err := db.Model(&models.TrafficReportNotification{}).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "client"}},
-			DoUpdates: clause.AssignmentColumns([]string{"enable", "daily", "weekly", "monthly"}),
+			DoUpdates: clause.AssignmentColumns([]string{"enable", "daily", "weekly", "monthly", "include_traffic", "include_billing"}),
 		}).
-		Select("client", "enable", "daily", "weekly", "monthly").
+		Select("client", "enable", "daily", "weekly", "monthly", "include_traffic", "include_billing").
 		Create(notifications).Error; err != nil {
 		return err
 	}

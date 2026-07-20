@@ -11,8 +11,19 @@ import (
 
 func TestValidateTrafficReportNotificationsRejectsEnabledWithoutCadence(t *testing.T) {
 	err := ValidateTrafficReportNotifications([]models.TrafficReportNotification{{
+		Client:         "client-a",
+		Enable:         true,
+		IncludeTraffic: true,
+	}})
+
+	assert.Error(t, err)
+}
+
+func TestValidateTrafficReportNotificationsRejectsEnabledWithoutContent(t *testing.T) {
+	err := ValidateTrafficReportNotifications([]models.TrafficReportNotification{{
 		Client: "client-a",
 		Enable: true,
+		Daily:  true,
 	}})
 
 	assert.Error(t, err)
@@ -26,8 +37,9 @@ func TestBuildEnabledTrafficReportNotificationsRequiresExistingCadence(t *testin
 	assert.Error(t, err)
 
 	notifications, err := buildEnabledTrafficReportNotifications([]string{"client-a"}, []models.TrafficReportNotification{{
-		Client: "client-a",
-		Daily:  true,
+		Client:         "client-a",
+		Daily:          true,
+		IncludeTraffic: true,
 	}})
 	require.NoError(t, err)
 	require.Len(t, notifications, 1)
@@ -74,7 +86,7 @@ func TestRequiredTrafficReportRetentionDays(t *testing.T) {
 				Weekly:  true,
 				Monthly: true,
 			}},
-			want: 32,
+			want: 35,
 		},
 	}
 

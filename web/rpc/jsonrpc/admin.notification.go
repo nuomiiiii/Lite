@@ -7,6 +7,7 @@ import (
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/notification"
 	"github.com/komari-monitor/komari/pkg/rpc"
+	"github.com/komari-monitor/komari/utils/notifier"
 	"gorm.io/gorm/clause"
 )
 
@@ -29,6 +30,7 @@ func init() {
 	reg("editTrafficReportNotifications", adminEditTrafficReport, "Edit traffic report notifications")
 	reg("enableTrafficReportNotifications", adminEnableTrafficReport, "Enable traffic report notifications")
 	reg("disableTrafficReportNotifications", adminDisableTrafficReport, "Disable traffic report notifications")
+	reg("sendDailyTrafficReport", adminSendDailyTrafficReport, "Send the daily traffic report immediately")
 	// ping loss notifications
 	reg("listPingLossNotifications", adminListPingLossNotifications, "List ping loss notifications")
 	reg("addPingLossNotification", adminAddPingLossNotification, "Create a ping loss notification")
@@ -220,6 +222,14 @@ func adminDisableTrafficReport(_ context.Context, req *rpc.JsonRpcRequest) (any,
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to disable traffic report notifications: "+err.Error(), nil)
 	}
 	return nil, nil
+}
+
+func adminSendDailyTrafficReport(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	result, err := notifier.SendDailyTrafficReportNow()
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, "Failed to send daily traffic report: "+err.Error(), nil)
+	}
+	return result, nil
 }
 
 func adminListPingLossNotifications(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
