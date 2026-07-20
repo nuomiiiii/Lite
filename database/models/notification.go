@@ -33,3 +33,18 @@ type TrafficReportNotification struct {
 	Weekly     bool   `json:"weekly" gorm:"type:boolean;default:false"`  // 周报
 	Monthly    bool   `json:"monthly" gorm:"type:boolean;default:false"` // 月报
 }
+
+// PingLossNotification defines packet-loss alerts for one client and ping task.
+type PingLossNotification struct {
+	Id              uint       `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
+	Client          string     `json:"client" gorm:"type:varchar(36);not null;uniqueIndex:idx_ping_loss_notification_target"`
+	ClientInfo      Client     `json:"client_info,omitempty" gorm:"foreignKey:Client;references:UUID;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
+	TaskId          uint       `json:"task_id" gorm:"not null;uniqueIndex:idx_ping_loss_notification_target"`
+	Task            PingTask   `json:"task,omitempty" gorm:"foreignKey:TaskId;references:Id;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
+	Enable          bool       `json:"enable" gorm:"type:boolean;default:false"`
+	WindowSeconds   int        `json:"window_seconds" gorm:"type:int;not null;default:60"`
+	LossThreshold   float64    `json:"loss_threshold" gorm:"type:decimal(5,2);not null;default:5.00"`
+	MinimumSamples  int        `json:"minimum_samples" gorm:"type:int;not null;default:1"`
+	CooldownSeconds int        `json:"cooldown_seconds" gorm:"type:int;not null;default:300"`
+	LastNotified    *time.Time `json:"last_notified"`
+}

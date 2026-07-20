@@ -465,7 +465,11 @@ func registerScheduledWork() {
 		log.Println("Failed to add expire notification scheduled task:", err)
 	}
 
+	if err := d_notification.EnsureTrafficReportMetricRetention(context.Background()); err != nil {
+		log.Printf("Failed to ensure traffic report metric retention: %v", err)
+	}
 	notifier.InitTrafficReportSchedule()
+	notifier.InitPingLossNotificationSchedule()
 }
 
 const taskResultRetentionDays = 30

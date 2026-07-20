@@ -11,7 +11,7 @@ import (
 )
 
 // admin.notification.go
-// 通知相关 RPC2 方法（admin 命名空间）：负载告警、离线通知、流量报告。
+// 通知相关 RPC2 方法（admin 命名空间）：负载告警、离线通知、流量报告、丢包告警。
 
 func init() {
 	// load notifications
@@ -29,6 +29,11 @@ func init() {
 	reg("editTrafficReportNotifications", adminEditTrafficReport, "Edit traffic report notifications")
 	reg("enableTrafficReportNotifications", adminEnableTrafficReport, "Enable traffic report notifications")
 	reg("disableTrafficReportNotifications", adminDisableTrafficReport, "Disable traffic report notifications")
+	// ping loss notifications
+	reg("listPingLossNotifications", adminListPingLossNotifications, "List ping loss notifications")
+	reg("addPingLossNotification", adminAddPingLossNotification, "Create a ping loss notification")
+	reg("editPingLossNotifications", adminEditPingLossNotifications, "Edit ping loss notifications")
+	reg("deletePingLossNotifications", adminDeletePingLossNotifications, "Delete ping loss notifications")
 }
 
 // reg 是 admin 命名空间方法的注册便捷封装。
@@ -212,6 +217,52 @@ func adminDisableTrafficReport(_ context.Context, req *rpc.JsonRpcRequest) (any,
 	}
 	if err := notification.DisableTrafficReportNotifications(uuids); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to disable traffic report notifications: "+err.Error(), nil)
+	}
+	return nil, nil
+}
+
+func adminListPingLossNotifications(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	list, err := notification.ListPingLossNotifications()
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, "Failed to list ping loss notifications: "+err.Error(), nil)
+	}
+	return list, nil
+}
+
+func adminAddPingLossNotification(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params models.PingLossNotification
+	if err := req.BindParams(&params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid request body: "+err.Error(), nil)
+	}
+	id, err := notification.AddPingLossNotification(params)
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return map[string]any{"id": id}, nil
+}
+
+func adminEditPingLossNotifications(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		Notifications []*models.PingLossNotification `json:"notifications"`
+	}
+	if err := req.BindParams(&params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid request body: "+err.Error(), nil)
+	}
+	if err := notification.EditPingLossNotifications(params.Notifications); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return nil, nil
+}
+
+func adminDeletePingLossNotifications(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		ID []uint `json:"id"`
+	}
+	if err := req.BindParams(&params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid request body: "+err.Error(), nil)
+	}
+	if err := notification.DeletePingLossNotifications(params.ID); err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
 	return nil, nil
 }

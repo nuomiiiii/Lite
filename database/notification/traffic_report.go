@@ -1,11 +1,19 @@
 package notification
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
 	"gorm.io/gorm/clause"
+)
+
+const (
+	dailyReportRetentionDays   = 2
+	weeklyReportRetentionDays  = 8
+	monthlyReportRetentionDays = 32
 )
 
 func validateTrafficReportNotification(notification models.TrafficReportNotification) error {
@@ -69,13 +77,16 @@ func EditTrafficReportNotifications(notifications []models.TrafficReportNotifica
 		return err
 	}
 	db := dbcore.GetDBInstance()
-	return db.Model(&models.TrafficReportNotification{}).
+	if err := db.Model(&models.TrafficReportNotification{}).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "client"}},
 			DoUpdates: clause.AssignmentColumns([]string{"enable", "daily", "weekly", "monthly"}),
 		}).
 		Select("client", "enable", "daily", "weekly", "monthly").
-		Create(notifications).Error
+		Create(notifications).Error; err != nil {
+		return err
+	}
+	return EnsureTrafficReportMetricRetention(context.Background())
 }
 
 // EnableTrafficReportNotifications 批量启用（仅更新 enable 字段）
@@ -93,13 +104,16 @@ func EnableTrafficReportNotifications(uuids []string) error {
 	if err != nil {
 		return err
 	}
-	return db.Model(&models.TrafficReportNotification{}).
+	if err := db.Model(&models.TrafficReportNotification{}).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "client"}},
 			DoUpdates: clause.AssignmentColumns([]string{"enable"}),
 		}).
 		Select("client", "enable").
-		Create(notifications).Error
+		Create(notifications).Error; err != nil {
+		return err
+	}
+	return EnsureTrafficReportMetricRetention(context.Background())
 }
 
 // DisableTrafficReportNotifications 批量禁用
@@ -141,4 +155,58 @@ func GetEnabledTrafficReportByType(daily, weekly, monthly bool) ([]models.Traffi
 	}
 	err := query.Find(&notifications).Error
 	return notifications, err
+}
+
+func RequiredTrafficReportRetentionDays(notifications []models.TrafficReportNotification) int {
+	required := 0
+	for _, notification := range notifications {
+		if !notification.Enable {
+			continue
+		}
+		switch {
+		case notification.Monthly && required < monthlyReportRetentionDays:
+			required = monthlyReportRetentionDays
+		case notification.Weekly && required < weeklyReportRetentionDays:
+			required = weeklyReportRetentionDays
+		case notification.Daily && required < dailyReportRetentionDays:
+			required = dailyReportRetentionDays
+		}
+	}
+	return required
+}
+
+// EnsureTrafficReportMetricRetention raises the four traffic metrics to the
+// minimum history required by enabled daily, weekly, or monthly reports.
+func EnsureTrafficReportMetricRetention(ctx context.Context) error {
+	db := dbcore.GetDBInstance()
+	var notifications []models.TrafficReportNotification
+	if err := db.Where("enable = ?", true).Find(&notifications).Error; err != nil {
+		return err
+	}
+	requiredDays := RequiredTrafficReportRetentionDays(notifications)
+	if requiredDays == 0 {
+		return nil
+	}
+	store := metricstore.GetStore()
+	if store == nil {
+		return fmt.Errorf("metric store is not initialized")
+	}
+	for _, metricName := range []string{
+		metricstore.MetricTrafficUp,
+		metricstore.MetricTrafficDown,
+		metricstore.MetricNetTotalUp,
+		metricstore.MetricNetTotalDown,
+	} {
+		definition, err := store.GetMetric(ctx, metricName)
+		if err != nil {
+			return fmt.Errorf("get retention for %s: %w", metricName, err)
+		}
+		if definition.RetentionDays >= requiredDays {
+			continue
+		}
+		if _, err := store.SetMetricRetention(ctx, metricName, requiredDays); err != nil {
+			return fmt.Errorf("set retention for %s: %w", metricName, err)
+		}
+	}
+	return nil
 }

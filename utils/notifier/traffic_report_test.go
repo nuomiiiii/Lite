@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -122,4 +123,72 @@ func TestComputeUsedByType(t *testing.T) {
 	assert.Equal(t, int64(70), computeUsedByType("max", 30, 70))
 	// 未知类型默认取较大值
 	assert.Equal(t, int64(70), computeUsedByType("unknown", 30, 70))
+}
+
+func TestFormatTrafficReportLineSeparatesDirections(t *testing.T) {
+	line := formatTrafficReportLine(models.Client{Name: "server-a"}, "昨日流量", trafficUsage{
+		Up:   1024,
+		Down: 2 * 1024,
+	})
+	assert.Equal(t, "server-a 昨日流量：上行 1.00 KB，下行 2.00 KB", line)
+
+	line = formatTrafficReportLine(models.Client{UUID: "client-a"}, "上周流量", trafficUsage{})
+	assert.Equal(t, "client-a 上周流量：上行 0 B，下行 0 B", line)
+}
+
+func TestSumTrafficDeltasIgnoresTransientCounterRollback(t *testing.T) {
+	const gib = int64(1024 * 1024 * 1024)
+	start := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	previous := &trafficDeltaRecord{
+		Time:       start.Add(-time.Minute),
+		NetTotalUp: 10 * gib,
+	}
+	records := []trafficDeltaRecord{
+		{
+			Time:       start,
+			NetTotalUp: gib,
+			TrafficUp:  gib,
+		},
+		{
+			Time:       start.Add(time.Minute),
+			NetTotalUp: 10*gib + gib/2,
+			TrafficUp:  9*gib + gib/2,
+		},
+	}
+
+	up, _ := sumTrafficDeltas(records, previous)
+	assert.Equal(t, gib/2, up)
+}
+
+func TestSumTrafficDeltasKeepsConfirmedCounterReset(t *testing.T) {
+	const gib = int64(1024 * 1024 * 1024)
+	start := time.Date(2026, 6, 7, 13, 0, 0, 0, time.UTC)
+	previous := &trafficDeltaRecord{
+		Time:       start.Add(-time.Minute),
+		NetTotalUp: 10 * gib,
+	}
+	records := []trafficDeltaRecord{
+		{Time: start, NetTotalUp: gib, TrafficUp: gib},
+		{Time: start.Add(time.Minute), NetTotalUp: 2 * gib, TrafficUp: gib},
+	}
+
+	up, _ := sumTrafficDeltas(records, previous)
+	assert.Equal(t, 2*gib, up)
+}
+
+func TestSumTrafficDeltasCorrectsInflatedRollupDelta(t *testing.T) {
+	const mib = int64(1024 * 1024)
+	start := time.Date(2026, 6, 7, 14, 0, 0, 0, time.UTC)
+	previous := &trafficDeltaRecord{
+		Time:       start.Add(-15 * time.Minute),
+		NetTotalUp: 10 * 1024 * mib,
+	}
+	records := []trafficDeltaRecord{{
+		Time:       start,
+		NetTotalUp: 10*1024*mib + 100*mib,
+		TrafficUp:  10 * 1024 * mib,
+	}}
+
+	up, _ := sumTrafficDeltas(records, previous)
+	assert.Equal(t, 100*mib, up)
 }

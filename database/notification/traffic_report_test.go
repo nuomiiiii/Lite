@@ -34,3 +34,53 @@ func TestBuildEnabledTrafficReportNotificationsRequiresExistingCadence(t *testin
 	assert.Equal(t, "client-a", notifications[0].Client)
 	assert.True(t, notifications[0].Enable)
 }
+
+func TestRequiredTrafficReportRetentionDays(t *testing.T) {
+	tests := []struct {
+		name          string
+		notifications []models.TrafficReportNotification
+		want          int
+	}{
+		{name: "none", want: 0},
+		{
+			name: "disabled reports do not retain data",
+			notifications: []models.TrafficReportNotification{{
+				Enable:  false,
+				Monthly: true,
+			}},
+			want: 0,
+		},
+		{
+			name: "daily",
+			notifications: []models.TrafficReportNotification{{
+				Enable: true,
+				Daily:  true,
+			}},
+			want: 2,
+		},
+		{
+			name: "weekly overrides daily",
+			notifications: []models.TrafficReportNotification{
+				{Enable: true, Daily: true},
+				{Enable: true, Weekly: true},
+			},
+			want: 8,
+		},
+		{
+			name: "monthly overrides shorter cadences",
+			notifications: []models.TrafficReportNotification{{
+				Enable:  true,
+				Daily:   true,
+				Weekly:  true,
+				Monthly: true,
+			}},
+			want: 32,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, RequiredTrafficReportRetentionDays(test.notifications))
+		})
+	}
+}

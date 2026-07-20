@@ -444,6 +444,7 @@ func doInitialize() error {
 		&models.OfflineNotification{},
 		&models.TrafficReportNotification{},
 		&models.PingTask{},
+		&models.PingLossNotification{},
 		&models.OidcProvider{},
 		&models.MessageSenderProvider{},
 		&models.ThemeConfiguration{},

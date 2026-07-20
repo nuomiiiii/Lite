@@ -214,6 +214,13 @@ func registerAdminRoutes(r *gin.Engine) {
 			trafficReport.POST("/enable", jsonRpc.Bind("admin:enableTrafficReportNotifications"))
 			trafficReport.POST("/disable", jsonRpc.Bind("admin:disableTrafficReportNotifications"))
 		}
+		pingLoss := notificationGroup.Group("/ping-loss")
+		{
+			pingLoss.GET("/", jsonRpc.Bind("admin:listPingLossNotifications"))
+			pingLoss.POST("/add", jsonRpc.Bind("admin:addPingLossNotification"))
+			pingLoss.POST("/edit", jsonRpc.Bind("admin:editPingLossNotifications"))
+			pingLoss.POST("/delete", jsonRpc.Bind("admin:deletePingLossNotifications"))
+		}
 	}
 
 	// ping tasks
