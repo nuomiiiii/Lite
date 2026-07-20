@@ -7,6 +7,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -83,16 +84,36 @@ func EditTrafficReportNotifications(notifications []models.TrafficReportNotifica
 		return err
 	}
 	db := dbcore.GetDBInstance()
-	if err := db.Model(&models.TrafficReportNotification{}).
+	if err := upsertTrafficReportNotifications(db, notifications); err != nil {
+		return err
+	}
+	return EnsureTrafficReportMetricRetention(context.Background())
+}
+
+func upsertTrafficReportNotifications(db *gorm.DB, notifications []models.TrafficReportNotification) error {
+	if len(notifications) == 0 {
+		return nil
+	}
+
+	rows := make([]map[string]interface{}, 0, len(notifications))
+	for _, notification := range notifications {
+		rows = append(rows, map[string]interface{}{
+			"client":          notification.Client,
+			"enable":          notification.Enable,
+			"daily":           notification.Daily,
+			"weekly":          notification.Weekly,
+			"monthly":         notification.Monthly,
+			"include_traffic": notification.IncludeTraffic,
+			"include_billing": notification.IncludeBilling,
+		})
+	}
+
+	return db.Model(&models.TrafficReportNotification{}).
 		Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "client"}},
 			DoUpdates: clause.AssignmentColumns([]string{"enable", "daily", "weekly", "monthly", "include_traffic", "include_billing"}),
 		}).
-		Select("client", "enable", "daily", "weekly", "monthly", "include_traffic", "include_billing").
-		Create(notifications).Error; err != nil {
-		return err
-	}
-	return EnsureTrafficReportMetricRetention(context.Background())
+		Create(rows).Error
 }
 
 // EnableTrafficReportNotifications 批量启用（仅更新 enable 字段）

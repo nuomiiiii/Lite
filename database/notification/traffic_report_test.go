@@ -5,9 +5,52 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	"github.com/komari-monitor/komari/database/models"
 )
+
+func TestUpsertTrafficReportNotificationsPersistsContentSelection(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:traffic-report-content?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Client{},
+		&models.TrafficReportNotification{},
+	))
+	require.NoError(t, db.Create(&models.Client{
+		UUID: "client-a", Token: "token-a", Name: "Server A",
+	}).Error)
+
+	require.NoError(t, upsertTrafficReportNotifications(db, []models.TrafficReportNotification{{
+		Client:         "client-a",
+		Enable:         true,
+		Daily:          true,
+		IncludeTraffic: false,
+		IncludeBilling: true,
+	}}))
+
+	var created models.TrafficReportNotification
+	require.NoError(t, db.First(&created, "client = ?", "client-a").Error)
+	assert.False(t, created.IncludeTraffic)
+	assert.True(t, created.IncludeBilling)
+
+	require.NoError(t, upsertTrafficReportNotifications(db, []models.TrafficReportNotification{{
+		Client:         "client-a",
+		Enable:         true,
+		Daily:          true,
+		IncludeTraffic: true,
+		IncludeBilling: false,
+	}}))
+
+	var updated models.TrafficReportNotification
+	require.NoError(t, db.First(&updated, "client = ?", "client-a").Error)
+	assert.True(t, updated.IncludeTraffic)
+	assert.False(t, updated.IncludeBilling)
+}
 
 func TestValidateTrafficReportNotificationsRejectsEnabledWithoutCadence(t *testing.T) {
 	err := ValidateTrafficReportNotifications([]models.TrafficReportNotification{{
