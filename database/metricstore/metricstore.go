@@ -32,6 +32,7 @@ const (
 	// served from rollups after compaction.
 	DefaultRollupRawRetention = 15 * time.Minute
 	DefaultRollupFinestTier   = time.Minute
+	externalStoreInitTimeout  = 30 * time.Second
 )
 
 // MetricStoreConfig 保存 metric store 配置。
@@ -328,8 +329,12 @@ func InitializeStore() error {
 			return
 		}
 
-		// metric store 始终启用；未配置时默认 SQLite（./data/metrics.db）。
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// SQLite V3 migration can legitimately take longer than the connection
+		// timeout for a large legacy database. The SQLite driver still applies its
+		// own bounded connect and busy timeouts; only the atomic data migration is
+		// allowed to run to completion. Remote stores keep the startup deadline so
+		// an unavailable database cannot block startup indefinitely.
+		ctx, cancel := startupStoreContext(cfg)
 		defer cancel()
 
 		s, err := openStore(ctx, cfg)
@@ -349,6 +354,13 @@ func InitializeStore() error {
 	})
 
 	return initErr
+}
+
+func startupStoreContext(cfg *MetricStoreConfig) (context.Context, context.CancelFunc) {
+	if ResolveDriverFromConfig(cfg.Driver, cfg.DSN) == metric.DriverSQLite {
+		return context.WithCancel(context.Background())
+	}
+	return context.WithTimeout(context.Background(), externalStoreInitTimeout)
 }
 
 // Reload 根据最新配置热重载 metric store，无需重启进程。
