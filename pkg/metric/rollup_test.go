@@ -139,7 +139,7 @@ func TestAggregateRollupSkipsDigestForNonPercentile(t *testing.T) {
 	if _, err := s.Compact(ctx, base.Add(4*time.Minute)); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
-	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET digest = ?", s.tables.rollups), []byte("invalid")); err != nil {
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET digest = ?", s.tables.rollupValues), []byte("invalid")); err != nil {
 		t.Fatalf("corrupt digest: %v", err)
 	}
 

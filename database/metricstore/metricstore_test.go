@@ -40,9 +40,10 @@ func TestDefaultRollupPolicy(t *testing.T) {
 
 func TestBuildMetricConfigEnablesDefaultRollupPolicy(t *testing.T) {
 	cfg, err := buildMetricConfig(&MetricStoreConfig{
-		Driver:      "sqlite",
-		DSN:         ":memory:",
-		TablePrefix: "metric_",
+		Driver:              "sqlite",
+		DSN:                 ":memory:",
+		DownsamplingEnabled: true,
+		TablePrefix:         "metric_",
 	}, false)
 	if err != nil {
 		t.Fatalf("build metric config: %v", err)
@@ -57,8 +58,9 @@ func TestBuildMetricConfigEnablesDefaultRollupPolicy(t *testing.T) {
 
 func TestBuildMetricConfigLeavesFinalRetentionToMetricDefinition(t *testing.T) {
 	cfg, err := buildMetricConfig(&MetricStoreConfig{
-		Driver: "sqlite",
-		DSN:    ":memory:",
+		Driver:              "sqlite",
+		DSN:                 ":memory:",
+		DownsamplingEnabled: true,
 	}, false)
 	if err != nil {
 		t.Fatalf("build metric config: %v", err)
@@ -70,16 +72,34 @@ func TestBuildMetricConfigLeavesFinalRetentionToMetricDefinition(t *testing.T) {
 	}
 }
 
-func TestBuildMetricConfigAlwaysEnablesDownsampling(t *testing.T) {
+func TestBuildMetricConfigCanDisableDownsampling(t *testing.T) {
 	cfg, err := buildMetricConfig(&MetricStoreConfig{
-		Driver: "sqlite",
-		DSN:    ":memory:",
+		Driver:              "sqlite",
+		DSN:                 ":memory:",
+		DownsamplingEnabled: false,
 	}, false)
 	if err != nil {
 		t.Fatalf("build metric config: %v", err)
 	}
-	if !cfg.RollupPolicy.Enabled() {
-		t.Fatal("expected rollup policy to be enabled")
+	if cfg.RollupPolicy.Enabled() {
+		t.Fatal("expected rollup policy to be disabled")
+	}
+}
+
+func TestBuildMetricConfigKeepsDownsamplingIndependentFromResourceMode(t *testing.T) {
+	for _, lowResourceMode := range []bool{false, true} {
+		cfg, err := buildMetricConfig(&MetricStoreConfig{
+			Driver:              "sqlite",
+			DSN:                 ":memory:",
+			DownsamplingEnabled: false,
+			LowResourceMode:     lowResourceMode,
+		}, false)
+		if err != nil {
+			t.Fatalf("build metric config (low_resource_mode=%t): %v", lowResourceMode, err)
+		}
+		if cfg.RollupPolicy.Enabled() {
+			t.Fatalf("low_resource_mode=%t unexpectedly enabled downsampling", lowResourceMode)
+		}
 	}
 }
 

@@ -438,7 +438,7 @@ func (a *App) registerReloadHandlers(cors *security.CorsController) {
 	a.reload.Register("traffic-report-schedule", func(event config.ConfigEvent) {
 		if event.IsChanged(config.TrafficReportTimeKey) {
 			if err := notifier.ReloadTrafficReportSchedule(); err != nil {
-				log.Printf("Failed to reload traffic report schedule: %v", err)
+				logger.Errorf("server", "Failed to reload traffic report schedule: %v", err)
 			}
 		}
 	})
@@ -569,7 +569,7 @@ func registerScheduledWork() {
 	}
 
 	if err := d_notification.EnsureTrafficReportMetricRetention(context.Background()); err != nil {
-		log.Printf("Failed to ensure traffic report metric retention: %v", err)
+		logger.Errorf("server", "Failed to ensure traffic report metric retention: %v", err)
 	}
 	notifier.InitTrafficReportSchedule()
 	notifier.InitPingLossNotificationSchedule()

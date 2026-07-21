@@ -20,15 +20,16 @@ func TestInfoWritesStructuredFields(t *testing.T) {
 	Info("metricstore", "store initialized", "driver", "sqlite", "points", 12)
 
 	line := output.String()
-	if !regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} \[INFO/METRICSTORE\]`).MatchString(line) {
+	if !regexp.MustCompile(`^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} (?:\x1b\[[0-9;]*m)?\[INFO/METRICSTORE\]`).MatchString(line) {
 		t.Fatalf("unexpected console log format %q", line)
 	}
+	plainLine := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(line, "")
 	for _, want := range []string{
 		"[INFO/METRICSTORE] store initialized",
 		"driver=sqlite",
 		"points=12",
 	} {
-		if !strings.Contains(line, want) {
+		if !strings.Contains(plainLine, want) {
 			t.Fatalf("expected %q in log output %q", want, line)
 		}
 	}
