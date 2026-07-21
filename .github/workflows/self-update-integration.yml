@@ -24,7 +24,7 @@ jobs:
       - name: Build frontend assets
         uses: ./.github/actions/build-frontend
         with:
-          ref: komari-2.0.4
+          ref: komari-2.1.2
 
       - name: Run updater unit tests
         run: go test ./pkg/selfupdate ./web/rpc/jsonrpc
@@ -39,8 +39,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p self-update-test
-          go build -trimpath -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.0.4 -X github.com/komari-monitor/komari/utils.VersionHash=old1234' -o self-update-test/komari-old .
-          go build -trimpath -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.1.0 -X github.com/komari-monitor/komari/utils.VersionHash=new1234' -o self-update-test/komari-new .
+          go build -trimpath -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.1.1 -X github.com/komari-monitor/komari/utils.VersionHash=old211a' -o self-update-test/komari-old .
+          go build -trimpath -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.1.2 -X github.com/komari-monitor/komari/utils.VersionHash=9sj2mo4' -o self-update-test/komari-new .
 
       - name: Smoke test static binary on mainstream distributions
         shell: bash
@@ -49,7 +49,7 @@ jobs:
           for image in ubuntu:20.04 debian:11-slim quay.io/centos/centos:7; do
             echo "Testing $image"
             output="$(docker run --rm -v "$PWD/self-update-test/komari-new:/komari:ro" "$image" /komari version --json)"
-            jq -e '.version == "2.1.0" and .hash == "new1234"' <<<"$output"
+            jq -e '.version == "2.1.2" and .hash == "9sj2mo4"' <<<"$output"
           done
 
       - name: Verify systemd update and automatic rollback
@@ -135,10 +135,10 @@ jobs:
             "data_dir": "$ROOT/success/data",
             "service": "$SUCCESS_SERVICE",
             "health_url": "http://127.0.0.1:28774/api/version",
-            "expected_version": "2.1.0",
-            "expected_hash": "new1234",
-            "previous_version": "2.0.4",
-            "previous_hash": "old1234",
+            "expected_version": "2.1.2",
+            "expected_hash": "9sj2mo4",
+            "previous_version": "2.1.1",
+            "previous_hash": "old211a",
             "update_root": "$ROOT/success/.komari-update",
             "backup_root": "$ROOT/success/backup/self-update-integration-success",
             "health_timeout": 30000000000,
@@ -147,7 +147,7 @@ jobs:
           JSON
           schedule_helper success komari-self-update-integration-success
           wait_result success succeeded
-          curl -fsS http://127.0.0.1:28774/api/version | grep -q '2.1.0'
+          curl -fsS http://127.0.0.1:28774/api/version | grep -q '2.1.2'
 
           create_case rollback "$ROLLBACK_SERVICE" 28775
           sudo tee "$ROOT/rollback/.komari-update/jobs/test/helper.json" >/dev/null <<JSON
@@ -160,8 +160,8 @@ jobs:
             "health_url": "http://127.0.0.1:28775/api/version",
             "expected_version": "9.9.9",
             "expected_hash": "bad9999",
-            "previous_version": "2.0.4",
-            "previous_hash": "old1234",
+            "previous_version": "2.1.1",
+            "previous_hash": "old211a",
             "update_root": "$ROOT/rollback/.komari-update",
             "backup_root": "$ROOT/rollback/backup/self-update-integration-rollback",
             "health_timeout": 8000000000,
@@ -170,4 +170,4 @@ jobs:
           JSON
           schedule_helper rollback komari-self-update-integration-rollback
           wait_result rollback rolled_back
-          curl -fsS http://127.0.0.1:28775/api/version | grep -q '2.0.4'
+          curl -fsS http://127.0.0.1:28775/api/version | grep -q '2.1.1'
