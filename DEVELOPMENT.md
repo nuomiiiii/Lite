@@ -10,7 +10,7 @@
 - Node.js 24
 - Zig 0.14.1（用于 CGO/SQLite 编译）
 
-后端仓库位于 `komari`，前端仓库位于同级目录 `komari-web`。前端当前使用分支 `komari-2.1.0`。
+后端仓库位于 `komari`，前端仓库位于同级目录 `komari-web`。前端当前使用分支 `komari-2.1.1`。
 
 ## 常用命令
 
@@ -36,17 +36,17 @@
 
 在 GitHub Actions 中手动运行 `Publish Stable Release`，填写：
 
-- `version`：仅版本号，例如 `2.1.0`
+- `version`：仅版本号，例如 `2.1.1`
 - `version_hash`：可留空；留空时自动生成七位字母数字标识
 - `target_ref`：默认 `main`
 - `web_ref`：本次发布使用的 `komari-web` 分支或标签
 
 发布后各处含义如下：
 
-- 页面和日志显示：`2.1.0 (2z1ifpb)`
-- Git 标签：`2.1.0`
-- GitHub Release 标题和标签：`2.1.0`
-- Docker 标签：`ghcr.io/nuomiiiii/komari:2.1.0` 和 `latest`
+- 页面和日志显示：`2.1.1 (a1b2c3d)`
+- Git 标签：`2.1.1`
+- GitHub Release 标题和标签：`2.1.1`
+- Docker 标签：`ghcr.io/nuomiiiii/komari:2.1.1` 和 `latest`
 - Docker 平台：`linux/amd64`、`linux/arm64`
 
 Release Notes 会生成“主要更新内容 / Bug修复 / 其他 / What's Changed”。配置 OpenAI Secrets 时会生成更精炼的中文摘要；未配置时会按提交类型稳定分类，不会只剩 Full Changelog。

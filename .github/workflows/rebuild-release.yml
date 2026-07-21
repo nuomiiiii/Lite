@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: Existing version-only GitHub Release tag, for example 2.1.0.
+        description: Existing version-only GitHub Release tag, for example 2.1.1.
         required: true
         type: string
       version_hash:
@@ -19,7 +19,7 @@ on:
       frontend_ref:
         description: komari-web branch or tag to build.
         required: true
-        default: komari-2.1.0
+        default: komari-2.1.1
         type: string
 
 permissions:
