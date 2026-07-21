@@ -95,6 +95,16 @@ jobs:
             sudo systemctl daemon-reload
             sudo systemctl start "$service"
             for _ in $(seq 1 30); do
+              if curl -fsS "http://127.0.0.1:$port/api/install/status" >/dev/null; then
+                curl -fsS \
+                  -H 'Content-Type: application/json' \
+                  --data '{"username":"integration","password":"Integration-test1","sitename":"Komari","description":"","metric_dsn":"./data/metrics.db"}' \
+                  "http://127.0.0.1:$port/api/install/complete" >/dev/null
+                break
+              fi
+              sleep 1
+            done
+            for _ in $(seq 1 30); do
               curl -fsS "http://127.0.0.1:$port/api/version" >/dev/null && return 0
               sleep 1
             done
