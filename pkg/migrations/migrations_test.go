@@ -28,6 +28,46 @@ func openTestDB(t *testing.T, name string) *gorm.DB {
 	return db
 }
 
+func TestMigrateTrafficResetDayFromTags(t *testing.T) {
+	db := openTestDB(t, "migrations_traffic_reset_day")
+	if err := db.AutoMigrate(&models.Client{}); err != nil {
+		t.Fatalf("migrate client table: %v", err)
+	}
+	managedDay := 5
+	clients := []models.Client{
+		{UUID: "legacy", Token: "token-legacy", Tags: "Premium<blue>;<TRD:26>"},
+		{UUID: "invalid", Token: "token-invalid", Tags: "<TRD:32>"},
+		{UUID: "managed", Token: "token-managed", Tags: "<TRD:26>", TrafficResetDay: &managedDay},
+	}
+	if err := db.Create(&clients).Error; err != nil {
+		t.Fatalf("seed clients: %v", err)
+	}
+
+	if err := MigrateTrafficResetDayFromTags(db); err != nil {
+		t.Fatalf("migrate traffic reset days: %v", err)
+	}
+
+	var legacy, invalid, managed models.Client
+	if err := db.First(&legacy, "uuid = ?", "legacy").Error; err != nil {
+		t.Fatal(err)
+	}
+	if legacy.TrafficResetDay == nil || *legacy.TrafficResetDay != 26 {
+		t.Fatalf("legacy reset day = %v, want 26", legacy.TrafficResetDay)
+	}
+	if err := db.First(&invalid, "uuid = ?", "invalid").Error; err != nil {
+		t.Fatal(err)
+	}
+	if invalid.TrafficResetDay != nil {
+		t.Fatalf("invalid reset day = %v, want nil", *invalid.TrafficResetDay)
+	}
+	if err := db.First(&managed, "uuid = ?", "managed").Error; err != nil {
+		t.Fatal(err)
+	}
+	if managed.TrafficResetDay == nil || *managed.TrafficResetDay != managedDay {
+		t.Fatalf("managed reset day = %v, want %d", managed.TrafficResetDay, managedDay)
+	}
+}
+
 func TestHasLegacyConfigTable(t *testing.T) {
 	t.Run("config item table", func(t *testing.T) {
 		db := openTestDB(t, "migrations_config_item")

@@ -66,7 +66,8 @@ func TestV2BasicInfoFillsRegionFromGeoIP(t *testing.T) {
 		Method:  v2.MethodAgentBasicInfo,
 		Params: map[string]interface{}{
 			"info": map[string]interface{}{
-				"ipv4": "8.8.8.8",
+				"ipv4":         "8.8.8.8",
+				"month_rotate": 26,
 			},
 		},
 		ID: "basic-info",
@@ -82,5 +83,17 @@ func TestV2BasicInfoFillsRegionFromGeoIP(t *testing.T) {
 	want := geoip.GetRegionUnicodeEmoji("SG")
 	if got.Region != want {
 		t.Fatalf("expected GeoIP region to be saved, got %q", got.Region)
+	}
+	if got.TrafficResetDay == nil || *got.TrafficResetDay != 26 {
+		t.Fatalf("expected Agent reset day to be adopted, got %v", got.TrafficResetDay)
+	}
+	var result struct {
+		Config *v2.ConfigParams `json:"config"`
+	}
+	if err := bindV2Params(resp.Result, &result); err != nil {
+		t.Fatalf("bind response config: %v", err)
+	}
+	if result.Config == nil || result.Config.MonthRotate != 26 {
+		t.Fatalf("expected response reset day 26, got %+v", result.Config)
 	}
 }

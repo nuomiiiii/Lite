@@ -66,7 +66,17 @@ func handleV2RPC(uuid string, req v2.Request, allowWait bool) v2.Response {
 		if err := ingestBasicInfo(uuid, params.Info, ""); err != nil {
 			return v2.Error(req.ID, -32000, "failed to save basic info", err.Error())
 		}
-		return v2.Success(req.ID, gin.H{"status": "success"})
+		result := gin.H{"status": "success"}
+		runtimeConfig, err := getClientRuntimeConfig(uuid)
+		if err != nil {
+			return v2.Error(req.ID, -32000, "failed to load agent config", err.Error())
+		}
+		if runtimeConfig != nil {
+			result["config"] = runtimeConfig
+		} else {
+			result["request_config_state"] = true
+		}
+		return v2.Success(req.ID, result)
 	case v2.MethodAgentPingResult:
 		var params v2.PingResultParams
 		if err := bindV2Params(req.Params, &params); err != nil {

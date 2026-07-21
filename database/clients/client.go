@@ -271,6 +271,13 @@ func SaveClient(updates map[string]interface{}) error {
 			}
 		}
 	}
+	if value, exists := updates["traffic_reset_day"]; exists {
+		normalized, err := normalizeTrafficResetDay(value)
+		if err != nil {
+			return err
+		}
+		updates["traffic_reset_day"] = normalized
+	}
 	if value, exists := updates["expired_at"]; exists {
 		switch typed := value.(type) {
 		case nil:
@@ -301,4 +308,50 @@ func SaveClient(updates map[string]interface{}) error {
 		return err
 	}
 	return nil
+}
+
+func normalizeTrafficResetDay(value interface{}) (*int, error) {
+	if value == nil {
+		return nil, nil
+	}
+	numericValue, ok := value.(float64)
+	if !ok {
+		switch typed := value.(type) {
+		case int:
+			numericValue = float64(typed)
+		case int32:
+			numericValue = float64(typed)
+		case int64:
+			numericValue = float64(typed)
+		case json.Number:
+			parsed, err := typed.Float64()
+			if err != nil {
+				return nil, fmt.Errorf("traffic_reset_day must be an integer from 0 to 31")
+			}
+			numericValue = parsed
+		default:
+			return nil, fmt.Errorf("traffic_reset_day must be an integer from 0 to 31")
+		}
+	}
+	if math.Trunc(numericValue) != numericValue || numericValue < 0 || numericValue > 31 {
+		return nil, fmt.Errorf("traffic_reset_day must be an integer from 0 to 31")
+	}
+	day := int(numericValue)
+	return &day, nil
+}
+
+// AdoptTrafficResetDay records an Agent's existing setting only while the node
+// has not yet been explicitly managed by Komari.
+func AdoptTrafficResetDay(clientUUID string, value interface{}) error {
+	day, err := normalizeTrafficResetDay(value)
+	if err != nil {
+		return err
+	}
+	if day == nil {
+		return nil
+	}
+	db := dbcore.GetDBInstance()
+	return db.Model(&models.Client{}).
+		Where("uuid = ? AND traffic_reset_day IS NULL", clientUUID).
+		Update("traffic_reset_day", *day).Error
 }

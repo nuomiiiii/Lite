@@ -40,7 +40,7 @@ jobs:
           set -euo pipefail
           mkdir -p self-update-test
           go build -trimpath -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.0.4 -X github.com/komari-monitor/komari/utils.VersionHash=old1234' -o self-update-test/komari-old .
-          go build -trimpath -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.0.5 -X github.com/komari-monitor/komari/utils.VersionHash=new1234' -o self-update-test/komari-new .
+          go build -trimpath -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.1.0 -X github.com/komari-monitor/komari/utils.VersionHash=new1234' -o self-update-test/komari-new .
 
       - name: Smoke test static binary on mainstream distributions
         shell: bash
@@ -49,7 +49,7 @@ jobs:
           for image in ubuntu:20.04 debian:11-slim quay.io/centos/centos:7; do
             echo "Testing $image"
             output="$(docker run --rm -v "$PWD/self-update-test/komari-new:/komari:ro" "$image" /komari version --json)"
-            jq -e '.version == "2.0.5" and .hash == "new1234"' <<<"$output"
+            jq -e '.version == "2.1.0" and .hash == "new1234"' <<<"$output"
           done
 
       - name: Verify systemd update and automatic rollback
@@ -135,7 +135,7 @@ jobs:
             "data_dir": "$ROOT/success/data",
             "service": "$SUCCESS_SERVICE",
             "health_url": "http://127.0.0.1:28774/api/version",
-            "expected_version": "2.0.5",
+            "expected_version": "2.1.0",
             "expected_hash": "new1234",
             "previous_version": "2.0.4",
             "previous_hash": "old1234",
@@ -147,7 +147,7 @@ jobs:
           JSON
           schedule_helper success komari-self-update-integration-success
           wait_result success succeeded
-          curl -fsS http://127.0.0.1:28774/api/version | grep -q '2.0.5'
+          curl -fsS http://127.0.0.1:28774/api/version | grep -q '2.1.0'
 
           create_case rollback "$ROLLBACK_SERVICE" 28775
           sudo tee "$ROOT/rollback/.komari-update/jobs/test/helper.json" >/dev/null <<JSON

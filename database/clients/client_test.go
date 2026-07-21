@@ -1,6 +1,7 @@
 package clients
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/komari-monitor/komari/database/models"
@@ -52,4 +53,21 @@ func TestDeleteClientCleansPingLossNotificationsAndTaskAssignments(t *testing.T)
 	var gotTask models.PingTask
 	require.NoError(t, db.First(&gotTask, task.Id).Error)
 	assert.Equal(t, models.StringArray{"client-b"}, gotTask.Clients)
+}
+
+func TestNormalizeTrafficResetDay(t *testing.T) {
+	for _, value := range []interface{}{float64(0), float64(1), float64(31), 26, json.Number("15")} {
+		day, err := normalizeTrafficResetDay(value)
+		require.NoError(t, err)
+		require.NotNil(t, day)
+	}
+
+	for _, value := range []interface{}{float64(-1), float64(32), float64(1.5), "26"} {
+		_, err := normalizeTrafficResetDay(value)
+		require.Error(t, err)
+	}
+
+	day, err := normalizeTrafficResetDay(nil)
+	require.NoError(t, err)
+	assert.Nil(t, day)
 }

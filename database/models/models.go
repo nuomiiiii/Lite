@@ -40,6 +40,7 @@ type Client struct {
 	Hidden           bool       `json:"hidden" gorm:"default:false"`
 	TrafficLimit     int64      `json:"traffic_limit" gorm:"type:bigint"`
 	TrafficLimitType string     `json:"traffic_limit_type" gorm:"type:varchar(10);default:'max'"` // 流量阈值类型：sum max min up down
+	TrafficResetDay  *int       `json:"traffic_reset_day,omitempty" gorm:"type:int"`              // nil: follow agent; 0: disabled; 1-31: monthly reset day
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 }

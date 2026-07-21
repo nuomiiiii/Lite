@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +15,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+var trafficResetDayTagPattern = regexp.MustCompile(`(?i)<\s*TRD\s*:\s*(\d{1,2})\s*>`)
 
 type legacyModelConfig struct {
 	ID                         uint    `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
@@ -151,6 +155,33 @@ func migrateRemovedCompatibilityConfig(db *gorm.DB) error {
 		"nezha_compat_enabled",
 		"nezha_compat_listen",
 	}).Error
+}
+
+// MigrateTrafficResetDayFromTags adopts the legacy <TRD:n> convention without
+// removing or rewriting tags. Explicitly managed values are never overwritten.
+func MigrateTrafficResetDayFromTags(db *gorm.DB) error {
+	var clients []models.Client
+	if err := db.Select("uuid", "tags", "traffic_reset_day").
+		Where("traffic_reset_day IS NULL AND tags <> ''").
+		Find(&clients).Error; err != nil {
+		return err
+	}
+	for _, client := range clients {
+		match := trafficResetDayTagPattern.FindStringSubmatch(client.Tags)
+		if len(match) != 2 {
+			continue
+		}
+		day, err := strconv.Atoi(match[1])
+		if err != nil || day < 1 || day > 31 {
+			continue
+		}
+		if err := db.Model(&models.Client{}).
+			Where("uuid = ? AND traffic_reset_day IS NULL", client.UUID).
+			UpdateColumn("traffic_reset_day", day).Error; err != nil {
+			return fmt.Errorf("migrate traffic reset day for client %s: %w", client.UUID, err)
+		}
+	}
+	return nil
 }
 
 func hasLegacyConfigTable(db *gorm.DB) bool {

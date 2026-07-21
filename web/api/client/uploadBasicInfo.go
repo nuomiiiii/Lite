@@ -23,10 +23,18 @@ func getClientIPType(ip net.IP) int {
 }
 
 func saveClientBasicInfo(info map[string]interface{}, uuid string, fallbackIP string) error {
+	monthRotate, reportsMonthRotate := info["month_rotate"]
+	delete(info, "month_rotate")
 	info["uuid"] = uuid
 	applyFallbackClientIP(info, fallbackIP)
 	appendClientRegionFromGeoIP(info)
-	return clients.SaveClientInfo(info)
+	if err := clients.SaveClientInfo(info); err != nil {
+		return err
+	}
+	if reportsMonthRotate {
+		return clients.AdoptTrafficResetDay(uuid, monthRotate)
+	}
+	return nil
 }
 
 func applyFallbackClientIP(info map[string]interface{}, fallbackIP string) {
@@ -100,5 +108,16 @@ func UploadBasicInfo(c *gin.Context) {
 		return
 	}
 
-	c.JSON(200, gin.H{"status": "success"})
+	response := gin.H{"status": "success"}
+	runtimeConfig, err := getClientRuntimeConfig(uuid)
+	if err != nil {
+		c.JSON(500, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	if runtimeConfig != nil {
+		response["config"] = runtimeConfig
+	} else {
+		response["request_config_state"] = true
+	}
+	c.JSON(200, response)
 }

@@ -452,6 +452,9 @@ func doInitialize() error {
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
+	if err := migrations.MigrateTrafficResetDayFromTags(instance); err != nil {
+		return fmt.Errorf("failed to migrate traffic reset days: %w", err)
+	}
 	if err := cleanupOrphanedPingLossNotifications(instance); err != nil {
 		return fmt.Errorf("failed to clean orphaned ping loss notifications: %w", err)
 	}
