@@ -65,6 +65,7 @@ jobs:
             sudo rm -f "/etc/systemd/system/$SUCCESS_SERVICE" "/etc/systemd/system/$ROLLBACK_SERVICE"
             sudo systemctl daemon-reload
             sudo rm -rf "$ROOT"
+            rm -f /tmp/komari-self-update-success.cookies
           }
           trap cleanup EXIT
 
@@ -137,6 +138,21 @@ jobs:
           }
 
           create_case success "$SUCCESS_SERVICE" 28774
+          COOKIE_JAR=/tmp/komari-self-update-success.cookies
+          curl -fsS \
+            -c "$COOKIE_JAR" \
+            -H 'Content-Type: application/json' \
+            --data '{"username":"integration","password":"Integration-test1","twofa_code":""}' \
+            http://127.0.0.1:28774/api/login >/dev/null
+          capability="$(curl -fsS \
+            -b "$COOKIE_JAR" \
+            -H 'Content-Type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"admin:getSelfUpdateStatus","params":{}}' \
+            http://127.0.0.1:28774/api/rpc2)"
+          jq -e \
+            --arg service "$SUCCESS_SERVICE" \
+            '.result.deployment == "linux" and .result.supported == true and .result.service == $service' \
+            <<<"$capability"
           sudo tee "$ROOT/success/.komari-update/jobs/test/helper.json" >/dev/null <<JSON
           {
             "job_id": "integration-success",
