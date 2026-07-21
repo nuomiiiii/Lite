@@ -224,19 +224,62 @@ jobs:
               return { commits, files, htmlUrl };
             }
 
+            function describeCommitInChinese(subject) {
+              const normalized = clean(subject);
+              const withoutPrefix = normalized.replace(
+                /^(?:feat|fix|hotfix|perf|refactor|build|ci|chore|docs|test|style|revert)(?:\([^)]+\))?!?:\s*/i,
+                "",
+              );
+
+              if (/[\u3400-\u9fff]/.test(withoutPrefix)) {
+                return withoutPrefix;
+              }
+              if (/^(?:fix|hotfix)(?:\(|!|:)/i.test(normalized)) {
+                return "问题修复";
+              }
+              if (/^feat(?:\(|!|:)/i.test(normalized)) {
+                return "新增功能或行为调整";
+              }
+              if (/^perf(?:\(|!|:)/i.test(normalized)) {
+                return "性能优化";
+              }
+              if (/^refactor(?:\(|!|:)/i.test(normalized)) {
+                return "代码与运行逻辑优化";
+              }
+              if (/^(?:build|ci)(?:\(|!|:)/i.test(normalized)) {
+                return "构建与发布流程调整";
+              }
+              if (/^docs(?:\(|!|:)/i.test(normalized)) {
+                return "文档更新";
+              }
+              if (/^test(?:\(|!|:)/i.test(normalized)) {
+                return "测试调整";
+              }
+              if (/^style(?:\(|!|:)/i.test(normalized)) {
+                return "界面或代码样式调整";
+              }
+              if (/^revert(?:\(|!|:)/i.test(normalized)) {
+                return "回退此前变更";
+              }
+              if (/^chore(?:\(|!|:)/i.test(normalized)) {
+                return "版本与日常维护调整";
+              }
+
+              return "功能与实现调整";
+            }
+
             function renderCommitLine(commit) {
-              const subject = clean(commit.commit.message.split("\n")[0]) || "(no subject)";
+              const subject = clean(commit.commit.message.split("\n")[0]);
               const shortSha = commit.sha.slice(0, 7);
               const author = commit.author?.login
                 ? ` @${commit.author.login}`
                 : (commit.commit.author?.name ? ` ${commit.commit.author.name}` : "");
 
-              return `- ${subject} ([${shortSha}](${commit.html_url}))${author}`;
+              return `- ${describeCommitInChinese(subject)} ([${shortSha}](${commit.html_url}))${author}`;
             }
 
             function buildFallbackReleaseSummary(comparison) {
               const groups = { main: [], bugfix: [], other: [] };
-              const prefixPattern = /^(?:feat|fix|hotfix|perf|refactor|build|ci|chore|docs|test|style|revert)(?:\([^)]+\))?!?:\s*/i;
 
               for (const commit of comparison.commits) {
                 const subject = clean(commit.commit.message.split("\n")[0]);
@@ -246,7 +289,7 @@ jobs:
 
                 const item = {
                   commit,
-                  subject: subject.replace(prefixPattern, "") || subject,
+                  subject: describeCommitInChinese(subject),
                 };
 
                 if (/^(?:fix|hotfix)(?:\(|!|:)/i.test(subject) || /修复/.test(subject)) {
@@ -284,16 +327,16 @@ jobs:
 
             function buildWhatsChangedSection(baseRef, tag, comparison) {
               if (!baseRef) {
-                return "## What's Changed\n\nNo comparison base was found for this release.";
+                return "## 变更明细\n\n本次发布未找到可用于比较的上一版本。";
               }
 
               if (comparison.commits.length === 0) {
-                return `## What's Changed\n\nNo commits found between \`${baseRef}\` and \`${tag}\`.`;
+                return `## 变更明细\n\n\`${baseRef}\` 与 \`${tag}\` 之间没有新的提交。`;
               }
 
-              const lines = ["## What's Changed", "", ...comparison.commits.map(renderCommitLine)];
+              const lines = ["## 变更明细", "", ...comparison.commits.map(renderCommitLine)];
               if (comparison.htmlUrl) {
-                lines.push("", `**Full Changelog**: ${comparison.htmlUrl}`);
+                lines.push("", `**完整变更记录**：${comparison.htmlUrl}`);
               }
 
               return lines.join("\n");
@@ -462,7 +505,7 @@ jobs:
               const withoutAiHeading = clean(summary
                 .replace(/^#{1,6}\s+AI Summary\b\s*/im, "")
                 .replace(/^\*\*AI Summary\*\*\s*/im, ""));
-              const whatsChangedIndex = withoutAiHeading.search(/^##\s+What's Changed\b/im);
+              const whatsChangedIndex = withoutAiHeading.search(/^##\s+(?:What's Changed\b|变更明细(?:\s|$))/im);
               if (whatsChangedIndex >= 0) {
                 return clean(withoutAiHeading.slice(0, whatsChangedIndex));
               }
@@ -544,8 +587,8 @@ jobs:
                     comparisonBase.ref
                       ? `Summarize only changes in the comparison ${comparisonBase.ref}...${tag}.`
                       : "No comparison base was found, so summarize only the supplied release context.",
-                    "Return only Markdown for the summary section that appears before '## What's Changed'.",
-                    "Do not use the heading 'AI Summary'. Do not add a 'What's Changed' section.",
+                    "Return only Markdown for the summary section that appears before '## 变更明细'.",
+                    "Do not use the heading 'AI Summary'. Do not add a '变更明细' section.",
                     "Use these top-level headings, in this order: '## 主要更新内容', '## Bug修复', and '## 其他'.",
                     "Omit '## Bug修复' when there are no concrete bug fixes. Keep bullets short and specific.",
                     "",
@@ -608,16 +651,11 @@ jobs:
               : `No comparison base found for ${tag}.`);
 
             const comparison = await getComparison(comparisonBase.ref, tag);
-            const whatsChangedSection = comparisonBase.previousTag
-              ? appendCommitsToGeneratedNotes(
-                await getGeneratedNotes(tag, release, comparisonBase.previousTag),
-                comparisonBase.ref,
-                tag,
-                comparison,
-              )
-              : (!comparisonBase.ref && !isSnapshotTag(tag)
-                ? await getGeneratedNotes(tag, release, "")
-                : buildWhatsChangedSection(comparisonBase.ref, tag, comparison));
+            const whatsChangedSection = buildWhatsChangedSection(
+              comparisonBase.ref,
+              tag,
+              comparison,
+            );
 
             if (!whatsChangedSection) {
               core.setFailed(`Failed to build What's Changed section for ${tag}.`);
