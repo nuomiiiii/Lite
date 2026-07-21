@@ -3,7 +3,6 @@ package notifier
 import (
 	"context"
 	"fmt"
-	"log"
 	"math"
 	"sort"
 	"strings"
@@ -15,6 +14,7 @@ import (
 	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
 	"github.com/komari-monitor/komari/pkg/config"
 	"github.com/komari-monitor/komari/pkg/corn"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/utils/messageSender"
 )
 
@@ -28,7 +28,7 @@ type TrafficReportSendResult struct {
 // InitTrafficReportSchedule 注册三个按北京时间执行的定时任务：日报、周报、月报。
 func InitTrafficReportSchedule() {
 	if err := ReloadTrafficReportSchedule(); err != nil {
-		log.Println("Failed to register traffic report schedules:", err)
+		logger.ErrorArgs("notifier", "Failed to register traffic report schedules:", err)
 	}
 }
 
@@ -59,13 +59,13 @@ func ReloadTrafficReportSchedule() error {
 			return err
 		}
 	}
-	log.Printf("Traffic report schedules registered for %s Asia/Shanghai", reportTime)
+	logger.Infof("notifier", "Traffic report schedules registered for %s Asia/Shanghai", reportTime)
 	return nil
 }
 
 func runScheduledTrafficReport(daily, weekly, monthly bool) {
 	if _, err := sendTrafficReport(daily, weekly, monthly, false); err != nil {
-		log.Printf("Failed to send scheduled traffic report: %v", err)
+		logger.Errorf("notifier", "Failed to send scheduled traffic report: %v", err)
 	}
 }
 
@@ -159,7 +159,7 @@ func sendTrafficReport(daily, weekly, monthly, currentDaily bool) (TrafficReport
 
 		usage, err := getClientTrafficInRange(n.Client, start, end)
 		if err != nil {
-			log.Printf("Failed to compute traffic for client %s (%s): %v", n.Client, label, err)
+			logger.Errorf("notifier", "Failed to compute traffic for client %s (%s): %v", n.Client, label, err)
 			lastClientError = err
 			continue
 		}
