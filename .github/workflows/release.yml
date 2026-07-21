@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Version-only release tag, for example 2.1.1
+        description: Version-only release tag, for example 2.1.2
         required: true
         type: string
       version_hash:
@@ -14,7 +14,7 @@ on:
       web_ref:
         description: Branch or tag in nuomiiiii/komari-web
         required: true
-        default: komari-2.1.1
+        default: komari-2.1.2
         type: string
 
 permissions:
