@@ -179,18 +179,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check whether this is the latest GitHub release
+      - name: Check whether this tag should become Docker latest
         id: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare.outputs.version }}
         run: |
-          is_latest="$(gh api graphql \
-            -f 'query=query($owner: String!, $name: String!, $tag: String!) { repository(owner: $owner, name: $name) { release(tagName: $tag) { isLatest } } }' \
-            -F owner="${{ github.repository_owner }}" \
-            -F name="${{ github.event.repository.name }}" \
-            -F tag="$TAG" \
-            --jq '.data.repository.release.isLatest')"
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name' 2>/dev/null || true)"
+          highest="$(printf '%s\n%s\n' "$latest" "$TAG" | sed '/^$/d' | sort -V | tail -n 1)"
+          if [ -z "$latest" ] || [ "$highest" = "$TAG" ]; then
+            is_latest=true
+          else
+            is_latest=false
+          fi
           echo "is_latest=$is_latest" >> "$GITHUB_OUTPUT"
 
       - name: Extract metadata
