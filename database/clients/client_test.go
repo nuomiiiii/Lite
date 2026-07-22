@@ -2,6 +2,7 @@ package clients
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/komari-monitor/komari/database/models"
@@ -70,4 +71,37 @@ func TestNormalizeTrafficResetDay(t *testing.T) {
 	day, err := normalizeTrafficResetDay(nil)
 	require.NoError(t, err)
 	assert.Nil(t, day)
+}
+
+func TestSaveClientPersistsCADCurrency(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "komari.db")
+	db, err := gorm.Open(sqlite.Open(databasePath), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Client{}))
+	require.NoError(t, db.Create(&models.Client{
+		UUID: "client-cad", Token: "token-cad", Name: "Canada Server", Currency: "$",
+	}).Error)
+
+	require.NoError(t, saveClient(db, map[string]interface{}{
+		"uuid":     "client-cad",
+		"currency": " cad ",
+	}))
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	db, err = gorm.Open(sqlite.Open(databasePath), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	sqlDB, err = db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+
+	var client models.Client
+	require.NoError(t, db.First(&client, "uuid = ?", "client-cad").Error)
+	assert.Equal(t, "CAD", client.Currency)
 }

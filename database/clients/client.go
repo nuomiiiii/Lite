@@ -5,6 +5,7 @@ import (
 	"fmt"
 	logger "github.com/komari-monitor/komari/utils/log"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
@@ -253,7 +254,10 @@ func GetAllClientBasicInfo() (clients []models.Client, err error) {
 }
 
 func SaveClient(updates map[string]interface{}) error {
-	db := dbcore.GetDBInstance()
+	return saveClient(dbcore.GetDBInstance(), updates)
+}
+
+func saveClient(db *gorm.DB, updates map[string]interface{}) error {
 	clientUUID, ok := updates["uuid"].(string)
 	if !ok || clientUUID == "" {
 		return fmt.Errorf("invalid client UUID")
@@ -277,6 +281,17 @@ func SaveClient(updates map[string]interface{}) error {
 			return err
 		}
 		updates["traffic_reset_day"] = normalized
+	}
+	if value, exists := updates["currency"]; exists {
+		currency, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("currency must be a string")
+		}
+		currency = strings.TrimSpace(currency)
+		if strings.EqualFold(currency, "CAD") {
+			currency = "CAD"
+		}
+		updates["currency"] = currency
 	}
 	if value, exists := updates["expired_at"]; exists {
 		switch typed := value.(type) {

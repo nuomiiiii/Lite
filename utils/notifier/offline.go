@@ -54,6 +54,43 @@ func getOrInitState(clientID string) *notificationState {
 	return val.(*notificationState)
 }
 
+func beginOfflineGrace(state *notificationState, endedConnectionID int64, now time.Time) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	// 只接受当前连接的首次离线事件。旧连接的延迟事件必须被忽略。
+	if !state.pendingOfflineSince.IsZero() || state.connectionID != endedConnectionID {
+		return false
+	}
+	state.pendingOfflineSince = now
+	return true
+}
+
+func recordOnlineConnection(state *notificationState, connectionID int64) (notifyOnline, duplicate bool) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.connectionID = connectionID
+	if state.isFirstConnection {
+		state.isFirstConnection = false
+		state.pendingOfflineSince = time.Time{}
+		state.isConnExist = true
+		return false, false
+	}
+
+	wasPending := !state.pendingOfflineSince.IsZero()
+	state.pendingOfflineSince = time.Time{}
+	if wasPending {
+		return false, false
+	}
+
+	if state.isConnExist {
+		return false, true
+	}
+	state.isConnExist = true
+	return true, false
+}
+
 // OfflineNotification 在启用通知且未在宽限期内发送的情况下，发送客户端离线通知。
 func OfflineNotification(clientID string, endedConnectionID int64) {
 	client, err := clients.GetClientByUUID(clientID)
@@ -73,17 +110,9 @@ func OfflineNotification(clientID string, endedConnectionID int64) {
 
 	now := time.Now().UTC()
 	state := getOrInitState(clientID)
-
-	state.mu.Lock()
-	// 如果已处于待通知状态，则不做处理。
-	// 只有当离线事件来自当前的连接会话时，我们才认为它有效。
-	if !state.pendingOfflineSince.IsZero() || state.connectionID != endedConnectionID {
-		state.mu.Unlock()
+	if !beginOfflineGrace(state, endedConnectionID, now) {
 		return
 	}
-	// 标记该客户端为待离线。
-	state.pendingOfflineSince = now
-	state.mu.Unlock()
 
 	// 新建协程，等待宽限期后判断是否需要发送通知。
 	go func(startTime time.Time, expectedConnectionID int64) {
@@ -135,43 +164,22 @@ func OnlineNotification(clientID string, connectionID int64) {
 	}
 	// 上线时检测续费
 	renewal.CheckAndAutoRenewal(client)
+
+	// 连接状态必须始终维护。通知开关只控制消息发送，不能让当前连接 ID
+	// 缺失，否则节点在线时启用通知后的首次断线会被误判为旧连接事件。
+	state := getOrInitState(clientID)
+	notifyOnline, duplicate := recordOnlineConnection(state, connectionID)
+
 	_, enabled := getNotificationConfig(clientID)
 	if !enabled {
 		return
 	}
-
-	state := getOrInitState(clientID)
-
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	state.connectionID = connectionID
-
-	// 规则1：首次连接不通知。
-	if state.isFirstConnection {
-		state.isFirstConnection = false
-		// 同时清除任何待离线状态（如服务器重启时客户端本已离线）
-		state.pendingOfflineSince = time.Time{}
-		state.isConnExist = true
-		return
-	}
-
-	// 检查客户端是否处于待离线状态。
-	wasPending := !state.pendingOfflineSince.IsZero()
-	// 上线时总是清除待离线状态。
-	state.pendingOfflineSince = time.Time{}
-
-	// 规则2：宽限期内重连，不通知。
-	if wasPending {
-		return
-	}
-
-	// 规则3: 没断开后重连, 不通知
-	// 为了解决OfflineNotify中不是全程加锁
-	if state.isConnExist {
+	if duplicate {
 		logger.Infof("notifier", "%s has connection exist: %d", clientID, connectionID)
 		return
-	} else {
-		state.isConnExist = true
+	}
+	if !notifyOnline {
+		return
 	}
 
 	// 规则4：客户端离线足够久已通知（或未待离线），现在重新上线，发送上线通知。
