@@ -17,6 +17,7 @@ const (
 	MethodAgentMessage    = "agent.message"
 	MethodAgentEvent      = "agent.event"
 	MethodAgentTerminal   = "agent.terminal.request"
+	MethodAgentRemote     = "agent.remote.request"
 	MethodAgentConfig     = "agent.config"
 	MethodAgentPull       = "agent.pull"
 )
@@ -95,6 +96,11 @@ type EventParams struct {
 
 type TerminalRequestParams struct {
 	RequestID string `json:"request_id"`
+}
+
+type RemoteRequestParams struct {
+	RequestID string `json:"request_id"`
+	Ticket    string `json:"ticket"`
 }
 
 type ConfigParams struct {

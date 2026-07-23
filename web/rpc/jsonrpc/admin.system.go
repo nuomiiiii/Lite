@@ -110,6 +110,15 @@ func adminExec(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcE
 	if len(params.Clients) == 0 {
 		return nil, rpc.MakeError(rpc.InvalidParams, "clients is required", nil)
 	}
+	var protectedClients []string
+	if err := dbcore.GetDBInstance().Model(&models.Client{}).
+		Where("uuid IN ? AND remote_control_protected = ?", params.Clients, true).
+		Pluck("uuid", &protectedClients).Error; err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, "Failed to validate remote control protection: "+err.Error(), nil)
+	}
+	if len(protectedClients) > 0 {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Remote control is disabled for the Komari Server node: "+strings.Join(protectedClients, ", "), nil)
+	}
 
 	var onlineClients, queuedClients, offlineClients []string
 	for _, uuid := range params.Clients {

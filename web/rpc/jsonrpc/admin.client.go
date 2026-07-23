@@ -10,6 +10,8 @@ import (
 	"github.com/komari-monitor/komari/pkg/rpc"
 	v2 "github.com/komari-monitor/komari/protocol/v2"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
+	remote_api "github.com/komari-monitor/komari/web/api/remote"
+	terminal_api "github.com/komari-monitor/komari/web/api/terminal"
 )
 
 // admin.client.go
@@ -121,6 +123,11 @@ func adminEditClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.Js
 				MonthRotate: *clientInfo.TrafficResetDay,
 			})
 		}
+	}
+	if protected, changed := update["remote_control_protected"].(bool); changed && protected {
+		remote_api.CloseClientSessions(uuid)
+		terminal_api.CloseClientSessions(uuid)
+		agent_runtime.RemoveV2EventsByMethods(uuid, v2.MethodAgentExec, v2.MethodAgentTerminal, v2.MethodAgentRemote)
 	}
 	actor, ip := auditActor(ctx)
 	auditlog.Log(ip, actor, "edit client:"+uuid, "info")

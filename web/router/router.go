@@ -6,6 +6,7 @@ import (
 	"github.com/komari-monitor/komari/web/api/admin"
 	"github.com/komari-monitor/komari/web/api/client"
 	public_api "github.com/komari-monitor/komari/web/api/public"
+	"github.com/komari-monitor/komari/web/api/remote"
 	"github.com/komari-monitor/komari/web/api/terminal"
 	"github.com/komari-monitor/komari/web/public"
 	jsonRpc "github.com/komari-monitor/komari/web/rpc/jsonrpc"
@@ -70,6 +71,7 @@ func registerAgentRoutes(r *gin.Engine) {
 		tokenAuthorized.GET("/v2/rpc", client.WebSocketV2RPC)
 		tokenAuthorized.POST("/v2/rpc", client.UploadV2RPC)
 		tokenAuthorized.GET("/terminal", terminal.EstablishConnection)
+		tokenAuthorized.GET("/remote", remote.EstablishAgent)
 
 		// JSON 接口 -> RPC2 (client: 命名空间)。
 		tokenAuthorized.POST("/task/result", jsonRpc.Bind("client:taskResult", jsonRpc.WithRaw()))
@@ -169,6 +171,8 @@ func registerAdminRoutes(r *gin.Engine) {
 		clientGroup.GET("/:uuid/token", jsonRpc.Bind("admin:getClientToken", jsonRpc.WithPath("uuid"), jsonRpc.WithFlat()))
 		clientGroup.POST("/order", jsonRpc.Bind("admin:orderClients"))
 		clientGroup.GET("/:uuid/terminal", api.RequireSensitive2FA(), terminal.RequestTerminal)
+		clientGroup.POST("/:uuid/remote/session", remote.CreateSession)
+		clientGroup.GET("/:uuid/remote", remote.ConnectBrowser)
 	}
 
 	// records
