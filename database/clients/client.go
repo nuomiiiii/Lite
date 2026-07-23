@@ -288,7 +288,7 @@ func saveClient(db *gorm.DB, updates map[string]interface{}) error {
 			return fmt.Errorf("currency must be a string")
 		}
 		currency = strings.TrimSpace(currency)
-		if strings.EqualFold(currency, "CAD") || strings.EqualFold(currency, "CA$") {
+		if strings.EqualFold(currency, "CAD") || strings.EqualFold(currency, "CA$") || strings.EqualFold(currency, "C$") {
 			currency = "CAD"
 		}
 		updates["currency"] = currency

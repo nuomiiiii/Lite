@@ -86,7 +86,7 @@ func TestSaveClientPersistsCADCurrency(t *testing.T) {
 
 	require.NoError(t, saveClient(db, map[string]interface{}{
 		"uuid":     "client-cad",
-		"currency": " ca$ ",
+		"currency": " c$ ",
 	}))
 
 	sqlDB, err := db.DB()
