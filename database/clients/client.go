@@ -245,8 +245,18 @@ func GetClientTokenByUUID(uuid string) (token string, err error) {
 }
 
 func GetAllClientBasicInfo() (clients []models.Client, err error) {
-	db := dbcore.GetDBInstance()
-	err = db.Find(&clients).Error
+	return getClientBasicInfo(dbcore.GetDBInstance())
+}
+
+func GetClientBasicInfoByUUIDs(uuids []string) (clients []models.Client, err error) {
+	if len(uuids) == 0 {
+		return []models.Client{}, nil
+	}
+	return getClientBasicInfo(dbcore.GetDBInstance().Where("uuid IN ?", uuids))
+}
+
+func getClientBasicInfo(query *gorm.DB) (clients []models.Client, err error) {
+	err = query.Order("weight ASC").Order("created_at ASC").Order("uuid ASC").Find(&clients).Error
 	if err != nil {
 		return nil, err
 	}

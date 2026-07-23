@@ -151,6 +151,24 @@ func TestFormatTrafficReportLineSupportsBillingAndCombinedContent(t *testing.T) 
 	)
 }
 
+func TestTrafficReportTargetsFollowConfiguredClientOrder(t *testing.T) {
+	notifications := []models.TrafficReportNotification{
+		{Client: "client-a", IncludeTraffic: true},
+		{Client: "client-b", IncludeBilling: true},
+	}
+	clients := []models.Client{
+		{UUID: "client-b", Name: "B", Weight: 10},
+		{UUID: "client-a", Name: "A", Weight: 20},
+	}
+
+	targets := trafficReportTargetsInClientOrder(notifications, clients)
+	assert.Len(t, targets, 2)
+	assert.Equal(t, "client-b", targets[0].client.UUID)
+	assert.True(t, targets[0].notification.IncludeBilling)
+	assert.Equal(t, "client-a", targets[1].client.UUID)
+	assert.True(t, targets[1].notification.IncludeTraffic)
+}
+
 func TestSumTrafficDeltasIgnoresTransientCounterRollback(t *testing.T) {
 	const gib = int64(1024 * 1024 * 1024)
 	start := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)

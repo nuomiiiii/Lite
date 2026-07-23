@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/stretchr/testify/assert"
@@ -12,6 +13,28 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+func TestGetClientBasicInfoUsesConfiguredOrder(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:client-configured-order?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Client{}))
+
+	createdAt := time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create([]models.Client{
+		{UUID: "client-c", Token: "token-c", Name: "C", Weight: 20, CreatedAt: createdAt},
+		{UUID: "client-b", Token: "token-b", Name: "B", Weight: 10, CreatedAt: createdAt.Add(time.Minute)},
+		{UUID: "client-a", Token: "token-a", Name: "A", Weight: 10, CreatedAt: createdAt},
+	}).Error)
+
+	clients, err := getClientBasicInfo(db)
+	require.NoError(t, err)
+	require.Len(t, clients, 3)
+	assert.Equal(t, []string{"client-a", "client-b", "client-c"}, []string{
+		clients[0].UUID, clients[1].UUID, clients[2].UUID,
+	})
+}
 
 func TestDeleteClientCleansPingLossNotificationsAndTaskAssignments(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:delete-client-cleanup?mode=memory&cache=shared&_foreign_keys=off"), &gorm.Config{

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	clientdb "github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
@@ -23,6 +24,28 @@ var beijingLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 type TrafficReportSendResult struct {
 	Sent        bool `json:"sent"`
 	ClientCount int  `json:"client_count"`
+}
+
+type trafficReportTarget struct {
+	client       models.Client
+	notification models.TrafficReportNotification
+}
+
+func trafficReportTargetsInClientOrder(notifications []models.TrafficReportNotification, clientList []models.Client) []trafficReportTarget {
+	notificationsByClient := make(map[string]models.TrafficReportNotification, len(notifications))
+	for _, notification := range notifications {
+		notificationsByClient[notification.Client] = notification
+	}
+
+	targets := make([]trafficReportTarget, 0, len(notifications))
+	for _, client := range clientList {
+		notification, ok := notificationsByClient[client.UUID]
+		if !ok {
+			continue
+		}
+		targets = append(targets, trafficReportTarget{client: client, notification: notification})
+	}
+	return targets
 }
 
 // InitTrafficReportSchedule 注册三个按北京时间执行的定时任务：日报、周报、月报。
@@ -138,34 +161,26 @@ func sendTrafficReport(daily, weekly, monthly, currentDaily bool) (TrafficReport
 	for _, n := range notifications {
 		clientUUIDs = append(clientUUIDs, n.Client)
 	}
-	var clientList []models.Client
-	if err := db.Where("uuid IN ?", clientUUIDs).Find(&clientList).Error; err != nil {
+	clientList, err := clientdb.GetClientBasicInfoByUUIDs(clientUUIDs)
+	if err != nil {
 		return result, fmt.Errorf("query clients for %s traffic report: %w", label, err)
 	}
-	clientMap := make(map[string]models.Client, len(clientList))
-	for _, c := range clientList {
-		clientMap[c.UUID] = c
-	}
+	targets := trafficReportTargetsInClientOrder(notifications, clientList)
 
 	// 为每个服务器统计流量并拼接消息
 	var lines []string
-	eventClients := make([]models.Client, 0, len(notifications))
+	eventClients := make([]models.Client, 0, len(targets))
 	var lastClientError error
-	for _, n := range notifications {
-		c, ok := clientMap[n.Client]
-		if !ok {
-			continue
-		}
-
-		usage, err := getClientTrafficInRange(n.Client, start, end)
+	for _, target := range targets {
+		usage, err := getClientTrafficInRange(target.client.UUID, start, end)
 		if err != nil {
-			logger.Errorf("notifier", "Failed to compute traffic for client %s (%s): %v", n.Client, label, err)
+			logger.Errorf("notifier", "Failed to compute traffic for client %s (%s): %v", target.client.UUID, label, err)
 			lastClientError = err
 			continue
 		}
 
-		lines = append(lines, formatTrafficReportLine(c, suffix, usage, n.IncludeTraffic, n.IncludeBilling))
-		eventClients = append(eventClients, c)
+		lines = append(lines, formatTrafficReportLine(target.client, suffix, usage, target.notification.IncludeTraffic, target.notification.IncludeBilling))
+		eventClients = append(eventClients, target.client)
 	}
 
 	if len(lines) == 0 {

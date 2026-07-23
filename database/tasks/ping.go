@@ -54,12 +54,28 @@ func DeletePingTask(id []uint) error {
 	}
 
 	db := dbcore.GetDBInstance()
-	result := db.Where("id IN ?", id).Delete(&models.PingTask{})
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
+	if err := deletePingTaskRows(db, id); err != nil {
+		return err
 	}
 	ReloadPingSchedule()
-	return result.Error
+	return nil
+}
+
+func deletePingTaskRows(db *gorm.DB, ids []uint) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("task_id IN ?", ids).Delete(&models.PingLossNotification{}).Error; err != nil {
+			return err
+		}
+
+		result := tx.Where("id IN ?", ids).Delete(&models.PingTask{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
 }
 
 // EditPingTask 批量更新延迟监测任务配置。
