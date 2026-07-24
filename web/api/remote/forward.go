@@ -70,7 +70,7 @@ func fileOperationAuditDetail(data []byte) string {
 		return ""
 	}
 	switch request.Type {
-	case "file.create", "file.mkdir", "file.delete", "file.rename", "file.upload.start":
+	case "file.create", "file.mkdir", "file.copy", "file.delete", "file.rename", "file.upload.start":
 	default:
 		return ""
 	}

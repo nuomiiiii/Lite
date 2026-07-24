@@ -10,6 +10,10 @@ func TestFileOperationAuditOnlyRecordsMutations(t *testing.T) {
 	if mutation != "operation:file.rename, path:/tmp/old name, destination:/tmp/new" {
 		t.Fatalf("unexpected sanitized audit detail: %q", mutation)
 	}
+	copyMutation := fileOperationAuditDetail([]byte(`{"type":"file.copy","path":"/tmp/source","destination":"/tmp/destination"}`))
+	if copyMutation != "operation:file.copy, path:/tmp/source, destination:/tmp/destination" {
+		t.Fatalf("copy was not audited correctly: %q", copyMutation)
+	}
 	for _, payload := range []string{
 		`{"type":"file.list","path":"/tmp"}`,
 		`{"type":"file.download","path":"/tmp/file"}`,

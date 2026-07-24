@@ -149,14 +149,8 @@ func PrepareAndLaunch(ctx context.Context, version, versionHash string) (*Update
 		return nil, err
 	}
 
-	command := exec.CommandContext(ctx, "systemd-run",
-		"--unit=komari-self-update-"+jobID,
-		"--no-block",
-		"--property=Restart=on-failure",
-		"--property=RestartSec=3s",
-		candidate, "_self-update-helper", configPath,
-	)
-	if output, err := command.CombinedOutput(); err != nil {
+	output, err := scheduleUpdateHelper(ctx, jobID, candidate, configPath, runCombinedOutput)
+	if err != nil {
 		result.Status = "failed"
 		result.Message = strings.TrimSpace(string(output))
 		result.UpdatedAt = time.Now().UTC()
@@ -165,6 +159,44 @@ func PrepareAndLaunch(ctx context.Context, version, versionHash string) (*Update
 	}
 	launched = true
 	return result, nil
+}
+
+type commandRunner func(context.Context, string, ...string) ([]byte, error)
+
+func runCombinedOutput(ctx context.Context, name string, arguments ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, arguments...).CombinedOutput()
+}
+
+func scheduleUpdateHelper(ctx context.Context, jobID, candidate, configPath string, run commandRunner) ([]byte, error) {
+	arguments := []string{
+		"--unit=komari-self-update-" + jobID,
+		"--no-block",
+		"--property=Restart=on-failure",
+		"--property=RestartSec=3s",
+		candidate, "_self-update-helper", configPath,
+	}
+	output, err := run(ctx, "systemd-run", arguments...)
+	if err == nil || !noBlockUnsupported(output) {
+		return output, err
+	}
+
+	compatibleArguments := make([]string, 0, len(arguments)-1)
+	for _, argument := range arguments {
+		if argument != "--no-block" {
+			compatibleArguments = append(compatibleArguments, argument)
+		}
+	}
+	return run(ctx, "systemd-run", compatibleArguments...)
+}
+
+func noBlockUnsupported(output []byte) bool {
+	message := strings.ToLower(string(output))
+	if !strings.Contains(message, "--no-block") {
+		return false
+	}
+	return strings.Contains(message, "unrecognized option") ||
+		strings.Contains(message, "unknown option") ||
+		strings.Contains(message, "invalid option")
 }
 
 func isUpdateInProgress(status string) bool {
