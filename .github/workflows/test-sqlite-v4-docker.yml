@@ -13,7 +13,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   VERSION: 2.1.7
-  VERSION_HASH: 1vl7e9p
+  VERSION_HASH: r6k2m9q
 
 jobs:
   build-frontend:
