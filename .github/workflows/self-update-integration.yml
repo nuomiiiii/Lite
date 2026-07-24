@@ -24,7 +24,7 @@ jobs:
       - name: Build frontend assets
         uses: ./.github/actions/build-frontend
         with:
-          ref: komari-2.1.5
+          ref: komari-2.1.6
 
       - name: Run updater unit tests
         run: go test ./pkg/selfupdate ./web/rpc/jsonrpc

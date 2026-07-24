@@ -10,7 +10,7 @@ inputs:
     default: https://github.com/nuomiiiii/komari-web
   ref:
     description: Optional komari-web ref to build. Uses the repository default branch when empty.
-    default: komari-2.1.5
+    default: komari-2.1.6
   artifact-name:
     description: Optional artifact name for the packed frontend theme.
     default: ""
