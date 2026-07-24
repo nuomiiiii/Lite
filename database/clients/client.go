@@ -259,7 +259,7 @@ func rotateClientToken(db *gorm.DB, uuid string, gracePeriod time.Duration) (tok
 		}
 		now := time.Now().UTC()
 		if client.PreviousToken != "" && client.PreviousTokenExpiresAt != nil && client.PreviousTokenExpiresAt.After(now) {
-			return fmt.Errorf("Token 轮换仍在过渡期内，请先使用新 Token 重新部署 Agent；新 Token 首次成功连接后才能再次轮换")
+			return fmt.Errorf("Token 重置仍在过渡期内，请先使用新 Token 重新部署 Agent；新 Token 首次成功连接后才能再次重置")
 		}
 		token = utils.GenerateToken()
 		previousExpiresAt = now.Add(gracePeriod)

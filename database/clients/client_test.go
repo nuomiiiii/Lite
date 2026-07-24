@@ -147,7 +147,7 @@ func TestRotateClientTokenKeepsOldTokenUntilNewTokenConnects(t *testing.T) {
 	assert.Equal(t, "client-a", uuid)
 	_, _, err = rotateClientToken(db, "client-a", time.Hour)
 	require.Error(t, err)
-	assert.Equal(t, "Token 轮换仍在过渡期内，请先使用新 Token 重新部署 Agent；新 Token 首次成功连接后才能再次轮换", err.Error())
+	assert.Equal(t, "Token 重置仍在过渡期内，请先使用新 Token 重新部署 Agent；新 Token 首次成功连接后才能再次重置", err.Error())
 
 	uuid, err = getClientUUIDByToken(db, newToken, expiresAt.Add(-time.Minute))
 	require.NoError(t, err)
