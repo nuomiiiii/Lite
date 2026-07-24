@@ -175,18 +175,29 @@ func scheduleUpdateHelper(ctx context.Context, jobID, candidate, configPath stri
 		"--property=RestartSec=3s",
 		candidate, "_self-update-helper", configPath,
 	}
-	output, err := run(ctx, "systemd-run", arguments...)
-	if err == nil || !noBlockUnsupported(output) {
-		return output, err
-	}
+	noBlockEnabled := true
+	restartPropertiesEnabled := true
+	for {
+		output, err := run(ctx, "systemd-run", arguments...)
+		if err == nil {
+			return output, nil
+		}
 
-	compatibleArguments := make([]string, 0, len(arguments)-1)
-	for _, argument := range arguments {
-		if argument != "--no-block" {
-			compatibleArguments = append(compatibleArguments, argument)
+		switch {
+		case noBlockEnabled && noBlockUnsupported(output):
+			noBlockEnabled = false
+			arguments = removeSystemdRunArguments(arguments, func(argument string) bool {
+				return argument == "--no-block"
+			})
+		case restartPropertiesEnabled && restartPropertiesUnsupported(output):
+			restartPropertiesEnabled = false
+			arguments = removeSystemdRunArguments(arguments, func(argument string) bool {
+				return strings.HasPrefix(argument, "--property=Restart")
+			})
+		default:
+			return output, err
 		}
 	}
-	return run(ctx, "systemd-run", compatibleArguments...)
 }
 
 func noBlockUnsupported(output []byte) bool {
@@ -197,6 +208,29 @@ func noBlockUnsupported(output []byte) bool {
 	return strings.Contains(message, "unrecognized option") ||
 		strings.Contains(message, "unknown option") ||
 		strings.Contains(message, "invalid option")
+}
+
+func restartPropertiesUnsupported(output []byte) bool {
+	message := strings.ToLower(string(output))
+	if !strings.Contains(message, "restart=on-failure") && !strings.Contains(message, "restartsec=3s") {
+		return false
+	}
+	return strings.Contains(message, "unknown assignment") ||
+		strings.Contains(message, "unsupported assignment") ||
+		strings.Contains(message, "invalid assignment") ||
+		strings.Contains(message, "unknown property") ||
+		strings.Contains(message, "unsupported property") ||
+		strings.Contains(message, "invalid property")
+}
+
+func removeSystemdRunArguments(arguments []string, remove func(string) bool) []string {
+	compatible := make([]string, 0, len(arguments))
+	for _, argument := range arguments {
+		if !remove(argument) {
+			compatible = append(compatible, argument)
+		}
+	}
+	return compatible
 }
 
 func isUpdateInProgress(status string) bool {

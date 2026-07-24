@@ -38,6 +38,60 @@ func TestScheduleUpdateHelperFallsBackWithoutNoBlock(t *testing.T) {
 	}
 }
 
+func TestScheduleUpdateHelperFallsBackForCentOS7RestartProperties(t *testing.T) {
+	var calls [][]string
+	run := func(_ context.Context, name string, arguments ...string) ([]byte, error) {
+		if name != "systemd-run" {
+			t.Fatalf("command = %q, want systemd-run", name)
+		}
+		calls = append(calls, append([]string(nil), arguments...))
+		if len(calls) == 1 {
+			return []byte("Unknown assignment Restart=on-failure. Failed to create bus message: No such device or address"), errors.New("exit status 1")
+		}
+		return []byte("Running as unit: komari-self-update-test.service"), nil
+	}
+
+	if output, err := scheduleUpdateHelper(context.Background(), "test", "/tmp/candidate", "/tmp/helper.json", run); err != nil {
+		t.Fatalf("scheduleUpdateHelper() output = %q, error = %v", output, err)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("systemd-run calls = %d, want 2", len(calls))
+	}
+	if !containsArgument(calls[1], "--no-block") {
+		t.Fatal("CentOS 7 compatibility retry unexpectedly removed --no-block")
+	}
+	if containsArgument(calls[1], "--property=Restart=on-failure") || containsArgument(calls[1], "--property=RestartSec=3s") {
+		t.Fatal("CentOS 7 compatibility retry still used unsupported restart properties")
+	}
+}
+
+func TestScheduleUpdateHelperCombinesLegacyFallbacks(t *testing.T) {
+	var calls [][]string
+	run := func(_ context.Context, _ string, arguments ...string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), arguments...))
+		switch len(calls) {
+		case 1:
+			return []byte("systemd-run: unrecognized option '--no-block'"), errors.New("exit status 1")
+		case 2:
+			return []byte("Unknown assignment Restart=on-failure"), errors.New("exit status 1")
+		default:
+			return []byte("Running as unit: komari-self-update-test.service"), nil
+		}
+	}
+
+	if output, err := scheduleUpdateHelper(context.Background(), "test", "/tmp/candidate", "/tmp/helper.json", run); err != nil {
+		t.Fatalf("scheduleUpdateHelper() output = %q, error = %v", output, err)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("systemd-run calls = %d, want 3", len(calls))
+	}
+	if containsArgument(calls[2], "--no-block") ||
+		containsArgument(calls[2], "--property=Restart=on-failure") ||
+		containsArgument(calls[2], "--property=RestartSec=3s") {
+		t.Fatalf("final compatibility retry retained unsupported options: %v", calls[2])
+	}
+}
+
 func TestScheduleUpdateHelperDoesNotRetryOtherFailures(t *testing.T) {
 	calls := 0
 	run := func(_ context.Context, _ string, _ ...string) ([]byte, error) {
