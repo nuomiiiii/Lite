@@ -19,8 +19,11 @@ import (
 )
 
 const (
-	updateRootName = ".komari-update"
-	lastResultName = "last-result.json"
+	updateRootName           = ".komari-update"
+	lastResultName           = "last-result.json"
+	defaultHealthTimeout     = 15 * time.Minute
+	defaultStableWindow      = 15 * time.Second
+	activeTransactionTimeout = defaultHealthTimeout + 5*time.Minute
 )
 
 type HelperConfig struct {
@@ -75,7 +78,7 @@ func PrepareAndLaunch(ctx context.Context, version, versionHash string) (*Update
 	if err != nil {
 		return nil, err
 	}
-	if previous, err := ReadLastResult(filepath.Dir(executable)); err == nil && previous != nil && isUpdateInProgress(previous.Status) && time.Since(previous.UpdatedAt) < 15*time.Minute {
+	if previous, err := ReadLastResult(filepath.Dir(executable)); err == nil && previous != nil && isUpdateInProgress(previous.Status) && time.Since(previous.UpdatedAt) < activeTransactionTimeout {
 		return nil, errors.New("another self-update transaction is already running")
 	}
 	healthURL, err := localHealthURL()
@@ -130,8 +133,8 @@ func PrepareAndLaunch(ctx context.Context, version, versionHash string) (*Update
 		UpdateRoot:          updateRoot,
 		BackupRoot:          backupRoot,
 		StartDelay:          3 * time.Second,
-		HealthTimeout:       90 * time.Second,
-		StableWindow:        15 * time.Second,
+		HealthTimeout:       defaultHealthTimeout,
+		StableWindow:        defaultStableWindow,
 	}
 	configPath := filepath.Join(jobRoot, "helper.json")
 	if err := atomicWriteJSON(configPath, config, 0600); err != nil {

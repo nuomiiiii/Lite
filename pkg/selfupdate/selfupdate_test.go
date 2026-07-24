@@ -146,6 +146,32 @@ func TestManifestSelectsCurrentPlatformAndValidatesChecksum(t *testing.T) {
 	}
 }
 
+func TestMigrationHealthWindowCoversLowEndSQLiteUpgrade(t *testing.T) {
+	if defaultHealthTimeout < 15*time.Minute {
+		t.Fatalf("health timeout %s is too short for a low-end SQLite migration", defaultHealthTimeout)
+	}
+	if activeTransactionTimeout <= defaultHealthTimeout {
+		t.Fatalf("active transaction timeout %s must outlive health timeout %s", activeTransactionTimeout, defaultHealthTimeout)
+	}
+}
+
+func TestValidateHelperConfigAppliesMigrationDefaults(t *testing.T) {
+	tx, _ := newTestTransaction(t)
+	config := tx.config
+	config.HealthTimeout = 0
+	config.StableWindow = 0
+
+	if err := validateHelperConfig(&config); err != nil {
+		t.Fatalf("validateHelperConfig() error = %v", err)
+	}
+	if config.HealthTimeout != defaultHealthTimeout {
+		t.Fatalf("health timeout = %s, want %s", config.HealthTimeout, defaultHealthTimeout)
+	}
+	if config.StableWindow != defaultStableWindow {
+		t.Fatalf("stable window = %s, want %s", config.StableWindow, defaultStableWindow)
+	}
+}
+
 func TestTransactionKeepsSnapshotAfterSuccessfulUpdate(t *testing.T) {
 	tx, root := newTestTransaction(t)
 	tx.waitHealthy = func(version, hash string, _, _ time.Duration) error {
