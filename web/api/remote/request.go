@@ -35,12 +35,9 @@ func CreateSession(c *gin.Context) {
 		return
 	}
 	loginSession, _ := c.Cookie("session_token")
-	if !hasFreshStepUp(loginSession) {
-		if err := api.VerifySensitive2FA(c); err != nil {
-			api.RespondError(c, http.StatusUnauthorized, err.Error())
-			return
-		}
-		rememberStepUp(loginSession)
+	if err := verifyRemoteAccess(c, loginSession); err != nil {
+		api.RespondError(c, http.StatusUnauthorized, err.Error())
+		return
 	}
 
 	now := time.Now()
@@ -77,6 +74,34 @@ func CreateSession(c *gin.Context) {
 		"browser_ticket": session.BrowserTicket,
 		"expires_at":     session.ExpiresAt.UTC(),
 	})
+}
+
+// Authorize verifies the remote-management step-up before the browser creates
+// a terminal tab. This keeps the 2FA prompt independent from xterm startup and
+// avoids creating a pending remote session solely to discover that 2FA is due.
+func Authorize(c *gin.Context) {
+	principal := api.GetPrincipal(c)
+	if principal == nil || principal.Type != rpc.PrincipalUser {
+		api.RespondError(c, http.StatusForbidden, "Remote control requires an administrator session")
+		return
+	}
+	loginSession, _ := c.Cookie("session_token")
+	if err := verifyRemoteAccess(c, loginSession); err != nil {
+		api.RespondError(c, http.StatusUnauthorized, err.Error())
+		return
+	}
+	api.RespondSuccess(c, gin.H{"authorized": true})
+}
+
+func verifyRemoteAccess(c *gin.Context, loginSession string) error {
+	if hasFreshStepUp(loginSession) {
+		return nil
+	}
+	if err := api.VerifySensitive2FA(c); err != nil {
+		return err
+	}
+	rememberStepUp(loginSession)
+	return nil
 }
 
 func ConnectBrowser(c *gin.Context) {

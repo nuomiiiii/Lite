@@ -43,7 +43,7 @@
 
 发布后各处含义如下：
 
-- 页面和日志显示：`2.1.5 (yeycoeq)`
+- 页面和日志显示：`2.1.5 (5xkcaka)`
 - Git 标签：`2.1.5`
 - GitHub Release 标题和标签：`2.1.5`
 - Docker 标签：`ghcr.io/nuomiiiii/komari:2.1.5` 和 `latest`
