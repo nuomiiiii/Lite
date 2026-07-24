@@ -244,6 +244,35 @@ func GetClientTokenByUUID(uuid string) (token string, err error) {
 	return client.Token, nil
 }
 
+func RotateClientToken(uuid string, gracePeriod time.Duration) (token string, previousExpiresAt time.Time, err error) {
+	return rotateClientToken(dbcore.GetDBInstance(), uuid, gracePeriod)
+}
+
+func rotateClientToken(db *gorm.DB, uuid string, gracePeriod time.Duration) (token string, previousExpiresAt time.Time, err error) {
+	if gracePeriod <= 0 {
+		return "", time.Time{}, fmt.Errorf("token grace period must be positive")
+	}
+	err = db.Transaction(func(tx *gorm.DB) error {
+		var client models.Client
+		if err := tx.Where("uuid = ?", uuid).First(&client).Error; err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		if client.PreviousToken != "" && client.PreviousTokenExpiresAt != nil && client.PreviousTokenExpiresAt.After(now) {
+			return fmt.Errorf("a token rotation is already in progress")
+		}
+		token = utils.GenerateToken()
+		previousExpiresAt = now.Add(gracePeriod)
+		return tx.Model(&models.Client{}).Where("uuid = ?", uuid).Updates(map[string]interface{}{
+			"token":                     token,
+			"previous_token":            client.Token,
+			"previous_token_expires_at": previousExpiresAt,
+			"updated_at":                now,
+		}).Error
+	})
+	return token, previousExpiresAt, err
+}
+
 func GetAllClientBasicInfo() (clients []models.Client, err error) {
 	return getClientBasicInfo(dbcore.GetDBInstance())
 }

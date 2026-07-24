@@ -13,7 +13,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/komari-monitor/komari/database/clients"
 	v1 "github.com/komari-monitor/komari/protocol/v1"
 	"github.com/komari-monitor/komari/utils/notifier"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
@@ -117,15 +116,10 @@ func UploadReport(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
-	// 优先使用 body 中的 UUID，若为空则从中间件注入的上下文中获取
-	uuid := report.UUID
-	if uuid == "" {
-		if v, ok := c.Get("client_uuid"); ok {
-			uuid, _ = v.(string)
-		}
-	}
-	if uuid == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "UUID is required"})
+	// 节点身份只能来自已认证的 Token，不能信任上报正文中的 UUID。
+	uuid, ok := clientUUIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 		return
 	}
 
@@ -146,7 +140,7 @@ func WebSocketReport(c *gin.Context) {
 		return
 	}
 	// Upgrade the HTTP connection to a WebSocket connection
-	unsafeConn, err := api.UpgradeWebSocket(c)
+	unsafeConn, err := api.UpgradeWebSocket(c, api.AllowAgentWebSocket)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to upgrade to WebSocket." + err.Error()})
 		return
@@ -160,29 +154,9 @@ func WebSocketReport(c *gin.Context) {
 		return
 	}
 
-	// 第一次数据拿token
-	data := map[string]interface{}{}
-	err = json.Unmarshal(message, &data)
-	if err != nil {
-		conn.WriteJSON(gin.H{"status": "error", "error": "Invalid JSON"})
-		return
-	}
-	// it should ok,token was verfied in the middleware
-	token := ""
-	var errMsg string
-
-	// 优先检查查询参数中的 token
-	token = c.Query("token")
-
-	// 如果 token 为空，返回错误
-	if token == "" {
-		conn.WriteJSON(gin.H{"status": "error", "error": errMsg})
-		return
-	}
-
-	uuid, err := clients.GetClientUUIDByToken(token)
-	if err != nil {
-		conn.WriteJSON(gin.H{"status": "error", "error": errMsg})
+	uuid, ok := clientUUIDFromContext(c)
+	if !ok {
+		conn.WriteJSON(gin.H{"status": "error", "error": "Invalid token"})
 		return
 	}
 

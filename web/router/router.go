@@ -164,16 +164,17 @@ func registerAdminRoutes(r *gin.Engine) {
 	clientGroup := g.Group("/client")
 	{
 		clientGroup.POST("/remote/authorize", remote.Authorize)
+		clientGroup.POST("/remote/session", remote.CreateSession)
+		clientGroup.GET("/remote", remote.ConnectBrowser)
 		clientGroup.POST("/add", jsonRpc.Bind("admin:addClient", jsonRpc.WithFlat()))
 		clientGroup.GET("/list", jsonRpc.Bind("admin:listClients", jsonRpc.WithRaw()))
 		clientGroup.GET("/:uuid", jsonRpc.Bind("admin:getClient", jsonRpc.WithPath("uuid"), jsonRpc.WithRaw()))
 		clientGroup.POST("/:uuid/edit", jsonRpc.Bind("admin:editClient", jsonRpc.WithPath("uuid")))
 		clientGroup.POST("/:uuid/remove", jsonRpc.Bind("admin:removeClient", jsonRpc.WithPath("uuid")))
 		clientGroup.GET("/:uuid/token", jsonRpc.Bind("admin:getClientToken", jsonRpc.WithPath("uuid"), jsonRpc.WithFlat()))
+		clientGroup.POST("/token/rotate", api.RequireSensitive2FA(), jsonRpc.Bind("admin:rotateClientToken"))
 		clientGroup.POST("/order", jsonRpc.Bind("admin:orderClients"))
 		clientGroup.GET("/:uuid/terminal", api.RequireSensitive2FA(), terminal.RequestTerminal)
-		clientGroup.POST("/:uuid/remote/session", remote.CreateSession)
-		clientGroup.GET("/:uuid/remote", remote.ConnectBrowser)
 	}
 
 	// records

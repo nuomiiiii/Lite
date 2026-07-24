@@ -128,3 +128,50 @@ func TestSaveClientPersistsCADCurrency(t *testing.T) {
 	require.NoError(t, db.First(&client, "uuid = ?", "client-cad").Error)
 	assert.Equal(t, "CAD", client.Currency)
 }
+
+func TestRotateClientTokenKeepsOldTokenUntilNewTokenConnects(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:client-token-rotation?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Client{}))
+	require.NoError(t, db.Create(&models.Client{UUID: "client-a", Token: "old-token", Name: "A"}).Error)
+
+	newToken, expiresAt, err := rotateClientToken(db, "client-a", time.Hour)
+	require.NoError(t, err)
+	require.NotEmpty(t, newToken)
+	require.NotEqual(t, "old-token", newToken)
+
+	uuid, err := getClientUUIDByToken(db, "old-token", expiresAt.Add(-time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, "client-a", uuid)
+	_, _, err = rotateClientToken(db, "client-a", time.Hour)
+	require.Error(t, err)
+
+	uuid, err = getClientUUIDByToken(db, newToken, expiresAt.Add(-time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, "client-a", uuid)
+
+	_, err = getClientUUIDByToken(db, "old-token", expiresAt.Add(-time.Minute))
+	require.Error(t, err)
+
+	var client models.Client
+	require.NoError(t, db.First(&client, "uuid = ?", "client-a").Error)
+	assert.Empty(t, client.PreviousToken)
+	assert.Nil(t, client.PreviousTokenExpiresAt)
+}
+
+func TestExpiredPreviousClientTokenIsRejected(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:client-token-expiry?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Client{}))
+	expiresAt := time.Now().UTC().Add(-time.Minute)
+	require.NoError(t, db.Create(&models.Client{
+		UUID: "client-a", Token: "new-token", PreviousToken: "old-token", PreviousTokenExpiresAt: &expiresAt,
+	}).Error)
+
+	_, err = getClientUUIDByToken(db, "old-token", time.Now().UTC())
+	require.Error(t, err)
+}

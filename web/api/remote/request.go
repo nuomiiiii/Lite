@@ -14,13 +14,34 @@ import (
 	"github.com/komari-monitor/komari/web/api"
 )
 
+type browserAuthorization struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Ticket    string `json:"ticket"`
+}
+
+func (authorization browserAuthorization) valid() bool {
+	return authorization.Type == "auth" && authorization.SessionID != "" && authorization.Ticket != ""
+}
+
 func CreateSession(c *gin.Context) {
 	principal := api.GetPrincipal(c)
 	if principal == nil || principal.Type != rpc.PrincipalUser {
 		api.RespondError(c, http.StatusForbidden, "Remote control requires an administrator session")
 		return
 	}
-	uuid := c.Param("uuid")
+	var request struct {
+		UUID      string `json:"uuid" binding:"required"`
+		TwoFACode string `json:"2fa_code"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "Client UUID is required")
+		return
+	}
+	if request.TwoFACode != "" {
+		c.Set("2fa_code", request.TwoFACode)
+	}
+	uuid := request.UUID
 	client, err := clients.GetClientByUUID(uuid)
 	if err != nil {
 		api.RespondError(c, http.StatusNotFound, "Client not found")
@@ -105,12 +126,9 @@ func verifyRemoteAccess(c *gin.Context, loginSession string) error {
 }
 
 func ConnectBrowser(c *gin.Context) {
-	session := getSession(c.Query("id"))
 	principal := api.GetPrincipal(c)
 	loginSession, _ := c.Cookie("session_token")
-	if session == nil || principal == nil || principal.Type != rpc.PrincipalUser ||
-		principal.UserUUID != session.UserUUID || loginSession != session.LoginSession ||
-		c.Param("uuid") != session.UUID || time.Now().After(session.ExpiresAt) {
+	if principal == nil || principal.Type != rpc.PrincipalUser || loginSession == "" {
 		api.RespondError(c, http.StatusNotFound, "Remote session not found")
 		return
 	}
@@ -120,11 +138,15 @@ func ConnectBrowser(c *gin.Context) {
 	}
 	conn.SetReadLimit(remoteReadLimit)
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	var auth struct {
-		Type   string `json:"type"`
-		Ticket string `json:"ticket"`
+	var auth browserAuthorization
+	if err := conn.ReadJSON(&auth); err != nil || !auth.valid() {
+		_ = conn.Close()
+		return
 	}
-	if err := conn.ReadJSON(&auth); err != nil || auth.Type != "auth" {
+	session := getSession(auth.SessionID)
+	if session == nil || principal.UserUUID != session.UserUUID || loginSession != session.LoginSession ||
+		time.Now().After(session.ExpiresAt) {
+		_ = conn.WriteJSON(gin.H{"type": "remote.error", "message": "Remote session authorization failed"})
 		_ = conn.Close()
 		return
 	}

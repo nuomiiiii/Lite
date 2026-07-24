@@ -1,11 +1,40 @@
 package remote
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
+
+func TestBrowserAuthorizationRequiresSessionAndTicket(t *testing.T) {
+	for _, authorization := range []browserAuthorization{
+		{Type: "auth", SessionID: "session"},
+		{Type: "auth", Ticket: "ticket"},
+		{Type: "heartbeat", SessionID: "session", Ticket: "ticket"},
+	} {
+		if authorization.valid() {
+			t.Fatalf("incomplete browser authorization was accepted: %+v", authorization)
+		}
+	}
+	if !(browserAuthorization{Type: "auth", SessionID: "session", Ticket: "ticket"}).valid() {
+		t.Fatal("complete browser authorization was rejected")
+	}
+}
+
+func TestAgentRemoteSessionIDIgnoresQueryParameter(t *testing.T) {
+	context, _ := gin.CreateTestContext(httptest.NewRecorder())
+	context.Request = httptest.NewRequest("GET", "/api/clients/remote?id=query-session", nil)
+	if got := agentRemoteSessionID(context); got != "" {
+		t.Fatalf("query session identifier was accepted: %q", got)
+	}
+	context.Request.Header.Set("X-Komari-Remote-Session", "header-session")
+	if got := agentRemoteSessionID(context); got != "header-session" {
+		t.Fatalf("header session identifier was rejected: %q", got)
+	}
+}
 
 func TestBrowserAndAgentTicketsAreSingleUse(t *testing.T) {
 	now := time.Now()

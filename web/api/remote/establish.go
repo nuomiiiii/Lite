@@ -10,7 +10,7 @@ import (
 )
 
 func EstablishAgent(c *gin.Context) {
-	session := getSession(c.Query("id"))
+	session := getSession(agentRemoteSessionID(c))
 	principal := api.GetPrincipal(c)
 	if session == nil || principal == nil || principal.Type != rpc.PrincipalAgent ||
 		principal.ClientUUID != session.UUID || time.Now().After(session.ExpiresAt) {
@@ -35,4 +35,8 @@ func EstablishAgent(c *gin.Context) {
 	session.forwardOnce.Do(func() {
 		go forwardSession(session)
 	})
+}
+
+func agentRemoteSessionID(c *gin.Context) string {
+	return c.GetHeader("X-Komari-Remote-Session")
 }

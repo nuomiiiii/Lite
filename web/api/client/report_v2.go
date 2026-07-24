@@ -134,7 +134,7 @@ func WebSocketV2RPC(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Require WebSocket upgrade"})
 		return
 	}
-	unsafeConn, err := api.UpgradeWebSocket(c, api.EnableWebSocketCompression)
+	unsafeConn, err := api.UpgradeWebSocket(c, api.EnableWebSocketCompression, api.AllowAgentWebSocket)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to upgrade to WebSocket." + err.Error()})
 		return

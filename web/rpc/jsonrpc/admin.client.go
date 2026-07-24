@@ -2,6 +2,7 @@ package jsonrpc
 
 import (
 	"context"
+	"time"
 
 	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/clients"
@@ -63,6 +64,14 @@ func init() {
 			{Name: "uuid", Type: "string", Required: true, Description: "Client UUID"},
 		},
 		Returns: "{ token: string }",
+	})
+	RegisterWithGroupAndMeta("rotateClientToken", rpc.RoleAdmin, adminRotateClientToken, &rpc.MethodMeta{
+		Name:    "admin:rotateClientToken",
+		Summary: "Rotate a client token with a transition period",
+		Params: []rpc.ParamMeta{
+			{Name: "uuid", Type: "string", Required: true, Description: "Client UUID"},
+		},
+		Returns: "{ token: string, previous_token_expires_at: string }",
 	})
 	RegisterWithGroupAndMeta("clearRecords", rpc.RoleAdmin, adminClearRecords, &rpc.MethodMeta{
 		Name:    "admin:clearRecords",
@@ -189,6 +198,23 @@ func adminGetClientToken(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
 	return map[string]any{"token": token}, nil
+}
+
+func adminRotateClientToken(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		UUID string `json:"uuid"`
+	}
+	req.BindParams(&params)
+	if params.UUID == "" {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid or missing UUID", nil)
+	}
+	token, expiresAt, err := clients.RotateClientToken(params.UUID, 24*time.Hour)
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	actor, ip := auditActor(ctx)
+	auditlog.Log(ip, actor, "rotate client token:"+params.UUID, "warn")
+	return map[string]any{"token": token, "previous_token_expires_at": expiresAt}, nil
 }
 
 func adminClearRecords(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
