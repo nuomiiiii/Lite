@@ -49,6 +49,7 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 				&models.PingLossNotification{},
 				&models.OfflineNotification{},
 				&models.TrafficReportNotification{},
+				&models.TrafficDailyLedger{},
 				&models.LoadNotification{},
 				&models.Task{},
 				&models.TaskResult{},
@@ -72,6 +73,10 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 			}).Error)
 			require.NoError(t, db.Create([]models.OfflineNotification{{Client: "client-a"}, {Client: "client-b"}}).Error)
 			require.NoError(t, db.Create([]models.TrafficReportNotification{{Client: "client-a"}, {Client: "client-b"}}).Error)
+			require.NoError(t, db.Create([]models.TrafficDailyLedger{
+				{Client: "client-a", Day: "2026-07-24", UpBytes: 100, DownBytes: 200},
+				{Client: "client-b", Day: "2026-07-24", UpBytes: 300, DownBytes: 400},
+			}).Error)
 			loadRules := []models.LoadNotification{
 				{Name: "shared", Clients: models.StringArray{"client-a", "client-b"}, Metric: "cpu", Interval: 15},
 				{Name: "only-a", Clients: models.StringArray{"client-a"}, Metric: "cpu", Interval: 15},
@@ -100,6 +105,7 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 			assertRowCount(t, db, &models.PingLossNotification{}, "client = ?", 0, "client-a")
 			assertRowCount(t, db, &models.OfflineNotification{}, "client = ?", 0, "client-a")
 			assertRowCount(t, db, &models.TrafficReportNotification{}, "client = ?", 0, "client-a")
+			assertRowCount(t, db, &models.TrafficDailyLedger{}, "client = ?", 0, "client-a")
 			assertRowCount(t, db, &models.TaskResult{}, "client = ?", 0, "client-a")
 			for _, table := range []string{"records", "records_long_term", "gpu_records", "ping_records"} {
 				var count int64

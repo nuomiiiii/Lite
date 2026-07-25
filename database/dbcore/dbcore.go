@@ -443,6 +443,7 @@ func doInitialize() error {
 		&models.LoadNotification{},
 		&models.OfflineNotification{},
 		&models.TrafficReportNotification{},
+		&models.TrafficDailyLedger{},
 		&models.PingTask{},
 		&models.PingLossNotification{},
 		&models.OidcProvider{},
@@ -491,6 +492,7 @@ func cleanupOrphanedClientData(db *gorm.DB) error {
 		for label, model := range map[string]any{
 			"offline notifications":        &models.OfflineNotification{},
 			"traffic report notifications": &models.TrafficReportNotification{},
+			"traffic daily ledger":         &models.TrafficDailyLedger{},
 		} {
 			if err := tx.Where(`NOT EXISTS (
 				SELECT 1 FROM clients WHERE clients.uuid = client

@@ -26,8 +26,8 @@ import (
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/pkg/config"
 	"github.com/komari-monitor/komari/pkg/corn"
+	"github.com/komari-monitor/komari/pkg/metric"
 	"github.com/komari-monitor/komari/pkg/migrations"
-	"github.com/komari-monitor/komari/pkg/resourceprobe"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/geoip"
 	logger "github.com/komari-monitor/komari/utils/log"
@@ -39,6 +39,7 @@ import (
 	frontendpublic "github.com/komari-monitor/komari/web/public"
 	"github.com/komari-monitor/komari/web/router"
 	"github.com/komari-monitor/komari/web/security"
+	storageupdateweb "github.com/komari-monitor/komari/web/storageupdate"
 	upgradeweb "github.com/komari-monitor/komari/web/update"
 )
 
@@ -138,23 +139,11 @@ func ensureLowResourceModeDefault() (bool, error) {
 		}
 		return false, fmt.Errorf("%s must be a boolean", config.LowResourceModeKey)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
-	defer cancel()
-	result := resourceprobe.Detect(ctx, "./data")
-	if err := config.Set(config.LowResourceModeKey, result.LowResource); err != nil {
+	if err := config.Set(config.LowResourceModeKey, false); err != nil {
 		return false, err
 	}
-	logger.Infof("server",
-		"Low resource mode auto-detection: enabled=%t memory=%dMiB disk_free=%dMiB cpu=%.0fops/s random_write=%.2fMiB/s iops=%.0f reasons=%v",
-		result.LowResource,
-		result.MemoryBytes/(1024*1024),
-		result.DiskFreeBytes/(1024*1024),
-		result.CPUOpsPerSecond,
-		result.WriteBytesPerSecond/(1024*1024),
-		result.WriteIOPS,
-		result.Reasons,
-	)
-	return result.LowResource, nil
+	logger.Infof("server", "Low resource mode defaulted to disabled")
+	return false, nil
 }
 
 // InitStores 初始化独立存储组件（metric store）并执行 metrics 迁移。
@@ -261,6 +250,11 @@ func (a *App) initOAuth() {
 
 func (a *App) LegacyUpgradeRequired() (bool, migrations.LegacyMonitoringSummary, error) {
 	return migrations.LegacyMonitoringMigrationRequired(dbcore.GetDBInstance())
+}
+
+func (a *App) MetricStorageUpgradeRequired() (bool, metric.SQLiteMigrationSummary, error) {
+	summary, err := metricstore.InspectSQLiteStorageMigration(context.Background())
+	return summary.Required, summary, err
 }
 
 // InstallRequired reports whether the instance still needs the first-run guide.
@@ -407,6 +401,80 @@ func (a *App) RunLegacyUpgrade(summary migrations.LegacyMonitoringSummary) (bool
 		defer cancel()
 		if err := a.server.Shutdown(ctx); err != nil {
 			return false, fmt.Errorf("stop upgrade server: %w", err)
+		}
+		a.server = nil
+		a.engine = nil
+		return true, nil
+	}
+}
+
+// RunMetricStorageUpgrade exposes only authentication and SQLite migration
+// progress. Normal application routes remain unavailable until validation
+// succeeds and the restricted listener releases the port.
+func (a *App) RunMetricStorageUpgrade(summary metric.SQLiteMigrationSummary) (bool, error) {
+	a.initOAuth()
+	controller := storageupdateweb.NewController(summary)
+	controller.Activate()
+	defer controller.Deactivate()
+
+	r := gin.New()
+	r.Use(logger.GinLogger())
+	r.Use(logger.GinRecovery())
+	cors := security.NewCorsController(a.settings.CorsOriginCheckEnabled, a.settings.CorsAllowedOrigins)
+	r.Use(cors.Middleware())
+	r.Use(api.IdentityMiddleware())
+	r.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api") {
+			c.Header("Cache-Control", "no-store")
+		}
+		c.Next()
+	})
+
+	controller.Register(r)
+	frontendpublic.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
+		r.NoRoute(func(c *gin.Context) {
+			requestPath := c.Request.URL.Path
+			if strings.HasPrefix(requestPath, "/api") {
+				api.RespondError(c, http.StatusNotFound, "Not found in metric storage upgrade mode")
+				return
+			}
+			if c.Request.Method == http.MethodGet && requestPath != storageupdateweb.PagePath && filepath.Ext(requestPath) == "" {
+				c.Redirect(http.StatusTemporaryRedirect, storageupdateweb.PagePath)
+				return
+			}
+			for _, handler := range handlers {
+				handler(c)
+				if c.IsAborted() {
+					return
+				}
+			}
+		})
+	})
+
+	a.engine = r
+	a.server = &http.Server{Addr: flags.Listen, Handler: r}
+	serverErr := make(chan error, 1)
+	logger.Infof("server", "Metric storage upgrade progress is available on %s", flags.Listen)
+	go func() {
+		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(quit)
+
+	select {
+	case err := <-serverErr:
+		return false, fmt.Errorf("listen in metric storage upgrade mode: %w", err)
+	case <-quit:
+		return false, a.Shutdown()
+	case <-controller.Done():
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := a.server.Shutdown(ctx); err != nil {
+			return false, fmt.Errorf("stop metric storage upgrade server: %w", err)
 		}
 		a.server = nil
 		a.engine = nil
@@ -578,6 +646,11 @@ func registerScheduledWork() {
 	if err := d_notification.ReloadLoadNotificationSchedule(); err != nil {
 		logger.ErrorArgs("server", "Failed to reload load notification schedule:", err)
 	}
+	// Finish the one-time traffic-ledger backfill before compaction starts so a
+	// low-resource server never performs both history scans concurrently.
+	if err := d_notification.EnsureTrafficReportMetricRetention(context.Background()); err != nil {
+		logger.Errorf("server", "Failed to ensure traffic report metric retention: %v", err)
+	}
 
 	if err := corn.AddFunc("records:cleanup", "@every 30m", cleanupScheduledData); err != nil {
 		logger.ErrorArgs("server", "Failed to add cleanup scheduled task:", err)
@@ -592,9 +665,6 @@ func registerScheduledWork() {
 		logger.ErrorArgs("server", "Failed to add expire notification scheduled task:", err)
 	}
 
-	if err := d_notification.EnsureTrafficReportMetricRetention(context.Background()); err != nil {
-		logger.Errorf("server", "Failed to ensure traffic report metric retention: %v", err)
-	}
 	notifier.InitTrafficReportSchedule()
 	notifier.InitPingLossNotificationSchedule()
 }

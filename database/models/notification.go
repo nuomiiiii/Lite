@@ -36,6 +36,19 @@ type TrafficReportNotification struct {
 	IncludeBilling bool   `json:"include_billing" gorm:"type:boolean;default:false"` // 按服务器计费规则计算的流量
 }
 
+// TrafficDailyLedger stores exact report traffic for one Beijing calendar day.
+// The daily ledger is intentionally separate from the general metric store so
+// weekly and monthly reports do not require long retention for four metrics.
+type TrafficDailyLedger struct {
+	Client     string    `json:"client" gorm:"type:varchar(36);primaryKey;not null"`
+	ClientInfo Client    `json:"-" gorm:"foreignKey:Client;references:UUID;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
+	Day        string    `json:"day" gorm:"type:varchar(10);primaryKey;not null"`
+	UpBytes    int64     `json:"up_bytes" gorm:"type:bigint;not null;default:0"`
+	DownBytes  int64     `json:"down_bytes" gorm:"type:bigint;not null;default:0"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
 // PingLossNotification defines packet-loss alerts for one client and ping task.
 type PingLossNotification struct {
 	Id              uint       `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`

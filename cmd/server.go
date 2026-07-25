@@ -66,6 +66,22 @@ func RunServer() {
 		}
 	}
 
+	storageUpgradeRequired, storageSummary, err := app.MetricStorageUpgradeRequired()
+	if err != nil {
+		_ = app.Shutdown()
+		logger.Fatalf("server", "server startup failed at %q: %v", "detect-metric-storage-upgrade", err)
+	}
+	if storageUpgradeRequired {
+		completed, err := app.RunMetricStorageUpgrade(storageSummary)
+		if err != nil {
+			_ = app.Shutdown()
+			logger.Fatalf("server", "server startup failed at %q: %v", "run-metric-storage-upgrade", err)
+		}
+		if !completed {
+			return
+		}
+	}
+
 	// 初始化阶段：任一步失败都不应继续对外服务。
 	type stage struct {
 		name string

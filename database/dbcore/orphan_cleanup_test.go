@@ -50,6 +50,7 @@ func TestCleanupOrphanedClientDataRepairsAllAssociations(t *testing.T) {
 		&models.PingLossNotification{},
 		&models.OfflineNotification{},
 		&models.TrafficReportNotification{},
+		&models.TrafficDailyLedger{},
 		&models.LoadNotification{},
 		&models.Task{},
 		&models.TaskResult{},
@@ -71,6 +72,10 @@ func TestCleanupOrphanedClientDataRepairsAllAssociations(t *testing.T) {
 	}).Error)
 	require.NoError(t, db.Create([]models.OfflineNotification{{Client: "client-a"}, {Client: "deleted-client"}}).Error)
 	require.NoError(t, db.Create([]models.TrafficReportNotification{{Client: "client-a"}, {Client: "deleted-client"}}).Error)
+	require.NoError(t, db.Create([]models.TrafficDailyLedger{
+		{Client: "client-a", Day: "2026-07-24"},
+		{Client: "deleted-client", Day: "2026-07-24"},
+	}).Error)
 	loadRules := []models.LoadNotification{
 		{Name: "shared", Clients: models.StringArray{"client-a", "deleted-client"}, Metric: "cpu", Interval: 15},
 		{Name: "orphan", Clients: models.StringArray{"deleted-client"}, Metric: "cpu", Interval: 15},
@@ -103,7 +108,7 @@ func TestCleanupOrphanedClientDataRepairsAllAssociations(t *testing.T) {
 	assert.Equal(t, models.StringArray{"client-a"}, tasks[0].Clients)
 	for _, model := range []any{
 		&models.PingLossNotification{}, &models.OfflineNotification{},
-		&models.TrafficReportNotification{}, &models.TaskResult{},
+		&models.TrafficReportNotification{}, &models.TrafficDailyLedger{}, &models.TaskResult{},
 	} {
 		var count int64
 		require.NoError(t, db.Model(model).Count(&count).Error)

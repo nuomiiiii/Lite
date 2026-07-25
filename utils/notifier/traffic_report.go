@@ -3,16 +3,14 @@ package notifier
 import (
 	"context"
 	"fmt"
-	"math"
-	"sort"
 	"strings"
 	"time"
 
 	clientdb "github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
 	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
+	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/pkg/config"
 	"github.com/komari-monitor/komari/pkg/corn"
 	logger "github.com/komari-monitor/komari/utils/log"
@@ -52,6 +50,13 @@ func trafficReportTargetsInClientOrder(notifications []models.TrafficReportNotif
 func InitTrafficReportSchedule() {
 	if err := ReloadTrafficReportSchedule(); err != nil {
 		logger.ErrorArgs("notifier", "Failed to register traffic report schedules:", err)
+	}
+	if err := corn.AddContextFunc("traffic-ledger-maintenance", "@every 1h", true, func(ctx context.Context) {
+		if err := trafficledger.Maintain(ctx, dbcore.GetDBInstance(), time.Now().UTC()); err != nil {
+			logger.Errorf("notifier", "Failed to maintain traffic ledger: %v", err)
+		}
+	}); err != nil {
+		logger.ErrorArgs("notifier", "Failed to register traffic ledger maintenance:", err)
 	}
 }
 
@@ -166,13 +171,31 @@ func sendTrafficReport(daily, weekly, monthly, currentDaily bool) (TrafficReport
 		return result, fmt.Errorf("query clients for %s traffic report: %w", label, err)
 	}
 	targets := trafficReportTargetsInClientOrder(notifications, clientList)
+	ctx := context.Background()
+	ledgerStart := trafficledger.BeijingDay(start)
+	ledgerEnd := trafficledger.BeijingDay(end.Add(time.Nanosecond))
+	if !currentDaily && len(targets) > 0 {
+		targetIDs := make([]string, 0, len(targets))
+		for _, target := range targets {
+			targetIDs = append(targetIDs, target.client.UUID)
+		}
+		if err := trafficledger.EnsureRange(ctx, db, targetIDs, ledgerStart, ledgerEnd); err != nil {
+			return result, fmt.Errorf("settle %s traffic ledger: %w", label, err)
+		}
+	}
 
 	// 为每个服务器统计流量并拼接消息
 	var lines []string
 	eventClients := make([]models.Client, 0, len(targets))
 	var lastClientError error
 	for _, target := range targets {
-		usage, err := getClientTrafficInRange(target.client.UUID, start, end)
+		var usage trafficUsage
+		var err error
+		if currentDaily {
+			usage, err = getClientTrafficInRange(target.client.UUID, start, end)
+		} else {
+			usage, err = trafficledger.SumRange(ctx, db, target.client.UUID, ledgerStart, ledgerEnd)
+		}
 		if err != nil {
 			logger.Errorf("notifier", "Failed to compute traffic for client %s (%s): %v", target.client.UUID, label, err)
 			lastClientError = err
@@ -248,10 +271,7 @@ func previousTrafficReportRange(now time.Time, period string) (time.Time, time.T
 	return startLocal.UTC(), endLocal.Add(-time.Nanosecond).UTC()
 }
 
-type trafficUsage struct {
-	Up   int64
-	Down int64
-}
+type trafficUsage = trafficledger.Usage
 
 func formatTrafficReportLine(client models.Client, suffix string, usage trafficUsage, includeTraffic, includeBilling bool) string {
 	name := strings.TrimSpace(client.Name)
@@ -280,149 +300,15 @@ func formatTrafficReportLine(client models.Client, suffix string, usage trafficU
 // 历史监控数据已完全迁移到 metric store，这里从 metric store 读取区间内记录并
 // 累加精确的流量增量字段计算用量；缺失增量时回退到累计流量差值。
 func getClientTrafficInRange(clientUUID string, start, end time.Time) (trafficUsage, error) {
-	ctx := context.Background()
-	recs, err := metricstore.GetRecordsByClientAndTime(ctx, clientUUID, start, end)
-	if err != nil {
-		return trafficUsage{}, err
-	}
-
-	records := make([]trafficDeltaRecord, 0, len(recs))
-	for _, r := range recs {
-		records = append(records, trafficDeltaRecord{
-			Time:         r.Time,
-			NetTotalUp:   r.NetTotalUp,
-			NetTotalDown: r.NetTotalDown,
-			TrafficUp:    r.TrafficUp,
-			TrafficDown:  r.TrafficDown,
-		})
-	}
-	sort.Slice(records, func(i, j int) bool {
-		return records[i].Time.Before(records[j].Time)
-	})
-
-	// 计算增量基线（区间开始前最后一条累计流量）
-	var previous *trafficDeltaRecord
-	baseline, err := metricstore.GetLatestTrafficBefore(ctx, []string{clientUUID}, start)
-	if err != nil {
-		return trafficUsage{}, err
-	}
-	if base, ok := baseline[clientUUID]; ok {
-		previous = &trafficDeltaRecord{
-			Time:         base.Time,
-			NetTotalUp:   base.NetTotalUp,
-			NetTotalDown: base.NetTotalDown,
-		}
-	}
-
-	totalUp, totalDown := sumTrafficDeltas(records, previous)
-	return trafficUsage{Up: totalUp, Down: totalDown}, nil
+	return trafficledger.MetricUsage(context.Background(), clientUUID, start, end)
 }
 
-type trafficDeltaRecord struct {
-	Time         time.Time
-	NetTotalUp   int64
-	NetTotalDown int64
-	TrafficUp    int64
-	TrafficDown  int64
-}
-
-const (
-	trafficCounterRecoveryWindow  = 30 * time.Minute
-	trafficDeltaAnomalyMultiplier = int64(4)
-	trafficDeltaAnomalyAllowance  = int64(64 * 1024 * 1024)
-)
+type trafficDeltaRecord = trafficledger.DeltaRecord
 
 func sumTrafficDeltas(records []trafficDeltaRecord, previous *trafficDeltaRecord) (int64, int64) {
-	hasPrevious := previous != nil
-	var previousUp int64
-	var previousDown int64
-	if previous != nil {
-		previousUp = previous.NetTotalUp
-		previousDown = previous.NetTotalDown
-	}
-
-	totalUp := sumTrafficDirection(
-		records,
-		hasPrevious,
-		previousUp,
-		func(record trafficDeltaRecord) int64 { return record.NetTotalUp },
-		func(record trafficDeltaRecord) int64 { return record.TrafficUp },
-	)
-	totalDown := sumTrafficDirection(
-		records,
-		hasPrevious,
-		previousDown,
-		func(record trafficDeltaRecord) int64 { return record.NetTotalDown },
-		func(record trafficDeltaRecord) int64 { return record.TrafficDown },
-	)
-	return totalUp, totalDown
-}
-
-func sumTrafficDirection(
-	records []trafficDeltaRecord,
-	hasBaseline bool,
-	baseline int64,
-	totalValue func(trafficDeltaRecord) int64,
-	storedDelta func(trafficDeltaRecord) int64,
-) int64 {
-	var total int64
-	for i := 0; i < len(records); i++ {
-		current := totalValue(records[i])
-		if hasBaseline && current < baseline {
-			if recoveryIndex := findTrafficCounterRecovery(records, i+1, baseline, records[i].Time, totalValue); recoveryIndex >= 0 {
-				recovered := totalValue(records[recoveryIndex])
-				total += recovered - baseline
-				baseline = recovered
-				i = recoveryIndex
-				continue
-			}
-		}
-
-		delta := storedDelta(records[i])
-		if hasBaseline {
-			delta = trafficDeltaOrFallback(delta, current, baseline)
-			if current >= baseline {
-				directDelta := current - baseline
-				if delta > trafficDeltaUpperBound(directDelta) {
-					delta = directDelta
-				}
-			}
-		}
-		total += delta
-		baseline = current
-		hasBaseline = true
-	}
-	return total
-}
-
-func findTrafficCounterRecovery(
-	records []trafficDeltaRecord,
-	start int,
-	baseline int64,
-	dropTime time.Time,
-	totalValue func(trafficDeltaRecord) int64,
-) int {
-	for i := start; i < len(records); i++ {
-		if records[i].Time.Sub(dropTime) > trafficCounterRecoveryWindow {
-			break
-		}
-		if totalValue(records[i]) >= baseline {
-			return i
-		}
-	}
-	return -1
-}
-
-func trafficDeltaUpperBound(directDelta int64) int64 {
-	if directDelta > (math.MaxInt64-trafficDeltaAnomalyAllowance)/trafficDeltaAnomalyMultiplier {
-		return math.MaxInt64
-	}
-	return directDelta*trafficDeltaAnomalyMultiplier + trafficDeltaAnomalyAllowance
+	return trafficledger.SumTrafficDeltas(records, previous)
 }
 
 func trafficDeltaOrFallback(storedDelta, currentTotal, previousTotal int64) int64 {
-	if storedDelta > 0 {
-		return storedDelta
-	}
-	return metricstore.TrafficCounterDelta(currentTotal, previousTotal)
+	return trafficledger.TrafficDeltaOrFallback(storedDelta, currentTotal, previousTotal)
 }
