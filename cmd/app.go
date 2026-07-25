@@ -189,6 +189,29 @@ func (a *App) InitStores() error {
 
 		return fmt.Errorf("metrics startup migration failed: %w", err)
 	}
+	var registeredClients []models.Client
+	if err := dbcore.GetDBInstance().Select("uuid").Find(&registeredClients).Error; err != nil {
+		return fmt.Errorf("failed to list clients for metrics orphan cleanup: %w", err)
+	}
+	validEntities := make(map[string]struct{}, len(registeredClients))
+	for _, client := range registeredClients {
+		validEntities[client.UUID] = struct{}{}
+	}
+	var pingTasks []models.PingTask
+	if err := dbcore.GetDBInstance().Select("id").Find(&pingTasks).Error; err != nil {
+		return fmt.Errorf("failed to list ping tasks for metrics orphan cleanup: %w", err)
+	}
+	validPingTasks := make(map[uint]struct{}, len(pingTasks))
+	for _, task := range pingTasks {
+		validPingTasks[task.Id] = struct{}{}
+	}
+	orphanResult, err := metricstore.CleanupOrphanedData(context.Background(), validEntities, validPingTasks)
+	if err != nil {
+		return fmt.Errorf("failed to clean orphaned metrics: %w", err)
+	}
+	if orphanResult.Entities > 0 || orphanResult.PingTasks > 0 {
+		logger.Infof("metricstore", "Removed orphaned metric data (entities=%d ping_tasks=%d)", orphanResult.Entities, orphanResult.PingTasks)
+	}
 	metricstore.StartReportBatcher()
 	a.addCleanup("metric-report-batcher", func(ctx context.Context) error {
 		return metricstore.StopReportBatcher(ctx)

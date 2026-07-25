@@ -168,6 +168,9 @@ func WriteReport(ctx context.Context, report v1.Report) (v1.Report, error) {
 	if report.UpdatedAt.IsZero() {
 		return v1.Report{}, fmt.Errorf("report receive time is required")
 	}
+	if EntityWritesBlocked(report.UUID) {
+		return v1.Report{}, ErrMetricWriteBlocked
+	}
 	report.UpdatedAt = report.UpdatedAt.UTC()
 	if GetStore() == nil {
 		return v1.Report{}, fmt.Errorf("metric store not enabled")
@@ -190,6 +193,9 @@ func WriteReport(ctx context.Context, report v1.Report) (v1.Report, error) {
 	saved, err := writeReportBatch(ctx, []v1.Report{report})
 	if err != nil {
 		return v1.Report{}, err
+	}
+	if len(saved) == 0 {
+		return v1.Report{}, ErrMetricWriteBlocked
 	}
 	return saved[0], nil
 }
@@ -403,10 +409,30 @@ func writeReportBatch(ctx context.Context, reports []v1.Report) ([]v1.Report, er
 	if len(reports) == 0 {
 		return nil, nil
 	}
+	filtered := reports[:0]
+	for _, report := range reports {
+		if !EntityWritesBlocked(report.UUID) {
+			filtered = append(filtered, report)
+		}
+	}
+	reports = filtered
+	if len(reports) == 0 {
+		return nil, nil
+	}
 	if err := storeOperations.AcquireShared(ctx); err != nil {
 		return nil, fmt.Errorf("wait for metric store operation before writing reports: %w", err)
 	}
 	defer storeOperations.ReleaseShared()
+	filtered = reports[:0]
+	for _, report := range reports {
+		if !EntityWritesBlocked(report.UUID) {
+			filtered = append(filtered, report)
+		}
+	}
+	reports = filtered
+	if len(reports) == 0 {
+		return nil, nil
+	}
 
 	s := GetStore()
 	if s == nil {

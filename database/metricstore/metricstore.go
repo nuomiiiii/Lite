@@ -685,6 +685,16 @@ func createMetricDefinitionsWithDefaultRetention(ctx context.Context, s *metric.
 
 // WritePingRecord 将 ping 记录写入 metric store
 func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
+	if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) {
+		return ErrMetricWriteBlocked
+	}
+	if err := storeOperations.AcquireShared(ctx); err != nil {
+		return fmt.Errorf("wait for metric store operation before writing ping record: %w", err)
+	}
+	defer storeOperations.ReleaseShared()
+	if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) {
+		return ErrMetricWriteBlocked
+	}
 	s := GetStore()
 	if s == nil {
 		return fmt.Errorf("metric store not enabled")
@@ -1111,7 +1121,13 @@ func DeleteAllPingRecords(ctx context.Context) error {
 
 // DeletePingRecordsByTask 删除指定任务（task_id）的全部 ping 记录。
 func DeletePingRecordsByTask(ctx context.Context, taskIDs []uint) error {
-	s := GetStore()
+	if err := storeOperations.Acquire(ctx); err != nil {
+		return fmt.Errorf("wait for metric store operations before deleting ping tasks: %w", err)
+	}
+	defer storeOperations.Release()
+	storeMu.RLock()
+	defer storeMu.RUnlock()
+	s := store
 	if s == nil {
 		return fmt.Errorf("metric store not enabled")
 	}
@@ -1130,7 +1146,13 @@ func DeletePingRecordsByTask(ctx context.Context, taskIDs []uint) error {
 
 // DeleteEntity 删除指定 agent 在所有指标下的历史数据。
 func DeleteEntity(ctx context.Context, entityID string) error {
-	s := GetStore()
+	if err := storeOperations.Acquire(ctx); err != nil {
+		return fmt.Errorf("wait for metric store operations before deleting entity: %w", err)
+	}
+	defer storeOperations.Release()
+	storeMu.RLock()
+	defer storeMu.RUnlock()
+	s := store
 	if s == nil {
 		return fmt.Errorf("metric store not enabled")
 	}

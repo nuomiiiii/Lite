@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
@@ -47,6 +48,16 @@ func AddPingTask(clients []string, defaultOn bool, name string, target, task_typ
 }
 
 func DeletePingTask(id []uint) error {
+	if len(id) == 0 {
+		return fmt.Errorf("ping task id is required")
+	}
+	metricstore.BlockPingTaskWrites(id)
+	deleted := false
+	defer func() {
+		if !deleted {
+			metricstore.UnblockPingTaskWrites(id)
+		}
+	}()
 	// The metric store is independent from the main database, so clean it first
 	// to avoid leaving history that can no longer be addressed through the task.
 	if err := DeletePingRecords(id); err != nil {
@@ -57,12 +68,17 @@ func DeletePingTask(id []uint) error {
 	if err := deletePingTaskRows(db, id); err != nil {
 		return err
 	}
-	ReloadPingSchedule()
-	return nil
+	deleted = true
+	return ReloadPingSchedule()
 }
 
 func deletePingTaskRows(db *gorm.DB, ids []uint) error {
 	return db.Transaction(func(tx *gorm.DB) error {
+		if tx.Migrator().HasTable("ping_records") {
+			if err := tx.Exec("DELETE FROM ping_records WHERE task_id IN ?", ids).Error; err != nil {
+				return fmt.Errorf("delete legacy ping records: %w", err)
+			}
+		}
 		if err := tx.Where("task_id IN ?", ids).Delete(&models.PingLossNotification{}).Error; err != nil {
 			return err
 		}
@@ -153,6 +169,9 @@ func UpdatePingTaskOrder(order map[uint]int) error {
 // metric store，旧 ping_records 表不再参与。
 
 func SavePingRecord(record models.PingRecord) error {
+	if !utils.IsPingTaskAssigned(record.TaskId, record.Client) {
+		return fmt.Errorf("ping task %d is not assigned to client %s", record.TaskId, record.Client)
+	}
 	return metricstore.WritePingRecord(context.Background(), record)
 }
 

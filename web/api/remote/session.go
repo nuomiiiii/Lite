@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/komari-monitor/komari/database/metricstore"
 )
 
 const (
@@ -83,6 +84,9 @@ var (
 func putSession(session *remoteSession) error {
 	sessionsMu.Lock()
 	defer sessionsMu.Unlock()
+	if metricstore.EntityWritesBlocked(session.UUID) {
+		return errors.New("client is being deleted")
+	}
 	if len(sessions) >= maxRemoteSessions {
 		return errors.New("too many active remote sessions")
 	}

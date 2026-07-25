@@ -34,6 +34,9 @@ func TestDeletePingTaskRowsCleansMatchingPingLossNotifications(t *testing.T) {
 		{Client: "client-a", TaskId: tasks[0].Id, Enable: true, WindowSeconds: 60, LossThreshold: 5, MinimumSamples: 1, CooldownSeconds: 300},
 		{Client: "client-a", TaskId: tasks[1].Id, Enable: true, WindowSeconds: 60, LossThreshold: 5, MinimumSamples: 1, CooldownSeconds: 300},
 	}).Error)
+	require.NoError(t, db.Exec("CREATE TABLE ping_records (client TEXT NOT NULL, task_id INTEGER NOT NULL)").Error)
+	require.NoError(t, db.Exec("INSERT INTO ping_records (client, task_id) VALUES (?, ?), (?, ?)",
+		"client-a", tasks[0].Id, "client-a", tasks[1].Id).Error)
 
 	require.NoError(t, deletePingTaskRows(db, []uint{tasks[0].Id}))
 
@@ -46,4 +49,9 @@ func TestDeletePingTaskRowsCleansMatchingPingLossNotifications(t *testing.T) {
 	require.NoError(t, db.Order("id ASC").Find(&remainingNotifications).Error)
 	require.Len(t, remainingNotifications, 1)
 	assert.Equal(t, tasks[1].Id, remainingNotifications[0].TaskId)
+	var legacyCount int64
+	require.NoError(t, db.Table("ping_records").Where("task_id = ?", tasks[0].Id).Count(&legacyCount).Error)
+	assert.Zero(t, legacyCount)
+	require.NoError(t, db.Table("ping_records").Where("task_id = ?", tasks[1].Id).Count(&legacyCount).Error)
+	assert.Equal(t, int64(1), legacyCount)
 }
