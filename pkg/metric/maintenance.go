@@ -30,6 +30,18 @@ const (
 	sqliteVacuumSQL     = "VACUUM"
 )
 
+// SQLiteFileSizes separates retained database pages from WAL/SHM runtime
+// sidecars so callers can present stable data size and transient disk usage.
+type SQLiteFileSizes struct {
+	Database int64
+	WAL      int64
+	SHM      int64
+}
+
+func (sizes SQLiteFileSizes) Total() int64 {
+	return sizes.Database + sizes.WAL + sizes.SHM
+}
+
 // Driver returns the Store's configured database backend.
 //
 // Driver 返回 Store 配置的数据库后端。
@@ -63,7 +75,8 @@ func (s *Store) StorageSize(ctx context.Context) (int64, error) {
 	}
 
 	if s.cfg.Driver == DriverSQLite {
-		return s.sqliteStorageSize(ctx)
+		files, err := s.sqliteFileSizes(ctx)
+		return files.Total(), err
 	}
 
 	query, args, err := managedStorageSizeQuery(s.cfg.Driver, s.tables)
@@ -75,6 +88,23 @@ func (s *Store) StorageSize(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("metric: query %s storage size: %w", s.cfg.Driver, err)
 	}
 	return size, nil
+}
+
+// SQLiteFiles returns the local SQLite database and sidecar sizes. It is only
+// available for SQLite stores; in-memory databases return zero-valued files.
+func (s *Store) SQLiteFiles(ctx context.Context) (SQLiteFileSizes, error) {
+	s.maintenanceMu.RLock()
+	defer s.maintenanceMu.RUnlock()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed || s.db == nil {
+		return SQLiteFileSizes{}, ErrClosed
+	}
+	if s.cfg.Driver != DriverSQLite {
+		return SQLiteFileSizes{}, fmt.Errorf("%w: storage files are only available for SQLite", ErrInvalidArgument)
+	}
+	return s.sqliteFileSizes(ctx)
 }
 
 // CheckpointWAL copies committed SQLite WAL pages into the main database and
@@ -246,9 +276,14 @@ func (s *Store) cleanupOrphanedMetricData(ctx context.Context) (int64, error) {
 }
 
 func (s *Store) sqliteStorageSize(ctx context.Context) (int64, error) {
+	files, err := s.sqliteFileSizes(ctx)
+	return files.Total(), err
+}
+
+func (s *Store) sqliteFileSizes(ctx context.Context) (SQLiteFileSizes, error) {
 	rows, err := s.db.QueryContext(ctx, "PRAGMA database_list")
 	if err != nil {
-		return 0, fmt.Errorf("metric: list sqlite databases: %w", err)
+		return SQLiteFileSizes{}, fmt.Errorf("metric: list sqlite databases: %w", err)
 	}
 
 	var path string
@@ -257,7 +292,7 @@ func (s *Store) sqliteStorageSize(ctx context.Context) (int64, error) {
 		var name, file string
 		if err := rows.Scan(&sequence, &name, &file); err != nil {
 			_ = rows.Close()
-			return 0, fmt.Errorf("metric: scan sqlite database path: %w", err)
+			return SQLiteFileSizes{}, fmt.Errorf("metric: scan sqlite database path: %w", err)
 		}
 		if name == "main" {
 			path = file
@@ -265,28 +300,36 @@ func (s *Store) sqliteStorageSize(ctx context.Context) (int64, error) {
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return 0, fmt.Errorf("metric: list sqlite databases: %w", err)
+		return SQLiteFileSizes{}, fmt.Errorf("metric: list sqlite databases: %w", err)
 	}
 	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("metric: close sqlite database list: %w", err)
+		return SQLiteFileSizes{}, fmt.Errorf("metric: close sqlite database list: %w", err)
 	}
 	if path == "" {
 		// SQLite reports an empty path for in-memory databases.
-		return 0, nil
+		return SQLiteFileSizes{}, nil
 	}
 
-	var size int64
-	for _, name := range []string{path, path + "-wal", path + "-shm"} {
+	var sizes SQLiteFileSizes
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		name := path + suffix
 		info, err := os.Stat(name)
 		switch {
 		case err == nil:
-			size += info.Size()
+			switch suffix {
+			case "":
+				sizes.Database = info.Size()
+			case "-wal":
+				sizes.WAL = info.Size()
+			case "-shm":
+				sizes.SHM = info.Size()
+			}
 		case errors.Is(err, os.ErrNotExist):
 		default:
-			return 0, fmt.Errorf("metric: stat sqlite storage file %q: %w", name, err)
+			return SQLiteFileSizes{}, fmt.Errorf("metric: stat sqlite storage file %q: %w", name, err)
 		}
 	}
-	return size, nil
+	return sizes, nil
 }
 
 func sqliteCheckpoint(ctx context.Context, db *sql.DB) error {

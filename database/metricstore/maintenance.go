@@ -20,6 +20,7 @@ type StorageInfo struct {
 	Driver metric.Driver
 	Action metric.MaintenanceAction
 	Size   int64
+	Files  *metric.SQLiteFileSizes
 }
 
 // MaintenanceResult keeps measurement failures separate from the maintenance
@@ -52,6 +53,14 @@ func InspectStorage(ctx context.Context) (StorageInfo, error) {
 	info := StorageInfo{
 		Driver: activeStore.Driver(),
 		Action: activeStore.MaintenanceAction(),
+	}
+	if info.Driver == metric.DriverSQLite {
+		files, err := activeStore.SQLiteFiles(ctx)
+		info.Size = files.Total()
+		if err == nil {
+			info.Files = &files
+		}
+		return info, err
 	}
 	size, err := activeStore.StorageSize(ctx)
 	info.Size = size

@@ -19,12 +19,23 @@ const (
 
 var databaseMaintenanceMu sync.Mutex
 
+type databaseFileSizes struct {
+	Database int64 `json:"database"`
+	WAL      int64 `json:"wal"`
+	SHM      int64 `json:"shm"`
+}
+
+func (sizes databaseFileSizes) total() int64 {
+	return sizes.Database + sizes.WAL + sizes.SHM
+}
+
 type databaseStorageStatus struct {
-	Driver   string `json:"driver"`
-	Location string `json:"location"`
-	Size     *int64 `json:"size"`
-	Action   string `json:"action"`
-	Error    string `json:"error,omitempty"`
+	Driver   string             `json:"driver"`
+	Location string             `json:"location"`
+	Size     *int64             `json:"size"`
+	Files    *databaseFileSizes `json:"files,omitempty"`
+	Action   string             `json:"action"`
+	Error    string             `json:"error,omitempty"`
 }
 
 type databaseStatusResponse struct {
@@ -119,12 +130,17 @@ func mainDatabaseStatus() databaseStorageStatus {
 		Location: databaseLocationLocal,
 		Action:   string(metric.MaintenanceVacuum),
 	}
-	size, err := dbcore.StorageSize()
+	files, err := dbcore.StorageFiles()
 	if err != nil {
 		status.Error = err.Error()
 		return status
 	}
-	status.Size = int64Pointer(size)
+	status.Files = &databaseFileSizes{
+		Database: files.Database,
+		WAL:      files.WAL,
+		SHM:      files.SHM,
+	}
+	status.Size = int64Pointer(status.Files.total())
 	return status
 }
 
@@ -138,6 +154,13 @@ func monitoringDatabaseStatus(ctx context.Context) databaseStorageStatus {
 	if err != nil {
 		status.Error = err.Error()
 		return status
+	}
+	if info.Files != nil {
+		status.Files = &databaseFileSizes{
+			Database: info.Files.Database,
+			WAL:      info.Files.WAL,
+			SHM:      info.Files.SHM,
+		}
 	}
 	status.Size = int64Pointer(info.Size)
 	return status

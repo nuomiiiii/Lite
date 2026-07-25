@@ -27,6 +27,9 @@ func TestInspectAndReclaimStorage(t *testing.T) {
 	if info.Size != 0 {
 		t.Fatalf("in-memory storage size = %d, want 0", info.Size)
 	}
+	if info.Files == nil || info.Files.Total() != 0 {
+		t.Fatalf("in-memory SQLite file breakdown = %#v, want zero-valued details", info.Files)
+	}
 
 	result, err := ReclaimSpace(ctx)
 	if err != nil {

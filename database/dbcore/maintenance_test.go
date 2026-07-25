@@ -58,6 +58,14 @@ func TestSQLiteFileSetSizeIncludesWALAndSHM(t *testing.T) {
 	if got != 23 {
 		t.Fatalf("size = %d, want 23", got)
 	}
+
+	breakdown, err := sqliteFileSetSizes("file:" + filepath.ToSlash(databasePath) + "?mode=rwc")
+	if err != nil {
+		t.Fatalf("sqliteFileSetSizes: %v", err)
+	}
+	if breakdown.Database != 11 || breakdown.WAL != 7 || breakdown.SHM != 5 || breakdown.Total() != 23 {
+		t.Fatalf("unexpected file breakdown: %#v", breakdown)
+	}
 }
 
 func TestSQLiteFileSetSizeRejectsNonFileDatabase(t *testing.T) {

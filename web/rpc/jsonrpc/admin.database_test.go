@@ -72,3 +72,10 @@ func TestDatabaseMaintenanceResponsePreservesLegacyMainSizes(t *testing.T) {
 		})
 	}
 }
+
+func TestDatabaseFileSizesTotalIncludesRuntimeSidecars(t *testing.T) {
+	files := databaseFileSizes{Database: 40, WAL: 7, SHM: 1}
+	if got := files.total(); got != 48 {
+		t.Fatalf("file total = %d, want 48", got)
+	}
+}

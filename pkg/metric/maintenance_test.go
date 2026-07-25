@@ -46,6 +46,13 @@ func TestSQLiteStorageSizeAndReclaimSpace(t *testing.T) {
 	if want := sqliteFileSetSize(t, path); before != want {
 		t.Fatalf("StorageSize() = %d, file sum = %d", before, want)
 	}
+	files, err := store.SQLiteFiles(ctx)
+	if err != nil {
+		t.Fatalf("SQLiteFiles() before reclaim: %v", err)
+	}
+	if files.Database == 0 || files.WAL == 0 || files.Total() != before {
+		t.Fatalf("unexpected SQLite file breakdown: %#v (total %d)", files, before)
+	}
 
 	if err := store.ReclaimSpace(ctx); err != nil {
 		t.Fatalf("reclaim sqlite space: %v", err)
