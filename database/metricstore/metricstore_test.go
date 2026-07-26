@@ -650,6 +650,16 @@ func TestCompactStepProcessesOnlyOneMetric(t *testing.T) {
 	if written == 0 || completed {
 		t.Fatalf("first compact step = written %d, completed %v; want a partial cycle with rollups", written, completed)
 	}
+	status := GetRuntimeStatus()
+	if status.Compacting || status.CurrentMetric != "a.metric" || status.Progress != 1 || status.Total != 3 {
+		t.Fatalf("runtime status after first step = %#v", status)
+	}
+	if status.CycleStartedAt.IsZero() || status.LastStepAt.IsZero() || status.NextCheckpointAt.IsZero() {
+		t.Fatalf("runtime status timestamps were not recorded: %#v", status)
+	}
+	if status.CycleWritten != written {
+		t.Fatalf("runtime cycle written = %d, want %d", status.CycleWritten, written)
+	}
 	assertRawMetricCount(t, dsn, "a.metric", 0)
 	assertRawMetricCount(t, dsn, "b.metric", 1)
 	assertRawMetricCount(t, dsn, "c.metric", 1)
@@ -662,6 +672,13 @@ func TestCompactStepProcessesOnlyOneMetric(t *testing.T) {
 
 	if _, completed, err = CompactStep(ctx, now); err != nil || !completed {
 		t.Fatalf("third compact step = completed %v, err %v; want completed cycle", completed, err)
+	}
+	status = GetRuntimeStatus()
+	if status.Progress != 3 || status.Total != 3 || status.LastCycleCompletedAt.IsZero() {
+		t.Fatalf("runtime status after completed cycle = %#v", status)
+	}
+	if status.CheckpointPending || status.LastCheckpointSuccessAt.IsZero() || status.LastError != "" {
+		t.Fatalf("runtime checkpoint status after completed cycle = %#v", status)
 	}
 	assertRawMetricCount(t, dsn, "c.metric", 0)
 }
@@ -755,16 +772,20 @@ func TestRetryMetricWALCheckpointClearsPendingWAL(t *testing.T) {
 	if err := s.Write(ctx, metric.Point{MetricName: "a.metric", EntityID: "node", Timestamp: now, Value: 1}); err != nil {
 		t.Fatalf("write metric: %v", err)
 	}
-	previousPending := checkpointPending
-	checkpointPending = true
-	t.Cleanup(func() { checkpointPending = previousPending })
+	runtimeStatusMu.Lock()
+	runtimeStatus.CheckpointPending = true
+	runtimeStatusMu.Unlock()
 
 	if size := fileSize(t, dsn+"-wal"); size == 0 {
 		t.Fatal("expected WAL content before retry")
 	}
 	retryMetricWALCheckpoint(ctx, s)
-	if checkpointPending {
+	if GetRuntimeStatus().CheckpointPending {
 		t.Fatal("successful deferred WAL checkpoint remained pending")
+	}
+	status := GetRuntimeStatus()
+	if status.LastCheckpointSuccessAt.IsZero() || status.ConsecutiveCheckpointFailures != 0 {
+		t.Fatalf("checkpoint status after retry = %#v", status)
 	}
 	if size := fileSize(t, dsn+"-wal"); size != 0 {
 		t.Fatalf("SQLite WAL size after deferred retry = %d, want 0", size)
@@ -822,8 +843,15 @@ func installCompactStepTestStore(t *testing.T, s *metric.Store, cursor int) {
 	t.Helper()
 	installTestStore(t, s)
 	previousCursor := compactAt
+	previousStatus := GetRuntimeStatus()
 	compactAt = cursor
-	t.Cleanup(func() { compactAt = previousCursor })
+	resetRuntimeStatus(s.Driver())
+	t.Cleanup(func() {
+		compactAt = previousCursor
+		runtimeStatusMu.Lock()
+		runtimeStatus = previousStatus
+		runtimeStatusMu.Unlock()
+	})
 }
 
 func assertRawMetricCount(t *testing.T, dsn, metricName string, want int) {

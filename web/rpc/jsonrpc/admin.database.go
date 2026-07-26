@@ -3,6 +3,7 @@ package jsonrpc
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/komari-monitor/komari/cmd/flags"
 	"github.com/komari-monitor/komari/database/auditlog"
@@ -30,12 +31,32 @@ func (sizes databaseFileSizes) total() int64 {
 }
 
 type databaseStorageStatus struct {
-	Driver   string             `json:"driver"`
-	Location string             `json:"location"`
-	Size     *int64             `json:"size"`
-	Files    *databaseFileSizes `json:"files,omitempty"`
-	Action   string             `json:"action"`
-	Error    string             `json:"error,omitempty"`
+	Driver   string                 `json:"driver"`
+	Location string                 `json:"location"`
+	Size     *int64                 `json:"size"`
+	Files    *databaseFileSizes     `json:"files,omitempty"`
+	Runtime  *databaseRuntimeStatus `json:"runtime,omitempty"`
+	Action   string                 `json:"action"`
+	Error    string                 `json:"error,omitempty"`
+}
+
+type databaseRuntimeStatus struct {
+	Compacting                    bool       `json:"compacting"`
+	CurrentMetric                 string     `json:"current_metric"`
+	Progress                      int        `json:"progress"`
+	Total                         int        `json:"total"`
+	CycleWritten                  int        `json:"cycle_written"`
+	CycleStartedAt                *time.Time `json:"cycle_started_at"`
+	LastStepAt                    *time.Time `json:"last_step_at"`
+	LastCycleCompletedAt          *time.Time `json:"last_cycle_completed_at"`
+	CheckpointApplicable          bool       `json:"checkpoint_applicable"`
+	LastCheckpointAttemptAt       *time.Time `json:"last_checkpoint_attempt_at"`
+	LastCheckpointSuccessAt       *time.Time `json:"last_checkpoint_success_at"`
+	NextCheckpointAt              *time.Time `json:"next_checkpoint_at"`
+	CheckpointPending             bool       `json:"checkpoint_pending"`
+	ConsecutiveCheckpointFailures int        `json:"consecutive_checkpoint_failures"`
+	ConsecutiveCycleFailures      int        `json:"consecutive_cycle_failures"`
+	LastError                     string     `json:"last_error,omitempty"`
 }
 
 type databaseStatusResponse struct {
@@ -151,6 +172,9 @@ func monitoringDatabaseStatus(ctx context.Context) databaseStorageStatus {
 		Action: string(info.Action),
 	}
 	status.Location = databaseLocationForDriver(info.Driver)
+	if info.Driver != "" {
+		status.Runtime = newDatabaseRuntimeStatus(info.Driver, metricstore.GetRuntimeStatus())
+	}
 	if err != nil {
 		status.Error = err.Error()
 		return status
@@ -163,6 +187,30 @@ func monitoringDatabaseStatus(ctx context.Context) databaseStorageStatus {
 		}
 	}
 	status.Size = int64Pointer(info.Size)
+	return status
+}
+
+func newDatabaseRuntimeStatus(driver metric.Driver, runtime metricstore.RuntimeStatus) *databaseRuntimeStatus {
+	status := &databaseRuntimeStatus{
+		Compacting:                    runtime.Compacting,
+		CurrentMetric:                 runtime.CurrentMetric,
+		Progress:                      runtime.Progress,
+		Total:                         runtime.Total,
+		CycleWritten:                  runtime.CycleWritten,
+		CycleStartedAt:                nonZeroTimePointer(runtime.CycleStartedAt),
+		LastStepAt:                    nonZeroTimePointer(runtime.LastStepAt),
+		LastCycleCompletedAt:          nonZeroTimePointer(runtime.LastCycleCompletedAt),
+		CheckpointApplicable:          driver == metric.DriverSQLite,
+		CheckpointPending:             runtime.CheckpointPending,
+		ConsecutiveCheckpointFailures: runtime.ConsecutiveCheckpointFailures,
+		ConsecutiveCycleFailures:      runtime.ConsecutiveCycleFailures,
+		LastError:                     runtime.LastError,
+	}
+	if status.CheckpointApplicable {
+		status.LastCheckpointAttemptAt = nonZeroTimePointer(runtime.LastCheckpointAttemptAt)
+		status.LastCheckpointSuccessAt = nonZeroTimePointer(runtime.LastCheckpointSuccessAt)
+		status.NextCheckpointAt = nonZeroTimePointer(runtime.NextCheckpointAt)
+	}
 	return status
 }
 
@@ -247,6 +295,14 @@ func appendMeasurementError(current, phase string, err error) string {
 }
 
 func int64Pointer(value int64) *int64 {
+	return &value
+}
+
+func nonZeroTimePointer(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	value = value.UTC()
 	return &value
 }
 

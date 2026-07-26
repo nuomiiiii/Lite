@@ -23,7 +23,6 @@ var (
 	storeOperations   = newStoreOperationGate()
 	compactOperations = newStoreOperationGate()
 	compactAt         int
-	checkpointPending bool
 )
 
 var ErrCompactInProgress = errors.New("metric store compact already in progress")
@@ -387,6 +386,7 @@ func InitializeStore() error {
 	store = s
 	storeFingerprint = targetFingerprint(cfg)
 	storeMu.Unlock()
+	resetRuntimeStatus(s.Driver())
 	setLowResourceMode(cfg.LowResourceMode)
 	clearStoreClosing()
 
@@ -433,6 +433,7 @@ func Reload(ctx context.Context) error {
 	store = s
 	storeFingerprint = targetFingerprint(cfg)
 	storeMu.Unlock()
+	resetRuntimeStatus(s.Driver())
 	setLowResourceMode(cfg.LowResourceMode)
 
 	if old != nil {
@@ -572,7 +573,9 @@ func CompactStep(ctx context.Context, now time.Time) (written int, cycleComplete
 	}
 	if len(defs) == 0 {
 		compactAt = 0
-		return 0, true, finishCompactCycle(ctx, activeStore, now)
+		cycleErr := finishCompactCycle(ctx, activeStore, now)
+		finishEmptyCompactCycle(activeStore.Driver(), cycleErr, time.Now().UTC())
+		return 0, true, cycleErr
 	}
 	if compactAt < 0 || compactAt >= len(defs) {
 		compactAt = 0
@@ -581,14 +584,18 @@ func CompactStep(ctx context.Context, now time.Time) (written int, cycleComplete
 	idx := compactAt
 	compactAt = (compactAt + 1) % len(defs)
 	cycleCompleted = compactAt == 0
+	beginCompactStep(activeStore.Driver(), defs[idx].Name, idx, len(defs), time.Now().UTC())
 	written, compactErr := activeStore.CompactMetric(ctx, defs[idx].Name, now)
 	if compactErr != nil {
 		compactErr = fmt.Errorf("compact metric %q: %w", defs[idx].Name, compactErr)
 	}
 	if !cycleCompleted {
+		finishCompactStep(written, false, compactErr, time.Now().UTC())
 		return written, false, compactErr
 	}
-	return written, true, errors.Join(compactErr, finishCompactCycle(ctx, activeStore, now))
+	cycleErr := errors.Join(compactErr, finishCompactCycle(ctx, activeStore, now))
+	finishCompactStep(written, true, cycleErr, time.Now().UTC())
+	return written, true, cycleErr
 }
 
 func finishCompactCycle(ctx context.Context, activeStore *metric.Store, now time.Time) error {
@@ -598,11 +605,10 @@ func finishCompactCycle(ctx context.Context, activeStore *metric.Store, now time
 	}
 	if activeStore.Driver() == metric.DriverSQLite {
 		checkpointCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		if err := activeStore.CheckpointWAL(checkpointCtx); err != nil {
-			checkpointPending = true
-			logger.Warnf("metricstore", "Failed to truncate metric WAL after compaction: %v", err)
-		} else {
-			checkpointPending = false
+		checkpointErr := activeStore.CheckpointWAL(checkpointCtx)
+		recordCheckpointResult(activeStore.Driver(), checkpointErr, time.Now().UTC())
+		if checkpointErr != nil {
+			logger.Warnf("metricstore", "Failed to truncate metric WAL after compaction: %v", checkpointErr)
 		}
 		cancel()
 	}
@@ -610,19 +616,17 @@ func finishCompactCycle(ctx context.Context, activeStore *metric.Store, now time
 }
 
 func retryMetricWALCheckpoint(ctx context.Context, activeStore *metric.Store) {
-	if !checkpointPending {
+	if !checkpointIsPending() {
 		return
 	}
 	if activeStore.Driver() != metric.DriverSQLite {
-		checkpointPending = false
+		clearCheckpointForExternal(activeStore.Driver())
 		return
 	}
 	retryCtx, cancel := context.WithTimeout(ctx, checkpointRetryTimeout)
 	err := activeStore.CheckpointWAL(retryCtx)
 	cancel()
-	if err == nil {
-		checkpointPending = false
-	}
+	recordCheckpointResult(activeStore.Driver(), err, time.Now().UTC())
 }
 
 // CloseStoreContext stops the asynchronous store migration before taking the
@@ -645,9 +649,11 @@ func CloseStoreContext(ctx context.Context) error {
 		err := store.Close()
 		store = nil
 		storeFingerprint = ""
+		resetRuntimeStatus("")
 		return err
 	}
 	storeFingerprint = ""
+	resetRuntimeStatus("")
 	return nil
 }
 
