@@ -167,11 +167,15 @@ func (s *Store) ensureSQLiteStorageV4(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if migratedBlocks > 0 {
+	compactDigestBlocks, compactDigestBuckets, err := s.migrateSQLiteV4RollupDigestCodec(ctx)
+	if err != nil {
+		return err
+	}
+	if migratedBlocks > 0 || compactDigestBlocks > 0 {
 		if err := s.fullSQLiteVacuum(ctx); err != nil {
-			return fmt.Errorf("metric: vacuum split SQLite V4 rollup storage: %w", err)
+			return fmt.Errorf("metric: vacuum SQLite V4 rollup storage after codec migration: %w", err)
 		}
-		log.Printf("metric: migrated %d SQLite V4 rollup blocks (%d buckets) to split summary/digest storage and reclaimed database space", migratedBlocks, migratedBuckets)
+		log.Printf("metric: migrated %d SQLite V4 rollup blocks (%d buckets) to split storage and %d digest blocks (%d buckets) to compact codec, reclaimed database space", migratedBlocks, migratedBuckets, compactDigestBlocks, compactDigestBuckets)
 	}
 	return nil
 }

@@ -9,12 +9,15 @@ import (
 
 // SQLiteMigrationSummary describes pending work without modifying the
 // database. SourceRows is the number of raw points and rollup buckets that may
-// need to be rewritten; LegacyBlocks covers the earlier V4 rollup codec.
+// need to be rewritten; LegacyBlocks covers the earlier V4 rollup codec and
+// LegacyDigestBlocks covers split blocks that still use the original digest
+// payload encoding.
 type SQLiteMigrationSummary struct {
-	Required     bool   `json:"required"`
-	Layout       string `json:"layout"`
-	SourceRows   int64  `json:"source_rows"`
-	LegacyBlocks int64  `json:"legacy_blocks"`
+	Required           bool   `json:"required"`
+	Layout             string `json:"layout"`
+	SourceRows         int64  `json:"source_rows"`
+	LegacyBlocks       int64  `json:"legacy_blocks"`
+	LegacyDigestBlocks int64  `json:"legacy_digest_blocks"`
 }
 
 // InspectSQLiteMigration reports whether opening cfg with AutoMigrate would
@@ -127,11 +130,14 @@ func InspectSQLiteMigration(ctx context.Context, cfg Config) (SQLiteMigrationSum
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+t.rollupBlocks+` WHERE codec = ?`, sqliteV4LegacyRollupBlockCodec).Scan(&summary.LegacyBlocks); err != nil {
 		return SQLiteMigrationSummary{}, fmt.Errorf("metric: count legacy SQLite V4 blocks: %w", err)
 	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+t.rollupBlocks+` WHERE codec = ? AND digest_codec = ?`, sqliteV4RollupBlockCodec, sqliteV4LegacyRollupDigestCodec).Scan(&summary.LegacyDigestBlocks); err != nil {
+		return SQLiteMigrationSummary{}, fmt.Errorf("metric: count legacy SQLite V4 digest blocks: %w", err)
+	}
 	var autoVacuum int
 	if err := db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&autoVacuum); err != nil {
 		return SQLiteMigrationSummary{}, fmt.Errorf("metric: inspect SQLite auto-vacuum mode: %w", err)
 	}
-	summary.Required = summary.LegacyBlocks > 0 || autoVacuum != 2
+	summary.Required = summary.LegacyBlocks > 0 || summary.LegacyDigestBlocks > 0 || autoVacuum != 2
 	if !summary.Required {
 		summary.Layout = "current"
 	}

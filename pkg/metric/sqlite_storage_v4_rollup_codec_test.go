@@ -1,6 +1,7 @@
 package metric
 
 import (
+	"encoding/binary"
 	"math"
 	"testing"
 )
@@ -94,5 +95,38 @@ func TestSQLiteV4RollupSummaryDecodeDoesNotReadDigestSection(t *testing.T) {
 	if _, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
 		encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true); err == nil {
 		t.Fatal("percentile decode unexpectedly accepted a corrupt digest section")
+	}
+}
+
+func TestSQLiteV4CompactDigestFallsBackForNonExactWeights(t *testing.T) {
+	digest := NewTDigest(100000)
+	digest.Add(10.25, 0.5)
+	digest.Add(20.5, 1.25)
+	digest.Add(30.75, math.Ldexp(1, 64))
+	record := sqliteV4RollupRecord{
+		count:   -1,
+		minBits: math.Float64bits(digest.min),
+		maxBits: math.Float64bits(digest.max),
+		digest:  digest.Encode(),
+	}
+	compact, err := encodeSQLiteV4CompactTDigest(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compact) < 9 {
+		t.Fatalf("compact digest length=%d, want header", len(compact))
+	}
+	if binary.LittleEndian.Uint64(compact[0:8]) != math.Float64bits(digest.compression) {
+		t.Fatal("compact digest changed compression")
+	}
+	if compact[8]&sqliteV4DigestIntegerWeights != 0 {
+		t.Fatal("non-exact weights unexpectedly used integer encoding")
+	}
+	decoded, err := decodeSQLiteV4CompactTDigest(compact, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sqliteV4TDigestsEqual(record.digest, decoded) {
+		t.Fatal("compact digest changed non-integral or large weight bits")
 	}
 }

@@ -12,10 +12,18 @@ import (
 )
 
 const (
-	sqliteV4RollupSummaryMagic = "KMS4"
-	sqliteV4RollupDigestMagic  = "KMD4"
-	sqliteV4RollupDigestCodec  = 1
-	sqliteV4RollupDigestLevel  = 6
+	sqliteV4RollupSummaryMagic       = "KMS4"
+	sqliteV4RollupDigestMagic        = "KMD4"
+	sqliteV4RollupDigestCompactMagic = "KMX4"
+	sqliteV4LegacyRollupDigestCodec  = 1
+	sqliteV4RollupDigestCodec        = 2
+	sqliteV4RollupSummaryLevel       = 3
+	sqliteV4RollupDigestLevel        = 6
+)
+
+const (
+	sqliteV4DigestMetadataFromSummary = byte(1 << 0)
+	sqliteV4DigestIntegerWeights      = byte(1 << 1)
 )
 
 func encodeSQLiteV4RollupBlock(records []sqliteV4RollupRecord) (sqliteV4EncodedRollupBlock, error) {
@@ -83,23 +91,12 @@ func encodeSQLiteV4RollupBlock(records []sqliteV4RollupRecord) (sqliteV4EncodedR
 		appendVarintTo(&summary, delta)
 	}
 
-	var digests bytes.Buffer
-	digests.WriteString(sqliteV4RollupDigestMagic)
-	appendUvarintTo(&digests, uint64(len(records)))
-	for _, record := range records {
-		rawDigest, err := sqliteV4RawTDigest(record.digest)
-		if err != nil {
-			return sqliteV4EncodedRollupBlock{}, err
-		}
-		appendUvarintTo(&digests, uint64(len(rawDigest)))
-		digests.Write(rawDigest)
-	}
-
-	payload, err := compressSQLiteV4RollupSection(summary.Bytes(), flate.BestSpeed)
+	digestPayload, err := encodeSQLiteV4RollupDigestSection(records)
 	if err != nil {
 		return sqliteV4EncodedRollupBlock{}, err
 	}
-	digestPayload, err := compressSQLiteV4RollupSection(digests.Bytes(), sqliteV4RollupDigestLevel)
+
+	payload, err := compressSQLiteV4RollupSection(summary.Bytes(), sqliteV4RollupSummaryLevel)
 	if err != nil {
 		return sqliteV4EncodedRollupBlock{}, err
 	}
@@ -114,6 +111,114 @@ func encodeSQLiteV4RollupBlock(records []sqliteV4RollupRecord) (sqliteV4EncodedR
 		digestChecksum: crc32.ChecksumIEEE(digestPayload),
 		digestPayload:  digestPayload,
 	}, nil
+}
+
+// encodeSQLiteV4RollupDigestSection stores a lossless compact digest layout.
+// The summary section already carries count/min/max for every bucket, so those
+// fields are omitted when their bit patterns match the digest. Centroid means
+// use XOR-varints and integral weights use unsigned varints; non-integral
+// weights retain their exact float64 bits through a per-digest fallback flag.
+func encodeSQLiteV4RollupDigestSection(records []sqliteV4RollupRecord) ([]byte, error) {
+	var digests bytes.Buffer
+	digests.WriteString(sqliteV4RollupDigestCompactMagic)
+	appendUvarintTo(&digests, uint64(len(records)))
+	for _, record := range records {
+		compact, err := encodeSQLiteV4CompactTDigest(record)
+		if err != nil {
+			return nil, err
+		}
+		appendUvarintTo(&digests, uint64(len(compact)))
+		digests.Write(compact)
+	}
+	return compressSQLiteV4RollupSection(digests.Bytes(), sqliteV4RollupDigestLevel)
+}
+
+func encodeSQLiteV4CompactTDigest(record sqliteV4RollupRecord) ([]byte, error) {
+	raw, err := sqliteV4RawTDigest(record.digest)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if len(raw) < 39 || raw[0] != tdigestMagic0 || raw[1] != tdigestMagic1 || raw[2] != tdigestVersion {
+		return nil, fmt.Errorf("metric: invalid raw SQLite V4 t-digest")
+	}
+	n := binary.LittleEndian.Uint32(raw[35:39])
+	if uint64(n) > uint64((len(raw)-39)/16) || len(raw) != 39+int(n)*16 {
+		return nil, fmt.Errorf("metric: invalid raw SQLite V4 t-digest length")
+	}
+
+	compressionBits := binary.LittleEndian.Uint64(raw[3:11])
+	minBits := binary.LittleEndian.Uint64(raw[11:19])
+	maxBits := binary.LittleEndian.Uint64(raw[19:27])
+	countBits := binary.LittleEndian.Uint64(raw[27:35])
+	metadataFromSummary := record.count >= 0 &&
+		minBits == record.minBits && maxBits == record.maxBits &&
+		countBits == math.Float64bits(float64(record.count))
+	integerWeights := true
+	weights := make([]uint64, n)
+	means := make([]uint64, n)
+	for i := uint32(0); i < n; i++ {
+		off := 39 + int(i)*16
+		means[i] = binary.LittleEndian.Uint64(raw[off : off+8])
+		weight := math.Float64frombits(binary.LittleEndian.Uint64(raw[off+8 : off+16]))
+		// Only use the varint representation when converting through uint64 is
+		// exactly reversible at the float64 bit level. This excludes values at
+		// and above 2^64 as well as large integers that cannot round-trip.
+		if weight < 0 || math.IsNaN(weight) || math.IsInf(weight, 0) || math.Trunc(weight) != weight || weight >= math.Ldexp(1, 64) {
+			integerWeights = false
+			continue
+		}
+		integerWeight := uint64(weight)
+		if math.Float64bits(float64(integerWeight)) != math.Float64bits(weight) {
+			integerWeights = false
+			continue
+		}
+		weights[i] = integerWeight
+	}
+
+	var compact bytes.Buffer
+	var u64 [8]byte
+	binary.LittleEndian.PutUint64(u64[:], compressionBits)
+	compact.Write(u64[:])
+	flags := byte(0)
+	if metadataFromSummary {
+		flags |= sqliteV4DigestMetadataFromSummary
+	}
+	if integerWeights {
+		flags |= sqliteV4DigestIntegerWeights
+	}
+	compact.WriteByte(flags)
+	if !metadataFromSummary {
+		binary.LittleEndian.PutUint64(u64[:], minBits)
+		compact.Write(u64[:])
+		binary.LittleEndian.PutUint64(u64[:], maxBits)
+		compact.Write(u64[:])
+		binary.LittleEndian.PutUint64(u64[:], countBits)
+		compact.Write(u64[:])
+	}
+	appendUvarintTo(&compact, uint64(n))
+	if n > 0 {
+		binary.LittleEndian.PutUint64(u64[:], means[0])
+		compact.Write(u64[:])
+		previous := means[0]
+		for i := uint32(1); i < n; i++ {
+			appendUvarintTo(&compact, means[i]^previous)
+			previous = means[i]
+		}
+	}
+	if integerWeights {
+		for _, weight := range weights {
+			appendUvarintTo(&compact, weight)
+		}
+	} else {
+		for i := uint32(0); i < n; i++ {
+			off := 39 + int(i)*16 + 8
+			compact.Write(raw[off : off+8])
+		}
+	}
+	return compact.Bytes(), nil
 }
 
 func decodeSQLiteV4RollupBlock(codec, expectedCount int, expectedChecksum uint32, payload []byte, digestCodec int, expectedDigestChecksum uint32, digestPayload []byte, needDigest bool) ([]sqliteV4RollupRecord, error) {
@@ -224,9 +329,17 @@ func decodeSQLiteV4RollupBlock(codec, expectedCount int, expectedChecksum uint32
 }
 
 func decodeSQLiteV4RollupDigestSection(records []sqliteV4RollupRecord, codec int, expectedChecksum uint32, payload []byte) error {
-	if codec != sqliteV4RollupDigestCodec {
+	switch codec {
+	case sqliteV4LegacyRollupDigestCodec:
+		return decodeSQLiteV4LegacyRollupDigestSection(records, expectedChecksum, payload)
+	case sqliteV4RollupDigestCodec:
+		return decodeSQLiteV4CompactRollupDigestSection(records, expectedChecksum, payload)
+	default:
 		return fmt.Errorf("metric: unsupported SQLite V4 rollup digest codec %d", codec)
 	}
+}
+
+func decodeSQLiteV4LegacyRollupDigestSection(records []sqliteV4RollupRecord, expectedChecksum uint32, payload []byte) error {
 	if len(payload) < 2 || crc32.ChecksumIEEE(payload) != expectedChecksum {
 		return fmt.Errorf("metric: SQLite V4 rollup digest checksum mismatch")
 	}
@@ -257,6 +370,142 @@ func decodeSQLiteV4RollupDigestSection(records []sqliteV4RollupRecord, codec int
 		return fmt.Errorf("metric: SQLite V4 rollup digest contains trailing data")
 	}
 	return nil
+}
+
+func decodeSQLiteV4CompactRollupDigestSection(records []sqliteV4RollupRecord, expectedChecksum uint32, payload []byte) error {
+	if len(payload) < 2 || crc32.ChecksumIEEE(payload) != expectedChecksum {
+		return fmt.Errorf("metric: SQLite V4 rollup digest checksum mismatch")
+	}
+	raw, err := inflateSQLiteV4Payload(payload)
+	if err != nil {
+		return err
+	}
+	reader := bytes.NewReader(raw)
+	magic := make([]byte, len(sqliteV4RollupDigestCompactMagic))
+	if _, err := io.ReadFull(reader, magic); err != nil || string(magic) != sqliteV4RollupDigestCompactMagic {
+		return fmt.Errorf("metric: invalid compact SQLite V4 rollup digest header")
+	}
+	count, err := binary.ReadUvarint(reader)
+	if err != nil || count != uint64(len(records)) {
+		return fmt.Errorf("metric: SQLite V4 compact rollup digest count mismatch")
+	}
+	for i := range records {
+		length, err := binary.ReadUvarint(reader)
+		if err != nil || length > uint64(reader.Len()) {
+			return fmt.Errorf("metric: invalid compact SQLite V4 rollup digest length")
+		}
+		encoded := make([]byte, int(length))
+		if _, err := io.ReadFull(reader, encoded); err != nil {
+			return err
+		}
+		if len(encoded) == 0 {
+			records[i].digest = nil
+			continue
+		}
+		digest, err := decodeSQLiteV4CompactTDigest(encoded, records[i])
+		if err != nil {
+			return fmt.Errorf("metric: decode compact SQLite V4 rollup digest %d: %w", i, err)
+		}
+		records[i].digest = digest
+	}
+	if reader.Len() != 0 {
+		return fmt.Errorf("metric: SQLite V4 compact rollup digest contains trailing data")
+	}
+	return nil
+}
+
+func decodeSQLiteV4CompactTDigest(encoded []byte, record sqliteV4RollupRecord) ([]byte, error) {
+	if len(encoded) < 9 {
+		return nil, fmt.Errorf("metric: compact t-digest is truncated")
+	}
+	reader := bytes.NewReader(encoded)
+	var fixed [8]byte
+	if _, err := io.ReadFull(reader, fixed[:]); err != nil {
+		return nil, err
+	}
+	compressionBits := binary.LittleEndian.Uint64(fixed[:])
+	flags, err := reader.ReadByte()
+	if err != nil {
+		return nil, err
+	}
+	if flags & ^(sqliteV4DigestMetadataFromSummary|sqliteV4DigestIntegerWeights) != 0 {
+		return nil, fmt.Errorf("metric: unsupported compact t-digest flags 0x%x", flags)
+	}
+	minBits := record.minBits
+	maxBits := record.maxBits
+	countBits := math.Float64bits(float64(record.count))
+	if flags&sqliteV4DigestMetadataFromSummary == 0 {
+		if _, err := io.ReadFull(reader, fixed[:]); err != nil {
+			return nil, err
+		}
+		minBits = binary.LittleEndian.Uint64(fixed[:])
+		if _, err := io.ReadFull(reader, fixed[:]); err != nil {
+			return nil, err
+		}
+		maxBits = binary.LittleEndian.Uint64(fixed[:])
+		if _, err := io.ReadFull(reader, fixed[:]); err != nil {
+			return nil, err
+		}
+		countBits = binary.LittleEndian.Uint64(fixed[:])
+	}
+	n, err := binary.ReadUvarint(reader)
+	if err != nil || n > uint64(sqliteV4MaxDecodedRollupRows) || n > uint64(reader.Len()+1) {
+		return nil, fmt.Errorf("metric: invalid compact t-digest centroid count")
+	}
+	means := make([]uint64, int(n))
+	if n > 0 {
+		if _, err := io.ReadFull(reader, fixed[:]); err != nil {
+			return nil, err
+		}
+		means[0] = binary.LittleEndian.Uint64(fixed[:])
+		for i := 1; i < int(n); i++ {
+			delta, err := binary.ReadUvarint(reader)
+			if err != nil {
+				return nil, err
+			}
+			means[i] = means[i-1] ^ delta
+		}
+	}
+	weights := make([]uint64, int(n))
+	weightBits := make([]uint64, int(n))
+	if flags&sqliteV4DigestIntegerWeights != 0 {
+		for i := range weights {
+			weight, err := binary.ReadUvarint(reader)
+			if err != nil {
+				return nil, err
+			}
+			weights[i] = weight
+			weightBits[i] = math.Float64bits(float64(weight))
+		}
+	} else {
+		for i := range weightBits {
+			if _, err := io.ReadFull(reader, fixed[:]); err != nil {
+				return nil, err
+			}
+			weightBits[i] = binary.LittleEndian.Uint64(fixed[:])
+		}
+	}
+	if reader.Len() != 0 {
+		return nil, fmt.Errorf("metric: compact t-digest contains trailing data")
+	}
+
+	raw := make([]byte, 0, 39+int(n)*16)
+	raw = append(raw, tdigestMagic0, tdigestMagic1, tdigestVersion)
+	var u64 [8]byte
+	for _, value := range []uint64{compressionBits, minBits, maxBits, countBits} {
+		binary.LittleEndian.PutUint64(u64[:], value)
+		raw = append(raw, u64[:]...)
+	}
+	var u32 [4]byte
+	binary.LittleEndian.PutUint32(u32[:], uint32(n))
+	raw = append(raw, u32[:]...)
+	for i, meanBits := range means {
+		binary.LittleEndian.PutUint64(u64[:], meanBits)
+		raw = append(raw, u64[:]...)
+		binary.LittleEndian.PutUint64(u64[:], weightBits[i])
+		raw = append(raw, u64[:]...)
+	}
+	return raw, nil
 }
 
 func sqliteV4RawTDigest(encoded []byte) ([]byte, error) {

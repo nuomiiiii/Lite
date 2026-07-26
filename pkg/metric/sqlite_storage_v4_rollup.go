@@ -109,6 +109,114 @@ func (s *Store) migrateSQLiteV4RollupBlocksToSplit(ctx context.Context) (int64, 
 	return migratedBlocks, migratedBuckets, nil
 }
 
+// migrateSQLiteV4RollupDigestCodec upgrades split rollup blocks from the
+// original KMD4 digest payload to the compact KMX4 payload. The whole rewrite
+// is transactional: a validation or write failure leaves every old block
+// readable and untouched.
+func (s *Store) migrateSQLiteV4RollupDigestCodec(ctx context.Context) (int64, int64, error) {
+	var blockCount int64
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+s.tables.rollupBlocks+` WHERE codec = ? AND digest_codec = ?`, sqliteV4RollupBlockCodec, sqliteV4LegacyRollupDigestCodec).Scan(&blockCount); err != nil {
+		return 0, 0, fmt.Errorf("metric: count legacy SQLite V4 digest blocks: %w", err)
+	}
+	if blockCount == 0 {
+		return 0, 0, nil
+	}
+	s.reportMigrationProgress(MigrationPhaseUpgradingRollupBlocks, 0, blockCount, 0)
+	log.Printf("metric: migrating %d SQLite V4 rollup digest blocks to compact codec", blockCount)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("metric: begin compact SQLite V4 digest migration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	type key struct {
+		seriesID, resolution, startNano int64
+	}
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(
+		`SELECT series_id, resolution_nano, start_nano FROM %s
+		 WHERE codec = ? AND digest_codec = ? ORDER BY series_id, resolution_nano, start_nano`,
+		s.tables.rollupBlocks,
+	), sqliteV4RollupBlockCodec, sqliteV4LegacyRollupDigestCodec)
+	if err != nil {
+		return 0, 0, err
+	}
+	keys := make([]key, 0, blockCount)
+	for rows.Next() {
+		var item key
+		if err := rows.Scan(&item.seriesID, &item.resolution, &item.startNano); err != nil {
+			_ = rows.Close()
+			return 0, 0, err
+		}
+		keys = append(keys, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, 0, err
+	}
+
+	var migratedBlocks, migratedBuckets int64
+	for _, item := range keys {
+		var endNano, checksum, digestChecksum int64
+		var count, codec, digestCodec int
+		var payload, digestPayload []byte
+		if err := tx.QueryRowContext(ctx, fmt.Sprintf(
+			`SELECT end_nano, bucket_count, codec, checksum, payload,
+			        digest_codec, digest_checksum, digest_payload FROM %s
+			 WHERE series_id = ? AND resolution_nano = ? AND start_nano = ?`,
+			s.tables.rollupBlocks,
+		), item.seriesID, item.resolution, item.startNano).Scan(
+			&endNano, &count, &codec, &checksum, &payload,
+			&digestCodec, &digestChecksum, &digestPayload,
+		); err != nil {
+			return migratedBlocks, migratedBuckets, err
+		}
+		records, err := decodeSQLiteV4RollupBlock(codec, count, uint32(checksum), payload, digestCodec, uint32(digestChecksum), digestPayload, true)
+		if err != nil {
+			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: decode legacy SQLite V4 digest block series=%d resolution=%d start=%d: %w", item.seriesID, item.resolution, item.startNano, err)
+		}
+		if len(records) == 0 || records[0].bucketNano != item.startNano || records[len(records)-1].bucketNano != endNano {
+			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: legacy SQLite V4 digest block boundary mismatch for series=%d resolution=%d start=%d", item.seriesID, item.resolution, item.startNano)
+		}
+		encoded, err := encodeSQLiteV4RollupBlock(records)
+		if err != nil {
+			return migratedBlocks, migratedBuckets, err
+		}
+		decoded, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
+			encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true)
+		if err != nil || !sqliteV4RollupRecordsEqual(records, decoded) {
+			if err == nil {
+				err = errors.New("compact digest round-trip validation changed data")
+			}
+			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: validate compact SQLite V4 digest block: %w", err)
+		}
+		result, err := tx.ExecContext(ctx, fmt.Sprintf(
+			`UPDATE %s SET codec = ?, checksum = ?, payload = ?, digest_codec = ?, digest_checksum = ?, digest_payload = ?
+			 WHERE series_id = ? AND resolution_nano = ? AND start_nano = ? AND codec = ? AND digest_codec = ?`,
+			s.tables.rollupBlocks,
+		), encoded.codec, int64(encoded.checksum), encoded.payload, encoded.digestCodec, int64(encoded.digestChecksum), encoded.digestPayload,
+			item.seriesID, item.resolution, item.startNano, sqliteV4RollupBlockCodec, sqliteV4LegacyRollupDigestCodec)
+		if err != nil {
+			return migratedBlocks, migratedBuckets, err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: inspect compact SQLite V4 digest update: %w", err)
+		}
+		if affected != 1 {
+			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: compact SQLite V4 digest update affected %d rows, want 1", affected)
+		}
+		migratedBlocks++
+		migratedBuckets += int64(len(records))
+		s.reportMigrationProgress(MigrationPhaseUpgradingRollupBlocks, migratedBlocks, blockCount, migratedBuckets)
+	}
+	if err := tx.Commit(); err != nil {
+		return migratedBlocks, migratedBuckets, fmt.Errorf("metric: commit compact SQLite V4 digest migration: %w", err)
+	}
+	return migratedBlocks, migratedBuckets, nil
+}
+
 func (s *Store) createSQLiteV4RollupBlocks(ctx context.Context, tx *sql.Tx) error {
 	statements := []string{
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
