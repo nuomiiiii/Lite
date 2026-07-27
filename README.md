@@ -121,7 +121,7 @@ go build -o komari
 
 - [版本发布](https://github.com/nuomiiiii/komari/releases)
 - [Agent](https://github.com/nuomiiiii/komari-agent)
-- [Web 前端](https://github.com/nuomiiiii/komari-web)
+- [Nezha 主题](https://github.com/nuomiiiii/nezha)
 - [Komari 文档](https://komari-document.pages.dev/)
 - [上游 Komari](https://github.com/komari-monitor/komari)
 
