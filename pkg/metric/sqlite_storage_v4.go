@@ -626,6 +626,74 @@ func (s *Store) writeSQLiteV4BlocksTx(ctx context.Context, tx *sql.Tx, seriesID 
 	return nil
 }
 
+func (s *Store) deleteSQLiteV4PointsBeforeCompactionTx(ctx context.Context, tx *sql.Tx, metricName string, beforeNano int64) error {
+	series, err := s.sqliteV4MatchingSeries(ctx, tx, metricName, "", nil)
+	if err != nil {
+		return err
+	}
+	type boundaryBlock struct {
+		startNano int64
+		endNano   int64
+		count     int
+		codec     int
+		checksum  int64
+		payload   []byte
+	}
+	for _, item := range series {
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
+			"SELECT start_nano, end_nano, point_count, codec, checksum, payload FROM %s WHERE series_id = ? AND start_nano < ? AND end_nano >= ? ORDER BY start_nano",
+			s.tables.pointBlocks,
+		), item.id, beforeNano, beforeNano)
+		if err != nil {
+			return err
+		}
+		var boundaries []boundaryBlock
+		for rows.Next() {
+			var block boundaryBlock
+			if err := rows.Scan(&block.startNano, &block.endNano, &block.count, &block.codec, &block.checksum, &block.payload); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			boundaries = append(boundaries, block)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+s.tables.pointBlocks+" WHERE series_id = ? AND end_nano < ?", item.id, beforeNano); err != nil {
+			return err
+		}
+		for _, block := range boundaries {
+			points, err := decodeSQLiteV4Block(block.codec, block.count, uint32(block.checksum), block.payload)
+			if err != nil {
+				return fmt.Errorf("metric: decode SQLite V4 compaction boundary series=%d start=%d: %w", item.id, block.startNano, err)
+			}
+			if len(points) == 0 || points[0].timestamp != block.startNano || points[len(points)-1].timestamp != block.endNano {
+				return fmt.Errorf("metric: SQLite V4 compaction boundary mismatch for series=%d start=%d", item.id, block.startNano)
+			}
+			kept := make([]sqliteV4BlockPoint, 0, len(points))
+			for _, point := range points {
+				if point.timestamp >= beforeNano {
+					kept = append(kept, point)
+				}
+			}
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+s.tables.pointBlocks+" WHERE series_id = ? AND start_nano = ?", item.id, block.startNano); err != nil {
+				return err
+			}
+			if err := s.writeSQLiteV4BlocksTx(ctx, tx, item.id, kept); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+s.tables.pointValues+" WHERE series_id = ? AND ts_nano < ?", item.id, beforeNano); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) deleteSQLiteV4PointsTx(ctx context.Context, tx *sql.Tx, filter Query, beforeNano *int64) (int64, error) {
 	series, err := s.sqliteV4MatchingSeries(ctx, tx, filter.MetricName, filter.EntityID, filter.Tags)
 	if err != nil {
