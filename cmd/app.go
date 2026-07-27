@@ -29,6 +29,7 @@ import (
 	"github.com/komari-monitor/komari/pkg/metric"
 	"github.com/komari-monitor/komari/pkg/migrations"
 	"github.com/komari-monitor/komari/utils"
+	"github.com/komari-monitor/komari/utils/cloudflared"
 	"github.com/komari-monitor/komari/utils/geoip"
 	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/utils/messageSender"
@@ -487,6 +488,14 @@ func (a *App) StartBackground() error {
 	registerScheduledWork()
 	a.addCleanup("scheduler", func(context.Context) error {
 		corn.StopAll()
+		return nil
+	})
+
+	if err := cloudflared.AutoStart(GetEnv("KOMARI_CLOUDFLARED_TOKEN", "")); err != nil {
+		logger.Errorf("cloudflared", "failed to auto start: %v", err)
+	}
+	a.addCleanup("cloudflared", func(context.Context) error {
+		cloudflared.Shutdown()
 		return nil
 	})
 	return nil

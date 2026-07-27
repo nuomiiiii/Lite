@@ -34,6 +34,7 @@ type legacyModelConfig struct {
 	OAuthEnabled               bool    `json:"o_auth_enabled" gorm:"default:false"`
 	OAuthProvider              string  `json:"o_auth_provider" gorm:"type:varchar(50);default:'github'"`
 	DisablePasswordLogin       bool    `json:"disable_password_login" gorm:"default:false"`
+	CloudflareTunnelToken      string  `json:"cloudflare_tunnel_token" gorm:"type:longtext"`
 	CustomHead                 string  `json:"custom_head" gorm:"type:longtext"`
 	CustomBody                 string  `json:"custom_body" gorm:"type:longtext"`
 	NotificationEnabled        bool    `json:"notification_enabled" gorm:"default:false"`
@@ -68,6 +69,7 @@ type legacyConfig struct {
 	OAuthEnabled               bool      `json:"o_auth_enabled"`
 	OAuthProvider              string    `json:"o_auth_provider"`
 	DisablePasswordLogin       bool      `json:"disable_password_login"`
+	CloudflareTunnelToken      string    `json:"cloudflare_tunnel_token"`
 	CustomHead                 string    `json:"custom_head"`
 	CustomBody                 string    `json:"custom_body"`
 	NotificationEnabled        bool      `json:"notification_enabled"`

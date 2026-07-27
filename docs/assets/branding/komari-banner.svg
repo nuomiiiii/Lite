@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="800" viewBox="0 0 2400 800" role="img" aria-labelledby="title desc">
+  <title id="title">Komari</title>
+  <desc id="desc">Komari lightweight self-hosted server monitoring banner.</desc>
+  <defs>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M48 0H0V48" fill="none" stroke="#EEF1F3" stroke-width="2"/>
+    </pattern>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="22" stdDeviation="28" flood-color="#1E2933" flood-opacity=".08"/>
+    </filter>
+  </defs>
+  <rect width="2400" height="800" fill="#FFFFFF"/>
+  <rect width="2400" height="800" fill="url(#grid)" opacity=".42"/>
+  <path d="M0 650C350 600 540 715 820 656C1090 600 1250 528 1530 584C1830 644 2070 526 2400 570V800H0Z" fill="#F8FAFB"/>
+  <g filter="url(#soft)">
+    <rect x="180" y="172" width="456" height="456" rx="107.16" fill="#F7F9FB" stroke="#E5E9ED" stroke-width="6.84"/>
+  </g>
+  <g transform="translate(116.16 108.16) scale(.57)">
+    <path d="M320 282V742" fill="none" stroke="#202A33" stroke-width="92" stroke-linecap="round"/>
+    <path d="M332 512L668 274" fill="none" stroke="#12B8A6" stroke-width="92" stroke-linecap="round"/>
+    <path d="M332 512L668 750" fill="none" stroke="#FF6B5E" stroke-width="92" stroke-linecap="round"/>
+    <circle cx="332" cy="512" r="62" fill="#202A33"/>
+    <circle cx="682" cy="264" r="66" fill="#FFFFFF" stroke="#12B8A6" stroke-width="34"/>
+    <circle cx="682" cy="760" r="66" fill="#FFFFFF" stroke="#FF6B5E" stroke-width="34"/>
+    <circle cx="706" cy="240" r="16" fill="#F2C14E"/>
+  </g>
+
+  <text x="770" y="352" fill="#18232C" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="168" font-weight="720" letter-spacing="0">Komari</text>
+  <text x="782" y="442" fill="#5F6B73" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Microsoft YaHei, sans-serif" font-size="44" font-weight="500" letter-spacing="0">轻量级、自托管的服务器监控与管理工具</text>
+  <g transform="translate(782 500)">
+    <circle cx="10" cy="10" r="10" fill="#12B8A6"/>
+    <text x="38" y="24" fill="#879198" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="30" font-weight="620" letter-spacing="0">LIGHTWEIGHT</text>
+    <circle cx="314" cy="10" r="6" fill="#CDD3D7"/>
+    <text x="344" y="24" fill="#879198" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="30" font-weight="620" letter-spacing="0">SELF-HOSTED</text>
+    <circle cx="604" cy="10" r="6" fill="#CDD3D7"/>
+    <text x="634" y="24" fill="#879198" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="30" font-weight="620" letter-spacing="0">PRECISE</text>
+  </g>
+
+  <g transform="translate(1890 250)">
+    <rect x="0" y="0" width="310" height="300" rx="32" fill="#FFFFFF" stroke="#E5E9ED" stroke-width="4"/>
+    <circle cx="42" cy="48" r="10" fill="#12B8A6"/>
+    <text x="66" y="59" fill="#46525A" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="28" font-weight="650" letter-spacing="0">LIVE</text>
+    <path d="M34 182C72 146 94 208 132 166C170 124 192 188 224 134C244 101 264 112 280 82" fill="none" stroke="#12B8A6" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M34 230H280" stroke="#EEF1F3" stroke-width="4"/>
+    <rect x="34" y="252" width="88" height="12" rx="6" fill="#FF6B5E"/>
+    <rect x="132" y="252" width="148" height="12" rx="6" fill="#E8ECEF"/>
+  </g>
+</svg>

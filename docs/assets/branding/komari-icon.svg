@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Komari icon</title>
+  <desc id="desc">A network topology shaped like the letter K.</desc>
+  <rect x="112" y="112" width="800" height="800" rx="188" fill="#F7F9FB" stroke="#E5E9ED" stroke-width="12"/>
+  <path d="M320 282V742" fill="none" stroke="#202A33" stroke-width="92" stroke-linecap="round"/>
+  <path d="M332 512L668 274" fill="none" stroke="#12B8A6" stroke-width="92" stroke-linecap="round"/>
+  <path d="M332 512L668 750" fill="none" stroke="#FF6B5E" stroke-width="92" stroke-linecap="round"/>
+  <circle cx="332" cy="512" r="62" fill="#202A33"/>
+  <circle cx="682" cy="264" r="66" fill="#FFFFFF" stroke="#12B8A6" stroke-width="34"/>
+  <circle cx="682" cy="760" r="66" fill="#FFFFFF" stroke="#FF6B5E" stroke-width="34"/>
+  <circle cx="706" cy="240" r="16" fill="#F2C14E"/>
+</svg>

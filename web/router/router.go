@@ -151,6 +151,10 @@ func registerAdminRoutes(r *gin.Engine) {
 		settings.GET("/oidc", jsonRpc.Bind("admin:getOidcProvider", jsonRpc.WithQuery("provider")))
 		settings.POST("/message-sender", jsonRpc.Bind("admin:setMessageSenderProvider"))
 		settings.GET("/message-sender", jsonRpc.Bind("admin:getMessageSenderProvider", jsonRpc.WithQuery("provider")))
+		settings.GET("/cloudflared", jsonRpc.Bind("admin:getCloudflaredStatus"))
+		settings.POST("/cloudflared/start", jsonRpc.Bind("admin:startCloudflared"))
+		settings.POST("/cloudflared/stop", jsonRpc.Bind("admin:stopCloudflared"))
+		settings.POST("/cloudflared/remove-token", jsonRpc.Bind("admin:removeCloudflaredToken"))
 	}
 
 	// database storage inspection and maintenance
