@@ -122,8 +122,8 @@ jobs:
           image="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
           manifest="$(docker buildx imagetools inspect "$image")"
           echo "$manifest"
-          grep -F 'Platform:    linux/amd64' <<<"$manifest"
-          grep -F 'Platform:    linux/arm64' <<<"$manifest"
+          grep -F 'Platform:  linux/amd64' <<<"$manifest"
+          grep -F 'Platform:  linux/arm64' <<<"$manifest"
           for platform in linux/amd64 linux/arm64; do
             docker pull --platform "$platform" "$image"
             output="$(docker run --rm --platform "$platform" "$image" /app/komari version --json)"
