@@ -47,6 +47,10 @@ func TestSQLiteStorageV4MigratesV3AndPreservesExactPoints(t *testing.T) {
 	if !store.sqliteStorageV4 {
 		t.Fatal("SQLite V4 storage was not enabled")
 	}
+	definition, err := store.GetMetric(ctx, "exact")
+	if err != nil || definition.RetentionDays != 30 {
+		t.Fatalf("V3 to V4 migration changed retention: days=%d err=%v", definition.RetentionDays, err)
+	}
 	var hotCount, blockPointCount int
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM metric_point_values`).Scan(&hotCount); err != nil {
 		t.Fatal(err)
@@ -495,6 +499,119 @@ func TestSQLiteStorageV4ReducesRollupDominatedDatabase(t *testing.T) {
 	t.Logf("SQLite V4 rollup-dominated size: V3=%d V4=%d ratio=%.3f", v3Size, v4Size, float64(v4Size)/float64(v3Size))
 	if v4Size*100 >= v3Size*70 {
 		t.Fatalf("SQLite V4 rollup-dominated size=%d, want at least 30%% below V3 size=%d", v4Size, v3Size)
+	}
+}
+
+func TestSQLiteStorageV4DigestHandoffPreservesPercentilesAndRetention(t *testing.T) {
+	ctx := context.Background()
+	policy := RollupPolicy{
+		RawRetention: time.Hour,
+		Tiers: []RollupTier{
+			{Interval: time.Minute, Retention: 2 * 24 * time.Hour},
+			{Interval: 5 * time.Minute, Retention: 7 * 24 * time.Hour},
+		},
+	}
+	store, err := Open(ctx, SQLiteInDir(t.TempDir(), WithRollupPolicy(policy)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateMetric(ctx, Definition{Name: "handoff", Type: TypeGauge, RetentionDays: 10}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 27, 12, 30, 0, 0, time.UTC)
+	oldStart := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	recentStart := oldStart.Add(time.Hour)
+	fineBuckets := make(map[rollupKey]*rollupBucket)
+	for _, start := range []time.Time{oldStart, recentStart} {
+		for minute := 0; minute < 5; minute++ {
+			bucketTime := start.Add(time.Duration(minute) * time.Minute)
+			bucket := newRollupBucket(policy.compression())
+			for sample := 0; sample < 3; sample++ {
+				bucket.addPoint(float64(minute*10+sample), bucketTime.Add(time.Duration(sample)*time.Second).UnixNano())
+			}
+			fineBuckets[rollupKey{entityID: "node-a", bucket: bucketTime.UnixNano()}] = bucket
+		}
+	}
+	coarseBuckets := buildCoarserBucketsFromDelta(fineBuckets, 5*time.Minute, policy.compression())
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.writeRollupBucketsTx(ctx, "handoff", time.Minute, fineBuckets, tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if _, err := store.writeRollupBucketsTx(ctx, "handoff", 5*time.Minute, coarseBuckets, tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if _, err := store.sealAllSQLiteV4RollupsTx(ctx, tx, 0, 0); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	query := AggregateQuery{
+		Query: Query{MetricName: "handoff", EntityID: "node-a", Start: recentStart, End: recentStart.Add(5*time.Minute - time.Nanosecond)},
+		Interval: 5 * time.Minute,
+		Aggregation: AggP95,
+	}
+	before, err := store.AggregateRollup(ctx, query, 5*time.Minute)
+	if err != nil || len(before) != 1 {
+		t.Fatalf("query percentile before handoff: points=%v err=%v", before, err)
+	}
+	tx, err = store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.syncSQLiteV4RedundantRollupDigestsTx(ctx, tx, "handoff", now, policy.withMetricRetention(10*24*time.Hour), true); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	series, err := store.sqliteV4MatchingSeries(ctx, store.db, "handoff", "node-a", nil)
+	if err != nil || len(series) != 1 {
+		t.Fatalf("find handoff series: count=%d err=%v", len(series), err)
+	}
+	records, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, (5*time.Minute).Nanoseconds())
+	if err != nil || len(records) != 2 {
+		t.Fatalf("load handoff records: count=%d err=%v", len(records), err)
+	}
+	if len(records[0].digest) == 0 || len(records[1].digest) != 0 {
+		t.Fatalf("unexpected digest handoff state: old=%d recent=%d", len(records[0].digest), len(records[1].digest))
+	}
+	after, err := store.AggregateRollup(ctx, query, 5*time.Minute)
+	if err != nil || len(after) != 1 || math.Float64bits(after[0].Value) != math.Float64bits(before[0].Value) {
+		t.Fatalf("percentile changed after handoff: before=%v after=%v err=%v", before, after, err)
+	}
+	later := now.Add(2 * time.Hour)
+	tx, err = store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effectivePolicy := policy.withMetricRetention(10 * 24 * time.Hour)
+	if _, _, err := store.syncSQLiteV4RedundantRollupDigestsTx(ctx, tx, "handoff", later, effectivePolicy, true); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := store.enforceRetentionWithinTx(ctx, "handoff", later, effectivePolicy, tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	afterExpiry, err := store.AggregateRollup(ctx, query, 5*time.Minute)
+	if err != nil || len(afterExpiry) != 1 || math.Float64bits(afterExpiry[0].Value) != math.Float64bits(before[0].Value) {
+		t.Fatalf("percentile changed after finer expiry: before=%v after=%v err=%v", before, afterExpiry, err)
+	}
+	definition, err := store.GetMetric(ctx, "handoff")
+	if err != nil || definition.RetentionDays != 10 {
+		t.Fatalf("handoff changed retention: days=%d err=%v", definition.RetentionDays, err)
 	}
 }
 

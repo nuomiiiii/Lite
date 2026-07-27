@@ -115,17 +115,17 @@ func (s *Store) migrateSQLiteV4RollupBlocksToSplit(ctx context.Context) (int64, 
 // readable and untouched.
 func (s *Store) migrateSQLiteV4RollupDigestCodec(ctx context.Context) (int64, int64, error) {
 	var blockCount int64
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+s.tables.rollupBlocks+` WHERE codec = ? AND digest_codec = ?`, sqliteV4RollupBlockCodec, sqliteV4LegacyRollupDigestCodec).Scan(&blockCount); err != nil {
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+s.tables.rollupBlocks+` WHERE codec = ? AND digest_codec IN (?, ?)`, sqliteV4RollupBlockCodec, sqliteV4LegacyRollupDigestCodec, sqliteV4CompactRollupDigestCodec).Scan(&blockCount); err != nil {
 		return 0, 0, fmt.Errorf("metric: count legacy SQLite V4 digest blocks: %w", err)
 	}
 	if blockCount == 0 {
 		return 0, 0, nil
 	}
 	s.reportMigrationProgress(MigrationPhaseUpgradingRollupBlocks, 0, blockCount, 0)
-	log.Printf("metric: migrating %d SQLite V4 rollup digest blocks to compact codec", blockCount)
+	log.Printf("metric: migrating %d SQLite V4 rollup digest blocks to dense codec", blockCount)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, 0, fmt.Errorf("metric: begin compact SQLite V4 digest migration: %w", err)
+		return 0, 0, fmt.Errorf("metric: begin dense SQLite V4 digest migration: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	type key struct {
@@ -133,9 +133,9 @@ func (s *Store) migrateSQLiteV4RollupDigestCodec(ctx context.Context) (int64, in
 	}
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(
 		`SELECT series_id, resolution_nano, start_nano FROM %s
-		 WHERE codec = ? AND digest_codec = ? ORDER BY series_id, resolution_nano, start_nano`,
+		 WHERE codec = ? AND digest_codec IN (?, ?) ORDER BY series_id, resolution_nano, start_nano`,
 		s.tables.rollupBlocks,
-	), sqliteV4RollupBlockCodec, sqliteV4LegacyRollupDigestCodec)
+	), sqliteV4RollupBlockCodec, sqliteV4LegacyRollupDigestCodec, sqliteV4CompactRollupDigestCodec)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -187,34 +187,87 @@ func (s *Store) migrateSQLiteV4RollupDigestCodec(ctx context.Context) (int64, in
 			encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true)
 		if err != nil || !sqliteV4RollupRecordsEqual(records, decoded) {
 			if err == nil {
-				err = errors.New("compact digest round-trip validation changed data")
+				err = errors.New("dense digest round-trip validation changed data")
 			}
-			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: validate compact SQLite V4 digest block: %w", err)
+			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: validate dense SQLite V4 digest block: %w", err)
 		}
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(
 			`UPDATE %s SET codec = ?, checksum = ?, payload = ?, digest_codec = ?, digest_checksum = ?, digest_payload = ?
 			 WHERE series_id = ? AND resolution_nano = ? AND start_nano = ? AND codec = ? AND digest_codec = ?`,
 			s.tables.rollupBlocks,
 		), encoded.codec, int64(encoded.checksum), encoded.payload, encoded.digestCodec, int64(encoded.digestChecksum), encoded.digestPayload,
-			item.seriesID, item.resolution, item.startNano, sqliteV4RollupBlockCodec, sqliteV4LegacyRollupDigestCodec)
+			item.seriesID, item.resolution, item.startNano, sqliteV4RollupBlockCodec, digestCodec)
 		if err != nil {
 			return migratedBlocks, migratedBuckets, err
 		}
 		affected, err := result.RowsAffected()
 		if err != nil {
-			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: inspect compact SQLite V4 digest update: %w", err)
+			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: inspect dense SQLite V4 digest update: %w", err)
 		}
 		if affected != 1 {
-			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: compact SQLite V4 digest update affected %d rows, want 1", affected)
+			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: dense SQLite V4 digest update affected %d rows, want 1", affected)
 		}
 		migratedBlocks++
 		migratedBuckets += int64(len(records))
 		s.reportMigrationProgress(MigrationPhaseUpgradingRollupBlocks, migratedBlocks, blockCount, migratedBuckets)
 	}
 	if err := tx.Commit(); err != nil {
-		return migratedBlocks, migratedBuckets, fmt.Errorf("metric: commit compact SQLite V4 digest migration: %w", err)
+		return migratedBlocks, migratedBuckets, fmt.Errorf("metric: commit dense SQLite V4 digest migration: %w", err)
 	}
 	return migratedBlocks, migratedBuckets, nil
+}
+
+func (s *Store) migrateSQLiteV4RedundantRollupDigests(ctx context.Context, now time.Time) (int64, int64, error) {
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT name, retention_days FROM %s ORDER BY name`, s.tables.definitions))
+	if err != nil {
+		return 0, 0, fmt.Errorf("metric: list definitions for digest handoff migration: %w", err)
+	}
+	type metricRetention struct {
+		name string
+		days int
+	}
+	var metrics []metricRetention
+	for rows.Next() {
+		var item metricRetention
+		if err := rows.Scan(&item.name, &item.days); err != nil {
+			_ = rows.Close()
+			return 0, 0, err
+		}
+		metrics = append(metrics, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, 0, err
+	}
+	if len(metrics) == 0 {
+		return 0, 0, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, 0, fmt.Errorf("metric: begin digest handoff migration: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	s.reportMigrationProgress(MigrationPhaseUpgradingRollupBlocks, 0, int64(len(metrics)), 0)
+	var rewrittenBlocks, rewrittenBuckets int64
+	for index, item := range metrics {
+		if item.days > 0 {
+			policy := s.cfg.RollupPolicy.withMetricRetention(time.Duration(item.days) * 24 * time.Hour)
+			blocks, buckets, err := s.syncSQLiteV4RedundantRollupDigestsTx(ctx, tx, item.name, now.UTC(), policy, true)
+			if err != nil {
+				return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: migrate digest handoff for %q: %w", item.name, err)
+			}
+			rewrittenBlocks += blocks
+			rewrittenBuckets += buckets
+		}
+		s.reportMigrationProgress(MigrationPhaseUpgradingRollupBlocks, int64(index+1), int64(len(metrics)), rewrittenBuckets)
+	}
+	if err := tx.Commit(); err != nil {
+		return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: commit digest handoff migration: %w", err)
+	}
+	return rewrittenBlocks, rewrittenBuckets, nil
 }
 
 func (s *Store) createSQLiteV4RollupBlocks(ctx context.Context, tx *sql.Tx) error {
@@ -582,6 +635,207 @@ func (s *Store) appendSQLiteV4RollupTailTx(ctx context.Context, tx *sql.Tx, seri
 	}
 }
 
+const sqliteV4RollupDigestHandoffWindow = time.Hour
+
+type sqliteV4RollupStoredBlock struct {
+	startNano      int64
+	endNano        int64
+	count          int
+	codec          int
+	checksum       uint32
+	payload        []byte
+	digestCodec    int
+	digestChecksum uint32
+	digestPayload  []byte
+}
+
+func sqliteV4CeilNano(value, step int64) (int64, error) {
+	if step <= 0 {
+		return value, nil
+	}
+	floor := floorDivNano(value, step)
+	if floor == value {
+		return value, nil
+	}
+	return checkedAddInt64(floor, step)
+}
+
+// syncSQLiteV4RedundantRollupDigestsTx keeps coarse summaries available for
+// ordinary charts while omitting their recent digest copies. Before finer data
+// crosses its retention boundary, the coarse digest is rebuilt and validated
+// in the same transaction, so percentile history never depends on expired data.
+func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sql.Tx, metricName string, now time.Time, policy RollupPolicy, force bool) (int64, int64, error) {
+	if len(policy.Tiers) < 2 || policy.RawRetention <= 0 {
+		return 0, 0, nil
+	}
+	fine := policy.Tiers[0]
+	coarse := policy.Tiers[1]
+	if coarse.Retention <= fine.Retention || coarse.Interval%fine.Interval != 0 {
+		return 0, 0, nil
+	}
+	step := sqliteV4RollupDigestHandoffWindow
+	if coarse.Interval > step || step%coarse.Interval != 0 {
+		step = coarse.Interval
+	}
+	digestCutoff, err := sqliteV4CeilNano(now.UTC().Add(-fine.Retention).UnixNano(), step.Nanoseconds())
+	if err != nil {
+		return 0, 0, err
+	}
+	if !force {
+		var previousRawCutoff int64
+		err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT watermark_nano FROM %s WHERE metric_name = ?`, s.tables.watermarks), metricName).Scan(&previousRawCutoff)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, err
+		}
+		if err == nil && previousRawCutoff > 0 {
+			previousNow, addErr := checkedAddInt64(previousRawCutoff, policy.RawRetention.Nanoseconds())
+			if addErr != nil {
+				return 0, 0, addErr
+			}
+			previousDigestCutoff, ceilErr := sqliteV4CeilNano(previousNow-fine.Retention.Nanoseconds(), step.Nanoseconds())
+			if ceilErr != nil {
+				return 0, 0, ceilErr
+			}
+			if previousDigestCutoff == digestCutoff {
+				return 0, 0, nil
+			}
+		}
+	}
+	series, err := s.sqliteV4MatchingSeries(ctx, tx, metricName, "", nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	var rewrittenBlocks, rewrittenBuckets int64
+	for _, item := range series {
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
+			`SELECT start_nano, end_nano, bucket_count, codec, checksum, payload,
+			        digest_codec, digest_checksum, digest_payload FROM %s
+			 WHERE series_id = ? AND resolution_nano = ? ORDER BY start_nano`,
+			s.tables.rollupBlocks,
+		), item.id, coarse.Interval.Nanoseconds())
+		if err != nil {
+			return rewrittenBlocks, rewrittenBuckets, err
+		}
+		var blocks []sqliteV4RollupStoredBlock
+		for rows.Next() {
+			var block sqliteV4RollupStoredBlock
+			var checksum, digestChecksum int64
+			if err := rows.Scan(&block.startNano, &block.endNano, &block.count, &block.codec, &checksum, &block.payload,
+				&block.digestCodec, &digestChecksum, &block.digestPayload); err != nil {
+				_ = rows.Close()
+				return rewrittenBlocks, rewrittenBuckets, err
+			}
+			block.checksum = uint32(checksum)
+			block.digestChecksum = uint32(digestChecksum)
+			blocks = append(blocks, block)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return rewrittenBlocks, rewrittenBuckets, err
+		}
+		if err := rows.Close(); err != nil {
+			return rewrittenBlocks, rewrittenBuckets, err
+		}
+		for _, block := range blocks {
+			records, err := decodeSQLiteV4RollupBlock(block.codec, block.count, block.checksum, block.payload,
+				block.digestCodec, block.digestChecksum, block.digestPayload, true)
+			if err != nil {
+				return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: decode digest handoff block series=%d start=%d: %w", item.id, block.startNano, err)
+			}
+			if len(records) == 0 || records[0].bucketNano != block.startNano || records[len(records)-1].bucketNano != block.endNano {
+				return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: digest handoff block boundary mismatch series=%d start=%d", item.id, block.startNano)
+			}
+			changed := false
+			var restore []int
+			for index := range records {
+				if records[index].bucketNano >= digestCutoff {
+					if len(records[index].digest) > 0 {
+						records[index].digest = nil
+						changed = true
+					}
+				} else if len(records[index].digest) == 0 {
+					restore = append(restore, index)
+				}
+			}
+			if len(restore) > 0 {
+				fineUpper, err := checkedAddInt64(block.endNano, coarse.Interval.Nanoseconds()-fine.Interval.Nanoseconds())
+				if err != nil {
+					return rewrittenBlocks, rewrittenBuckets, err
+				}
+				fineRecords, err := s.loadAllSQLiteV4RollupBlockRecords(ctx, tx, item.id, fine.Interval.Nanoseconds())
+				if err != nil {
+					return rewrittenBlocks, rewrittenBuckets, err
+				}
+				groups := make(map[int64]*rollupBucket)
+				for _, fineRecord := range fineRecords {
+					if fineRecord.bucketNano < block.startNano || fineRecord.bucketNano > fineUpper {
+						continue
+					}
+					bucketData, err := sqliteV4RollupBucketFromRecord(fineRecord, item, true)
+					if err != nil {
+						return rewrittenBlocks, rewrittenBuckets, err
+					}
+					if bucketData.digest == nil {
+						return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: finer digest missing during handoff bucket=%d", fineRecord.bucketNano)
+					}
+					bucketNano := floorDivNano(fineRecord.bucketNano, coarse.Interval.Nanoseconds())
+					bucket := groups[bucketNano]
+					if bucket == nil {
+						bucket = newRollupBucketWithDigest(policy.compression(), true)
+						groups[bucketNano] = bucket
+					}
+					bucket.mergeStored(bucketData)
+				}
+				for _, index := range restore {
+					record := &records[index]
+					rebuilt := groups[record.bucketNano]
+					if rebuilt == nil || rebuilt.digest == nil || rebuilt.count != record.count ||
+						math.Float64bits(rebuilt.min) != record.minBits || math.Float64bits(rebuilt.max) != record.maxBits {
+						return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: cannot losslessly hand off digest series=%d bucket=%d", item.id, record.bucketNano)
+					}
+					record.digest = rebuilt.digest.Encode()
+					changed = true
+				}
+			}
+			if !changed {
+				continue
+			}
+			encoded, err := encodeSQLiteV4RollupBlock(records)
+			if err != nil {
+				return rewrittenBlocks, rewrittenBuckets, err
+			}
+			decoded, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
+				encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true)
+			if err != nil || !sqliteV4RollupRecordsEqual(records, decoded) {
+				if err == nil {
+					err = errors.New("digest handoff round-trip validation changed data")
+				}
+				return rewrittenBlocks, rewrittenBuckets, err
+			}
+			result, err := tx.ExecContext(ctx, fmt.Sprintf(
+				`UPDATE %s SET end_nano = ?, bucket_count = ?, codec = ?, checksum = ?, payload = ?,
+				        digest_codec = ?, digest_checksum = ?, digest_payload = ?
+				 WHERE series_id = ? AND resolution_nano = ? AND start_nano = ?`, s.tables.rollupBlocks,
+			), encoded.endNano, encoded.count, encoded.codec, int64(encoded.checksum), encoded.payload,
+				encoded.digestCodec, int64(encoded.digestChecksum), encoded.digestPayload,
+				item.id, coarse.Interval.Nanoseconds(), block.startNano)
+			if err != nil {
+				return rewrittenBlocks, rewrittenBuckets, err
+			}
+			affected, err := result.RowsAffected()
+			if err != nil {
+				return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: inspect digest handoff update: %w", err)
+			}
+			if affected != 1 {
+				return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: digest handoff update affected %d rows, want 1", affected)
+			}
+			rewrittenBlocks++
+			rewrittenBuckets += int64(len(records))
+		}
+	}
+	return rewrittenBlocks, rewrittenBuckets, nil
+}
+
 func (s *Store) querySQLiteV4Rollups(ctx context.Context, q querier, metricName, entityID string, tags map[string]string, resolution, lower, upper int64, needDigest bool) ([]storedRollup, error) {
 	series, err := s.sqliteV4MatchingSeries(ctx, q, metricName, entityID, tags)
 	if err != nil {
@@ -692,7 +946,7 @@ func (s *Store) querySQLiteV4Rollups(ctx context.Context, q querier, metricName,
 
 func sqliteV4RollupBucketFromRecord(record sqliteV4RollupRecord, series sqliteV4Series, needDigest bool) (*rollupBucket, error) {
 	var digest *TDigest
-	if needDigest {
+	if needDigest && len(record.digest) > 0 {
 		var err error
 		digest, err = DecodeTDigest(record.digest)
 		if err != nil {

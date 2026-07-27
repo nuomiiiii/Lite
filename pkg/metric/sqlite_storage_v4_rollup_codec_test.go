@@ -1,9 +1,12 @@
 package metric
 
 import (
+	"bytes"
 	"encoding/binary"
+	"hash/crc32"
 	"math"
 	"testing"
+	"time"
 )
 
 func TestSQLiteV4RollupCodecRoundTripPreservesBits(t *testing.T) {
@@ -36,6 +39,9 @@ func TestSQLiteV4RollupCodecRoundTripPreservesBits(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if encoded.digestCodec != sqliteV4RollupDigestCodec {
+			t.Fatalf("digest codec=%d, want %d", encoded.digestCodec, sqliteV4RollupDigestCodec)
+		}
 		decoded, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
 			encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true)
 		if err != nil {
@@ -44,6 +50,103 @@ func TestSQLiteV4RollupCodecRoundTripPreservesBits(t *testing.T) {
 		if !sqliteV4RollupRecordsEqual(records[start:end], decoded) {
 			t.Fatal("SQLite V4 rollup codec changed a float bit pattern, timestamp, count, digest, or creation time")
 		}
+	}
+}
+
+func TestSQLiteV4DenseDigestPreservesMixedCompressionAndUnusualMeans(t *testing.T) {
+	makeDigest := func(compression float64, values ...float64) []byte {
+		digest := NewTDigest(compression)
+		for _, value := range values {
+			digest.Add(value, 1)
+		}
+		return digest.Encode()
+	}
+	unordered := NewTDigest(100)
+	unordered.processed = true
+	unordered.min = 1
+	unordered.max = 2
+	unordered.count = 2
+	unordered.centroids = []centroid{{mean: 2, weight: 1}, {mean: 1, weight: 1}}
+	digests := [][]byte{
+		makeDigest(100, -20, -3.5, -0.0, 0, 4.25, 19),
+		makeDigest(200, -1000, -1, 1, 1000),
+		unordered.encodeRaw(),
+		nil,
+	}
+	records := make([]sqliteV4RollupRecord, len(digests))
+	for index, digestBlob := range digests {
+		digest, err := DecodeTDigest(digestBlob)
+		if err != nil {
+			t.Fatal(err)
+		}
+		count := int64(digest.Count())
+		minValue, maxValue := digest.min, digest.max
+		if len(digestBlob) == 0 {
+			count, minValue, maxValue = 1, float64(index), float64(index)
+		}
+		records[index] = sqliteV4RollupRecord{
+			bucketNano: int64(index+1) * time.Minute.Nanoseconds(),
+			count: count,
+			sumBits: math.Float64bits(float64(index) + 1), sumSqBits: math.Float64bits(float64(index) + 2),
+			minBits: math.Float64bits(minValue), maxBits: math.Float64bits(maxValue),
+			firstBits: math.Float64bits(minValue), firstTS: int64(index+1) * time.Minute.Nanoseconds(),
+			lastBits: math.Float64bits(maxValue), lastTS: int64(index+1)*time.Minute.Nanoseconds() + 1,
+			digest: digestBlob, createdAt: int64(index+1)*time.Minute.Nanoseconds() + 2,
+		}
+	}
+	encoded, err := encodeSQLiteV4RollupBlock(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
+		encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sqliteV4RollupRecordsEqual(records, decoded) {
+		t.Fatal("dense SQLite V4 digest codec changed mixed or unusual digest bits")
+	}
+}
+
+func TestSQLiteV4CompactDigestCodec2RemainsReadable(t *testing.T) {
+	digest := NewTDigest(100)
+	for index := 0; index < 200; index++ {
+		digest.Add(float64(index)/9, 1)
+	}
+	records := []sqliteV4RollupRecord{{
+		bucketNano: time.Minute.Nanoseconds(), count: 200,
+		sumBits: math.Float64bits(1), sumSqBits: math.Float64bits(2),
+		minBits: math.Float64bits(digest.min), maxBits: math.Float64bits(digest.max),
+		firstBits: math.Float64bits(digest.min), firstTS: time.Minute.Nanoseconds(),
+		lastBits: math.Float64bits(digest.max), lastTS: time.Minute.Nanoseconds() + 1,
+		digest: digest.Encode(), createdAt: time.Minute.Nanoseconds() + 2,
+	}}
+	encoded, err := encodeSQLiteV4RollupBlock(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy bytes.Buffer
+	legacy.WriteString(sqliteV4RollupDigestCompactMagic)
+	appendUvarintTo(&legacy, uint64(len(records)))
+	for _, record := range records {
+		compact, err := encodeSQLiteV4CompactTDigest(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		appendUvarintTo(&legacy, uint64(len(compact)))
+		legacy.Write(compact)
+	}
+	legacyPayload, err := compressSQLiteV4RollupSection(legacy.Bytes(), sqliteV4RollupDigestLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
+		sqliteV4CompactRollupDigestCodec, crc32.ChecksumIEEE(legacyPayload), legacyPayload, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sqliteV4RollupRecordsEqual(records, decoded) {
+		t.Fatal("legacy compact digest codec changed while retaining read compatibility")
 	}
 }
 

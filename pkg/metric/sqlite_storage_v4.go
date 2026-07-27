@@ -130,14 +130,18 @@ func (s *Store) migrateSQLiteStorageV4(ctx context.Context) error {
 	}
 	s.reportMigrationProgress(MigrationPhaseCommitting, 1, 1, pointSourceCount+rollupSourceCount)
 	s.sqliteStorageV4 = true
-	s.reportMigrationProgress(MigrationPhaseReclaiming, 0, 1, pointSourceCount+rollupSourceCount)
+	_, handoffBuckets, err := s.migrateSQLiteV4RedundantRollupDigests(ctx, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	s.reportMigrationProgress(MigrationPhaseReclaiming, 0, 1, pointSourceCount+rollupSourceCount+handoffBuckets)
 	if err := s.fullSQLiteVacuum(ctx); err != nil {
 		// The V4 transaction is already fully validated and committed. A failed
 		// physical rewrite does not invalidate the logical migration.
 		log.Printf("metric: SQLite V4 post-migration vacuum skipped: %v", err)
 	}
-	s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, pointSourceCount+rollupSourceCount)
-	s.reportMigrationProgress(MigrationPhaseCompleted, 1, 1, pointSourceCount+rollupSourceCount)
+	s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, pointSourceCount+rollupSourceCount+handoffBuckets)
+	s.reportMigrationProgress(MigrationPhaseCompleted, 1, 1, pointSourceCount+rollupSourceCount+handoffBuckets)
 	log.Printf("metric: migrated SQLite metric storage to V%d (%d raw points and %d rollups preserved bit-for-bit)", sqliteStorageVersionV4, pointSourceCount, rollupSourceCount)
 	return nil
 }
@@ -167,15 +171,21 @@ func (s *Store) ensureSQLiteStorageV4(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	compactDigestBlocks, compactDigestBuckets, err := s.migrateSQLiteV4RollupDigestCodec(ctx)
+	denseDigestBlocks, denseDigestBuckets, err := s.migrateSQLiteV4RollupDigestCodec(ctx)
 	if err != nil {
 		return err
 	}
-	if migratedBlocks > 0 || compactDigestBlocks > 0 {
+	handoffBlocks, handoffBuckets, err := s.migrateSQLiteV4RedundantRollupDigests(ctx, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if migratedBlocks > 0 || denseDigestBlocks > 0 || handoffBlocks > 0 {
+		s.reportMigrationProgress(MigrationPhaseReclaiming, 0, 1, migratedBuckets+denseDigestBuckets+handoffBuckets)
 		if err := s.fullSQLiteVacuum(ctx); err != nil {
 			return fmt.Errorf("metric: vacuum SQLite V4 rollup storage after codec migration: %w", err)
 		}
-		log.Printf("metric: migrated %d SQLite V4 rollup blocks (%d buckets) to split storage and %d digest blocks (%d buckets) to compact codec, reclaimed database space", migratedBlocks, migratedBuckets, compactDigestBlocks, compactDigestBuckets)
+		s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, migratedBuckets+denseDigestBuckets+handoffBuckets)
+		log.Printf("metric: migrated %d SQLite V4 rollup blocks (%d buckets) to split storage, %d digest blocks (%d buckets) to dense codec, and %d blocks (%d buckets) to digest handoff storage; reclaimed database space", migratedBlocks, migratedBuckets, denseDigestBlocks, denseDigestBuckets, handoffBlocks, handoffBuckets)
 	}
 	return nil
 }

@@ -259,6 +259,11 @@ func (s *Store) compactMetricIncrementalWithinTx(ctx context.Context, metricName
 		written += n
 	}
 
+	if s.sqliteStorageV4 {
+		if _, _, err := s.syncSQLiteV4RedundantRollupDigestsTx(ctx, tx, metricName, now, policy, false); err != nil {
+			return written, err
+		}
+	}
 	if err := s.enforceRetentionWithinTx(ctx, metricName, now, policy, tx); err != nil {
 		return written, err
 	}
@@ -542,7 +547,13 @@ func buildCoarserBucketsFromDelta(delta map[rollupKey]*rollupBucket, coarseInter
 		return out
 	}
 	coarseSize := coarseInterval.Nanoseconds()
-	for k, src := range delta {
+	keys := make([]rollupKey, 0, len(delta))
+	for key := range delta {
+		keys = append(keys, key)
+	}
+	sortRollupKeys(keys)
+	for _, k := range keys {
+		src := delta[k]
 		bucket := floorDivNano(k.bucket, coarseSize)
 		ck := rollupKey{entityID: k.entityID, tagsHash: k.tagsHash, bucket: bucket}
 		b := out[ck]

@@ -198,7 +198,11 @@ func (s *Store) scanRollupRowsContained(ctx context.Context, metricName, entityI
 // 它是包含扫描和混合扫描共用的 SQL 原语；桶窗口语义由调用方通过传入的边界决定。
 func (s *Store) scanRollupRowsBetween(ctx context.Context, metricName, entityID string, tags map[string]string, resNano, lowerBucket, upperBucket int64, needDigest bool) ([]storedRollup, error) {
 	if s.sqliteStorageV4 {
-		return s.querySQLiteV4Rollups(ctx, s.reader(), metricName, entityID, tags, resNano, lowerBucket, upperBucket, needDigest)
+		rows, err := s.querySQLiteV4Rollups(ctx, s.reader(), metricName, entityID, tags, resNano, lowerBucket, upperBucket, needDigest)
+		if err != nil || !needDigest {
+			return rows, err
+		}
+		return s.hydrateSQLiteV4RollupDigests(ctx, metricName, entityID, tags, resNano, rows)
 	}
 	args := []any{metricName, resNano, lowerBucket, upperBucket}
 	parts := []string{
@@ -237,6 +241,71 @@ func (s *Store) scanRollupRowsBetween(ctx context.Context, metricName, entityID 
 // foldRollupRows 将存储的 rollup 行折叠进 interval 宽的输出桶。百分位查询会
 // 按桶合并 t-digest，其他聚合只携带精确摘要。groups 可为 nil，此时会分配新 map；
 // 传入已有 map 可让调用方把 rollup 和 raw 的贡献累加到同一批输出桶中。
+func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, entityID string, tags map[string]string, resolution int64, rows []storedRollup) ([]storedRollup, error) {
+	missing := make([]int, 0)
+	var lower, upper int64
+	for index := range rows {
+		if rows[index].bucketData.digest != nil {
+			continue
+		}
+		missing = append(missing, index)
+		if len(missing) == 1 || rows[index].bucket < lower {
+			lower = rows[index].bucket
+		}
+		if len(missing) == 1 || rows[index].bucket > upper {
+			upper = rows[index].bucket
+		}
+	}
+	if len(missing) == 0 {
+		return rows, nil
+	}
+
+	var finer int64
+	for index, tier := range s.cfg.RollupPolicy.Tiers {
+		if tier.Interval.Nanoseconds() == resolution && index > 0 {
+			finer = s.cfg.RollupPolicy.Tiers[index-1].Interval.Nanoseconds()
+			break
+		}
+	}
+	if finer <= 0 || resolution%finer != 0 {
+		return nil, fmt.Errorf("metric: %d SQLite V4 rollup digests are unavailable at resolution %d", len(missing), resolution)
+	}
+	fineUpper, err := checkedAddInt64(upper, resolution-finer)
+	if err != nil {
+		return nil, err
+	}
+	fineRows, err := s.scanRollupRowsBetween(ctx, metricName, entityID, tags, finer, lower, fineUpper, true)
+	if err != nil {
+		return nil, err
+	}
+	comp := s.cfg.RollupPolicy.compression()
+	groups := make(map[rollupKey]*rollupBucket)
+	for _, row := range fineRows {
+		if row.bucketData.digest == nil {
+			return nil, fmt.Errorf("metric: finer SQLite V4 rollup digest is unavailable at resolution %d bucket %d", finer, row.bucket)
+		}
+		key := rollupKey{entityID: row.entityID, tagsHash: row.bucketData.tagsHash, bucket: floorDivNano(row.bucket, resolution)}
+		bucket := groups[key]
+		if bucket == nil {
+			bucket = newRollupBucketWithDigest(comp, true)
+			groups[key] = bucket
+		}
+		bucket.mergeStored(row.bucketData)
+	}
+	for _, index := range missing {
+		coarse := rows[index].bucketData
+		key := rollupKey{entityID: rows[index].entityID, tagsHash: coarse.tagsHash, bucket: rows[index].bucket}
+		rebuilt := groups[key]
+		if rebuilt == nil || rebuilt.digest == nil || rebuilt.count != coarse.count ||
+			math.Float64bits(rebuilt.min) != math.Float64bits(coarse.min) ||
+			math.Float64bits(rebuilt.max) != math.Float64bits(coarse.max) {
+			return nil, fmt.Errorf("metric: cannot losslessly rebuild SQLite V4 rollup digest at resolution %d bucket %d", resolution, rows[index].bucket)
+		}
+		coarse.digest = rebuilt.digest
+	}
+	return rows, nil
+}
+
 func foldRollupRows(groups map[rollupKey]*rollupBucket, rows []storedRollup, interval time.Duration, comp float64, preserveSeries, needDigest bool) map[rollupKey]*rollupBucket {
 	if groups == nil {
 		groups = make(map[rollupKey]*rollupBucket)
