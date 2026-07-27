@@ -28,7 +28,8 @@ func TestUpstreamMainDatabaseUpgradeCompatibility(t *testing.T) {
 		withTraffic bool
 	}{
 		{name: "1.1.x"},
-		{name: "1.2.0"},
+		{name: "1.2.5"},
+		{name: "1.2.5-fix2"},
 		{name: "1.2.6", withTraffic: true},
 	}
 
