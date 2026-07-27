@@ -13,15 +13,17 @@
   <rect width="2400" height="800" fill="url(#grid)" opacity=".42"/>
   <path d="M0 650C350 600 540 715 820 656C1090 600 1250 528 1530 584C1830 644 2070 526 2400 570V800H0Z" fill="#F8FAFB"/>
   <g filter="url(#soft)">
-    <rect x="180" y="172" width="456" height="456" rx="112" fill="#FFFFFF" stroke="#E5E9ED" stroke-width="8"/>
+    <rect x="180" y="172" width="456" height="456" rx="107.16" fill="#F7F9FB" stroke="#E5E9ED" stroke-width="6.84"/>
   </g>
-  <path d="M354 286V514" fill="none" stroke="#202A33" stroke-width="48" stroke-linecap="round"/>
-  <path d="M362 400L526 282" fill="none" stroke="#12B8A6" stroke-width="48" stroke-linecap="round"/>
-  <path d="M362 400L526 518" fill="none" stroke="#FF6B5E" stroke-width="48" stroke-linecap="round"/>
-  <circle cx="362" cy="400" r="34" fill="#202A33"/>
-  <circle cx="534" cy="276" r="36" fill="#FFFFFF" stroke="#12B8A6" stroke-width="18"/>
-  <circle cx="534" cy="524" r="36" fill="#FFFFFF" stroke="#FF6B5E" stroke-width="18"/>
-  <circle cx="546" cy="264" r="9" fill="#F2C14E"/>
+  <g transform="translate(116.16 108.16) scale(.57)">
+    <path d="M320 282V742" fill="none" stroke="#202A33" stroke-width="92" stroke-linecap="round"/>
+    <path d="M332 512L668 274" fill="none" stroke="#12B8A6" stroke-width="92" stroke-linecap="round"/>
+    <path d="M332 512L668 750" fill="none" stroke="#FF6B5E" stroke-width="92" stroke-linecap="round"/>
+    <circle cx="332" cy="512" r="62" fill="#202A33"/>
+    <circle cx="682" cy="264" r="66" fill="#FFFFFF" stroke="#12B8A6" stroke-width="34"/>
+    <circle cx="682" cy="760" r="66" fill="#FFFFFF" stroke="#FF6B5E" stroke-width="34"/>
+    <circle cx="706" cy="240" r="16" fill="#F2C14E"/>
+  </g>
 
   <text x="770" y="352" fill="#18232C" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="168" font-weight="720" letter-spacing="0">Komari</text>
   <text x="782" y="442" fill="#5F6B73" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Microsoft YaHei, sans-serif" font-size="44" font-weight="500" letter-spacing="0">轻量级、自托管的服务器监控与管理工具</text>
