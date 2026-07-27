@@ -1,1 +1,134 @@
+# Komari
 
+[![Release](https://img.shields.io/github/v/release/nuomiiiii/komari?label=release)](https://github.com/nuomiiiii/komari/releases)
+[![Docker](https://img.shields.io/badge/GHCR-nuomiiiii%2Fkomari-2496ED?logo=docker)](https://github.com/nuomiiiii/komari/pkgs/container/komari)
+[![License](https://img.shields.io/github/license/nuomiiiii/komari)](LICENSE)
+
+Komari 是一款轻量级、自托管的服务器监控与管理工具。服务端提供 Web 管理界面，Agent 负责采集节点状态、执行延迟监测与经过授权的远程操作。本分支基于 [komari-monitor/komari](https://github.com/komari-monitor/komari) 持续开发，重点优化低配置设备上的数据库占用、维护负载和日常运维体验。
+
+> [!WARNING]
+> Komari 只能部署在你拥有或已获得授权管理的设备上。请勿将其用于未经授权的访问、持久化、命令执行或其他滥用行为。管理员应为面板启用 HTTPS 和双因素认证，并妥善保护 Agent Token 与备份文件。
+
+## 2.1.8 主要更新
+
+- **SQLite V4 指标存储**：指标点和历史汇总块采用更紧凑的编码，汇总段使用兼顾低端单核设备的压缩参数；新摘要编码不额外降低指标数值精度。
+- **安全迁移流程**：兼容上游 `1.1.x`、`1.2.x`、`1.3.x` 及本分支 `2.1.x` 的 SQLite 旧结构，长时间迁移会进入独立进度页，失败时保留原数据并允许安全重试。
+- **精确流量账本**：日报、周报和月报读取独立的每日精确账本，不再为了报表长期保留四项流量指标的详细历史。
+- **数据库运行状态**：后台可查看数据库文件、WAL、运行时临时占用、压缩周期、最近 checkpoint、连续失败次数与最近错误。
+- **低配置优化**：压缩维护按指标拆分并分散执行，降低单核低性能服务器上的瞬时 CPU 竞争；低资源模式恢复为可选项且默认关闭。
+- **删除残留修复**：删除服务器或延迟监测任务时，同步清理关联配置、告警、任务结果、流量账本与历史指标。
+- **远程管理**：提供多标签 Web 终端、同一服务器多开、文件浏览与拖拽上传；识别为 Komari Server 的节点会禁止 Web 远程操作，限制只作用于 Komari，不会影响 SSH、Xshell 等其他连接方式。
+- **Linux 一键更新**：直接安装且由 systemd 管理的实例支持校验、冷备份、原子替换、健康检查和失败回退；Docker 实例继续通过拉取镜像更新。
+
+## 核心功能
+
+- CPU、内存、磁盘、网络、负载、连接数和运行时间监控
+- 节点分组、排序、标签、账单、流量限额与重置日管理
+- IPv4/IPv6 延迟监测、历史曲线、任务排序与异常告警
+- 离线、流量和延迟通知，以及日/周/月流量报告
+- 可安装主题与托管主题配置
+- 多标签远程终端、文件管理和远程任务执行
+- SQLite 数据库占用明细、运行诊断、备份和手动空间回收
+- Linux 直接安装、Docker 与多架构二进制部署
+
+## 数据库与升级说明
+
+### SQLite V4
+
+SQLite V4 的压缩编码不会额外改变已采集指标的数值精度。详细指标和历史汇总仍遵循后台设置的保留周期与原有采样/汇总规则；流量报表所需的累计值由独立精确账本保存。
+
+V4 迁移只适用于使用 SQLite 的指标存储。外置 MySQL 或 PostgreSQL 不会进入 SQLite V4 迁移，也不会显示对应的迁移进度。
+
+### 从旧版本升级
+
+> [!IMPORTANT]
+> `2.1.8` 涉及指标数据库迁移，建议先备份完整 `data` 目录，再通过手动替换程序或重建 Docker 容器更新。首次启动时不要中断迁移，并等待迁移页面明确显示完成。
+
+1. 停止旧 Komari，备份程序和完整 `data` 目录。
+2. 更新程序或容器，并保持原有 `data` 挂载不变。
+3. 打开管理页面查看迁移进度，确认服务正常后再删除备份。
+4. 升级会自动清理已删除服务器和延迟任务的历史残留。SQLite 产生的空闲页会继续复用；如需立即把空间归还给磁盘，可在业务低峰期手动执行一次“回收空间”。
+
+低资源模式默认关闭。如设备为低性能单核 CPU，可在后台按实际情况启用；V4 的分批维护不依赖该开关。
+
+## 快速开始
+
+### Linux 一键安装
+
+适用于使用 systemd 的常见 Linux 发行版：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nuomiiiii/komari/main/install-komari.sh -o install-komari.sh
+chmod +x install-komari.sh
+sudo ./install-komari.sh
+```
+
+安装完成后访问 `http://<服务器 IP>:25774`。正式环境建议配置反向代理和 HTTPS。
+
+### Docker
+
+```bash
+mkdir -p ./data
+docker run -d --name komari --restart unless-stopped -p 25774:25774 -v "$(pwd)/data:/app/data" ghcr.io/nuomiiiii/komari:latest
+```
+
+更新 Docker 部署：
+
+```bash
+docker pull ghcr.io/nuomiiiii/komari:latest
+docker rm -f komari
+```
+
+随后使用原来的端口和 `data` 挂载重新创建容器。不要在未确认备份的情况下删除宿主机数据目录。
+
+### 二进制文件
+
+从 [Releases](https://github.com/nuomiiiii/komari/releases) 下载与系统架构匹配的文件：
+
+```bash
+chmod +x komari-linux-amd64
+./komari-linux-amd64 server -l 0.0.0.0:25774
+```
+
+默认数据目录为程序工作目录下的 `data`。
+
+## Agent 与远程管理
+
+Agent 项目与安装说明见 [nuomiiiii/komari-agent](https://github.com/nuomiiiii/komari-agent)。`2.1.x` 服务端建议搭配当前兼容版本 Agent 使用；远程终端、文件管理和任务执行只有在 Agent 支持并由管理员主动发起时才可用。
+
+远程入口受管理员登录、双因素认证和短时会话限制。Komari 会阻止对自动识别出的 Komari Server 节点执行 Web 终端、文件和 Docker 管理，避免通过 Agent 绕过面板自身的保护；这不会修改系统 SSH、防火墙或其他远程连接配置。
+
+## Linux 一键更新与回退
+
+一键更新只面向官方脚本安装、由 systemd 管理且满足运行时检查的 Linux 实例。更新程序会校验版本、构建标识、大小和 SHA-256，备份当前程序及 `data`，并在新进程健康检查失败时恢复旧版本。
+
+Docker、Windows、非 systemd 环境、外置指标数据库和不满足原子回退条件的部署不会启用该入口。详细限制见 [Linux 一键更新与回退](docs/self-update.md)。
+
+## 从源码构建
+
+后端使用 Go `1.25`，前端建议使用 Node.js `20+`：
+
+```bash
+git clone https://github.com/nuomiiiii/komari.git
+cd komari
+go build -o komari
+./komari server -l 0.0.0.0:25774
+```
+
+正式构建还需要将 [nuomiiiii/komari-web](https://github.com/nuomiiiii/komari-web) 的构建产物放入默认主题目录。可参考仓库内的 GitHub Actions 构建流程。
+
+## 相关链接
+
+- [版本发布](https://github.com/nuomiiiii/komari/releases)
+- [Agent](https://github.com/nuomiiiii/komari-agent)
+- [Web 前端](https://github.com/nuomiiiii/komari-web)
+- [Komari 文档](https://komari-document.pages.dev/)
+- [上游 Komari](https://github.com/komari-monitor/komari)
+
+## 致谢
+
+感谢 Komari 上游维护者、Agent 与主题贡献者，以及持续提供测试和反馈的社区用户。本分支保留上游版权与 MIT 许可证。
+
+## 许可证
+
+[MIT License](LICENSE)
