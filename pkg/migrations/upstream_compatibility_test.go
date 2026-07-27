@@ -67,7 +67,7 @@ func TestUpstreamMainDatabaseUpgradeCompatibility(t *testing.T) {
 }
 
 func TestUpstreamMetricDatabaseUpgradeCompatibility(t *testing.T) {
-	for _, version := range []string{"1.2.7", "1.3.0"} {
+	for _, version := range []string{"1.2.7", "1.2.8", "1.2.8-fix", "1.3.0"} {
 		t.Run(version, func(t *testing.T) {
 			closeActiveMetricStore(t)
 			_ = openCompatibilityConfigDB(t)
