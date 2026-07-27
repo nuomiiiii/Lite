@@ -14,8 +14,8 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   VERSION: 2.1.8
-  VERSION_HASH: 8k3nq7p
-  IMAGE_TAG: 2.1.8-test
+  VERSION_HASH: p7m4x2k
+  IMAGE_TAG: 2.1.8-fix
 
 jobs:
   build-frontend:
@@ -43,6 +43,9 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Run migration regression tests
+        run: go test ./pkg/migrations ./database/metricstore
 
       - name: Install Zig
         uses: ./.github/actions/setup-zig
@@ -110,4 +113,4 @@ jobs:
           output="$(docker run --rm --platform linux/amd64 "$image" /app/komari version --json)"
           echo "$output"
           grep -F '"version":"2.1.8"' <<<"$output"
-          grep -F '"hash":"8k3nq7p"' <<<"$output"
+          grep -F '"hash":"p7m4x2k"' <<<"$output"

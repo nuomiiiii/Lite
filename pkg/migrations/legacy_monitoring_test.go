@@ -58,7 +58,7 @@ func TestLegacyMonitoringTablesMigratedByOneShotMigration(t *testing.T) {
 	if summary.LoadRows != 2 || summary.GPURows != 1 || summary.LatencyRows != 2 || summary.MonitoringRows != 5 {
 		t.Fatalf("unexpected legacy monitoring summary: %#v", summary)
 	}
-	if summary.EstimatedPoints != 21 || summary.RetentionDays < 1 {
+	if summary.EstimatedPoints != 23 || summary.RetentionDays < 1 {
 		t.Fatalf("unexpected legacy point estimate or retention: %#v", summary)
 	}
 
@@ -82,7 +82,7 @@ func TestLegacyMonitoringTablesMigratedByOneShotMigration(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("migrate legacy monitoring with progress: %v", err)
 	}
-	if lastProgress.SourceRowsDone != 5 || lastProgress.SourceRowsTotal != 5 || lastProgress.WrittenPoints != 21 {
+	if lastProgress.SourceRowsDone != 5 || lastProgress.SourceRowsTotal != 5 || lastProgress.WrittenPoints != 23 {
 		t.Fatalf("unexpected final migration progress: %#v", lastProgress)
 	}
 
@@ -117,19 +117,19 @@ func TestLegacyMonitoringTablesMigratedByOneShotMigration(t *testing.T) {
 		t.Fatalf("unexpected gpu points: %#v", gpuPoints)
 	}
 
-	pingPoints, err := metricStore.Query(ctx, metric.Query{MetricName: metricstore.MetricPingLatency, EntityID: "client-a", Start: hour.Add(-time.Second), End: hour.Add(time.Hour), Tags: map[string]string{"task_id": "7"}})
+	pingPoints, err := metricStore.Query(ctx, metric.Query{MetricName: metricstore.MetricPingLatency, EntityID: "client-a", Start: hour.Add(-time.Second), End: hour.Add(time.Hour), Tags: map[string]string{"task_id": "7"}, Order: metric.OrderAsc})
 	if err != nil {
 		t.Fatalf("query ping points: %v", err)
 	}
-	if len(pingPoints) != 1 || math.Abs(pingPoints[0].Value-34.15) > 1e-9 || !pingPoints[0].Timestamp.Equal(hour) {
+	if len(pingPoints) != 2 || pingPoints[0].Value != 36 || pingPoints[1].Value != -1 || !pingPoints[0].Timestamp.Equal(base) || !pingPoints[1].Timestamp.Equal(base.Add(30*time.Second)) {
 		t.Fatalf("unexpected ping points: %#v", pingPoints)
 	}
 
-	pingLossPoints, err := metricStore.Query(ctx, metric.Query{MetricName: metricstore.MetricPingLoss, EntityID: "client-a", Start: hour.Add(-time.Second), End: hour.Add(time.Hour), Tags: map[string]string{"task_id": "7"}})
+	pingLossPoints, err := metricStore.Query(ctx, metric.Query{MetricName: metricstore.MetricPingLoss, EntityID: "client-a", Start: hour.Add(-time.Second), End: hour.Add(time.Hour), Tags: map[string]string{"task_id": "7"}, Order: metric.OrderAsc})
 	if err != nil {
 		t.Fatalf("query ping loss points: %v", err)
 	}
-	if len(pingLossPoints) != 1 || math.Abs(pingLossPoints[0].Value-0.95) > 1e-9 || !pingLossPoints[0].Timestamp.Equal(hour) {
+	if len(pingLossPoints) != 2 || pingLossPoints[0].Value != 0 || pingLossPoints[1].Value != 1 || !pingLossPoints[0].Timestamp.Equal(base) || !pingLossPoints[1].Timestamp.Equal(base.Add(30*time.Second)) {
 		t.Fatalf("unexpected ping loss points: %#v", pingLossPoints)
 	}
 
@@ -151,6 +151,86 @@ func TestLegacyMonitoringTablesMigratedByOneShotMigration(t *testing.T) {
 	}
 	if markDoneCalls != 1 {
 		t.Fatalf("completed migration rewrote marker, calls=%d", markDoneCalls)
+	}
+}
+
+func TestStaleCompletionMarkerRecoversExactPingHistory(t *testing.T) {
+	ctx := context.Background()
+	mainDB, err := gorm.Open(sqlite.Open("file:"+filepath.ToSlash(filepath.Join(t.TempDir(), "stale-marker.db"))+"?mode=rwc"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	if sqlDB, err := mainDB.DB(); err == nil {
+		t.Cleanup(func() { _ = sqlDB.Close() })
+	} else {
+		t.Fatalf("legacy sql db: %v", err)
+	}
+	if err := mainDB.AutoMigrate(&models.PingRecord{}); err != nil {
+		t.Fatalf("migrate legacy ping table: %v", err)
+	}
+
+	base := time.Date(2026, 7, 27, 3, 30, 0, 0, time.UTC)
+	for _, record := range []models.PingRecord{
+		{Client: "client-a", TaskId: 7, Time: base, Value: 36},
+		{Client: "client-a", TaskId: 7, Time: base.Add(30 * time.Second), Value: -1},
+	} {
+		if err := mainDB.Create(&record).Error; err != nil {
+			t.Fatalf("seed legacy ping record: %v", err)
+		}
+	}
+
+	required, summary, err := LegacyMonitoringMigrationRequired(mainDB)
+	if err != nil {
+		t.Fatalf("inspect stale migration marker state: %v", err)
+	}
+	if !required || summary.LatencyRows != 2 {
+		t.Fatalf("legacy rows must override the completion marker: required=%v summary=%#v", required, summary)
+	}
+
+	metricDB, err := sql.Open("sqlite3", "file:"+filepath.ToSlash(filepath.Join(t.TempDir(), "stale-marker-metrics.db"))+"?mode=rwc")
+	if err != nil {
+		t.Fatalf("open metric db: %v", err)
+	}
+	store, err := metric.Open(ctx, metric.SQLite("", metric.WithDB(metricDB)))
+	if err != nil {
+		t.Fatalf("open metric store: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = store.Close()
+		_ = metricDB.Close()
+	})
+	if err := metricstore.EnsureBuiltinMetricDefinitions(ctx, store); err != nil {
+		t.Fatalf("ensure metric definitions: %v", err)
+	}
+
+	marked := false
+	stats, err := runLegacyMonitoringMigration(ctx, mainDB, store, true, func() error {
+		marked = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("repair stale completion marker: %v", err)
+	}
+	if stats.Ping != 2 || !marked {
+		t.Fatalf("unexpected recovery result: stats=%#v marked=%v", stats, marked)
+	}
+	if mainDB.Migrator().HasTable("ping_records") {
+		t.Fatal("legacy ping table was not removed after verified import")
+	}
+
+	points, err := store.Query(ctx, metric.Query{
+		MetricName: metricstore.MetricPingLatency,
+		EntityID:   "client-a",
+		Start:      base.Add(-time.Second),
+		End:        base.Add(time.Minute),
+		Tags:       map[string]string{"task_id": "7"},
+		Order:      metric.OrderAsc,
+	})
+	if err != nil {
+		t.Fatalf("query recovered ping points: %v", err)
+	}
+	if len(points) != 2 || points[0].Value != 36 || points[1].Value != -1 {
+		t.Fatalf("recovered ping history lost precision: %#v", points)
 	}
 }
 
