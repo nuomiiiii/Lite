@@ -101,6 +101,9 @@ func (s *Store) CompactMetric(ctx context.Context, metricName string, now time.T
 	obsoleteIntervals := rollupIntervalsOutsidePolicy(policy.Tiers, effectivePolicy.Tiers)
 	policy = effectivePolicy
 	now = now.UTC()
+	if policy.RawRetention > 0 {
+		return s.compactMetricIncrementalInChunks(ctx, metricName, now, policy, obsoleteIntervals)
+	}
 
 	// Retry the whole compaction on a transient serialization/deadlock failure.
 	// Under SERIALIZABLE, a concurrent writer touching the same raw range can
@@ -122,6 +125,164 @@ func (s *Store) CompactMetric(ctx context.Context, metricName string, now time.T
 		lastErr = err
 	}
 	return 0, fmt.Errorf("compact metric %q: exhausted retries after serialization failures: %w", metricName, lastErr)
+}
+
+const metricCompactionChunkWindow = 6 * time.Hour
+
+// compactMetricIncrementalInChunks commits old upgrade data in bounded ranges.
+// A timeout only rolls back the active range; earlier ranges and their persisted
+// watermarks remain available for the next scheduled compaction attempt.
+func (s *Store) compactMetricIncrementalInChunks(ctx context.Context, metricName string, now time.Time, policy RollupPolicy, obsoleteIntervals []time.Duration) (int, error) {
+	total := 0
+	for {
+		written, completed, err := s.compactMetricIncrementalChunk(ctx, metricName, now, policy, obsoleteIntervals)
+		if err != nil {
+			return total, err
+		}
+		total += written
+		if err := s.incrementalSQLiteVacuum(ctx, 256); err != nil {
+			log.Printf("metric: incremental SQLite vacuum skipped: %v", err)
+		}
+		if completed {
+			return total, nil
+		}
+	}
+}
+
+func (s *Store) compactMetricIncrementalChunk(ctx context.Context, metricName string, now time.Time, policy RollupPolicy, obsoleteIntervals []time.Duration) (int, bool, error) {
+	const maxAttempts = 5
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		written, completed, err := s.compactMetricIncrementalChunkOnce(ctx, metricName, now, policy, obsoleteIntervals)
+		if err == nil {
+			return written, completed, nil
+		}
+		if !isRetryableSerializationError(err) {
+			return 0, false, err
+		}
+		lastErr = err
+	}
+	return 0, false, fmt.Errorf("compact metric %q chunk: exhausted retries after serialization failures: %w", metricName, lastErr)
+}
+
+func (s *Store) compactMetricIncrementalChunkOnce(ctx context.Context, metricName string, now time.Time, policy RollupPolicy, obsoleteIntervals []time.Duration) (int, bool, error) {
+	tx, err := s.db.BeginTx(ctx, s.dialect.compactTxOptions())
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	rawCutoff := policy.rawCutoff(now)
+	chunkStart, found, err := s.oldestRawTimestampBeforeTx(ctx, tx, metricName, rawCutoff)
+	if err != nil {
+		return 0, false, err
+	}
+	chunkEnd := rawCutoff
+	completed := true
+	written := 0
+	if found {
+		windowNano := metricCompactionChunkWindow.Nanoseconds()
+		candidate, addErr := checkedAddInt64(floorDivNano(chunkStart.UnixNano(), windowNano), windowNano)
+		if addErr != nil {
+			return 0, false, addErr
+		}
+		if candidate < rawCutoff.UnixNano() {
+			chunkEnd = time.Unix(0, candidate).UTC()
+			completed = false
+		}
+		written, err = s.compactMetricIncrementalRangeWithinTx(ctx, metricName, chunkStart, chunkEnd, policy, tx)
+		if err != nil {
+			return 0, false, err
+		}
+		if s.sqliteStorageV4 {
+			err = s.deleteSQLiteV4PointsBeforeCompactionTx(ctx, tx, metricName, chunkEnd.UnixNano())
+		} else {
+			_, err = s.DeleteBeforeTx(ctx, metricName, chunkEnd, tx)
+		}
+		if err != nil {
+			return 0, false, err
+		}
+	}
+
+	if completed {
+		if s.sqliteStorageV4 {
+			sealBefore := now.Add(-sqliteV4HotWindow).UnixNano()
+			if _, err := s.sealSQLiteV4PointsTx(ctx, tx, metricName, sealBefore, 0, 0); err != nil {
+				return 0, false, err
+			}
+		}
+		if err := s.deleteRollupsForIntervalsTx(ctx, metricName, obsoleteIntervals, tx); err != nil {
+			return 0, false, err
+		}
+		if s.sqliteStorageV4 {
+			if _, _, err := s.syncSQLiteV4RedundantRollupDigestsTx(ctx, tx, metricName, now, policy, false); err != nil {
+				return 0, false, err
+			}
+		}
+		if err := s.enforceRetentionWithinTx(ctx, metricName, now, policy, tx); err != nil {
+			return 0, false, err
+		}
+	}
+	if err := s.persistCompactionWatermarkTx(ctx, metricName, chunkEnd, tx); err != nil {
+		return 0, false, err
+	}
+	if completed && s.sqliteStorageV4 {
+		if err := s.sealSQLiteV4RollupHotTx(ctx, tx, metricName, now.Add(-sqliteV4HotWindow).UnixNano()); err != nil {
+			return 0, false, err
+		}
+	}
+	if completed {
+		if err := s.pruneUnusedSQLiteSeries(ctx, tx); err != nil {
+			return 0, false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, false, err
+	}
+	return written, completed, nil
+}
+
+func (s *Store) oldestRawTimestampBeforeTx(ctx context.Context, tx *sql.Tx, metricName string, before time.Time) (time.Time, bool, error) {
+	beforeNano := before.UTC().UnixNano()
+	if s.sqliteStorageV4 {
+		var blockMin, hotMin sql.NullInt64
+		if err := tx.QueryRowContext(ctx, fmt.Sprintf(
+			"SELECT MIN(b.start_nano) FROM %s b JOIN %s s ON s.id = b.series_id WHERE s.metric_name = ? AND b.start_nano < ?",
+			s.tables.pointBlocks, s.tables.series,
+		), metricName, beforeNano).Scan(&blockMin); err != nil {
+			return time.Time{}, false, err
+		}
+		if err := tx.QueryRowContext(ctx, fmt.Sprintf(
+			"SELECT MIN(v.ts_nano) FROM %s v JOIN %s s ON s.id = v.series_id WHERE s.metric_name = ? AND v.ts_nano < ?",
+			s.tables.pointValues, s.tables.series,
+		), metricName, beforeNano).Scan(&hotMin); err != nil {
+			return time.Time{}, false, err
+		}
+		minimum := int64(0)
+		found := false
+		for _, candidate := range []sql.NullInt64{blockMin, hotMin} {
+			if candidate.Valid && (!found || candidate.Int64 < minimum) {
+				minimum = candidate.Int64
+				found = true
+			}
+		}
+		if !found {
+			return time.Time{}, false, nil
+		}
+		return time.Unix(0, minimum).UTC(), true, nil
+	}
+	var minimum sql.NullInt64
+	err := tx.QueryRowContext(ctx, fmt.Sprintf(
+		"SELECT MIN(ts_nano) FROM %s WHERE metric_name = %s AND ts_nano < %s",
+		s.tables.points, s.dialect.placeholder(1), s.dialect.placeholder(2),
+	), metricName, beforeNano).Scan(&minimum)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if !minimum.Valid {
+		return time.Time{}, false, nil
+	}
+	return time.Unix(0, minimum.Int64).UTC(), true, nil
 }
 
 // compactMetricOnce runs a single compaction attempt inside one transaction.
@@ -266,6 +427,27 @@ func (s *Store) compactMetricIncrementalWithinTx(ctx context.Context, metricName
 	}
 	if err := s.enforceRetentionWithinTx(ctx, metricName, now, policy, tx); err != nil {
 		return written, err
+	}
+	return written, nil
+}
+
+func (s *Store) compactMetricIncrementalRangeWithinTx(ctx context.Context, metricName string, start, before time.Time, policy RollupPolicy, tx *sql.Tx) (int, error) {
+	comp := policy.compression()
+	delta, err := s.buildFinestTierRange(ctx, tx, metricName, policy.Tiers[0].Interval, comp, start, before)
+	if err != nil {
+		return 0, err
+	}
+
+	written := 0
+	for tierIdx, tier := range policy.Tiers {
+		if tierIdx > 0 {
+			delta = buildCoarserBucketsFromDelta(delta, tier.Interval, comp)
+		}
+		n, err := s.mergeRollupBucketsTx(ctx, metricName, tier.Interval, delta, tx)
+		if err != nil {
+			return written, err
+		}
+		written += n
 	}
 	return written, nil
 }
@@ -420,26 +602,34 @@ type rollupKey struct {
 // buildFinestTier 扫描某指标的原始点，并按给定 interval 分桶，key 为
 // （实体、标签集合、桶起点）。每个点的标签 map 决定它属于哪条序列。
 func (s *Store) buildFinestTier(ctx context.Context, q querier, metricName string, interval time.Duration, comp float64) (map[rollupKey]*rollupBucket, error) {
-	return s.buildFinestTierBefore(ctx, q, metricName, interval, comp, time.Time{})
+	return s.buildFinestTierRange(ctx, q, metricName, interval, comp, time.Time{}, time.Time{})
 }
 
 // buildFinestTierBefore aggregates only raw points older than before. A zero
 // cutoff preserves the full-rebuild behavior used when raw is retained forever.
 func (s *Store) buildFinestTierBefore(ctx context.Context, q querier, metricName string, interval time.Duration, comp float64, before time.Time) (map[rollupKey]*rollupBucket, error) {
+	return s.buildFinestTierRange(ctx, q, metricName, interval, comp, time.Time{}, before)
+}
+
+func (s *Store) buildFinestTierRange(ctx context.Context, q querier, metricName string, interval time.Duration, comp float64, start, before time.Time) (map[rollupKey]*rollupBucket, error) {
 	size := interval.Nanoseconds()
 	out := make(map[rollupKey]*rollupBucket)
 	if s.sqliteStorageV4 {
+		startNano := int64(math.MinInt64)
+		if !start.IsZero() {
+			startNano = start.UTC().UnixNano()
+		}
 		endNano := int64(math.MaxInt64)
 		if !before.IsZero() {
 			beforeNano := before.UTC().UnixNano()
-			if beforeNano == math.MinInt64 {
+			if beforeNano == math.MinInt64 || beforeNano <= startNano {
 				return out, nil
 			}
 			endNano = beforeNano - 1
 		}
 		points, err := s.querySQLiteV4(ctx, q, Query{
 			MetricName: metricName,
-			Start:      time.Unix(0, math.MinInt64).UTC(),
+			Start:      time.Unix(0, startNano).UTC(),
 			End:        time.Unix(0, endNano).UTC(),
 		})
 		if err != nil {
@@ -466,9 +656,13 @@ func (s *Store) buildFinestTierBefore(ctx context.Context, q querier, metricName
 	}
 	args := []any{metricName}
 	where := "metric_name = " + s.dialect.placeholder(1)
+	if !start.IsZero() {
+		args = append(args, start.UTC().UnixNano())
+		where += " AND ts_nano >= " + s.dialect.placeholder(len(args))
+	}
 	if !before.IsZero() {
 		args = append(args, before.UTC().UnixNano())
-		where += " AND ts_nano < " + s.dialect.placeholder(2)
+		where += " AND ts_nano < " + s.dialect.placeholder(len(args))
 	}
 	sqlText := fmt.Sprintf(
 		`SELECT entity_id, ts_nano, value, tags FROM %s WHERE %s ORDER BY ts_nano ASC`,
