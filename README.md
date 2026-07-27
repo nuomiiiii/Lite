@@ -1,5 +1,7 @@
 # Komari
 
+![Komari](docs/assets/branding/komari-banner.svg)
+
 [![Release](https://img.shields.io/github/v/release/nuomiiiii/komari?label=release)](https://github.com/nuomiiiii/komari/releases)
 [![Docker](https://img.shields.io/badge/GHCR-nuomiiiii%2Fkomari-2496ED?logo=docker)](https://github.com/nuomiiiii/komari/pkgs/container/komari)
 [![License](https://img.shields.io/github/license/nuomiiiii/komari)](LICENSE)
