@@ -219,6 +219,7 @@ func publicGetPublicPingTasks(_ context.Context, _ *rpc.JsonRpcRequest) (any, *r
 		DefaultOn bool     `json:"default_on"`
 		Type      string   `json:"type"`
 		Interval  int      `json:"interval"`
+		Weight    int      `json:"weight"`
 	}
 	out := make([]publicPingTask, len(pingTasks))
 	for i, task := range pingTasks {
@@ -229,6 +230,7 @@ func publicGetPublicPingTasks(_ context.Context, _ *rpc.JsonRpcRequest) (any, *r
 			DefaultOn: task.DefaultOn,
 			Type:      task.Type,
 			Interval:  task.Interval,
+			Weight:    task.Weight,
 		}
 	}
 	return out, nil

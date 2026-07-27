@@ -1,6 +1,50 @@
 package public
 
-import "testing"
+import (
+	"crypto/sha256"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestRemoveFaviconIfHashMatches(t *testing.T) {
+	filePath := filepath.Join(t.TempDir(), "favicon.ico")
+	legacyData := []byte("legacy default favicon")
+	customData := []byte("custom favicon")
+	legacyHash := sha256.Sum256(legacyData)
+
+	if err := os.WriteFile(filePath, legacyData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := removeFaviconIfHashMatches(filePath, legacyHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !removed {
+		t.Fatal("legacy default favicon was not removed")
+	}
+	if _, err := os.Stat(filePath); !os.IsNotExist(err) {
+		t.Fatalf("legacy favicon still exists: %v", err)
+	}
+
+	if err := os.WriteFile(filePath, customData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	removed, err = removeFaviconIfHashMatches(filePath, legacyHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed {
+		t.Fatal("custom favicon was removed")
+	}
+	got, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(customData) {
+		t.Fatalf("custom favicon changed: got %q", got)
+	}
+}
 
 func TestNormalizeHTMLLanguage(t *testing.T) {
 	tests := map[string]struct {

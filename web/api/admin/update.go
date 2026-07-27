@@ -89,14 +89,12 @@ func UploadFavicon(c *gin.Context) {
 
 func DeleteFavicon(c *gin.Context) {
 	if err := os.Remove("./data/favicon.ico"); err != nil {
-		if os.IsNotExist(err) {
-			api.RespondError(c, http.StatusNotFound, "Favicon not found")
-		} else {
+		if !os.IsNotExist(err) {
 			api.RespondError(c, http.StatusInternalServerError, "Failed to delete favicon: "+err.Error())
+			return
 		}
-		return
 	}
 	uuid, _ := c.Get("uuid")
-	auditlog.Log(c.ClientIP(), uuid.(string), "Favicon deleted", "info")
+	auditlog.Log(c.ClientIP(), uuid.(string), "Favicon restored to default", "info")
 	api.RespondSuccess(c, nil)
 }
