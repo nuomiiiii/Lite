@@ -29,9 +29,17 @@ jobs:
         with:
           artifact-name: komari-frontend
 
-  build-linux-amd64:
+  build-linux:
     needs: build-frontend
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            zig_target: x86_64-linux-musl
+          - goarch: arm64
+            zig_target: aarch64-linux-musl
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -45,43 +53,47 @@ jobs:
           go-version-file: go.mod
 
       - name: Run migration regression tests
+        if: matrix.goarch == 'amd64'
         run: go test ./pkg/migrations ./database/metricstore
 
       - name: Install Zig
         uses: ./.github/actions/setup-zig
 
-      - name: Build Linux amd64 binary
+      - name: Build Linux ${{ matrix.goarch }} binary
         env:
           GOOS: linux
-          GOARCH: amd64
+          GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
-          CC: zig cc -target x86_64-linux-musl
+          CC: zig cc -target ${{ matrix.zig_target }}
           GIN_MODE: release
         shell: bash
         run: |
           set -euo pipefail
-          go build -trimpath \
-            -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}" \
-            -o komari-linux-amd64
+          LDFLAGS="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}"
+          go build -trimpath -ldflags="$LDFLAGS" -o "komari-linux-${GOARCH}"
 
       - name: Upload Docker binary
         uses: actions/upload-artifact@v4
         with:
-          name: komari-linux-amd64
-          path: komari-linux-amd64
+          name: komari-linux-${{ matrix.goarch }}
+          path: komari-linux-${{ matrix.goarch }}
 
   build-and-push:
-    needs: build-linux-amd64
+    needs: build-linux
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download Docker binary
+      - name: Download Docker binaries
         uses: actions/download-artifact@v4
         with:
-          name: komari-linux-amd64
+          pattern: komari-linux-*
           path: .
+          merge-multiple: true
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -93,24 +105,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Linux amd64 image
+      - name: Build and push multi-architecture image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           no-cache: true
           provenance: false
 
-      - name: Verify image platform and embedded version
+      - name: Verify image platforms and embedded version
         shell: bash
         run: |
           set -euo pipefail
           image="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
-          docker buildx imagetools inspect "$image"
-          docker pull --platform linux/amd64 "$image"
-          output="$(docker run --rm --platform linux/amd64 "$image" /app/komari version --json)"
-          echo "$output"
-          grep -F '"version":"2.1.8"' <<<"$output"
-          grep -F '"hash":"p7m4x2k"' <<<"$output"
+          manifest="$(docker buildx imagetools inspect "$image")"
+          echo "$manifest"
+          grep -F 'Platform:    linux/amd64' <<<"$manifest"
+          grep -F 'Platform:    linux/arm64' <<<"$manifest"
+          for platform in linux/amd64 linux/arm64; do
+            docker pull --platform "$platform" "$image"
+            output="$(docker run --rm --platform "$platform" "$image" /app/komari version --json)"
+            echo "$output"
+            grep -F '"version":"2.1.8"' <<<"$output"
+            grep -F '"hash":"p7m4x2k"' <<<"$output"
+          done
