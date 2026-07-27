@@ -767,6 +767,7 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 					return rewrittenBlocks, rewrittenBuckets, err
 				}
 				groups := make(map[int64]*rollupBucket)
+				handoffIncomplete := false
 				for _, fineRecord := range fineRecords {
 					if fineRecord.bucketNano < block.startNano || fineRecord.bucketNano > fineUpper {
 						continue
@@ -776,7 +777,8 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 						return rewrittenBlocks, rewrittenBuckets, err
 					}
 					if bucketData.digest == nil {
-						return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: finer digest missing during handoff bucket=%d", fineRecord.bucketNano)
+						handoffIncomplete = true
+						break
 					}
 					bucketNano := floorDivNano(fineRecord.bucketNano, coarse.Interval.Nanoseconds())
 					bucket := groups[bucketNano]
@@ -786,15 +788,22 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 					}
 					bucket.mergeStored(bucketData)
 				}
-				for _, index := range restore {
-					record := &records[index]
-					rebuilt := groups[record.bucketNano]
-					if rebuilt == nil || rebuilt.digest == nil || rebuilt.count != record.count ||
-						math.Float64bits(rebuilt.min) != record.minBits || math.Float64bits(rebuilt.max) != record.maxBits {
-						return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: cannot losslessly hand off digest series=%d bucket=%d", item.id, record.bucketNano)
+				if !handoffIncomplete {
+					for _, index := range restore {
+						record := &records[index]
+						rebuilt := groups[record.bucketNano]
+						if rebuilt == nil || rebuilt.digest == nil || rebuilt.count != record.count ||
+							math.Float64bits(rebuilt.min) != record.minBits || math.Float64bits(rebuilt.max) != record.maxBits {
+							handoffIncomplete = true
+							break
+						}
+						record.digest = rebuilt.digest.Encode()
+						changed = true
 					}
-					record.digest = rebuilt.digest.Encode()
-					changed = true
+				}
+				if handoffIncomplete {
+					log.Printf("metric: deferring digest handoff for series=%d block=%d because finer rollup coverage is incomplete; keeping the stored block unchanged", item.id, block.startNano)
+					continue
 				}
 			}
 			if !changed {
