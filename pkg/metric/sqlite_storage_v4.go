@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	sqliteStorageVersionV4    = 4
+	sqliteStorageVersionV4              = 4
+	sqliteStorageVersionV4DigestHandoff = 5
 	sqliteV4HotWindow         = 5 * time.Minute
 	sqliteV4RollupFlushWindow = 30 * time.Minute
 )
@@ -48,6 +49,9 @@ func (s *Store) migrateSQLiteStorageV4(ctx context.Context) error {
 	if pointKind == "table" && rollupKind == "table" {
 		s.sqliteStorageV4 = true
 		if err := s.ensureSQLiteStorageV4(ctx); err != nil {
+			return err
+		}
+		if err := s.markSQLiteStorageV4DigestHandoff(ctx); err != nil {
 			return err
 		}
 		s.reportMigrationProgress(MigrationPhaseCompleted, 1, 1, 0)
@@ -141,6 +145,9 @@ func (s *Store) migrateSQLiteStorageV4(ctx context.Context) error {
 		log.Printf("metric: SQLite V4 post-migration vacuum skipped: %v", err)
 	}
 	s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, pointSourceCount+rollupSourceCount+handoffBuckets)
+	if err := s.markSQLiteStorageV4DigestHandoff(ctx); err != nil {
+		return err
+	}
 	s.reportMigrationProgress(MigrationPhaseCompleted, 1, 1, pointSourceCount+rollupSourceCount+handoffBuckets)
 	log.Printf("metric: migrated SQLite metric storage to V%d (%d raw points and %d rollups preserved bit-for-bit)", sqliteStorageVersionV4, pointSourceCount, rollupSourceCount)
 	return nil
@@ -179,13 +186,24 @@ func (s *Store) ensureSQLiteStorageV4(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if migratedBlocks > 0 || denseDigestBlocks > 0 || handoffBlocks > 0 {
+	var autoVacuum int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&autoVacuum); err != nil {
+		return fmt.Errorf("metric: inspect SQLite auto-vacuum mode: %w", err)
+	}
+	if migratedBlocks > 0 || denseDigestBlocks > 0 || handoffBlocks > 0 || autoVacuum != 2 {
 		s.reportMigrationProgress(MigrationPhaseReclaiming, 0, 1, migratedBuckets+denseDigestBuckets+handoffBuckets)
 		if err := s.fullSQLiteVacuum(ctx); err != nil {
 			return fmt.Errorf("metric: vacuum SQLite V4 rollup storage after codec migration: %w", err)
 		}
 		s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, migratedBuckets+denseDigestBuckets+handoffBuckets)
 		log.Printf("metric: migrated %d SQLite V4 rollup blocks (%d buckets) to split storage, %d digest blocks (%d buckets) to dense codec, and %d blocks (%d buckets) to digest handoff storage; reclaimed database space", migratedBlocks, migratedBuckets, denseDigestBlocks, denseDigestBuckets, handoffBlocks, handoffBuckets)
+	}
+	return nil
+}
+
+func (s *Store) markSQLiteStorageV4DigestHandoff(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, sqliteStorageVersionV4DigestHandoff)); err != nil {
+		return fmt.Errorf("metric: mark SQLite V4 digest handoff migration: %w", err)
 	}
 	return nil
 }
