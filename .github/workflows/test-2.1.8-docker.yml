@@ -52,9 +52,9 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Run migration regression tests
+      - name: Run full regression suite
         if: matrix.goarch == 'amd64'
-        run: go test ./pkg/migrations ./database/metricstore
+        run: go test ./...
 
       - name: Install Zig
         uses: ./.github/actions/setup-zig
