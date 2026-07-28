@@ -268,6 +268,10 @@ func (s *Store) migrateSQLiteV4RedundantRollupDigests(ctx context.Context, now t
 			if syncErr != nil {
 				_ = tx.Rollback()
 				if errors.Is(syncErr, errSQLiteV4DigestHandoffDeferred) {
+					// Force the runtime retry to scan again before retention advances.
+					if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE metric_name = ?`, s.tables.watermarks), item.name); err != nil {
+						return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: reset compaction watermark for deferred digest handoff %q: %w", item.name, err)
+					}
 					deferredMetrics++
 					log.Printf("metric: preserving %q digest blocks and deferring lossless handoff: %v", item.name, syncErr)
 					s.reportMigrationProgressWithDeferred(MigrationPhaseUpgradingRollupBlocks, int64(index+1), int64(len(metrics)), rewrittenBuckets, deferredMetrics)
@@ -887,14 +891,20 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 				for _, index := range restore {
 					record := &records[index]
 					if _, missing := incomplete[record.bucketNano]; missing {
-						return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("%w: finer digest missing during handoff bucket=%d", errSQLiteV4DigestHandoffDeferred, record.bucketNano)
+						// This old finer digest is already absent and cannot reappear on a retry.
+						continue
 					}
 					rebuilt := groups[record.bucketNano]
 					stored, err := sqliteV4RollupBucketFromRecord(*record, item, true)
 					if err != nil {
 						return rewrittenBlocks, rewrittenBuckets, err
 					}
-					if rebuilt == nil || rebuilt.digest == nil || !sqliteV4RollupSummariesEqual(rebuilt, stored) {
+					if rebuilt == nil || rebuilt.digest == nil || rebuilt.count != stored.count {
+						// No complete finer source remains. Keep the readable coarse summary,
+						// skip the unrecoverable digest, and continue with later buckets.
+						continue
+					}
+					if !sqliteV4RollupSummariesEqual(rebuilt, stored) {
 						return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("%w: cannot losslessly hand off digest series=%d bucket=%d", errSQLiteV4DigestHandoffDeferred, item.id, record.bucketNano)
 					}
 					record.digest = rebuilt.digest.Encode()
