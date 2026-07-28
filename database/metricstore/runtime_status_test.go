@@ -68,3 +68,39 @@ func TestRuntimeStatusKeepsPendingRetryEstimateWithoutCountingCycleFailure(t *te
 		t.Fatalf("checkpoint failure should not count as a compaction cycle failure: %#v", status)
 	}
 }
+func TestRuntimeStatusTracksDigestHandoffDeferredWithoutFailure(t *testing.T) {
+	previous := GetRuntimeStatus()
+	resetRuntimeStatus(metric.DriverSQLite)
+	t.Cleanup(func() {
+		runtimeStatusMu.Lock()
+		runtimeStatus = previous
+		runtimeStatusMu.Unlock()
+	})
+
+	at := time.Now().UTC()
+	recordDigestHandoffDeferred("cpu.usage", "摘要校验暂未通过", at)
+	recordDigestHandoffDeferred("load.average", "细粒度摘要尚未完整", at.Add(time.Second))
+	recordDigestHandoffDeferred("cpu.usage", "摘要校验暂未通过（已重试）", at.Add(2*time.Second))
+
+	status := GetRuntimeStatus()
+	if len(status.DigestHandoffDeferred) != 2 {
+		t.Fatalf("deferred status count = %d, want 2: %#v", len(status.DigestHandoffDeferred), status)
+	}
+	if status.ConsecutiveCycleFailures != 0 || status.ConsecutiveCheckpointFailures != 0 || status.LastError != "" {
+		t.Fatalf("safe deferral changed failure state: %#v", status)
+	}
+	if !status.LastDigestHandoffDeferredAt.Equal(at.Add(2 * time.Second)) {
+		t.Fatalf("latest deferred time was not updated: %#v", status)
+	}
+
+	status.DigestHandoffDeferred[0].Reason = "mutated copy"
+	if GetRuntimeStatus().DigestHandoffDeferred[0].Reason == "mutated copy" {
+		t.Fatal("GetRuntimeStatus returned the internal deferred slice")
+	}
+
+	clearDigestHandoffDeferred("cpu.usage")
+	status = GetRuntimeStatus()
+	if len(status.DigestHandoffDeferred) != 1 || status.DigestHandoffDeferred[0].Metric != "load.average" {
+		t.Fatalf("successful retry did not clear only its metric: %#v", status)
+	}
+}
