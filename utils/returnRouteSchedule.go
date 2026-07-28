@@ -19,7 +19,7 @@ type returnRouteTaskManager struct {
 
 var returnRouteManager = &returnRouteTaskManager{tasks: map[uint]models.ReturnRouteTask{}}
 
-const returnRouteProbeTimeout = 90 * time.Second
+const returnRouteProbeTimeout = 10 * time.Minute
 
 var returnRouteProbes = struct {
 	sync.Mutex
@@ -43,6 +43,9 @@ func (m *returnRouteTaskManager) Reload(tasks []models.ReturnRouteTask) error {
 			case <-ctx.Done():
 				return
 			default:
+				if ReturnRouteProbeInFlight(task.Id) {
+					return
+				}
 				DispatchReturnRouteTask(task)
 			}
 		}); err != nil {
@@ -75,6 +78,23 @@ func StartReturnRouteProbe(taskID uint) {
 		returnRouteProbes.started[taskID] = time.Now()
 	}
 	returnRouteProbes.Unlock()
+}
+
+func ReturnRouteProbeInFlight(taskID uint) bool {
+	if taskID == 0 {
+		return false
+	}
+	returnRouteProbes.Lock()
+	defer returnRouteProbes.Unlock()
+	started, exists := returnRouteProbes.started[taskID]
+	if !exists {
+		return false
+	}
+	if time.Since(started) >= returnRouteProbeTimeout {
+		delete(returnRouteProbes.started, taskID)
+		return false
+	}
+	return true
 }
 
 func ProbingReturnRouteTaskIDs() []uint {
