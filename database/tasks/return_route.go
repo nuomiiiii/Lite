@@ -752,7 +752,7 @@ func classifyReturnRouteSignaturesWithRules(hops []returnRouteSignature, rules *
 			return "10099", rules.document.Confidence["unicom_10099"]
 		case rules.hasSignature("unicom_9929", hop):
 			return "9929", rules.document.Confidence["unicom_9929"]
-		case rules.hasSignature("cn2_backbone", hop):
+		case rules.hasASN("cn2_backbone", hop.asn):
 			if hasASNGroupBefore(hops, index, rules, "cn2_global") {
 				return "CN2 GIA", rules.document.Confidence["cn2_gia"]
 			}
