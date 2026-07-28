@@ -652,6 +652,9 @@ func registerScheduledWork() {
 	if err := tasks.ReloadPingSchedule(); err != nil {
 		logger.ErrorArgs("server", "Failed to reload ping schedule:", err)
 	}
+	if err := tasks.ReloadReturnRouteSchedule(); err != nil {
+		logger.ErrorArgs("server", "Failed to reload return route schedule:", err)
+	}
 	if err := d_notification.ReloadLoadNotificationSchedule(); err != nil {
 		logger.ErrorArgs("server", "Failed to reload load notification schedule:", err)
 	}

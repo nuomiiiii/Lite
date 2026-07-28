@@ -38,9 +38,11 @@ func DeleteClient(clientUuid string) error {
 	}
 	deleted = true
 	if pingTasksChanged {
-		return tasks.ReloadPingSchedule()
+		if err := tasks.ReloadPingSchedule(); err != nil {
+			return err
+		}
 	}
-	return nil
+	return tasks.ReloadReturnRouteSchedule()
 }
 
 func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
@@ -52,6 +54,23 @@ func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
 		}
 		if clientCount == 0 {
 			return gorm.ErrRecordNotFound
+		}
+		if tx.Migrator().HasTable("return_route_tasks") {
+			var routeTaskIDs []uint
+			if err := tx.Model(&models.ReturnRouteTask{}).Where("client = ?", clientUuid).Pluck("id", &routeTaskIDs).Error; err != nil {
+				return fmt.Errorf("find client return route tasks: %w", err)
+			}
+			if len(routeTaskIDs) > 0 {
+				if err := tx.Where("task_id IN ?", routeTaskIDs).Delete(&models.ReturnRouteEvent{}).Error; err != nil {
+					return fmt.Errorf("delete client return route events: %w", err)
+				}
+				if err := tx.Where("task_id IN ?", routeTaskIDs).Delete(&models.ReturnRouteStatus{}).Error; err != nil {
+					return fmt.Errorf("delete client return route states: %w", err)
+				}
+				if err := tx.Where("id IN ?", routeTaskIDs).Delete(&models.ReturnRouteTask{}).Error; err != nil {
+					return fmt.Errorf("delete client return route tasks: %w", err)
+				}
+			}
 		}
 
 		for label, model := range map[string]any{

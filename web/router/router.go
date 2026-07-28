@@ -250,4 +250,13 @@ func registerAdminRoutes(r *gin.Engine) {
 		pingTask.POST("/edit", jsonRpc.Bind("admin:editPingTask"))
 		pingTask.POST("/order", jsonRpc.Bind("admin:orderPingTask"))
 	}
+
+	returnRoute := g.Group("/return-route")
+	{
+		returnRoute.GET("/", jsonRpc.Bind("admin:getReturnRouteOverview"))
+		returnRoute.POST("/add", jsonRpc.Bind("admin:addReturnRouteTask"))
+		returnRoute.POST("/edit", jsonRpc.Bind("admin:editReturnRouteTask"))
+		returnRoute.POST("/delete", jsonRpc.Bind("admin:deleteReturnRouteTask"))
+		returnRoute.POST("/probe", jsonRpc.Bind("admin:probeReturnRouteNow"))
+	}
 }

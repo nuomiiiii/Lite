@@ -1,9 +1,9 @@
-name: Build Komari 2.1.10 Snapshot Image
+name: Build Komari 2.1.11 Return Route Snapshot
 
 on:
   push:
     branches:
-      - test-2.1.10-snapshot
+      - snapshot-2.1.11-return-route
   workflow_dispatch:
 
 permissions:
@@ -13,9 +13,9 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  VERSION: 2.1.10-snapshot
-  VERSION_HASH: r7k2m9x
-  IMAGE_TAG: 2.1.10-snapshot
+  VERSION: 2.1.11-snapshot
+  VERSION_HASH: rr211a1
+  IMAGE_TAG: 2.1.11-snapshot
 
 jobs:
   build-frontend:
@@ -28,6 +28,7 @@ jobs:
         uses: ./.github/actions/build-frontend
         with:
           artifact-name: komari-frontend
+          ref: snapshot-2.1.11-return-route
 
   build-linux:
     needs: build-frontend
@@ -128,6 +129,6 @@ jobs:
             docker pull --platform "$platform" "$image"
             output="$(docker run --rm --platform "$platform" "$image" /app/komari version --json)"
             echo "$output"
-            grep -F '"version":"2.1.10-snapshot"' <<<"$output"
-            grep -F '"hash":"r7k2m9x"' <<<"$output"
+            grep -F '"version":"2.1.11-snapshot"' <<<"$output"
+            grep -F '"hash":"rr211a1"' <<<"$output"
           done

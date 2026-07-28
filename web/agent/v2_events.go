@@ -83,6 +83,8 @@ func EnqueueV2Event(uuid, method string, params any) v2.Event {
 	ttl := v2EventTTL
 	if method == v2.MethodAgentPing {
 		ttl = v2PingEventTTL
+	} else if method == v2.MethodAgentRoute {
+		ttl = 2 * time.Minute
 	}
 	event := v2.Event{
 		ID:        newV2EventID(),
@@ -130,8 +132,15 @@ func coalesceV2EventLocked(q *v2EventQueue, event v2.Event) {
 }
 
 func v2EventCoalesceKey(event v2.Event) string {
-	if event.Method != v2.MethodAgentPing {
+	if event.Method != v2.MethodAgentPing && event.Method != v2.MethodAgentRoute {
 		return ""
+	}
+	if event.Method == v2.MethodAgentRoute {
+		var params v2.RouteParams
+		if err := bindV2EventParams(event.Params, &params); err != nil || params.TaskID == 0 {
+			return ""
+		}
+		return fmt.Sprintf("%s:%d", event.Method, params.TaskID)
 	}
 	var params v2.PingParams
 	if err := bindV2EventParams(event.Params, &params); err != nil || params.TaskID == 0 {

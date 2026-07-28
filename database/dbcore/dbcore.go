@@ -446,6 +446,9 @@ func doInitialize() error {
 		&models.TrafficDailyLedger{},
 		&models.PingTask{},
 		&models.PingLossNotification{},
+		&models.ReturnRouteTask{},
+		&models.ReturnRouteStatus{},
+		&models.ReturnRouteEvent{},
 		&models.OidcProvider{},
 		&models.MessageSenderProvider{},
 		&models.ThemeConfiguration{},
@@ -489,6 +492,25 @@ func cleanupOrphanedPingLossNotifications(db *gorm.DB) error {
 
 func cleanupOrphanedClientData(db *gorm.DB) error {
 	return db.Transaction(func(tx *gorm.DB) error {
+		if tx.Migrator().HasTable("return_route_tasks") {
+			var orphanTaskIDs []uint
+			if err := tx.Model(&models.ReturnRouteTask{}).Where(`NOT EXISTS (
+				SELECT 1 FROM clients WHERE clients.uuid = return_route_tasks.client
+			)`).Pluck("id", &orphanTaskIDs).Error; err != nil {
+				return fmt.Errorf("list orphaned return route tasks: %w", err)
+			}
+			if len(orphanTaskIDs) > 0 {
+				if err := tx.Where("task_id IN ?", orphanTaskIDs).Delete(&models.ReturnRouteEvent{}).Error; err != nil {
+					return fmt.Errorf("delete orphaned return route events: %w", err)
+				}
+				if err := tx.Where("task_id IN ?", orphanTaskIDs).Delete(&models.ReturnRouteStatus{}).Error; err != nil {
+					return fmt.Errorf("delete orphaned return route states: %w", err)
+				}
+				if err := tx.Where("id IN ?", orphanTaskIDs).Delete(&models.ReturnRouteTask{}).Error; err != nil {
+					return fmt.Errorf("delete orphaned return route tasks: %w", err)
+				}
+			}
+		}
 		for label, model := range map[string]any{
 			"offline notifications":        &models.OfflineNotification{},
 			"traffic report notifications": &models.TrafficReportNotification{},
