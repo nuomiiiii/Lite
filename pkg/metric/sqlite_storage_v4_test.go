@@ -1032,12 +1032,18 @@ func TestSQLiteStorageV4DefersIncompleteV3DigestHandoff(t *testing.T) {
 				_ = store.Close()
 				t.Fatal(err)
 			}
-			if _, err := store.db.ExecContext(ctx,
-				"UPDATE "+store.tables.rollups+" SET digest = NULL WHERE metric_name = ? AND entity_id = ? AND resolution_nano = ? AND bucket_nano = ?",
+			result, err := store.db.ExecContext(ctx,
+				"UPDATE "+store.tables.rollupValues+" SET digest = NULL WHERE series_id IN (SELECT id FROM "+store.tables.series+" WHERE metric_name = ? AND entity_id = ?) AND resolution_nano = ? AND bucket_nano = ?",
 				"legacy-incomplete", "node-a", (5 * time.Minute).Nanoseconds(), bucketTime.UnixNano(),
-			); err != nil {
+			)
+			if err != nil {
 				_ = store.Close()
 				t.Fatal(err)
+			}
+			affected, err := result.RowsAffected()
+			if err != nil || affected != 1 {
+				_ = store.Close()
+				t.Fatalf("clear legacy digest: affected=%d err=%v", affected, err)
 			}
 			if !version.withWatermark {
 				if _, err := store.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+store.tables.watermarks); err != nil {
