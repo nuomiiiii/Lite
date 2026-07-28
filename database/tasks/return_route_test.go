@@ -47,6 +47,23 @@ func TestReturnRouteLinesAllowCrossCarrierExpectations(t *testing.T) {
 	}
 }
 
+func TestClassifyReturnRouteUsesLocalCN2PrefixWhenCymruMisses(t *testing.T) {
+	ips := []string{"207.57.144.1", "218.30.48.97", "59.43.159.17", "61.175.22.42"}
+	asns := map[string]int{
+		"207.57.144.1": 1054,
+		"218.30.48.97": 4134,
+		"61.175.22.42": 4134,
+	}
+	if line, confidence := classifyReturnRouteHops(ips, asns); line != "CN2 GT" || confidence < 0.9 {
+		t.Fatalf("local 59.43 feature classified as %q, %.2f; want CN2 GT", line, confidence)
+	}
+
+	gias := map[string]int{"207.57.144.1": 23764}
+	if line, confidence := classifyReturnRouteHops([]string{"207.57.144.1", "59.43.159.17"}, gias); line != "CN2 GIA" || confidence < 0.9 {
+		t.Fatalf("AS23764 -> 59.43 classified as %q, %.2f; want CN2 GIA", line, confidence)
+	}
+}
+
 func TestReturnRouteCrossCarrierInjectionCountsAsSwitch(t *testing.T) {
 	task := models.ReturnRouteTask{Id: 1, Client: "node", Carrier: "telecom", ExpectedLine: "CN2 GIA", SwitchConfirm: 2, RecoveryConfirm: 3}
 	status := models.ReturnRouteStatus{TaskId: 1, Confidence: 0.98, ASNPath: models.StringArray{"AS58807", "AS9808", "AS56041"}}
@@ -152,6 +169,9 @@ func TestGetReturnRouteSummary(t *testing.T) {
 	if err := db.Create(&events).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec("UPDATE return_route_events SET carrier = NULL, region = NULL, expected_line = NULL WHERE id = ?", events[1].Id).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := getReturnRouteSummary(db, now)
 	if err != nil {
@@ -180,6 +200,9 @@ func TestQueryReturnRouteEventsFiltersSnapshotsAndLegacyRows(t *testing.T) {
 	if err := db.Create(&events).Error; err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Exec("UPDATE return_route_events SET carrier = NULL, region = NULL, expected_line = NULL WHERE id = ?", events[1].Id).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	result, err := queryReturnRouteEvents(db, ReturnRouteEventQuery{
 		Page: 1, PageSize: 20, Keyword: "AS58807", ExpectedLine: "CN2 GIA", ActualLine: "CMIN2",
@@ -194,7 +217,7 @@ func TestQueryReturnRouteEventsFiltersSnapshotsAndLegacyRows(t *testing.T) {
 		t.Fatalf("snapshot route path = %#v", result.Events[0].RoutePath)
 	}
 
-	legacy, err := queryReturnRouteEvents(db, ReturnRouteEventQuery{Keyword: "210.13.64.1", ExpectedLine: "9929", Region: "华东"})
+	legacy, err := queryReturnRouteEvents(db, ReturnRouteEventQuery{Keyword: "210.13.64.1", Carrier: "unicom", ExpectedLine: "9929", Region: "华东"})
 	if err != nil {
 		t.Fatal(err)
 	}

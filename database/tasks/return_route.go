@@ -392,18 +392,18 @@ func filterReturnRouteEvents(query *gorm.DB, params ReturnRouteEventQuery, db *g
 			return query, fmt.Errorf("unsupported carrier %q", carrier)
 		}
 		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("carrier = ?", carrier)
-		query = query.Where("carrier = ? OR (carrier = '' AND task_id IN (?))", carrier, tasks)
+		query = query.Where("(carrier = ? OR ((carrier = '' OR carrier IS NULL) AND task_id IN (?)))", carrier, tasks)
 	}
 	if region := strings.TrimSpace(params.Region); region != "" {
 		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("region = ?", region)
-		query = query.Where("region = ? OR (region = '' AND task_id IN (?))", region, tasks)
+		query = query.Where("(region = ? OR ((region = '' OR region IS NULL) AND task_id IN (?)))", region, tasks)
 	}
 	if line := strings.ToUpper(strings.TrimSpace(params.ExpectedLine)); line != "" {
 		if !isReturnRouteLine(line) {
 			return query, fmt.Errorf("unsupported expected_line %q", line)
 		}
 		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("expected_line = ?", line)
-		query = query.Where("expected_line = ? OR (expected_line = '' AND task_id IN (?))", line, tasks)
+		query = query.Where("(expected_line = ? OR ((expected_line = '' OR expected_line IS NULL) AND task_id IN (?)))", line, tasks)
 	}
 	return query, nil
 }
@@ -470,7 +470,7 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 			seen[asn] = true
 		}
 	}
-	line, confidence := classifyReturnRoute(asnPath)
+	line, confidence := classifyReturnRouteHops(publicIPs, asns)
 	probeError := strings.TrimSpace(result.Error)
 	if probeError == "" && len(publicIPs) == 0 {
 		probeError = "no route hops were returned"
@@ -613,41 +613,68 @@ func formatReturnRouteNotification(task models.ReturnRouteTask, event models.Ret
 }
 
 func classifyReturnRoute(path models.StringArray) (string, float64) {
-	asns := make([]int, 0, len(path))
-	set := make(map[int]bool, len(path))
+	hops := make([]returnRouteSignature, 0, len(path))
 	for _, value := range path {
 		asn, _ := strconv.Atoi(strings.TrimPrefix(strings.ToUpper(value), "AS"))
 		if asn > 0 {
-			asns = append(asns, asn)
-			set[asn] = true
+			hops = append(hops, returnRouteSignature{asn: asn})
 		}
 	}
+	return classifyReturnRouteSignatures(hops)
+}
+
+type returnRouteSignature struct {
+	ip  string
+	asn int
+}
+
+func classifyReturnRouteHops(ips []string, asns map[string]int) (string, float64) {
+	hops := make([]returnRouteSignature, 0, len(ips))
+	for _, value := range ips {
+		ip := strings.TrimSpace(value)
+		if ip != "" {
+			hops = append(hops, returnRouteSignature{ip: ip, asn: asns[ip]})
+		}
+	}
+	return classifyReturnRouteSignatures(hops)
+}
+
+func classifyReturnRouteSignatures(hops []returnRouteSignature) (string, float64) {
 
 	// Prefer the first premium ingress visible in the ordered path. The target
 	// carrier's ordinary backbone usually appears later and must not mask an
 	// injected route through another carrier.
-	for _, asn := range asns {
-		switch asn {
+	for index, hop := range hops {
+		switch hop.asn {
 		case 58807:
 			return "CMIN2", 0.98
 		case 58453:
 			return "CMI", 0.96
 		case 23764:
-			if set[4809] {
+			if hasCN2BackboneAfter(hops, index) {
 				return "CN2 GIA", 0.96
 			}
 		case 9929:
 			return "9929", 0.98
 		case 4809:
-			if set[23764] {
+			if hasASNBefore(hops, index, 23764) {
 				return "CN2 GIA", 0.96
 			}
 			return "CN2 GT", 0.88
 		}
+		if isCN2BackboneIP(hop.ip) {
+			if hasASNBefore(hops, index, 23764) {
+				return "CN2 GIA", 0.96
+			}
+			if hasASNBefore(hops, index, 4134, 4812) {
+				return "CN2 GT", 0.94
+			}
+			return "CN2 GT", 0.86
+		}
 	}
 
-	for _, asn := range asns {
-		switch asn {
+	for _, hop := range hops {
+		switch hop.asn {
 		case 4134, 4812:
 			return "163", 0.92
 		case 4837:
@@ -655,8 +682,43 @@ func classifyReturnRoute(path models.StringArray) (string, float64) {
 		case 9808, 56040, 56041, 56046:
 			return "CMNET", 0.90
 		}
+		if is163BackboneIP(hop.ip) {
+			return "163", 0.88
+		}
 	}
 	return "UNKNOWN", 0
+}
+
+func hasASNBefore(hops []returnRouteSignature, index int, values ...int) bool {
+	wanted := make(map[int]bool, len(values))
+	for _, value := range values {
+		wanted[value] = true
+	}
+	for i := 0; i < index; i++ {
+		if wanted[hops[i].asn] {
+			return true
+		}
+	}
+	return false
+}
+
+func hasCN2BackboneAfter(hops []returnRouteSignature, index int) bool {
+	for i := index + 1; i < len(hops); i++ {
+		if hops[i].asn == 4809 || isCN2BackboneIP(hops[i].ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func isCN2BackboneIP(value string) bool {
+	ip := net.ParseIP(strings.TrimSpace(value)).To4()
+	return ip != nil && ip[0] == 59 && ip[1] == 43
+}
+
+func is163BackboneIP(value string) bool {
+	ip := net.ParseIP(strings.TrimSpace(value)).To4()
+	return ip != nil && ip[0] == 202 && ip[1] == 97
 }
 
 type asnCacheEntry struct {
