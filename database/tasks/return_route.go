@@ -91,15 +91,18 @@ func returnRouteLines(carrier string) []string {
 	}
 }
 
-func AddReturnRouteTask(task *models.ReturnRouteTask) (uint, error) {
+func AddReturnRouteTask(task *models.ReturnRouteTask) (uint, bool, error) {
 	if err := normalizeReturnRouteTask(task); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if err := dbcore.GetDBInstance().Create(task).Error; err != nil {
-		return 0, err
+		return 0, false, err
 	}
-	_ = ReloadReturnRouteSchedule()
-	return task.Id, nil
+	if err := ReloadReturnRouteSchedule(); err != nil {
+		return task.Id, false, err
+	}
+	dispatched := task.Enabled && utils.DispatchReturnRouteTask(*task)
+	return task.Id, dispatched, nil
 }
 
 func EditReturnRouteTask(task *models.ReturnRouteTask) error {

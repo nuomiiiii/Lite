@@ -31,11 +31,11 @@ func adminAddReturnRouteTask(_ context.Context, req *rpc.JsonRpcRequest) (any, *
 	if err := req.BindParams(&task); err != nil {
 		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
 	}
-	id, err := tasks.AddReturnRouteTask(&task)
+	id, dispatched, err := tasks.AddReturnRouteTask(&task)
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
 	}
-	return map[string]any{"task_id": id}, nil
+	return map[string]any{"task_id": id, "dispatched": dispatched}, nil
 }
 
 func adminEditReturnRouteTask(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
