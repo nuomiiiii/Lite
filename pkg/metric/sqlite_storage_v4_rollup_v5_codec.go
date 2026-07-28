@@ -691,7 +691,7 @@ func decodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord, codec
 			binary.LittleEndian.PutUint64(digestRaw[offset:offset+8], means[i])
 			binary.LittleEndian.PutUint64(digestRaw[offset+8:offset+16], weights[i])
 		}
-		records[index].digest = compressTDigestBlob(digestRaw)
+		records[index].digest = digestRaw
 	}
 	if reader.Len() != 0 {
 		return fmt.Errorf("metric: SQLite V4 structured digest contains trailing data")
