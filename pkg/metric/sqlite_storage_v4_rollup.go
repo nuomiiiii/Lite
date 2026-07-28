@@ -219,6 +219,13 @@ func (s *Store) migrateSQLiteV4RollupDigestCodec(ctx context.Context) (int64, in
 
 var errSQLiteV4DigestHandoffDeferred = errors.New("metric: digest handoff deferred")
 
+// IsDigestHandoffDeferred reports a safe-to-retry digest handoff. The finer
+// digest data is kept intact, so callers may surface the condition without
+// counting it as a compaction failure.
+func IsDigestHandoffDeferred(err error) bool {
+	return errors.Is(err, errSQLiteV4DigestHandoffDeferred)
+}
+
 func (s *Store) migrateSQLiteV4RedundantRollupDigests(ctx context.Context, now time.Time, force bool) (int64, int64, error) {
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT name, retention_days FROM %s ORDER BY name`, s.tables.definitions))
 	if err != nil {
@@ -708,13 +715,40 @@ func sqliteV4CeilNano(value, step int64) (int64, error) {
 // ordinary charts while omitting their recent digest copies. Before finer data
 // crosses its retention boundary, the coarse digest is rebuilt and validated
 // in the same transaction, so percentile history never depends on expired data.
+const sqliteV4RollupSummaryMaxULP = uint64(2)
+
+// sqliteV4RollupAccumulationsEqual accepts the tiny rounding difference caused
+// by adding the same samples directly versus merging five one-minute sums. The
+// stored coarse summary is never replaced during digest handoff; this check only
+// proves that the finer digests describe the same samples.
+func sqliteV4RollupAccumulationsEqual(left, right float64) bool {
+	if left == right {
+		return true
+	}
+	if math.IsNaN(left) || math.IsNaN(right) || math.IsInf(left, 0) || math.IsInf(right, 0) {
+		return false
+	}
+	ordered := func(value float64) uint64 {
+		bits := math.Float64bits(value)
+		if bits&(uint64(1)<<63) != 0 {
+			return ^bits
+		}
+		return bits | (uint64(1) << 63)
+	}
+	leftBits, rightBits := ordered(left), ordered(right)
+	if leftBits > rightBits {
+		leftBits, rightBits = rightBits, leftBits
+	}
+	return rightBits-leftBits <= sqliteV4RollupSummaryMaxULP
+}
+
 func sqliteV4RollupSummariesEqual(left, right *rollupBucket) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
 	return left.count == right.count &&
-		math.Float64bits(left.sum) == math.Float64bits(right.sum) &&
-		math.Float64bits(left.sumSq) == math.Float64bits(right.sumSq) &&
+		sqliteV4RollupAccumulationsEqual(left.sum, right.sum) &&
+		sqliteV4RollupAccumulationsEqual(left.sumSq, right.sumSq) &&
 		math.Float64bits(left.min) == math.Float64bits(right.min) &&
 		math.Float64bits(left.max) == math.Float64bits(right.max) &&
 		math.Float64bits(left.firstVal) == math.Float64bits(right.firstVal) &&
