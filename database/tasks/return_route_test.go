@@ -129,6 +129,57 @@ func TestReturnRouteStateRequiresSwitchAndRecoveryConfirmation(t *testing.T) {
 	}
 }
 
+func TestBuildReturnRouteRepeatNotificationOnlyWhileSwitched(t *testing.T) {
+	task := models.ReturnRouteTask{
+		Id: 7, Client: "node", Name: "route", Carrier: "telecom", Region: "华东",
+		Target: "203.0.113.1", IPVersion: 4, ExpectedLine: "CN2 GIA",
+	}
+	now := time.Now().UTC()
+	status := models.ReturnRouteStatus{
+		TaskId: task.Id, State: "switched", CurrentLine: "163", Confidence: 0.96,
+		ASNPath: models.StringArray{"AS4134"}, RoutePath: models.StringArray{"1 203.0.113.1 2.0ms"},
+	}
+
+	reminder := buildReturnRouteRepeatNotification(task, status, now)
+	if reminder == nil {
+		t.Fatal("switched route should create a repeat notification")
+	}
+	if reminder.Kind != "switch" || reminder.FromLine != "CN2 GIA" || reminder.ToLine != "163" || !reminder.OccurredAt.Equal(now) {
+		t.Fatalf("repeat notification = %#v", reminder)
+	}
+
+	status.State = "healthy"
+	if reminder := buildReturnRouteRepeatNotification(task, status, now); reminder != nil {
+		t.Fatalf("healthy route created a repeat notification: %#v", reminder)
+	}
+}
+
+func TestReturnRouteNotificationSwitchesAreIndependent(t *testing.T) {
+	tests := []struct {
+		name             string
+		notifySwitch     bool
+		notifyRecovery   bool
+		wantSwitch       bool
+		wantRecovery     bool
+	}{
+		{name: "both enabled", notifySwitch: true, notifyRecovery: true, wantSwitch: true, wantRecovery: true},
+		{name: "switch only", notifySwitch: true, notifyRecovery: false, wantSwitch: true, wantRecovery: false},
+		{name: "recovery only", notifySwitch: false, notifyRecovery: true, wantSwitch: false, wantRecovery: true},
+		{name: "both disabled", notifySwitch: false, notifyRecovery: false, wantSwitch: false, wantRecovery: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			task := models.ReturnRouteTask{Notify: test.notifySwitch, NotifyRecovery: test.notifyRecovery}
+			if got := shouldSendReturnRouteEventNotification(task, models.ReturnRouteEvent{Kind: "switch"}); got != test.wantSwitch {
+				t.Fatalf("switch notification = %v, want %v", got, test.wantSwitch)
+			}
+			if got := shouldSendReturnRouteEventNotification(task, models.ReturnRouteEvent{Kind: "recovery"}); got != test.wantRecovery {
+				t.Fatalf("recovery notification = %v, want %v", got, test.wantRecovery)
+			}
+		})
+	}
+}
+
 func TestQueryReturnRouteTasksFiltersAndPaginates(t *testing.T) {
 	db, tasks := seedReturnRouteQueryData(t)
 

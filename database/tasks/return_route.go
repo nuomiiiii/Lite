@@ -158,7 +158,7 @@ func EditReturnRouteTask(task *models.ReturnRouteTask) error {
 		"expected_line": task.ExpectedLine, "protocol": task.Protocol,
 		"interval": task.Interval, "switch_confirm": task.SwitchConfirm,
 		"recovery_confirm": task.RecoveryConfirm, "cooldown": task.Cooldown,
-		"notify": task.Notify, "enabled": task.Enabled,
+		"notify": task.Notify, "notify_recovery": task.NotifyRecovery, "enabled": task.Enabled,
 	}
 	result := dbcore.GetDBInstance().Model(&models.ReturnRouteTask{}).Where("id = ?", task.Id).Updates(updates)
 	if result.Error != nil {
@@ -504,6 +504,7 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 	}
 
 	var event *models.ReturnRouteEvent
+	var statusSnapshot models.ReturnRouteStatus
 	err := db.Transaction(func(tx *gorm.DB) error {
 		var status models.ReturnRouteStatus
 		find := tx.First(&status, "task_id = ?", task.Id)
@@ -533,15 +534,33 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 				return err
 			}
 		}
+		statusSnapshot = status
 		return tx.Where("occurred_at < ?", now.Add(-returnRouteEventRetention)).Delete(&models.ReturnRouteEvent{}).Error
 	})
 	if err != nil {
 		return err
 	}
-	if event != nil && task.Notify {
-		go sendReturnRouteNotification(task, *event)
+	if event != nil {
+		if shouldSendReturnRouteEventNotification(task, *event) {
+			go sendReturnRouteNotification(task, *event, false)
+		}
+	} else if task.Notify {
+		if reminder := buildReturnRouteRepeatNotification(task, statusSnapshot, now); reminder != nil {
+			go sendReturnRouteNotification(task, *reminder, true)
+		}
 	}
 	return nil
+}
+
+func shouldSendReturnRouteEventNotification(task models.ReturnRouteTask, event models.ReturnRouteEvent) bool {
+	switch event.Kind {
+	case "switch":
+		return task.Notify
+	case "recovery":
+		return task.NotifyRecovery
+	default:
+		return false
+	}
 }
 
 func advanceReturnRouteState(status *models.ReturnRouteStatus, task models.ReturnRouteTask, line string, now time.Time) *models.ReturnRouteEvent {
@@ -594,17 +613,27 @@ func advanceReturnRouteState(status *models.ReturnRouteStatus, task models.Retur
 	}
 }
 
-func sendReturnRouteNotification(task models.ReturnRouteTask, event models.ReturnRouteEvent) {
+func buildReturnRouteRepeatNotification(task models.ReturnRouteTask, status models.ReturnRouteStatus, now time.Time) *models.ReturnRouteEvent {
+	if status.State != "switched" || strings.TrimSpace(status.CurrentLine) == "" {
+		return nil
+	}
+	return &models.ReturnRouteEvent{
+		TaskId: task.Id, Client: task.Client, TaskName: task.Name, Carrier: task.Carrier,
+		Region: task.Region, Target: task.Target, IPVersion: task.IPVersion,
+		ExpectedLine: strings.ToUpper(strings.TrimSpace(task.ExpectedLine)), Kind: "switch",
+		FromLine: strings.ToUpper(strings.TrimSpace(task.ExpectedLine)), ToLine: status.CurrentLine,
+		Confidence: status.Confidence, ASNPath: append(models.StringArray{}, status.ASNPath...),
+		RoutePath: append(models.StringArray{}, status.RoutePath...), OccurredAt: now,
+	}
+}
+
+func sendReturnRouteNotification(task models.ReturnRouteTask, event models.ReturnRouteEvent, repeated bool) {
 	db := dbcore.GetDBInstance()
-	var status models.ReturnRouteStatus
-	if err := db.First(&status, "task_id = ?", task.Id).Error; err != nil {
-		return
-	}
-	if event.Kind == "switch" && status.LastNotifiedAt != nil && event.OccurredAt.Before(status.LastNotifiedAt.Add(time.Duration(task.Cooldown)*time.Second)) {
-		return
-	}
+	now := time.Now().UTC()
 	title := "回程线路已切换"
-	if event.Kind == "recovery" {
+	if repeated {
+		title = "回程线路仍处于切线状态"
+	} else if event.Kind == "recovery" {
 		title = "回程线路已恢复"
 	}
 	client := task.ClientInfo
@@ -613,7 +642,6 @@ func sendReturnRouteNotification(task models.ReturnRouteTask, event models.Retur
 	}
 	message := formatReturnRouteNotification(task, event)
 	if err := messageSender.SendEvent(models.EventMessage{Event: messageevent.ReturnRoute, Clients: []models.Client{client}, Time: event.OccurredAt, Message: title + "\n" + message}); err == nil {
-		now := time.Now().UTC()
 		_ = db.Model(&models.ReturnRouteStatus{}).Where("task_id = ?", task.Id).Update("last_notified_at", now).Error
 	}
 }

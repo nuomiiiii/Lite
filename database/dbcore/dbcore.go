@@ -435,6 +435,8 @@ func doInitialize() error {
 	// models.Record / models.PingRecord / models.GPURecord 结构体仍作为
 	// metric store 的读写 DTO 和旧表导入 DTO 保留在 models 包中。
 
+	copyLegacyReturnRouteNotify := instance.Migrator().HasTable("return_route_tasks") &&
+		!instance.Migrator().HasColumn("return_route_tasks", "notify_recovery")
 	err = instance.AutoMigrate(
 		&models.User{},
 		&models.Client{},
@@ -455,6 +457,11 @@ func doInitialize() error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
+	}
+	if copyLegacyReturnRouteNotify {
+		if err := instance.Exec("UPDATE return_route_tasks SET notify_recovery = notify").Error; err != nil {
+			return fmt.Errorf("failed to migrate return route notification settings: %w", err)
+		}
 	}
 	if err := migrations.MigrateTrafficResetDayFromTags(instance); err != nil {
 		return fmt.Errorf("failed to migrate traffic reset days: %w", err)
