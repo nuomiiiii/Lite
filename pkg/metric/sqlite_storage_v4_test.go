@@ -852,7 +852,7 @@ func TestSQLiteStorageV4RetainsCoarseDigestWhenFinerLayerIsIncomplete(t *testing
 	}
 }
 
-func TestSQLiteStorageV4DefersIncompleteDigestHandoffAcrossSupportedSources(t *testing.T) {
+func TestSQLiteStorageV4SkipsExpiredDigestHandoffAcrossSupportedSources(t *testing.T) {
 	versions := []string{
 		"upstream-1.2.5",
 		"upstream-1.2.7",
@@ -950,13 +950,11 @@ func TestSQLiteStorageV4DefersIncompleteDigestHandoffAcrossSupportedSources(t *t
 				_ = store.Close()
 				t.Fatalf("%s changed retention: days=%d err=%v", version, definition.RetentionDays, err)
 			}
-			deferred := false
 			for _, progress := range snapshots {
-				deferred = deferred || progress.Deferred > 0
-			}
-			if !deferred {
-				_ = store.Close()
-				t.Fatalf("%s did not report deferred digest handoff", version)
+				if progress.Deferred != 0 {
+					_ = store.Close()
+					t.Fatalf("%s reported an expired digest handoff as deferred: %#v", version, progress)
+				}
 			}
 			var codec, digestCodec int
 			var axisID sql.NullInt64
@@ -969,7 +967,7 @@ func TestSQLiteStorageV4DefersIncompleteDigestHandoffAcrossSupportedSources(t *t
 			}
 			if codec != sqliteV4SharedRollupBlockCodec || digestCodec != sqliteV4StructuredRollupDigestCodec || !axisID.Valid {
 				_ = store.Close()
-				t.Fatalf("%s was not safely converted after deferral: codec=%d digest=%d axis=%v", version, codec, digestCodec, axisID)
+				t.Fatalf("%s was not safely converted after skipping expired handoff: codec=%d digest=%d axis=%v", version, codec, digestCodec, axisID)
 			}
 			records, err = store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, (5 * time.Minute).Nanoseconds())
 			if err != nil || len(records) != 1 || records[0].count != bucket.count || len(records[0].digest) != 0 {
@@ -983,7 +981,7 @@ func TestSQLiteStorageV4DefersIncompleteDigestHandoffAcrossSupportedSources(t *t
 	}
 }
 
-func TestSQLiteStorageV4DefersIncompleteV3DigestHandoff(t *testing.T) {
+func TestSQLiteStorageV4SkipsExpiredV3DigestHandoff(t *testing.T) {
 	versions := []struct {
 		name          string
 		withWatermark bool
@@ -1067,12 +1065,10 @@ func TestSQLiteStorageV4DefersIncompleteV3DigestHandoff(t *testing.T) {
 			if err != nil || definition.RetentionDays != 10 {
 				t.Fatalf("%s changed retention: days=%d err=%v", version.name, definition.RetentionDays, err)
 			}
-			deferred := false
 			for _, progress := range snapshots {
-				deferred = deferred || progress.Deferred > 0
-			}
-			if !deferred {
-				t.Fatalf("%s did not report deferred V3 digest handoff", version.name)
+				if progress.Deferred != 0 {
+					t.Fatalf("%s reported an expired V3 digest handoff as deferred: %#v", version.name, progress)
+				}
 			}
 			rows, err := store.scanRollupRowsBetween(ctx, "legacy-incomplete", "node-a", nil,
 				(5 * time.Minute).Nanoseconds(), bucketTime.UnixNano(), bucketTime.UnixNano(), false)
