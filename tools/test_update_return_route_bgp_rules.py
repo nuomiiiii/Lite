@@ -31,13 +31,10 @@ class ResolvePrefixGroupsTest(unittest.TestCase):
 
         resolved = resolve_prefix_groups(
             groups,
-            {"unicom_9929": ["210.14.0.0/16", "210.14.160.0/19"]},
+            {"unicom_9929": ["210.14.0.0/16"]},
         )
 
-        self.assertEqual(
-            resolved["unicom_9929"],
-            ["210.14.0.0/16", "210.14.160.0/19"],
-        )
+        self.assertEqual(resolved["unicom_9929"], ["210.14.0.0/16"])
         self.assertEqual(
             resolved["unicom_4837"],
             ["210.13.0.0/16", "2402:4f00:f000::/36"],
@@ -50,12 +47,12 @@ class ResolvePrefixGroupsTest(unittest.TestCase):
             groups,
             {
                 "unicom_10099": ["2402:4f00:f000::/36"],
-                "unicom_9929": ["210.14.160.0/19"],
+                "unicom_9929": ["203.0.113.0/24"],
             },
         )
 
         self.assertEqual(resolved["unicom_10099"], ["2402:4f00:f000::/36"])
-        self.assertEqual(resolved["unicom_9929"], ["210.14.160.0/19"])
+        self.assertEqual(resolved["unicom_9929"], ["203.0.113.0/24"])
 
     def test_overlapping_manual_rules_in_different_groups_are_rejected(self):
         groups = {"unicom_10099": set(), "unicom_9929": set()}
