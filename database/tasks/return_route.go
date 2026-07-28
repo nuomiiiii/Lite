@@ -50,14 +50,14 @@ func normalizeReturnRouteTask(task *models.ReturnRouteTask) error {
 		return fmt.Errorf("snapshot currently supports the built-in ICMP route probe")
 	}
 	validLine := false
-	for _, line := range returnRouteLines(task.Carrier) {
+	for _, line := range returnRouteLines() {
 		if task.ExpectedLine == line {
 			validLine = true
 			break
 		}
 	}
 	if !validLine {
-		return fmt.Errorf("expected_line %q does not belong to carrier %q", task.ExpectedLine, task.Carrier)
+		return fmt.Errorf("unsupported expected_line %q", task.ExpectedLine)
 	}
 	if task.Interval < 60 || task.Interval > 86400 {
 		return fmt.Errorf("interval must be between 60 and 86400 seconds")
@@ -78,17 +78,8 @@ func normalizeReturnRouteTask(task *models.ReturnRouteTask) error {
 	return nil
 }
 
-func returnRouteLines(carrier string) []string {
-	switch carrier {
-	case "mobile":
-		return []string{"CMIN2", "CMI", "CMNET"}
-	case "telecom":
-		return []string{"CN2 GIA", "CN2 GT", "163"}
-	case "unicom":
-		return []string{"9929", "4837"}
-	default:
-		return nil
-	}
+func returnRouteLines() []string {
+	return []string{"CMIN2", "CMI", "CMNET", "CN2 GIA", "CN2 GT", "163", "9929", "4837"}
 }
 
 func AddReturnRouteTask(task *models.ReturnRouteTask) (uint, bool, error) {
@@ -212,7 +203,7 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 			seen[asn] = true
 		}
 	}
-	line, confidence := classifyReturnRoute(task.Carrier, asnPath)
+	line, confidence := classifyReturnRoute(asnPath)
 	probeError := strings.TrimSpace(result.Error)
 	if probeError == "" && len(publicIPs) == 0 {
 		probeError = "no route hops were returned"
@@ -335,39 +326,48 @@ func sendReturnRouteNotification(task models.ReturnRouteTask, event models.Retur
 	}
 }
 
-func classifyReturnRoute(carrier string, path models.StringArray) (string, float64) {
+func classifyReturnRoute(path models.StringArray) (string, float64) {
+	asns := make([]int, 0, len(path))
 	set := make(map[int]bool, len(path))
 	for _, value := range path {
 		asn, _ := strconv.Atoi(strings.TrimPrefix(strings.ToUpper(value), "AS"))
-		set[asn] = true
+		if asn > 0 {
+			asns = append(asns, asn)
+			set[asn] = true
+		}
 	}
-	switch strings.ToLower(carrier) {
-	case "mobile":
-		if set[58807] {
+
+	// Prefer the first premium ingress visible in the ordered path. The target
+	// carrier's ordinary backbone usually appears later and must not mask an
+	// injected route through another carrier.
+	for _, asn := range asns {
+		switch asn {
+		case 58807:
 			return "CMIN2", 0.98
-		}
-		if set[58453] {
+		case 58453:
 			return "CMI", 0.96
-		}
-		if set[9808] || set[56040] || set[56041] || set[56046] {
-			return "CMNET", 0.90
-		}
-	case "telecom":
-		if set[4809] && set[23764] {
-			return "CN2 GIA", 0.96
-		}
-		if set[4809] {
+		case 23764:
+			if set[4809] {
+				return "CN2 GIA", 0.96
+			}
+		case 9929:
+			return "9929", 0.98
+		case 4809:
+			if set[23764] {
+				return "CN2 GIA", 0.96
+			}
 			return "CN2 GT", 0.88
 		}
-		if set[4134] || set[4812] {
+	}
+
+	for _, asn := range asns {
+		switch asn {
+		case 4134, 4812:
 			return "163", 0.92
-		}
-	case "unicom":
-		if set[9929] {
-			return "9929", 0.98
-		}
-		if set[4837] {
+		case 4837:
 			return "4837", 0.96
+		case 9808, 56040, 56041, 56046:
+			return "CMNET", 0.90
 		}
 	}
 	return "UNKNOWN", 0
