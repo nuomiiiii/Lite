@@ -11,6 +11,14 @@ import (
 // compactor. It is also used to estimate the next end-of-cycle checkpoint.
 const CompactStepInterval = 10 * time.Second
 
+
+// DigestHandoffStatus describes a safe-to-retry percentile digest handoff.
+type DigestHandoffStatus struct {
+	Metric string
+	Reason string
+	At     time.Time
+}
+
 // RuntimeStatus is an in-memory snapshot of metric compaction and SQLite WAL
 // checkpoint activity. Reading it never queries or writes the metric database.
 type RuntimeStatus struct {
@@ -30,6 +38,8 @@ type RuntimeStatus struct {
 	ConsecutiveCycleFailures      int
 	LastError                     string
 	CycleWritten                  int
+	DigestHandoffDeferred         []DigestHandoffStatus
+	LastDigestHandoffDeferredAt   time.Time
 
 	cycleError string
 }
@@ -43,7 +53,9 @@ var (
 func GetRuntimeStatus() RuntimeStatus {
 	runtimeStatusMu.RLock()
 	defer runtimeStatusMu.RUnlock()
-	return runtimeStatus
+	result := runtimeStatus
+	result.DigestHandoffDeferred = append([]DigestHandoffStatus(nil), runtimeStatus.DigestHandoffDeferred...)
+	return result
 }
 
 func resetRuntimeStatus(driver metric.Driver) {
@@ -127,6 +139,42 @@ func finishEmptyCompactCycle(driver metric.Driver, err error, at time.Time) {
 		if !runtimeStatus.CheckpointPending {
 			runtimeStatus.LastError = ""
 		}
+	}
+}
+
+func recordDigestHandoffDeferred(metricName, reason string, at time.Time) {
+	runtimeStatusMu.Lock()
+	defer runtimeStatusMu.Unlock()
+
+	for index := range runtimeStatus.DigestHandoffDeferred {
+		if runtimeStatus.DigestHandoffDeferred[index].Metric == metricName {
+			runtimeStatus.DigestHandoffDeferred[index].Reason = reason
+			runtimeStatus.DigestHandoffDeferred[index].At = at
+			runtimeStatus.LastDigestHandoffDeferredAt = at
+			return
+		}
+	}
+	runtimeStatus.DigestHandoffDeferred = append(runtimeStatus.DigestHandoffDeferred, DigestHandoffStatus{
+		Metric: metricName,
+		Reason: reason,
+		At:     at,
+	})
+	runtimeStatus.LastDigestHandoffDeferredAt = at
+}
+
+func clearDigestHandoffDeferred(metricName string) {
+	runtimeStatusMu.Lock()
+	defer runtimeStatusMu.Unlock()
+
+	for index := range runtimeStatus.DigestHandoffDeferred {
+		if runtimeStatus.DigestHandoffDeferred[index].Metric != metricName {
+			continue
+		}
+		runtimeStatus.DigestHandoffDeferred = append(
+			runtimeStatus.DigestHandoffDeferred[:index],
+			runtimeStatus.DigestHandoffDeferred[index+1:]...,
+		)
+		return
 	}
 }
 
