@@ -42,6 +42,9 @@ type sqliteV4EncodedRollupBlock struct {
 	codec          int
 	checksum       uint32
 	payload        []byte
+	axisCodec      int
+	axisChecksum   uint32
+	axisPayload    []byte
 	digestCodec    int
 	digestChecksum uint32
 	digestPayload  []byte

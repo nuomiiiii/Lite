@@ -108,6 +108,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 			pointBlocks:  tableName(cfg.TablePrefix, "point_blocks"),
 			rollupValues: tableName(cfg.TablePrefix, "rollup_values"),
 			rollupBlocks: tableName(cfg.TablePrefix, "rollup_blocks"),
+			rollupAxes:   tableName(cfg.TablePrefix, "rollup_axes"),
 		},
 	}
 

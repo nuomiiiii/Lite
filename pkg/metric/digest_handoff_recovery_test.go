@@ -70,7 +70,7 @@ func TestSQLiteStorageV4DefersIncompleteDigestHandoffWithoutChangingBlock(t *tes
 	if err != nil || len(series) != 1 {
 		t.Fatalf("find gpu series: count=%d err=%v", len(series), err)
 	}
-	records, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, (5*time.Minute).Nanoseconds())
+	records, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, (5 * time.Minute).Nanoseconds())
 	if err != nil || len(records) != 1 {
 		t.Fatalf("load coarse rollup: count=%d err=%v", len(records), err)
 	}
@@ -83,13 +83,13 @@ func TestSQLiteStorageV4DefersIncompleteDigestHandoffWithoutChangingBlock(t *tes
 	if _, err := store.db.ExecContext(ctx, updateSQL,
 		encoded.endNano, encoded.count, encoded.codec, int64(encoded.checksum), encoded.payload,
 		encoded.digestCodec, int64(encoded.digestChecksum), encoded.digestPayload,
-		series[0].id, (5*time.Minute).Nanoseconds(), encoded.startNano); err != nil {
+		series[0].id, (5 * time.Minute).Nanoseconds(), encoded.startNano); err != nil {
 		t.Fatal(err)
 	}
 
 	type blockSnapshot struct {
 		endNano, count, codec, checksum, digestCodec, digestChecksum int64
-		payload, digestPayload                                    []byte
+		payload, digestPayload                                       []byte
 	}
 	readBlock := func() blockSnapshot {
 		var got blockSnapshot
@@ -106,7 +106,7 @@ func TestSQLiteStorageV4DefersIncompleteDigestHandoffWithoutChangingBlock(t *tes
 	}
 	before := readBlock()
 
-	rewrittenBlocks, rewrittenBuckets, err := store.migrateSQLiteV4RedundantRollupDigests(ctx, now)
+	rewrittenBlocks, rewrittenBuckets, err := store.migrateSQLiteV4RedundantRollupDigests(ctx, now, true)
 	if err != nil {
 		t.Fatalf("incomplete historical digest handoff blocked startup migration: %v", err)
 	}

@@ -39,15 +39,14 @@ func TestSQLiteV4RollupCodecRoundTripPreservesBits(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if encoded.digestCodec != sqliteV4RollupDigestCodec {
-			t.Fatalf("digest codec=%d, want %d", encoded.digestCodec, sqliteV4RollupDigestCodec)
+		if encoded.digestCodec != sqliteV4StructuredRollupDigestCodec {
+			t.Fatalf("digest codec=%d, want %d", encoded.digestCodec, sqliteV4StructuredRollupDigestCodec)
 		}
-		decoded, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
-			encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true)
+		decoded, err := decodeSQLiteV4EncodedRollupBlock(encoded, true)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !sqliteV4RollupRecordsEqual(records[start:end], decoded) {
+		if !sqliteV4RollupRecordDataSlicesEqual(records[start:end], decoded) {
 			t.Fatal("SQLite V4 rollup codec changed a float bit pattern, timestamp, count, digest, or creation time")
 		}
 	}
@@ -86,8 +85,8 @@ func TestSQLiteV4DenseDigestPreservesMixedCompressionAndUnusualMeans(t *testing.
 		}
 		records[index] = sqliteV4RollupRecord{
 			bucketNano: int64(index+1) * time.Minute.Nanoseconds(),
-			count: count,
-			sumBits: math.Float64bits(float64(index) + 1), sumSqBits: math.Float64bits(float64(index) + 2),
+			count:      count,
+			sumBits:    math.Float64bits(float64(index) + 1), sumSqBits: math.Float64bits(float64(index) + 2),
 			minBits: math.Float64bits(minValue), maxBits: math.Float64bits(maxValue),
 			firstBits: math.Float64bits(minValue), firstTS: int64(index+1) * time.Minute.Nanoseconds(),
 			lastBits: math.Float64bits(maxValue), lastTS: int64(index+1)*time.Minute.Nanoseconds() + 1,
@@ -98,12 +97,11 @@ func TestSQLiteV4DenseDigestPreservesMixedCompressionAndUnusualMeans(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
-		encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true)
+	decoded, err := decodeSQLiteV4EncodedRollupBlock(encoded, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sqliteV4RollupRecordsEqual(records, decoded) {
+	if !sqliteV4RollupRecordDataSlicesEqual(records, decoded) {
 		t.Fatal("dense SQLite V4 digest codec changed mixed or unusual digest bits")
 	}
 }
@@ -121,7 +119,7 @@ func TestSQLiteV4CompactDigestCodec2RemainsReadable(t *testing.T) {
 		lastBits: math.Float64bits(digest.max), lastTS: time.Minute.Nanoseconds() + 1,
 		digest: digest.Encode(), createdAt: time.Minute.Nanoseconds() + 2,
 	}}
-	encoded, err := encodeSQLiteV4RollupBlock(records)
+	encoded, err := encodeSQLiteV4RollupBlockV2(records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +143,7 @@ func TestSQLiteV4CompactDigestCodec2RemainsReadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !sqliteV4RollupRecordsEqual(records, decoded) {
+	if !sqliteV4RollupRecordDataSlicesEqual(records, decoded) {
 		t.Fatal("legacy compact digest codec changed while retaining read compatibility")
 	}
 }
@@ -166,8 +164,7 @@ func TestSQLiteV4RollupCodecRejectsCorruption(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded.payload[len(encoded.payload)-1] ^= 0xff
-	if _, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
-		encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true); err == nil {
+	if _, err := decodeSQLiteV4EncodedRollupBlock(encoded, true); err == nil {
 		t.Fatal("corrupt SQLite V4 rollup block unexpectedly decoded")
 	}
 }
@@ -190,13 +187,11 @@ func TestSQLiteV4RollupSummaryDecodeDoesNotReadDigestSection(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded.digestPayload[len(encoded.digestPayload)-1] ^= 0xff
-	decoded, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
-		encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, false)
+	decoded, err := decodeSQLiteV4EncodedRollupBlock(encoded, false)
 	if err != nil || len(decoded) != 1 || len(decoded[0].digest) != 0 {
 		t.Fatalf("summary-only decode touched digest section: records=%d err=%v", len(decoded), err)
 	}
-	if _, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
-		encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true); err == nil {
+	if _, err := decodeSQLiteV4EncodedRollupBlock(encoded, true); err == nil {
 		t.Fatal("percentile decode unexpectedly accepted a corrupt digest section")
 	}
 }

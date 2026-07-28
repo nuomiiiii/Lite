@@ -13,12 +13,13 @@ import (
 // LegacyDigestBlocks covers split blocks that still use the original digest
 // payload encoding.
 type SQLiteMigrationSummary struct {
-	Required           bool   `json:"required"`
-	Layout             string `json:"layout"`
-	SourceRows         int64  `json:"source_rows"`
-	LegacyBlocks       int64  `json:"legacy_blocks"`
-	LegacyDigestBlocks     int64 `json:"legacy_digest_blocks"`
-	DigestHandoffRequired bool  `json:"digest_handoff_required"`
+	Required              bool   `json:"required"`
+	Layout                string `json:"layout"`
+	SourceRows            int64  `json:"source_rows"`
+	LegacyBlocks          int64  `json:"legacy_blocks"`
+	LegacyDigestBlocks    int64  `json:"legacy_digest_blocks"`
+	LegacyAxisBlocks      int64  `json:"legacy_axis_blocks"`
+	DigestHandoffRequired bool   `json:"digest_handoff_required"`
 }
 
 // InspectSQLiteMigration reports whether opening cfg with AutoMigrate would
@@ -65,6 +66,7 @@ func InspectSQLiteMigration(ctx context.Context, cfg Config) (SQLiteMigrationSum
 		pointBlocks:  tableName(cfg.TablePrefix, "point_blocks"),
 		rollupValues: tableName(cfg.TablePrefix, "rollup_values"),
 		rollupBlocks: tableName(cfg.TablePrefix, "rollup_blocks"),
+		rollupAxes:   tableName(cfg.TablePrefix, "rollup_axes"),
 	}
 	pointKind, err := sqliteObjectTypeDB(ctx, db, t.points)
 	if err != nil {
@@ -123,16 +125,26 @@ func InspectSQLiteMigration(ctx context.Context, cfg Config) (SQLiteMigrationSum
 	if err != nil {
 		return SQLiteMigrationSummary{}, err
 	}
-	for _, name := range []string{"digest_codec", "digest_checksum", "digest_payload"} {
+	for _, name := range []string{"digest_codec", "digest_checksum", "digest_payload", "axis_id"} {
 		if !columns[name] {
 			return summary, nil
 		}
+	}
+	axisKind, err := sqliteObjectTypeDB(ctx, db, t.rollupAxes)
+	if err != nil {
+		return SQLiteMigrationSummary{}, err
+	}
+	if axisKind != "table" {
+		return summary, nil
 	}
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+t.rollupBlocks+` WHERE codec = ?`, sqliteV4LegacyRollupBlockCodec).Scan(&summary.LegacyBlocks); err != nil {
 		return SQLiteMigrationSummary{}, fmt.Errorf("metric: count legacy SQLite V4 blocks: %w", err)
 	}
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+t.rollupBlocks+` WHERE codec = ? AND digest_codec = ?`, sqliteV4RollupBlockCodec, sqliteV4LegacyRollupDigestCodec).Scan(&summary.LegacyDigestBlocks); err != nil {
 		return SQLiteMigrationSummary{}, fmt.Errorf("metric: count legacy SQLite V4 digest blocks: %w", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+t.rollupBlocks+` WHERE axis_id IS NULL OR codec != ? OR digest_codec != ?`, sqliteV4SharedRollupBlockCodec, sqliteV4StructuredRollupDigestCodec).Scan(&summary.LegacyAxisBlocks); err != nil {
+		return SQLiteMigrationSummary{}, fmt.Errorf("metric: count legacy SQLite V4 axis blocks: %w", err)
 	}
 	var autoVacuum int
 	if err := db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&autoVacuum); err != nil {
@@ -143,7 +155,7 @@ func InspectSQLiteMigration(ctx context.Context, cfg Config) (SQLiteMigrationSum
 		return SQLiteMigrationSummary{}, fmt.Errorf("metric: inspect SQLite migration version: %w", err)
 	}
 	summary.DigestHandoffRequired = userVersion < sqliteStorageVersionV4DigestHandoff
-	summary.Required = summary.LegacyBlocks > 0 || summary.LegacyDigestBlocks > 0 || summary.DigestHandoffRequired || autoVacuum != 2
+	summary.Required = summary.LegacyBlocks > 0 || summary.LegacyDigestBlocks > 0 || summary.LegacyAxisBlocks > 0 || summary.DigestHandoffRequired || autoVacuum != 2
 	if !summary.Required {
 		summary.Layout = "current"
 	}

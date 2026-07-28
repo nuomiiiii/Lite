@@ -27,6 +27,7 @@ type Status struct {
 	Current   int64                         `json:"current"`
 	Total     int64                         `json:"total"`
 	Preserved int64                         `json:"preserved"`
+	Deferred  int64                         `json:"deferred"`
 	Progress  float64                       `json:"progress"`
 	ElapsedMS int64                         `json:"elapsed_ms"`
 	Summary   metric.SQLiteMigrationSummary `json:"summary"`
@@ -122,6 +123,7 @@ func (c *Controller) retry(ctx *gin.Context) {
 	c.status.Current = 0
 	c.status.Total = 0
 	c.status.Preserved = 0
+	c.status.Deferred = 0
 	c.status.Progress = 0
 	c.status.ElapsedMS = 0
 	c.status.Error = ""
@@ -187,6 +189,9 @@ func (c *Controller) onProgress(progress metric.MigrationProgress) {
 	c.status.Current = progress.Current
 	c.status.Total = progress.Total
 	c.status.Preserved = progress.Preserved
+	if progress.Deferred > c.status.Deferred {
+		c.status.Deferred = progress.Deferred
+	}
 	if progress.Total > 0 {
 		c.status.Progress = float64(progress.Current) / float64(progress.Total) * 100
 	} else {

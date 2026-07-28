@@ -85,6 +85,7 @@ type tables struct {
 	pointBlocks  string
 	rollupValues string
 	rollupBlocks string
+	rollupAxes   string
 }
 
 // newDialect returns the SQL dialect implementation for a backend.

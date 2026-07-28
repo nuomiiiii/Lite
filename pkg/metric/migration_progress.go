@@ -8,6 +8,7 @@ type MigrationProgress struct {
 	Current   int64
 	Total     int64
 	Preserved int64
+	Deferred  int64
 }
 
 // MigrationProgressFunc observes automatic storage migration progress.
@@ -28,6 +29,10 @@ const (
 )
 
 func (s *Store) reportMigrationProgress(phase string, current, total, preserved int64) {
+	s.reportMigrationProgressWithDeferred(phase, current, total, preserved, 0)
+}
+
+func (s *Store) reportMigrationProgressWithDeferred(phase string, current, total, preserved, deferred int64) {
 	if s == nil || s.cfg.MigrationProgress == nil {
 		return
 	}
@@ -37,10 +42,14 @@ func (s *Store) reportMigrationProgress(phase string, current, total, preserved 
 	if total < current {
 		total = current
 	}
+	if deferred < 0 {
+		deferred = 0
+	}
 	s.cfg.MigrationProgress(MigrationProgress{
 		Phase:     phase,
 		Current:   current,
 		Total:     total,
 		Preserved: preserved,
+		Deferred:  deferred,
 	})
 }

@@ -67,35 +67,45 @@ func TestUpstreamMainDatabaseUpgradeCompatibility(t *testing.T) {
 }
 
 func TestUpstreamMetricDatabaseUpgradeCompatibility(t *testing.T) {
-	for _, version := range []string{"1.2.7", "1.2.8", "1.2.8-fix", "1.3.0"} {
-		t.Run(version, func(t *testing.T) {
+	versions := []struct {
+		name          string
+		withWatermark bool
+	}{
+		{name: "1.2.5"},
+		{name: "1.2.7", withWatermark: true},
+		{name: "1.2.8", withWatermark: true},
+		{name: "1.2.8-fix", withWatermark: true},
+		{name: "1.3.0", withWatermark: true},
+	}
+	for _, version := range versions {
+		t.Run(version.name, func(t *testing.T) {
 			closeActiveMetricStore(t)
 			_ = openCompatibilityConfigDB(t)
 			base := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
 			metricPath := filepath.Join(t.TempDir(), "metrics.db")
-			seedLegacyMetricStore(t, metricPath, base)
+			seedLegacyMetricStore(t, metricPath, base, version.withWatermark)
 			setCompatibilityMetricConfig(t, metricPath)
 
 			summary, err := metricstore.InspectSQLiteStorageMigration(context.Background())
 			if err != nil {
-				t.Fatalf("inspect %s metric database: %v", version, err)
+				t.Fatalf("inspect %s metric database: %v", version.name, err)
 			}
 			if !summary.Required || summary.Layout != "legacy" || summary.SourceRows != 11 {
-				t.Fatalf("unexpected %s preflight summary: %#v", version, summary)
+				t.Fatalf("unexpected %s preflight summary: %#v", version.name, summary)
 			}
 
 			if err := metricstore.InitializeStore(); err != nil {
-				t.Fatalf("upgrade %s metric database to V4: %v", version, err)
+				t.Fatalf("upgrade %s metric database to V4: %v", version.name, err)
 			}
 			t.Cleanup(func() { _ = metricstore.CloseStoreContext(context.Background()) })
 			assertCompatibilityReadAPIs(t, base, compatibilityExpected{trafficUp: 123456789, trafficDown: 987654321})
 
 			summary, err = metricstore.InspectSQLiteStorageMigration(context.Background())
 			if err != nil {
-				t.Fatalf("inspect upgraded %s metric database: %v", version, err)
+				t.Fatalf("inspect upgraded %s metric database: %v", version.name, err)
 			}
 			if summary.Required || summary.Layout != "current" {
-				t.Fatalf("unexpected %s post-upgrade summary: %#v", version, summary)
+				t.Fatalf("unexpected %s post-upgrade summary: %#v", version.name, summary)
 			}
 		})
 	}
@@ -174,7 +184,7 @@ func seedLegacyMainMonitoring(t *testing.T, db *gorm.DB, base time.Time, withTra
 	}
 }
 
-func seedLegacyMetricStore(t *testing.T, path string, base time.Time) {
+func seedLegacyMetricStore(t *testing.T, path string, base time.Time, withWatermark bool) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
@@ -198,6 +208,9 @@ func seedLegacyMetricStore(t *testing.T, path string, base time.Time) {
 		 first_ts BIGINT NOT NULL, last_val DOUBLE PRECISION NOT NULL, last_ts BIGINT NOT NULL,
 		 digest BLOB, created_at BIGINT NOT NULL,
 		 UNIQUE(metric_name, entity_id, tags_hash, resolution_nano, bucket_nano))`,
+	}
+	if withWatermark {
+		statements = append(statements, "CREATE TABLE metric_compaction_watermarks (metric_name VARCHAR(191) PRIMARY KEY, watermark_nano BIGINT NOT NULL, updated_at BIGINT NOT NULL)")
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {

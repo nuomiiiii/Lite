@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"hash/crc32"
 	"math"
 	"os"
 	"path/filepath"
@@ -405,21 +406,164 @@ func TestSQLiteStorageV4MigratesLegacyRollupBlocksToSplitStorage(t *testing.T) {
 	}
 	defer store.Close()
 	var codec, digestCodec int
-	var digestBytes int64
-	if err := store.db.QueryRowContext(ctx, `SELECT codec, digest_codec, length(digest_payload) FROM metric_rollup_blocks`).Scan(&codec, &digestCodec, &digestBytes); err != nil {
+	var digestBytes, axisID int64
+	if err := store.db.QueryRowContext(ctx, `SELECT codec, digest_codec, length(digest_payload), axis_id FROM metric_rollup_blocks`).Scan(&codec, &digestCodec, &digestBytes, &axisID); err != nil {
 		t.Fatal(err)
 	}
-	if codec != sqliteV4RollupBlockCodec || digestCodec != sqliteV4RollupDigestCodec || digestBytes == 0 {
-		t.Fatalf("legacy block was not split: codec=%d digest_codec=%d digest_bytes=%d", codec, digestCodec, digestBytes)
+	if codec != sqliteV4SharedRollupBlockCodec || digestCodec != sqliteV4StructuredRollupDigestCodec || digestBytes == 0 || axisID <= 0 {
+		t.Fatalf("legacy block was not upgraded to shared-axis storage: codec=%d digest_codec=%d digest_bytes=%d axis_id=%d", codec, digestCodec, digestBytes, axisID)
 	}
 	got, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, time.Minute.Nanoseconds())
-	if err != nil || !sqliteV4RollupRecordsEqual(records, got) {
+	if err != nil || !sqliteV4RollupRecordDataSlicesEqual(records, got) {
 		t.Fatalf("split migration changed rollup values: count=%d err=%v", len(got), err)
 	}
 	rows, err := store.scanRollupRowsBetween(ctx, "legacy-split", "node-a", map[string]string{"task": "117"},
 		time.Minute.Nanoseconds(), records[0].bucketNano, records[len(records)-1].bucketNano, false)
 	if err != nil || len(rows) != len(records) || rows[0].bucketData.digest != nil {
 		t.Fatalf("summary-only query after migration: count=%d err=%v", len(rows), err)
+	}
+}
+
+func TestSQLiteStorageV4UpgradesForkCodecMatrixLosslessly(t *testing.T) {
+	sources := []struct {
+		name        string
+		digestCodec int
+	}{
+		{name: "fork-2.1.7", digestCodec: sqliteV4LegacyRollupDigestCodec},
+		{name: "fork-2.1.8", digestCodec: sqliteV4CompactRollupDigestCodec},
+		{name: "fork-2.1.8-fix", digestCodec: sqliteV4RollupDigestCodec},
+		{name: "fork-2.1.9", digestCodec: sqliteV4RollupDigestCodec},
+	}
+	for _, sourceVersion := range sources {
+		t.Run(sourceVersion.name, func(t *testing.T) {
+			ctx := context.Background()
+			dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
+			policy := RollupPolicy{RawRetention: time.Hour, Tiers: []RollupTier{{Interval: time.Minute, Retention: 7 * 24 * time.Hour}}}
+			store, err := Open(ctx, SQLite(dsn, WithRollupPolicy(policy)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.CreateMetric(ctx, Definition{Name: "codec-matrix", Type: TypeGauge, RetentionDays: 10}); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			base := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+			buckets := make(map[rollupKey]*rollupBucket)
+			for minute := 0; minute < 12; minute++ {
+				bucketTime := base.Add(time.Duration(minute) * time.Minute)
+				bucket := newRollupBucket(policy.compression())
+				for sample := 0; sample < 5; sample++ {
+					bucket.addPoint(float64(minute*10+sample)/3, bucketTime.Add(time.Duration(sample)*time.Second).UnixNano())
+				}
+				buckets[rollupKey{entityID: "node-a", bucket: bucketTime.UnixNano()}] = bucket
+			}
+			tx, err := store.db.BeginTx(ctx, nil)
+			if err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if _, err := store.writeRollupBucketsTx(ctx, "codec-matrix", time.Minute, buckets, tx); err != nil {
+				_ = tx.Rollback()
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if _, err := store.sealAllSQLiteV4RollupsTx(ctx, tx, 0, 0); err != nil {
+				_ = tx.Rollback()
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if err := tx.Commit(); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			series, err := store.sqliteV4MatchingSeries(ctx, store.db, "codec-matrix", "node-a", nil)
+			if err != nil || len(series) != 1 {
+				_ = store.Close()
+				t.Fatalf("find source series: count=%d err=%v", len(series), err)
+			}
+			records, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, time.Minute.Nanoseconds())
+			if err != nil || len(records) != len(buckets) {
+				_ = store.Close()
+				t.Fatalf("load source records: count=%d err=%v", len(records), err)
+			}
+			encoded, err := encodeSQLiteV4RollupBlockV2(records)
+			if err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if sourceVersion.digestCodec == sqliteV4LegacyRollupDigestCodec {
+				var raw bytes.Buffer
+				raw.WriteString(sqliteV4RollupDigestMagic)
+				appendUvarintTo(&raw, uint64(len(records)))
+				for _, record := range records {
+					appendUvarintTo(&raw, uint64(len(record.digest)))
+					raw.Write(record.digest)
+				}
+				encoded.digestPayload, err = compressSQLiteV4RollupSection(raw.Bytes(), sqliteV4RollupDigestLevel)
+				encoded.digestCodec = sqliteV4LegacyRollupDigestCodec
+			} else if sourceVersion.digestCodec == sqliteV4CompactRollupDigestCodec {
+				var raw bytes.Buffer
+				raw.WriteString(sqliteV4RollupDigestCompactMagic)
+				appendUvarintTo(&raw, uint64(len(records)))
+				for _, record := range records {
+					compact, compactErr := encodeSQLiteV4CompactTDigest(record)
+					if compactErr != nil {
+						_ = store.Close()
+						t.Fatal(compactErr)
+					}
+					appendUvarintTo(&raw, uint64(len(compact)))
+					raw.Write(compact)
+				}
+				encoded.digestPayload, err = compressSQLiteV4RollupSection(raw.Bytes(), sqliteV4RollupDigestLevel)
+				encoded.digestCodec = sqliteV4CompactRollupDigestCodec
+			}
+			if err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			encoded.digestChecksum = crc32.ChecksumIEEE(encoded.digestPayload)
+			if _, err := store.db.ExecContext(ctx,
+				"UPDATE "+store.tables.rollupBlocks+" SET codec = ?, checksum = ?, payload = ?, digest_codec = ?, digest_checksum = ?, digest_payload = ?, axis_id = NULL WHERE series_id = ? AND resolution_nano = ? AND start_nano = ?",
+				encoded.codec, int64(encoded.checksum), encoded.payload, encoded.digestCodec, int64(encoded.digestChecksum), encoded.digestPayload,
+				series[0].id, time.Minute.Nanoseconds(), encoded.startNano,
+			); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if _, err := store.db.ExecContext(ctx, "DELETE FROM "+store.tables.rollupAxes); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			summary, err := InspectSQLiteMigration(ctx, SQLite(dsn))
+			if err != nil || !summary.Required {
+				t.Fatalf("inspect %s source: summary=%#v err=%v", sourceVersion.name, summary, err)
+			}
+			store, err = Open(ctx, SQLite(dsn, WithRollupPolicy(policy)))
+			if err != nil {
+				t.Fatalf("upgrade %s: %v", sourceVersion.name, err)
+			}
+			defer store.Close()
+			definition, err := store.GetMetric(ctx, "codec-matrix")
+			if err != nil || definition.RetentionDays != 10 {
+				t.Fatalf("%s changed retention: days=%d err=%v", sourceVersion.name, definition.RetentionDays, err)
+			}
+			series, err = store.sqliteV4MatchingSeries(ctx, store.db, "codec-matrix", "node-a", nil)
+			if err != nil || len(series) != 1 {
+				t.Fatalf("find upgraded series: count=%d err=%v", len(series), err)
+			}
+			got, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, time.Minute.Nanoseconds())
+			if err != nil || !sqliteV4RollupRecordDataSlicesEqual(records, got) {
+				t.Fatalf("%s changed rollup data: count=%d err=%v", sourceVersion.name, len(got), err)
+			}
+			summary, err = InspectSQLiteMigration(ctx, SQLite(dsn))
+			if err != nil || summary.Required || summary.Layout != "current" {
+				t.Fatalf("inspect upgraded %s: summary=%#v err=%v", sourceVersion.name, summary, err)
+			}
+		})
 	}
 }
 
@@ -554,8 +698,8 @@ func TestSQLiteStorageV4DigestHandoffPreservesPercentilesAndRetention(t *testing
 		t.Fatal(err)
 	}
 	query := AggregateQuery{
-		Query: Query{MetricName: "handoff", EntityID: "node-a", Start: recentStart, End: recentStart.Add(5*time.Minute - time.Nanosecond)},
-		Interval: 5 * time.Minute,
+		Query:       Query{MetricName: "handoff", EntityID: "node-a", Start: recentStart, End: recentStart.Add(5*time.Minute - time.Nanosecond)},
+		Interval:    5 * time.Minute,
 		Aggregation: AggP95,
 	}
 	before, err := store.AggregateRollup(ctx, query, 5*time.Minute)
@@ -577,7 +721,7 @@ func TestSQLiteStorageV4DigestHandoffPreservesPercentilesAndRetention(t *testing
 	if err != nil || len(series) != 1 {
 		t.Fatalf("find handoff series: count=%d err=%v", len(series), err)
 	}
-	records, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, (5*time.Minute).Nanoseconds())
+	records, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, (5 * time.Minute).Nanoseconds())
 	if err != nil || len(records) != 2 {
 		t.Fatalf("load handoff records: count=%d err=%v", len(records), err)
 	}
@@ -612,6 +756,324 @@ func TestSQLiteStorageV4DigestHandoffPreservesPercentilesAndRetention(t *testing
 	definition, err := store.GetMetric(ctx, "handoff")
 	if err != nil || definition.RetentionDays != 10 {
 		t.Fatalf("handoff changed retention: days=%d err=%v", definition.RetentionDays, err)
+	}
+}
+
+func TestSQLiteStorageV4RetainsCoarseDigestWhenFinerLayerIsIncomplete(t *testing.T) {
+	ctx := context.Background()
+	policy := RollupPolicy{
+		RawRetention: time.Hour,
+		Tiers: []RollupTier{
+			{Interval: time.Minute, Retention: 2 * 24 * time.Hour},
+			{Interval: 5 * time.Minute, Retention: 7 * 24 * time.Hour},
+		},
+	}
+	store, err := Open(ctx, SQLiteInDir(t.TempDir(), WithRollupPolicy(policy)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateMetric(ctx, Definition{Name: "retain-coarse", Type: TypeGauge, RetentionDays: 10}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Hour)
+	start := now.Add(-24 * time.Hour).Truncate(5 * time.Minute)
+	fineBuckets := make(map[rollupKey]*rollupBucket)
+	for minute := 0; minute < 5; minute++ {
+		bucketTime := start.Add(time.Duration(minute) * time.Minute)
+		bucket := newRollupBucket(policy.compression())
+		for sample := 0; sample < 3; sample++ {
+			bucket.addPoint(float64(minute*10+sample), bucketTime.Add(time.Duration(sample)*time.Second).UnixNano())
+		}
+		fineBuckets[rollupKey{entityID: "node-a", bucket: bucketTime.UnixNano()}] = bucket
+	}
+	coarseBuckets := buildCoarserBucketsFromDelta(fineBuckets, 5*time.Minute, policy.compression())
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.writeRollupBucketsTx(ctx, "retain-coarse", time.Minute, fineBuckets, tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if _, err := store.writeRollupBucketsTx(ctx, "retain-coarse", 5*time.Minute, coarseBuckets, tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if _, err := store.sealAllSQLiteV4RollupsTx(ctx, tx, 0, 0); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	series, err := store.sqliteV4MatchingSeries(ctx, store.db, "retain-coarse", "node-a", nil)
+	if err != nil || len(series) != 1 {
+		t.Fatalf("find retain series: count=%d err=%v", len(series), err)
+	}
+	tx, err = store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fineRecords, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, tx, series[0].id, time.Minute.Nanoseconds())
+	if err != nil || len(fineRecords) != 5 {
+		_ = tx.Rollback()
+		t.Fatalf("load fine records: count=%d err=%v", len(fineRecords), err)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM "+store.tables.rollupBlocks+" WHERE series_id = ? AND resolution_nano = ?", series[0].id, time.Minute.Nanoseconds()); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := store.writeSQLiteV4RollupBlocksTx(ctx, tx, series[0].id, time.Minute.Nanoseconds(), fineRecords[1:]); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rewritten, _, err := store.syncSQLiteV4RedundantRollupDigestsTx(ctx, tx, "retain-coarse", now, policy.withMetricRetention(10*24*time.Hour), true)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if rewritten != 0 {
+		t.Fatalf("rewrote %d coarse blocks despite incomplete finer data", rewritten)
+	}
+	coarseRecords, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, (5 * time.Minute).Nanoseconds())
+	if err != nil || len(coarseRecords) != 1 || len(coarseRecords[0].digest) == 0 {
+		t.Fatalf("coarse digest was not preserved: records=%#v err=%v", coarseRecords, err)
+	}
+}
+
+func TestSQLiteStorageV4DefersIncompleteDigestHandoffAcrossSupportedSources(t *testing.T) {
+	versions := []string{
+		"upstream-1.2.5",
+		"upstream-1.2.7",
+		"upstream-1.2.8",
+		"upstream-1.2.8-fix",
+		"upstream-1.3.0",
+		"fork-2.1.7",
+		"fork-2.1.8",
+		"fork-2.1.8-fix",
+		"fork-2.1.9",
+	}
+	for _, version := range versions {
+		t.Run(version, func(t *testing.T) {
+			ctx := context.Background()
+			dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
+			policy := RollupPolicy{
+				RawRetention: time.Hour,
+				Tiers: []RollupTier{
+					{Interval: time.Minute, Retention: 2 * 24 * time.Hour},
+					{Interval: 5 * time.Minute, Retention: 7 * 24 * time.Hour},
+				},
+			}
+			store, err := Open(ctx, SQLite(dsn, WithRollupPolicy(policy)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := store.CreateMetric(ctx, Definition{Name: "incomplete", Type: TypeGauge, RetentionDays: 10}); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			now := time.Now().UTC().Truncate(time.Hour)
+			bucketTime := now.Add(-72 * time.Hour).Truncate(5 * time.Minute)
+			bucket := newRollupBucket(policy.compression())
+			for sample := 0; sample < 3; sample++ {
+				bucket.addPoint(float64(sample+1), bucketTime.Add(time.Duration(sample)*time.Second).UnixNano())
+			}
+			tx, err := store.db.BeginTx(ctx, nil)
+			if err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if _, err := store.writeRollupBucketsTx(ctx, "incomplete", 5*time.Minute, map[rollupKey]*rollupBucket{
+				{entityID: "node-a", bucket: bucketTime.UnixNano()}: bucket,
+			}, tx); err != nil {
+				_ = tx.Rollback()
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if _, err := store.sealAllSQLiteV4RollupsTx(ctx, tx, 0, 0); err != nil {
+				_ = tx.Rollback()
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if err := tx.Commit(); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			series, err := store.sqliteV4MatchingSeries(ctx, store.db, "incomplete", "node-a", nil)
+			if err != nil || len(series) != 1 {
+				_ = store.Close()
+				t.Fatalf("find incomplete series: count=%d err=%v", len(series), err)
+			}
+			records, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, (5 * time.Minute).Nanoseconds())
+			if err != nil || len(records) != 1 {
+				_ = store.Close()
+				t.Fatalf("load seeded block: count=%d err=%v", len(records), err)
+			}
+			records[0].digest = nil
+			legacy, err := encodeSQLiteV4RollupBlockV2(records)
+			if err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if _, err := store.db.ExecContext(ctx,
+				"UPDATE metric_rollup_blocks SET codec = ?, checksum = ?, payload = ?, digest_codec = ?, digest_checksum = ?, digest_payload = ?, axis_id = NULL WHERE series_id = ? AND resolution_nano = ? AND start_nano = ?",
+				legacy.codec, int64(legacy.checksum), legacy.payload, legacy.digestCodec, int64(legacy.digestChecksum), legacy.digestPayload,
+				series[0].id, (5 * time.Minute).Nanoseconds(), legacy.startNano,
+			); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			var snapshots []MigrationProgress
+			store, err = Open(ctx, SQLite(dsn, WithRollupPolicy(policy), WithMigrationProgress(func(progress MigrationProgress) {
+				snapshots = append(snapshots, progress)
+			})))
+			if err != nil {
+				t.Fatalf("open %s with incomplete digest handoff: %v", version, err)
+			}
+			definition, err := store.GetMetric(ctx, "incomplete")
+			if err != nil || definition.RetentionDays != 10 {
+				_ = store.Close()
+				t.Fatalf("%s changed retention: days=%d err=%v", version, definition.RetentionDays, err)
+			}
+			deferred := false
+			for _, progress := range snapshots {
+				deferred = deferred || progress.Deferred > 0
+			}
+			if !deferred {
+				_ = store.Close()
+				t.Fatalf("%s did not report deferred digest handoff", version)
+			}
+			var codec, digestCodec int
+			var axisID sql.NullInt64
+			if err := store.db.QueryRowContext(ctx,
+				"SELECT codec, digest_codec, axis_id FROM metric_rollup_blocks WHERE series_id = ?",
+				series[0].id,
+			).Scan(&codec, &digestCodec, &axisID); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if codec != sqliteV4SharedRollupBlockCodec || digestCodec != sqliteV4StructuredRollupDigestCodec || !axisID.Valid {
+				_ = store.Close()
+				t.Fatalf("%s was not safely converted after deferral: codec=%d digest=%d axis=%v", version, codec, digestCodec, axisID)
+			}
+			records, err = store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, (5 * time.Minute).Nanoseconds())
+			if err != nil || len(records) != 1 || records[0].count != bucket.count || len(records[0].digest) != 0 {
+				_ = store.Close()
+				t.Fatalf("%s changed the preserved incomplete block: records=%#v err=%v", version, records, err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestSQLiteStorageV4DefersIncompleteV3DigestHandoff(t *testing.T) {
+	versions := []struct {
+		name          string
+		withWatermark bool
+	}{
+		{name: "upstream-1.2.5"},
+		{name: "upstream-1.2.7", withWatermark: true},
+		{name: "upstream-1.2.8", withWatermark: true},
+		{name: "upstream-1.2.8-fix", withWatermark: true},
+		{name: "upstream-1.3.0", withWatermark: true},
+	}
+	for _, version := range versions {
+		t.Run(version.name, func(t *testing.T) {
+			ctx := context.Background()
+			dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
+			policy := RollupPolicy{
+				RawRetention: time.Hour,
+				Tiers: []RollupTier{
+					{Interval: time.Minute, Retention: 2 * 24 * time.Hour},
+					{Interval: 5 * time.Minute, Retention: 7 * 24 * time.Hour},
+				},
+			}
+			store := createSQLiteV3OnlyStore(t, ctx, dsn)
+			store.cfg.RollupPolicy = policy
+			if err := store.CreateMetric(ctx, Definition{Name: "legacy-incomplete", Type: TypeGauge, RetentionDays: 10}); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			bucketTime := time.Now().UTC().Truncate(time.Hour).Add(-72 * time.Hour).Truncate(5 * time.Minute)
+			bucket := newRollupBucket(policy.compression())
+			for sample := 0; sample < 3; sample++ {
+				bucket.addPoint(float64(sample+1), bucketTime.Add(time.Duration(sample)*time.Second).UnixNano())
+			}
+			tx, err := store.db.BeginTx(ctx, nil)
+			if err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if _, err := store.writeRollupBucketsTx(ctx, "legacy-incomplete", 5*time.Minute, map[rollupKey]*rollupBucket{
+				{entityID: "node-a", bucket: bucketTime.UnixNano()}: bucket,
+			}, tx); err != nil {
+				_ = tx.Rollback()
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if err := tx.Commit(); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if _, err := store.db.ExecContext(ctx,
+				"UPDATE "+store.tables.rollups+" SET digest = NULL WHERE metric_name = ? AND entity_id = ? AND resolution_nano = ? AND bucket_nano = ?",
+				"legacy-incomplete", "node-a", (5 * time.Minute).Nanoseconds(), bucketTime.UnixNano(),
+			); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if !version.withWatermark {
+				if _, err := store.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+store.tables.watermarks); err != nil {
+					_ = store.Close()
+					t.Fatal(err)
+				}
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			var snapshots []MigrationProgress
+			store, err = Open(ctx, SQLite(dsn, WithRollupPolicy(policy), WithMigrationProgress(func(progress MigrationProgress) {
+				snapshots = append(snapshots, progress)
+			})))
+			if err != nil {
+				t.Fatalf("open %s V3 database with incomplete handoff: %v", version.name, err)
+			}
+			defer store.Close()
+			definition, err := store.GetMetric(ctx, "legacy-incomplete")
+			if err != nil || definition.RetentionDays != 10 {
+				t.Fatalf("%s changed retention: days=%d err=%v", version.name, definition.RetentionDays, err)
+			}
+			deferred := false
+			for _, progress := range snapshots {
+				deferred = deferred || progress.Deferred > 0
+			}
+			if !deferred {
+				t.Fatalf("%s did not report deferred V3 digest handoff", version.name)
+			}
+			rows, err := store.scanRollupRowsBetween(ctx, "legacy-incomplete", "node-a", nil,
+				(5 * time.Minute).Nanoseconds(), bucketTime.UnixNano(), bucketTime.UnixNano(), false)
+			if err != nil || len(rows) != 1 || rows[0].bucketData.count != bucket.count {
+				t.Fatalf("%s changed readable V3 rollup: rows=%#v err=%v", version.name, rows, err)
+			}
+		})
 	}
 }
 

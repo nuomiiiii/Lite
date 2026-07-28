@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math"
 	"sort"
 	"strings"
 	"time"
@@ -297,9 +296,7 @@ func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, en
 		coarse := rows[index].bucketData
 		key := rollupKey{entityID: rows[index].entityID, tagsHash: coarse.tagsHash, bucket: rows[index].bucket}
 		rebuilt := groups[key]
-		if rebuilt == nil || rebuilt.digest == nil || rebuilt.count != coarse.count ||
-			math.Float64bits(rebuilt.min) != math.Float64bits(coarse.min) ||
-			math.Float64bits(rebuilt.max) != math.Float64bits(coarse.max) {
+		if rebuilt == nil || rebuilt.digest == nil || !sqliteV4RollupSummariesEqual(rebuilt, coarse) {
 			return nil, fmt.Errorf("metric: cannot losslessly rebuild SQLite V4 rollup digest at resolution %d bucket %d", resolution, rows[index].bucket)
 		}
 		coarse.digest = rebuilt.digest

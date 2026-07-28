@@ -31,7 +31,7 @@ const (
 	sqliteV4DigestCommonCompression   = byte(1 << 0)
 )
 
-func encodeSQLiteV4RollupBlock(records []sqliteV4RollupRecord) (sqliteV4EncodedRollupBlock, error) {
+func encodeSQLiteV4RollupBlockV2(records []sqliteV4RollupRecord) (sqliteV4EncodedRollupBlock, error) {
 	if len(records) == 0 {
 		return sqliteV4EncodedRollupBlock{}, fmt.Errorf("metric: cannot encode an empty SQLite V4 rollup block")
 	}

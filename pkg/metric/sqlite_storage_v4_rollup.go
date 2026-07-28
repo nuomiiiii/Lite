@@ -72,7 +72,7 @@ func (s *Store) migrateSQLiteV4RollupBlocksToSplit(ctx context.Context) (int64, 
 		if len(records) == 0 || records[0].bucketNano != item.startNano || records[len(records)-1].bucketNano != endNano {
 			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: legacy SQLite V4 rollup block boundary mismatch for series=%d resolution=%d start=%d", item.seriesID, item.resolution, item.startNano)
 		}
-		encoded, err := encodeSQLiteV4RollupBlock(records)
+		encoded, err := encodeSQLiteV4RollupBlockV2(records)
 		if err != nil {
 			return migratedBlocks, migratedBuckets, err
 		}
@@ -179,7 +179,7 @@ func (s *Store) migrateSQLiteV4RollupDigestCodec(ctx context.Context) (int64, in
 		if len(records) == 0 || records[0].bucketNano != item.startNano || records[len(records)-1].bucketNano != endNano {
 			return migratedBlocks, migratedBuckets, fmt.Errorf("metric: legacy SQLite V4 digest block boundary mismatch for series=%d resolution=%d start=%d", item.seriesID, item.resolution, item.startNano)
 		}
-		encoded, err := encodeSQLiteV4RollupBlock(records)
+		encoded, err := encodeSQLiteV4RollupBlockV2(records)
 		if err != nil {
 			return migratedBlocks, migratedBuckets, err
 		}
@@ -217,7 +217,9 @@ func (s *Store) migrateSQLiteV4RollupDigestCodec(ctx context.Context) (int64, in
 	return migratedBlocks, migratedBuckets, nil
 }
 
-func (s *Store) migrateSQLiteV4RedundantRollupDigests(ctx context.Context, now time.Time) (int64, int64, error) {
+var errSQLiteV4DigestHandoffDeferred = errors.New("metric: digest handoff deferred")
+
+func (s *Store) migrateSQLiteV4RedundantRollupDigests(ctx context.Context, now time.Time, force bool) (int64, int64, error) {
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT name, retention_days FROM %s ORDER BY name`, s.tables.definitions))
 	if err != nil {
 		return 0, 0, fmt.Errorf("metric: list definitions for digest handoff migration: %w", err)
@@ -245,32 +247,45 @@ func (s *Store) migrateSQLiteV4RedundantRollupDigests(ctx context.Context, now t
 	if len(metrics) == 0 {
 		return 0, 0, nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, 0, fmt.Errorf("metric: begin digest handoff migration: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+
 	s.reportMigrationProgress(MigrationPhaseUpgradingRollupBlocks, 0, int64(len(metrics)), 0)
-	var rewrittenBlocks, rewrittenBuckets int64
+	var rewrittenBlocks, rewrittenBuckets, deferredMetrics int64
 	for index, item := range metrics {
 		if item.days > 0 {
-			policy := s.cfg.RollupPolicy.withMetricRetention(time.Duration(item.days) * 24 * time.Hour)
-			blocks, buckets, err := s.syncSQLiteV4RedundantRollupDigestsTx(ctx, tx, item.name, now.UTC(), policy, true)
+			tx, err := s.db.BeginTx(ctx, nil)
 			if err != nil {
-				return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: migrate digest handoff for %q: %w", item.name, err)
+				return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: begin digest handoff migration for %q: %w", item.name, err)
+			}
+			policy := s.cfg.RollupPolicy.withMetricRetention(time.Duration(item.days) * 24 * time.Hour)
+			blocks, buckets, syncErr := s.syncSQLiteV4RedundantRollupDigestsTx(ctx, tx, item.name, now.UTC(), policy, force)
+			if syncErr != nil {
+				_ = tx.Rollback()
+				if errors.Is(syncErr, errSQLiteV4DigestHandoffDeferred) {
+					deferredMetrics++
+					log.Printf("metric: preserving %q digest blocks and deferring lossless handoff: %v", item.name, syncErr)
+					s.reportMigrationProgressWithDeferred(MigrationPhaseUpgradingRollupBlocks, int64(index+1), int64(len(metrics)), rewrittenBuckets, deferredMetrics)
+					continue
+				}
+				return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: migrate digest handoff for %q: %w", item.name, syncErr)
+			}
+			if err := tx.Commit(); err != nil {
+				return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: commit digest handoff migration for %q: %w", item.name, err)
 			}
 			rewrittenBlocks += blocks
 			rewrittenBuckets += buckets
 		}
 		s.reportMigrationProgress(MigrationPhaseUpgradingRollupBlocks, int64(index+1), int64(len(metrics)), rewrittenBuckets)
 	}
-	if err := tx.Commit(); err != nil {
-		return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: commit digest handoff migration: %w", err)
+	if deferredMetrics > 0 {
+		log.Printf("metric: digest handoff deferred for %d metric definitions; existing digest data was preserved", deferredMetrics)
 	}
 	return rewrittenBlocks, rewrittenBuckets, nil
 }
 
 func (s *Store) createSQLiteV4RollupBlocks(ctx context.Context, tx *sql.Tx) error {
+	if err := s.createSQLiteV4RollupAxes(ctx, tx); err != nil {
+		return err
+	}
 	statements := []string{
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 			series_id INTEGER NOT NULL REFERENCES %s(id) ON DELETE CASCADE,
@@ -284,10 +299,11 @@ func (s *Store) createSQLiteV4RollupBlocks(ctx context.Context, tx *sql.Tx) erro
 			digest_codec INTEGER NOT NULL DEFAULT 0,
 			digest_checksum INTEGER NOT NULL DEFAULT 0,
 			digest_payload BLOB,
+			axis_id INTEGER REFERENCES %s(id),
 			PRIMARY KEY(series_id, resolution_nano, start_nano),
 			CHECK(end_nano >= start_nano),
 			CHECK(bucket_count > 0)
-		) WITHOUT ROWID`, s.tables.rollupBlocks, s.tables.series),
+		) WITHOUT ROWID`, s.tables.rollupBlocks, s.tables.series, s.tables.rollupAxes),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_rollup_blocks_time_idx ON %s (resolution_nano, start_nano, end_nano)`,
 			s.cfg.TablePrefix, s.tables.rollupBlocks),
 	}
@@ -296,7 +312,10 @@ func (s *Store) createSQLiteV4RollupBlocks(ctx context.Context, tx *sql.Tx) erro
 			return fmt.Errorf("metric: create SQLite V4 rollup block table: %w", err)
 		}
 	}
-	return s.ensureSQLiteV4RollupDigestColumns(ctx, tx)
+	if err := s.ensureSQLiteV4RollupDigestColumns(ctx, tx); err != nil {
+		return err
+	}
+	return s.createSQLiteV4RollupAxisReferences(ctx, tx)
 }
 
 func (s *Store) ensureSQLiteV4RollupDigestColumns(ctx context.Context, tx *sql.Tx) error {
@@ -329,6 +348,7 @@ func (s *Store) ensureSQLiteV4RollupDigestColumns(ctx context.Context, tx *sql.T
 		{"digest_codec", "INTEGER NOT NULL DEFAULT 0"},
 		{"digest_checksum", "INTEGER NOT NULL DEFAULT 0"},
 		{"digest_payload", "BLOB"},
+		{"axis_id", "INTEGER REFERENCES " + s.tables.rollupAxes + "(id)"},
 	}
 	for _, column := range additions {
 		if found[column.name] {
@@ -360,7 +380,7 @@ func (s *Store) validateSQLiteV4RollupBlocks(ctx context.Context, tx *sql.Tx) er
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for _, name := range []string{"series_id", "resolution_nano", "start_nano", "end_nano", "bucket_count", "codec", "checksum", "payload", "digest_codec", "digest_checksum", "digest_payload"} {
+	for _, name := range []string{"series_id", "resolution_nano", "start_nano", "end_nano", "bucket_count", "codec", "checksum", "payload", "digest_codec", "digest_checksum", "digest_payload", "axis_id"} {
 		if !found[name] {
 			return fmt.Errorf("metric: SQLite V4 rollup block table is missing column %s", name)
 		}
@@ -471,10 +491,11 @@ func scanSQLiteV4RollupRecord(scanner interface{ Scan(dest ...any) error }) (sql
 
 func (s *Store) loadAllSQLiteV4RollupBlockRecords(ctx context.Context, q querier, seriesID, resolution int64) ([]sqliteV4RollupRecord, error) {
 	rows, err := q.QueryContext(ctx, fmt.Sprintf(
-		`SELECT start_nano, end_nano, bucket_count, codec, checksum, payload,
-		        digest_codec, digest_checksum, digest_payload FROM %s
-		 WHERE series_id = ? AND resolution_nano = ? ORDER BY start_nano`,
-		s.tables.rollupBlocks,
+		"SELECT b.start_nano, b.end_nano, b.bucket_count, b.codec, b.checksum, b.payload, "+
+			"b.digest_codec, b.digest_checksum, b.digest_payload, a.codec, a.checksum, a.payload "+
+			"FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id "+
+			"WHERE b.series_id = ? AND b.resolution_nano = ? ORDER BY b.start_nano",
+		s.tables.rollupBlocks, s.tables.rollupAxes,
 	), seriesID, resolution)
 	if err != nil {
 		return nil, err
@@ -484,11 +505,20 @@ func (s *Store) loadAllSQLiteV4RollupBlockRecords(ctx context.Context, q querier
 	for rows.Next() {
 		var startNano, endNano, checksum, digestChecksum int64
 		var count, codec, digestCodec int
-		var payload, digestPayload []byte
-		if err := rows.Scan(&startNano, &endNano, &count, &codec, &checksum, &payload, &digestCodec, &digestChecksum, &digestPayload); err != nil {
+		var payload, digestPayload, axisPayload []byte
+		var axisCodec, axisChecksum sql.NullInt64
+		if err := rows.Scan(
+			&startNano, &endNano, &count, &codec, &checksum, &payload,
+			&digestCodec, &digestChecksum, &digestPayload,
+			&axisCodec, &axisChecksum, &axisPayload,
+		); err != nil {
 			return nil, err
 		}
-		records, err := decodeSQLiteV4RollupBlock(codec, count, uint32(checksum), payload, digestCodec, uint32(digestChecksum), digestPayload, true)
+		records, err := decodeSQLiteV4RollupBlockWithAxisReference(
+			codec, count, uint32(checksum), payload,
+			axisCodec, axisChecksum, axisPayload,
+			digestCodec, uint32(digestChecksum), digestPayload, true,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("metric: decode SQLite V4 rollup block series=%d resolution=%d start=%d: %w", seriesID, resolution, startNano, err)
 		}
@@ -511,19 +541,27 @@ func (s *Store) writeSQLiteV4RollupBlocksTx(ctx context.Context, tx *sql.Tx, ser
 		if err != nil {
 			return err
 		}
-		decoded, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload, encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true)
-		if err != nil || !sqliteV4RollupRecordsEqual(records[start:end], decoded) {
+		decoded, err := decodeSQLiteV4StoredRollupBlock(
+			encoded.codec, encoded.count, encoded.checksum, encoded.payload,
+			encoded.axisCodec, encoded.axisChecksum, encoded.axisPayload,
+			encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true,
+		)
+		if err != nil || !sqliteV4RollupRecordDataSlicesEqual(records[start:end], decoded) {
 			if err == nil {
-				err = errors.New("round-trip validation changed data")
+				err = errors.New("round-trip validation changed metric data")
 			}
 			return fmt.Errorf("metric: validate SQLite V4 rollup block: %w", err)
 		}
+		axisID, err := s.storeSQLiteV4RollupAxisTx(ctx, tx, encoded)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(
 			`INSERT INTO %s (series_id, resolution_nano, start_nano, end_nano, bucket_count, codec, checksum, payload,
-			                 digest_codec, digest_checksum, digest_payload)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, s.tables.rollupBlocks,
+			                 digest_codec, digest_checksum, digest_payload, axis_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, s.tables.rollupBlocks,
 		), seriesID, resolution, encoded.startNano, encoded.endNano, encoded.count, encoded.codec, int64(encoded.checksum), encoded.payload,
-			encoded.digestCodec, int64(encoded.digestChecksum), encoded.digestPayload); err != nil {
+			encoded.digestCodec, int64(encoded.digestChecksum), encoded.digestPayload, axisID); err != nil {
 			return err
 		}
 	}
@@ -554,13 +592,14 @@ func (s *Store) appendSQLiteV4RollupTailTx(ctx context.Context, tx *sql.Tx, seri
 		var startNano, endNano, checksum, digestChecksum int64
 		var count, codec, digestCodec int
 		var payload, digestPayload []byte
+		var axisID sql.NullInt64
 		err := tx.QueryRowContext(ctx, fmt.Sprintf(
 			`SELECT start_nano, end_nano, bucket_count, codec, checksum, payload,
-			        digest_codec, digest_checksum, digest_payload FROM %s
+			        digest_codec, digest_checksum, digest_payload, axis_id FROM %s
 			 WHERE series_id = ? AND resolution_nano = ? ORDER BY start_nano DESC LIMIT 1`,
 			s.tables.rollupBlocks,
 		), seriesID, resolution).Scan(&startNano, &endNano, &count, &codec, &checksum, &payload,
-			&digestCodec, &digestChecksum, &digestPayload)
+			&digestCodec, &digestChecksum, &digestPayload, &axisID)
 
 		var tail []sqliteV4RollupRecord
 		lower := int64(math.MinInt64)
@@ -571,8 +610,10 @@ func (s *Store) appendSQLiteV4RollupTailTx(ctx context.Context, tx *sql.Tx, seri
 		case err != nil:
 			return sealed, err
 		default:
-			records, decodeErr := decodeSQLiteV4RollupBlock(codec, count, uint32(checksum), payload,
-				digestCodec, uint32(digestChecksum), digestPayload, true)
+			records, decodeErr := s.decodeSQLiteV4RollupBlockFromStorage(
+				ctx, tx, codec, count, uint32(checksum), payload, axisID,
+				digestCodec, uint32(digestChecksum), digestPayload, true,
+			)
 			if decodeErr != nil {
 				return sealed, fmt.Errorf("metric: decode SQLite V4 rollup tail series=%d resolution=%d start=%d: %w", seriesID, resolution, startNano, decodeErr)
 			}
@@ -647,6 +688,9 @@ type sqliteV4RollupStoredBlock struct {
 	digestCodec    int
 	digestChecksum uint32
 	digestPayload  []byte
+	axisCodec      sql.NullInt64
+	axisChecksum   sql.NullInt64
+	axisPayload    []byte
 }
 
 func sqliteV4CeilNano(value, step int64) (int64, error) {
@@ -664,6 +708,21 @@ func sqliteV4CeilNano(value, step int64) (int64, error) {
 // ordinary charts while omitting their recent digest copies. Before finer data
 // crosses its retention boundary, the coarse digest is rebuilt and validated
 // in the same transaction, so percentile history never depends on expired data.
+func sqliteV4RollupSummariesEqual(left, right *rollupBucket) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.count == right.count &&
+		math.Float64bits(left.sum) == math.Float64bits(right.sum) &&
+		math.Float64bits(left.sumSq) == math.Float64bits(right.sumSq) &&
+		math.Float64bits(left.min) == math.Float64bits(right.min) &&
+		math.Float64bits(left.max) == math.Float64bits(right.max) &&
+		math.Float64bits(left.firstVal) == math.Float64bits(right.firstVal) &&
+		left.firstTS == right.firstTS &&
+		math.Float64bits(left.lastVal) == math.Float64bits(right.lastVal) &&
+		left.lastTS == right.lastTS
+}
+
 func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sql.Tx, metricName string, now time.Time, policy RollupPolicy, force bool) (int64, int64, error) {
 	if len(policy.Tiers) < 2 || policy.RawRetention <= 0 {
 		return 0, 0, nil
@@ -708,10 +767,11 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 	var rewrittenBlocks, rewrittenBuckets int64
 	for _, item := range series {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			`SELECT start_nano, end_nano, bucket_count, codec, checksum, payload,
-			        digest_codec, digest_checksum, digest_payload FROM %s
-			 WHERE series_id = ? AND resolution_nano = ? ORDER BY start_nano`,
-			s.tables.rollupBlocks,
+			`SELECT b.start_nano, b.end_nano, b.bucket_count, b.codec, b.checksum, b.payload,
+			        b.digest_codec, b.digest_checksum, b.digest_payload, a.codec, a.checksum, a.payload
+			 FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id
+			 WHERE b.series_id = ? AND b.resolution_nano = ? ORDER BY b.start_nano`,
+			s.tables.rollupBlocks, s.tables.rollupAxes,
 		), item.id, coarse.Interval.Nanoseconds())
 		if err != nil {
 			return rewrittenBlocks, rewrittenBuckets, err
@@ -721,7 +781,7 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 			var block sqliteV4RollupStoredBlock
 			var checksum, digestChecksum int64
 			if err := rows.Scan(&block.startNano, &block.endNano, &block.count, &block.codec, &checksum, &block.payload,
-				&block.digestCodec, &digestChecksum, &block.digestPayload); err != nil {
+				&block.digestCodec, &digestChecksum, &block.digestPayload, &block.axisCodec, &block.axisChecksum, &block.axisPayload); err != nil {
 				_ = rows.Close()
 				return rewrittenBlocks, rewrittenBuckets, err
 			}
@@ -737,8 +797,11 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 			return rewrittenBlocks, rewrittenBuckets, err
 		}
 		for _, block := range blocks {
-			records, err := decodeSQLiteV4RollupBlock(block.codec, block.count, block.checksum, block.payload,
-				block.digestCodec, block.digestChecksum, block.digestPayload, true)
+			records, err := decodeSQLiteV4RollupBlockWithAxisReference(
+				block.codec, block.count, block.checksum, block.payload,
+				block.axisCodec, block.axisChecksum, block.axisPayload,
+				block.digestCodec, block.digestChecksum, block.digestPayload, true,
+			)
 			if err != nil {
 				return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: decode digest handoff block series=%d start=%d: %w", item.id, block.startNano, err)
 			}
@@ -746,18 +809,17 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 				return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("metric: digest handoff block boundary mismatch series=%d start=%d", item.id, block.startNano)
 			}
 			changed := false
-			var restore []int
+			var restore, dropDuplicate []int
 			for index := range records {
 				if records[index].bucketNano >= digestCutoff {
 					if len(records[index].digest) > 0 {
-						records[index].digest = nil
-						changed = true
+						dropDuplicate = append(dropDuplicate, index)
 					}
 				} else if len(records[index].digest) == 0 {
 					restore = append(restore, index)
 				}
 			}
-			if len(restore) > 0 {
+			if len(restore) > 0 || len(dropDuplicate) > 0 {
 				fineUpper, err := checkedAddInt64(block.endNano, coarse.Interval.Nanoseconds()-fine.Interval.Nanoseconds())
 				if err != nil {
 					return rewrittenBlocks, rewrittenBuckets, err
@@ -767,20 +829,20 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 					return rewrittenBlocks, rewrittenBuckets, err
 				}
 				groups := make(map[int64]*rollupBucket)
-				handoffIncomplete := false
+				incomplete := make(map[int64]struct{})
 				for _, fineRecord := range fineRecords {
 					if fineRecord.bucketNano < block.startNano || fineRecord.bucketNano > fineUpper {
+						continue
+					}
+					bucketNano := floorDivNano(fineRecord.bucketNano, coarse.Interval.Nanoseconds())
+					if len(fineRecord.digest) == 0 {
+						incomplete[bucketNano] = struct{}{}
 						continue
 					}
 					bucketData, err := sqliteV4RollupBucketFromRecord(fineRecord, item, true)
 					if err != nil {
 						return rewrittenBlocks, rewrittenBuckets, err
 					}
-					if bucketData.digest == nil {
-						handoffIncomplete = true
-						break
-					}
-					bucketNano := floorDivNano(fineRecord.bucketNano, coarse.Interval.Nanoseconds())
 					bucket := groups[bucketNano]
 					if bucket == nil {
 						bucket = newRollupBucketWithDigest(policy.compression(), true)
@@ -788,22 +850,40 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 					}
 					bucket.mergeStored(bucketData)
 				}
-				if !handoffIncomplete {
-					for _, index := range restore {
-						record := &records[index]
-						rebuilt := groups[record.bucketNano]
-						if rebuilt == nil || rebuilt.digest == nil || rebuilt.count != record.count ||
-							math.Float64bits(rebuilt.min) != record.minBits || math.Float64bits(rebuilt.max) != record.maxBits {
-							handoffIncomplete = true
-							break
-						}
-						record.digest = rebuilt.digest.Encode()
-						changed = true
+				for _, index := range restore {
+					record := &records[index]
+					if _, missing := incomplete[record.bucketNano]; missing {
+						return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("%w: finer digest missing during handoff bucket=%d", errSQLiteV4DigestHandoffDeferred, record.bucketNano)
 					}
+					rebuilt := groups[record.bucketNano]
+					stored, err := sqliteV4RollupBucketFromRecord(*record, item, true)
+					if err != nil {
+						return rewrittenBlocks, rewrittenBuckets, err
+					}
+					if rebuilt == nil || rebuilt.digest == nil || !sqliteV4RollupSummariesEqual(rebuilt, stored) {
+						return rewrittenBlocks, rewrittenBuckets, fmt.Errorf("%w: cannot losslessly hand off digest series=%d bucket=%d", errSQLiteV4DigestHandoffDeferred, item.id, record.bucketNano)
+					}
+					record.digest = rebuilt.digest.Encode()
+					changed = true
 				}
-				if handoffIncomplete {
-					log.Printf("metric: deferring digest handoff for series=%d block=%d because finer rollup coverage is incomplete; keeping the stored block unchanged", item.id, block.startNano)
-					continue
+				for _, index := range dropDuplicate {
+					record := &records[index]
+					if _, missing := incomplete[record.bucketNano]; missing {
+						continue
+					}
+					rebuilt := groups[record.bucketNano]
+					stored, err := sqliteV4RollupBucketFromRecord(*record, item, true)
+					if err != nil {
+						return rewrittenBlocks, rewrittenBuckets, err
+					}
+					if rebuilt == nil || rebuilt.digest == nil || !sqliteV4RollupSummariesEqual(rebuilt, stored) {
+						continue
+					}
+					if !sqliteV4TDigestsEqual(record.digest, rebuilt.digest.Encode()) {
+						continue
+					}
+					record.digest = nil
+					changed = true
 				}
 			}
 			if !changed {
@@ -813,20 +893,27 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 			if err != nil {
 				return rewrittenBlocks, rewrittenBuckets, err
 			}
-			decoded, err := decodeSQLiteV4RollupBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload,
-				encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true)
-			if err != nil || !sqliteV4RollupRecordsEqual(records, decoded) {
+			decoded, err := decodeSQLiteV4StoredRollupBlock(
+				encoded.codec, encoded.count, encoded.checksum, encoded.payload,
+				encoded.axisCodec, encoded.axisChecksum, encoded.axisPayload,
+				encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true,
+			)
+			if err != nil || !sqliteV4RollupRecordDataSlicesEqual(records, decoded) {
 				if err == nil {
 					err = errors.New("digest handoff round-trip validation changed data")
 				}
 				return rewrittenBlocks, rewrittenBuckets, err
 			}
+			axisID, err := s.storeSQLiteV4RollupAxisTx(ctx, tx, encoded)
+			if err != nil {
+				return rewrittenBlocks, rewrittenBuckets, err
+			}
 			result, err := tx.ExecContext(ctx, fmt.Sprintf(
 				`UPDATE %s SET end_nano = ?, bucket_count = ?, codec = ?, checksum = ?, payload = ?,
-				        digest_codec = ?, digest_checksum = ?, digest_payload = ?
+				        digest_codec = ?, digest_checksum = ?, digest_payload = ?, axis_id = ?
 				 WHERE series_id = ? AND resolution_nano = ? AND start_nano = ?`, s.tables.rollupBlocks,
 			), encoded.endNano, encoded.count, encoded.codec, int64(encoded.checksum), encoded.payload,
-				encoded.digestCodec, int64(encoded.digestChecksum), encoded.digestPayload,
+				encoded.digestCodec, int64(encoded.digestChecksum), encoded.digestPayload, axisID,
 				item.id, coarse.Interval.Nanoseconds(), block.startNano)
 			if err != nil {
 				return rewrittenBlocks, rewrittenBuckets, err
@@ -853,14 +940,15 @@ func (s *Store) querySQLiteV4Rollups(ctx context.Context, q querier, metricName,
 	var result []storedRollup
 	for _, item := range series {
 		byBucket := make(map[int64]sqliteV4RollupRecord)
-		blockColumns := "start_nano, end_nano, bucket_count, codec, checksum, payload"
+		blockColumns := "b.start_nano, b.end_nano, b.bucket_count, b.codec, b.checksum, b.payload"
 		if needDigest {
-			blockColumns += ", digest_codec, digest_checksum, digest_payload"
+			blockColumns += ", b.digest_codec, b.digest_checksum, b.digest_payload"
 		}
+		blockColumns += ", a.codec, a.checksum, a.payload"
 		blockRows, err := q.QueryContext(ctx, fmt.Sprintf(
-			`SELECT %s FROM %s
-			 WHERE series_id = ? AND resolution_nano = ? AND end_nano >= ? AND start_nano <= ? ORDER BY start_nano`,
-			blockColumns, s.tables.rollupBlocks,
+			`SELECT %s FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id
+			 WHERE b.series_id = ? AND b.resolution_nano = ? AND b.end_nano >= ? AND b.start_nano <= ? ORDER BY b.start_nano`,
+			blockColumns, s.tables.rollupBlocks, s.tables.rollupAxes,
 		), item.id, resolution, lower, upper)
 		if err != nil {
 			return nil, err
@@ -868,16 +956,21 @@ func (s *Store) querySQLiteV4Rollups(ctx context.Context, q querier, metricName,
 		for blockRows.Next() {
 			var startNano, endNano, checksum, digestChecksum int64
 			var count, codec, digestCodec int
-			var payload, digestPayload []byte
+			var payload, digestPayload, axisPayload []byte
+			var axisCodec, axisChecksum sql.NullInt64
 			destinations := []any{&startNano, &endNano, &count, &codec, &checksum, &payload}
 			if needDigest {
 				destinations = append(destinations, &digestCodec, &digestChecksum, &digestPayload)
 			}
+			destinations = append(destinations, &axisCodec, &axisChecksum, &axisPayload)
 			if err := blockRows.Scan(destinations...); err != nil {
 				_ = blockRows.Close()
 				return nil, err
 			}
-			records, err := decodeSQLiteV4RollupBlock(codec, count, uint32(checksum), payload, digestCodec, uint32(digestChecksum), digestPayload, needDigest)
+			records, err := decodeSQLiteV4RollupBlockWithAxisReference(
+				codec, count, uint32(checksum), payload, axisCodec, axisChecksum, axisPayload,
+				digestCodec, uint32(digestChecksum), digestPayload, needDigest,
+			)
 			if err != nil {
 				_ = blockRows.Close()
 				return nil, fmt.Errorf("metric: decode SQLite V4 rollup block series=%d start=%d: %w", item.id, startNano, err)
@@ -996,21 +1089,24 @@ func (s *Store) readSQLiteV4RollupBucketTx(ctx context.Context, tx *sql.Tx, metr
 		var startNano, endNano, checksum, digestChecksum int64
 		var count, codec, digestCodec int
 		var payload, digestPayload []byte
+		var axisID sql.NullInt64
 		err = tx.QueryRowContext(ctx, fmt.Sprintf(
 			`SELECT start_nano, end_nano, bucket_count, codec, checksum, payload,
-			        digest_codec, digest_checksum, digest_payload FROM %s
+			        digest_codec, digest_checksum, digest_payload, axis_id FROM %s
 			 WHERE series_id = ? AND resolution_nano = ? AND end_nano >= ? AND start_nano <= ?
 			 ORDER BY start_nano LIMIT 1`, s.tables.rollupBlocks,
 		), item.id, resolution, bucketNano, bucketNano).Scan(&startNano, &endNano, &count, &codec, &checksum, &payload,
-			&digestCodec, &digestChecksum, &digestPayload)
+			&digestCodec, &digestChecksum, &digestPayload, &axisID)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		records, err := decodeSQLiteV4RollupBlock(codec, count, uint32(checksum), payload,
-			digestCodec, uint32(digestChecksum), digestPayload, true)
+		records, err := s.decodeSQLiteV4RollupBlockFromStorage(
+			ctx, tx, codec, count, uint32(checksum), payload, axisID,
+			digestCodec, uint32(digestChecksum), digestPayload, true,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("metric: decode SQLite V4 rollup bucket series=%d start=%d: %w", item.id, startNano, err)
 		}
@@ -1038,9 +1134,10 @@ func (s *Store) sqliteV4SeriesHasRollupBetween(ctx context.Context, q querier, s
 		return true, nil
 	}
 	rows, err := q.QueryContext(ctx, fmt.Sprintf(
-		`SELECT start_nano, end_nano, bucket_count, codec, checksum, payload FROM %s
-		 WHERE series_id = ? AND end_nano >= ? AND start_nano <= ? ORDER BY start_nano`,
-		s.tables.rollupBlocks,
+		`SELECT b.start_nano, b.end_nano, b.bucket_count, b.codec, b.checksum, b.payload,
+		        a.codec, a.checksum, a.payload FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id
+		 WHERE b.series_id = ? AND b.end_nano >= ? AND b.start_nano <= ? ORDER BY b.start_nano`,
+		s.tables.rollupBlocks, s.tables.rollupAxes,
 	), seriesID, lower, upper)
 	if err != nil {
 		return false, err
@@ -1049,11 +1146,15 @@ func (s *Store) sqliteV4SeriesHasRollupBetween(ctx context.Context, q querier, s
 	for rows.Next() {
 		var startNano, endNano, checksum int64
 		var count, codec int
-		var payload []byte
-		if err := rows.Scan(&startNano, &endNano, &count, &codec, &checksum, &payload); err != nil {
+		var payload, axisPayload []byte
+		var axisCodec, axisChecksum sql.NullInt64
+		if err := rows.Scan(&startNano, &endNano, &count, &codec, &checksum, &payload, &axisCodec, &axisChecksum, &axisPayload); err != nil {
 			return false, err
 		}
-		records, err := decodeSQLiteV4RollupBlock(codec, count, uint32(checksum), payload, 0, 0, nil, false)
+		records, err := decodeSQLiteV4RollupBlockWithAxisReference(
+			codec, count, uint32(checksum), payload, axisCodec, axisChecksum, axisPayload,
+			0, 0, nil, false,
+		)
 		if err != nil {
 			return false, fmt.Errorf("metric: decode SQLite V4 rollup block series=%d start=%d: %w", seriesID, startNano, err)
 		}
@@ -1092,9 +1193,10 @@ func (s *Store) latestSQLiteV4RollupBefore(ctx context.Context, q querier, metri
 		}
 
 		rows, err := q.QueryContext(ctx, fmt.Sprintf(
-			`SELECT start_nano, end_nano, bucket_count, codec, checksum, payload FROM %s
-			 WHERE series_id = ? AND resolution_nano = ? AND start_nano < ? ORDER BY start_nano DESC`,
-			s.tables.rollupBlocks,
+			`SELECT b.start_nano, b.end_nano, b.bucket_count, b.codec, b.checksum, b.payload,
+			        a.codec, a.checksum, a.payload FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id
+			 WHERE b.series_id = ? AND b.resolution_nano = ? AND b.start_nano < ? ORDER BY b.start_nano DESC`,
+			s.tables.rollupBlocks, s.tables.rollupAxes,
 		), item.id, resolution, beforeNano)
 		if err != nil {
 			return Point{}, false, err
@@ -1103,12 +1205,16 @@ func (s *Store) latestSQLiteV4RollupBefore(ctx context.Context, q querier, metri
 		for rows.Next() {
 			var startNano, endNano, checksum int64
 			var count, codec int
-			var payload []byte
-			if err := rows.Scan(&startNano, &endNano, &count, &codec, &checksum, &payload); err != nil {
+			var payload, axisPayload []byte
+			var axisCodec, axisChecksum sql.NullInt64
+			if err := rows.Scan(&startNano, &endNano, &count, &codec, &checksum, &payload, &axisCodec, &axisChecksum, &axisPayload); err != nil {
 				_ = rows.Close()
 				return Point{}, false, err
 			}
-			records, err := decodeSQLiteV4RollupBlock(codec, count, uint32(checksum), payload, 0, 0, nil, false)
+			records, err := decodeSQLiteV4RollupBlockWithAxisReference(
+				codec, count, uint32(checksum), payload, axisCodec, axisChecksum, axisPayload,
+				0, 0, nil, false,
+			)
 			if err != nil {
 				_ = rows.Close()
 				return Point{}, false, fmt.Errorf("metric: decode SQLite V4 rollup block series=%d start=%d: %w", item.id, startNano, err)
@@ -1180,9 +1286,10 @@ func (s *Store) deleteSQLiteV4RollupsTx(ctx context.Context, tx *sql.Tx, filter 
 			blockArgs = append(blockArgs, *beforeNano)
 		}
 		blockRows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			`SELECT resolution_nano, start_nano, end_nano, bucket_count, codec, checksum, payload,
-			        digest_codec, digest_checksum, digest_payload FROM %s WHERE %s`,
-			s.tables.rollupBlocks, blockWhere,
+			`SELECT b.resolution_nano, b.start_nano, b.end_nano, b.bucket_count, b.codec, b.checksum, b.payload,
+			        b.digest_codec, b.digest_checksum, b.digest_payload, a.codec, a.checksum, a.payload
+			 FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id WHERE %s`,
+			s.tables.rollupBlocks, s.tables.rollupAxes, blockWhere,
 		), blockArgs...)
 		if err != nil {
 			return total, err
@@ -1191,17 +1298,20 @@ func (s *Store) deleteSQLiteV4RollupsTx(ctx context.Context, tx *sql.Tx, filter 
 			resolution, start, end, checksum, digestChecksum int64
 			count, codec, digestCodec                        int
 			payload, digestPayload                           []byte
+			axisCodec, axisChecksum                          sql.NullInt64
+			axisPayload                                      []byte
 		}
 		var blocks []block
 		for blockRows.Next() {
 			var value block
 			if err := blockRows.Scan(&value.resolution, &value.start, &value.end, &value.count, &value.codec, &value.checksum, &value.payload,
-				&value.digestCodec, &value.digestChecksum, &value.digestPayload); err != nil {
+				&value.digestCodec, &value.digestChecksum, &value.digestPayload, &value.axisCodec, &value.axisChecksum, &value.axisPayload); err != nil {
 				_ = blockRows.Close()
 				return total, err
 			}
 			value.payload = append([]byte(nil), value.payload...)
 			value.digestPayload = append([]byte(nil), value.digestPayload...)
+			value.axisPayload = append([]byte(nil), value.axisPayload...)
 			blocks = append(blocks, value)
 		}
 		if err := blockRows.Err(); err != nil {
@@ -1212,8 +1322,11 @@ func (s *Store) deleteSQLiteV4RollupsTx(ctx context.Context, tx *sql.Tx, filter 
 			return total, err
 		}
 		for _, value := range blocks {
-			records, err := decodeSQLiteV4RollupBlock(value.codec, value.count, uint32(value.checksum), value.payload,
-				value.digestCodec, uint32(value.digestChecksum), value.digestPayload, true)
+			records, err := decodeSQLiteV4RollupBlockWithAxisReference(
+				value.codec, value.count, uint32(value.checksum), value.payload,
+				value.axisCodec, value.axisChecksum, value.axisPayload,
+				value.digestCodec, uint32(value.digestChecksum), value.digestPayload, true,
+			)
 			if err != nil {
 				return total, err
 			}
@@ -1379,10 +1492,11 @@ func (s *Store) rewriteSQLiteV4LateRollupBlocksTx(ctx context.Context, tx *sql.T
 		records   []sqliteV4RollupRecord
 	}
 	blockRows, err := tx.QueryContext(ctx, fmt.Sprintf(
-		`SELECT start_nano, end_nano, bucket_count, codec, checksum, payload,
-		        digest_codec, digest_checksum, digest_payload FROM %s
-		 WHERE series_id = ? AND resolution_nano = ? AND end_nano >= ? AND start_nano <= ?
-		 ORDER BY start_nano`, s.tables.rollupBlocks,
+		`SELECT b.start_nano, b.end_nano, b.bucket_count, b.codec, b.checksum, b.payload,
+		        b.digest_codec, b.digest_checksum, b.digest_payload, a.codec, a.checksum, a.payload
+		 FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id
+		 WHERE b.series_id = ? AND b.resolution_nano = ? AND b.end_nano >= ? AND b.start_nano <= ?
+		 ORDER BY b.start_nano`, s.tables.rollupBlocks, s.tables.rollupAxes,
 	), seriesID, resolution, hot[0].bucketNano, hot[len(hot)-1].bucketNano)
 	if err != nil {
 		return false, err
@@ -1392,14 +1506,17 @@ func (s *Store) rewriteSQLiteV4LateRollupBlocksTx(ctx context.Context, tx *sql.T
 	for blockRows.Next() {
 		var startNano, endNano, checksum, digestChecksum int64
 		var count, codec, digestCodec int
-		var payload, digestPayload []byte
+		var payload, digestPayload, axisPayload []byte
+		var axisCodec, axisChecksum sql.NullInt64
 		if err := blockRows.Scan(&startNano, &endNano, &count, &codec, &checksum, &payload,
-			&digestCodec, &digestChecksum, &digestPayload); err != nil {
+			&digestCodec, &digestChecksum, &digestPayload, &axisCodec, &axisChecksum, &axisPayload); err != nil {
 			_ = blockRows.Close()
 			return false, err
 		}
-		records, err := decodeSQLiteV4RollupBlock(codec, count, uint32(checksum), payload,
-			digestCodec, uint32(digestChecksum), digestPayload, true)
+		records, err := decodeSQLiteV4RollupBlockWithAxisReference(
+			codec, count, uint32(checksum), payload, axisCodec, axisChecksum, axisPayload,
+			digestCodec, uint32(digestChecksum), digestPayload, true,
+		)
 		if err != nil {
 			_ = blockRows.Close()
 			return false, fmt.Errorf("metric: decode SQLite V4 late rollup block series=%d resolution=%d start=%d: %w", seriesID, resolution, startNano, err)

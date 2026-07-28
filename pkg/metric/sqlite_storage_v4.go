@@ -15,8 +15,8 @@ import (
 const (
 	sqliteStorageVersionV4              = 4
 	sqliteStorageVersionV4DigestHandoff = 5
-	sqliteV4HotWindow         = 5 * time.Minute
-	sqliteV4RollupFlushWindow = 30 * time.Minute
+	sqliteV4HotWindow                   = 5 * time.Minute
+	sqliteV4RollupFlushWindow           = 30 * time.Minute
 )
 
 // migrateSQLiteStorageV4 first brings legacy layouts to the normalized V3
@@ -134,21 +134,28 @@ func (s *Store) migrateSQLiteStorageV4(ctx context.Context) error {
 	}
 	s.reportMigrationProgress(MigrationPhaseCommitting, 1, 1, pointSourceCount+rollupSourceCount)
 	s.sqliteStorageV4 = true
-	_, handoffBuckets, err := s.migrateSQLiteV4RedundantRollupDigests(ctx, time.Now().UTC())
+	_, handoffBuckets, err := s.migrateSQLiteV4RedundantRollupDigests(ctx, time.Now().UTC(), true)
 	if err != nil {
 		return err
 	}
-	s.reportMigrationProgress(MigrationPhaseReclaiming, 0, 1, pointSourceCount+rollupSourceCount+handoffBuckets)
+	_, sharedBuckets, skippedBlocks, err := s.migrateSQLiteV4SharedRollupBlocks(ctx)
+	if err != nil {
+		return err
+	}
+	if skippedBlocks > 0 {
+		log.Printf("metric: deferred %d readable rollup blocks that could not yet be converted to shared-axis storage", skippedBlocks)
+	}
+	s.reportMigrationProgress(MigrationPhaseReclaiming, 0, 1, pointSourceCount+rollupSourceCount+handoffBuckets+sharedBuckets)
 	if err := s.fullSQLiteVacuum(ctx); err != nil {
 		// The V4 transaction is already fully validated and committed. A failed
 		// physical rewrite does not invalidate the logical migration.
 		log.Printf("metric: SQLite V4 post-migration vacuum skipped: %v", err)
 	}
-	s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, pointSourceCount+rollupSourceCount+handoffBuckets)
+	s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, pointSourceCount+rollupSourceCount+handoffBuckets+sharedBuckets)
 	if err := s.markSQLiteStorageV4DigestHandoff(ctx); err != nil {
 		return err
 	}
-	s.reportMigrationProgress(MigrationPhaseCompleted, 1, 1, pointSourceCount+rollupSourceCount+handoffBuckets)
+	s.reportMigrationProgress(MigrationPhaseCompleted, 1, 1, pointSourceCount+rollupSourceCount+handoffBuckets+sharedBuckets)
 	log.Printf("metric: migrated SQLite metric storage to V%d (%d raw points and %d rollups preserved bit-for-bit)", sqliteStorageVersionV4, pointSourceCount, rollupSourceCount)
 	return nil
 }
@@ -174,29 +181,36 @@ func (s *Store) ensureSQLiteStorageV4(ctx context.Context) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("metric: commit SQLite V4 verification: %w", err)
 	}
-	migratedBlocks, migratedBuckets, err := s.migrateSQLiteV4RollupBlocksToSplit(ctx)
+	var pendingSharedBlocks int64
+	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+s.tables.rollupBlocks+
+		" WHERE axis_id IS NULL OR codec != ? OR digest_codec != ?",
+		sqliteV4SharedRollupBlockCodec, sqliteV4StructuredRollupDigestCodec,
+	).Scan(&pendingSharedBlocks); err != nil {
+		return fmt.Errorf("metric: count pending shared-axis blocks: %w", err)
+	}
+	handoffBlocks, handoffBuckets, err := s.migrateSQLiteV4RedundantRollupDigests(ctx, time.Now().UTC(), pendingSharedBlocks > 0)
 	if err != nil {
 		return err
 	}
-	denseDigestBlocks, denseDigestBuckets, err := s.migrateSQLiteV4RollupDigestCodec(ctx)
+	sharedBlocks, sharedBuckets, skippedBlocks, err := s.migrateSQLiteV4SharedRollupBlocks(ctx)
 	if err != nil {
 		return err
 	}
-	handoffBlocks, handoffBuckets, err := s.migrateSQLiteV4RedundantRollupDigests(ctx, time.Now().UTC())
-	if err != nil {
-		return err
+	if skippedBlocks > 0 {
+		log.Printf("metric: deferred %d readable rollup blocks that could not yet be converted to shared-axis storage", skippedBlocks)
 	}
 	var autoVacuum int
 	if err := s.db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&autoVacuum); err != nil {
 		return fmt.Errorf("metric: inspect SQLite auto-vacuum mode: %w", err)
 	}
-	if migratedBlocks > 0 || denseDigestBlocks > 0 || handoffBlocks > 0 || autoVacuum != 2 {
-		s.reportMigrationProgress(MigrationPhaseReclaiming, 0, 1, migratedBuckets+denseDigestBuckets+handoffBuckets)
+	if handoffBlocks > 0 || sharedBlocks > 0 || autoVacuum != 2 {
+		preserved := handoffBuckets + sharedBuckets
+		s.reportMigrationProgress(MigrationPhaseReclaiming, 0, 1, preserved)
 		if err := s.fullSQLiteVacuum(ctx); err != nil {
 			return fmt.Errorf("metric: vacuum SQLite V4 rollup storage after codec migration: %w", err)
 		}
-		s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, migratedBuckets+denseDigestBuckets+handoffBuckets)
-		log.Printf("metric: migrated %d SQLite V4 rollup blocks (%d buckets) to split storage, %d digest blocks (%d buckets) to dense codec, and %d blocks (%d buckets) to digest handoff storage; reclaimed database space", migratedBlocks, migratedBuckets, denseDigestBlocks, denseDigestBuckets, handoffBlocks, handoffBuckets)
+		s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, preserved)
+		log.Printf("metric: migrated %d digest handoff blocks (%d buckets) and %d shared-axis blocks (%d buckets); reclaimed database space", handoffBlocks, handoffBuckets, sharedBlocks, sharedBuckets)
 	}
 	return nil
 }
