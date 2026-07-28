@@ -485,6 +485,12 @@ func (a *App) RunMetricStorageUpgrade(summary metric.SQLiteMigrationSummary) (bo
 
 // StartBackground 启动后台工作：定时任务。
 func (a *App) StartBackground() error {
+	stopReturnRouteRules := tasks.StartReturnRouteRuleWatcher()
+	a.addCleanup("return-route-rules", func(context.Context) error {
+		stopReturnRouteRules()
+		return nil
+	})
+
 	registerScheduledWork()
 	a.addCleanup("scheduler", func(context.Context) error {
 		corn.StopAll()

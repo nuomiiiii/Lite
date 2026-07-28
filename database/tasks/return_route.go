@@ -1,12 +1,9 @@
 package tasks
 
 import (
-	"context"
 	"fmt"
-	"net"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
@@ -128,7 +125,7 @@ func normalizeReturnRouteTask(task *models.ReturnRouteTask) error {
 }
 
 func returnRouteLines() []string {
-	return []string{"CMIN2", "CMI", "CMNET", "CN2 GIA", "CN2 GT", "163", "9929", "4837"}
+	return []string{"CMIN2", "CMI", "CMNET", "CN2 GIA", "CN2 GT", "163", "10099", "9929", "4837"}
 }
 
 func AddReturnRouteTask(task *models.ReturnRouteTask) (uint, bool, error) {
@@ -484,7 +481,8 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 		routePath = append(routePath, fmt.Sprintf("%d %s %.1fms", hop.TTL, ip, hop.LatencyMS))
 		publicIPs = append(publicIPs, ip)
 	}
-	asns := lookupASNs(publicIPs)
+	rules := currentReturnRouteRules()
+	asns := lookupASNsWithRules(publicIPs, rules)
 	asnPath := make(models.StringArray, 0, len(publicIPs))
 	seen := map[int]bool{}
 	for _, ip := range publicIPs {
@@ -494,7 +492,11 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 			seen[asn] = true
 		}
 	}
-	line, confidence := classifyReturnRouteHops(publicIPs, asns)
+	hops := make([]returnRouteSignature, 0, len(publicIPs))
+	for _, ip := range publicIPs {
+		hops = append(hops, returnRouteSignature{ip: ip, asn: asns[ip]})
+	}
+	line, confidence := classifyReturnRouteSignaturesWithRules(hops, rules)
 	probeError := strings.TrimSpace(result.Error)
 	if probeError == "" && len(publicIPs) == 0 {
 		probeError = "no route hops were returned"
@@ -720,163 +722,85 @@ func classifyReturnRouteHops(ips []string, asns map[string]int) (string, float64
 }
 
 func classifyReturnRouteSignatures(hops []returnRouteSignature) (string, float64) {
+	return classifyReturnRouteSignaturesWithRules(hops, currentReturnRouteRules())
+}
+
+func classifyReturnRouteSignaturesWithRules(hops []returnRouteSignature, rules *compiledReturnRouteRules) (string, float64) {
 
 	// Prefer the first premium ingress visible in the ordered path. The target
 	// carrier's ordinary backbone usually appears later and must not mask an
 	// injected route through another carrier.
 	for index, hop := range hops {
-		switch hop.asn {
-		case 58807:
-			return "CMIN2", 0.98
-		case 58453:
-			return "CMI", 0.96
-		case 23764:
-			if hasCN2BackboneAfter(hops, index) {
-				return "CN2 GIA", 0.96
-			}
-		case 9929:
-			return "9929", 0.98
-		case 4809:
-			if hasASNBefore(hops, index, 23764) {
-				return "CN2 GIA", 0.96
-			}
-			return "CN2 GT", 0.88
+		// Locally maintained backbone prefixes take precedence over a conflicting
+		// external ASN response. This covers known cases such as 210.14.0.0/16.
+		if rules.hasPrefix("unicom_10099", hop.ip) {
+			return "10099", rules.document.Confidence["unicom_10099"]
 		}
-		if isCN2BackboneIP(hop.ip) {
-			if hasASNBefore(hops, index, 23764) {
-				return "CN2 GIA", 0.96
+		if rules.hasPrefix("unicom_9929", hop.ip) {
+			return "9929", rules.document.Confidence["unicom_9929"]
+		}
+		switch {
+		case rules.hasSignature("cmin2", hop):
+			return "CMIN2", rules.document.Confidence["cmin2"]
+		case rules.hasSignature("cmi", hop):
+			return "CMI", rules.document.Confidence["cmi"]
+		case rules.hasSignature("cn2_global", hop):
+			if hasCN2BackboneAfter(hops, index, rules) {
+				return "CN2 GIA", rules.document.Confidence["cn2_gia"]
 			}
-			if hasASNBefore(hops, index, 4134, 4812) {
-				return "CN2 GT", 0.94
+		case rules.hasSignature("unicom_10099", hop):
+			return "10099", rules.document.Confidence["unicom_10099"]
+		case rules.hasSignature("unicom_9929", hop):
+			return "9929", rules.document.Confidence["unicom_9929"]
+		case rules.hasSignature("cn2_backbone", hop):
+			if hasASNGroupBefore(hops, index, rules, "cn2_global") {
+				return "CN2 GIA", rules.document.Confidence["cn2_gia"]
 			}
-			return "CN2 GT", 0.86
+			return "CN2 GT", rules.document.Confidence["cn2_gt"]
+		}
+		if rules.hasPrefix("cn2_backbone", hop.ip) {
+			if hasASNGroupBefore(hops, index, rules, "cn2_global") {
+				return "CN2 GIA", rules.document.Confidence["cn2_gia"]
+			}
+			if hasASNGroupBefore(hops, index, rules, "telecom_163") {
+				return "CN2 GT", rules.document.Confidence["cn2_gt_strong"]
+			}
+			return "CN2 GT", rules.document.Confidence["cn2_gt_prefix_only"]
 		}
 	}
 
 	for _, hop := range hops {
-		switch hop.asn {
-		case 4134, 4812:
-			return "163", 0.92
-		case 4837:
-			return "4837", 0.96
-		case 9808, 56040, 56041, 56046:
-			return "CMNET", 0.90
+		switch {
+		case rules.hasSignature("telecom_163", hop):
+			return "163", rules.document.Confidence["telecom_163"]
+		case rules.hasSignature("unicom_4837", hop):
+			return "4837", rules.document.Confidence["unicom_4837"]
+		case rules.hasSignature("cmnet", hop):
+			return "CMNET", rules.document.Confidence["cmnet"]
 		}
-		if is163BackboneIP(hop.ip) {
-			return "163", 0.88
+		if rules.hasPrefix("telecom_163", hop.ip) {
+			return "163", rules.document.Confidence["telecom_163_prefix"]
 		}
 	}
 	return "UNKNOWN", 0
 }
 
-func hasASNBefore(hops []returnRouteSignature, index int, values ...int) bool {
-	wanted := make(map[int]bool, len(values))
-	for _, value := range values {
-		wanted[value] = true
-	}
+func hasASNGroupBefore(hops []returnRouteSignature, index int, rules *compiledReturnRouteRules, group string) bool {
 	for i := 0; i < index; i++ {
-		if wanted[hops[i].asn] {
+		if rules.hasSignature(group, hops[i]) {
 			return true
 		}
 	}
 	return false
 }
 
-func hasCN2BackboneAfter(hops []returnRouteSignature, index int) bool {
+func hasCN2BackboneAfter(hops []returnRouteSignature, index int, rules *compiledReturnRouteRules) bool {
 	for i := index + 1; i < len(hops); i++ {
-		if hops[i].asn == 4809 || isCN2BackboneIP(hops[i].ip) {
+		if rules.hasSignature("cn2_backbone", hops[i]) {
 			return true
 		}
 	}
 	return false
-}
-
-func isCN2BackboneIP(value string) bool {
-	ip := net.ParseIP(strings.TrimSpace(value)).To4()
-	return ip != nil && ip[0] == 59 && ip[1] == 43
-}
-
-func is163BackboneIP(value string) bool {
-	ip := net.ParseIP(strings.TrimSpace(value)).To4()
-	return ip != nil && ip[0] == 202 && ip[1] == 97
-}
-
-type asnCacheEntry struct {
-	asn     int
-	expires time.Time
-}
-
-var asnCache = struct {
-	sync.RWMutex
-	values map[string]asnCacheEntry
-}{values: map[string]asnCacheEntry{}}
-
-func lookupASNs(ips []string) map[string]int {
-	unique := map[string]struct{}{}
-	for _, ip := range ips {
-		unique[ip] = struct{}{}
-	}
-	result := make(map[string]int, len(unique))
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
-	defer cancel()
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for ip := range unique {
-		ip := ip
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			asn := lookupASN(ctx, ip)
-			mu.Lock()
-			result[ip] = asn
-			mu.Unlock()
-		}()
-	}
-	wg.Wait()
-	return result
-}
-
-func lookupASN(ctx context.Context, value string) int {
-	ip := net.ParseIP(strings.TrimSpace(value))
-	if ip == nil || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-		return 0
-	}
-	key := ip.String()
-	asnCache.RLock()
-	cached, ok := asnCache.values[key]
-	asnCache.RUnlock()
-	if ok && cached.expires.After(time.Now()) {
-		return cached.asn
-	}
-	query := cymruQueryName(ip)
-	texts, err := net.DefaultResolver.LookupTXT(ctx, query)
-	asn := 0
-	if err == nil && len(texts) > 0 {
-		fields := strings.Fields(strings.ReplaceAll(texts[0], "|", " "))
-		if len(fields) > 0 {
-			asn, _ = strconv.Atoi(fields[0])
-		}
-	}
-	cacheTTL := 5 * time.Minute
-	if asn > 0 {
-		cacheTTL = 24 * time.Hour
-	}
-	asnCache.Lock()
-	asnCache.values[key] = asnCacheEntry{asn: asn, expires: time.Now().Add(cacheTTL)}
-	asnCache.Unlock()
-	return asn
-}
-
-func cymruQueryName(ip net.IP) string {
-	if v4 := ip.To4(); v4 != nil {
-		return fmt.Sprintf("%d.%d.%d.%d.origin.asn.cymru.com", v4[3], v4[2], v4[1], v4[0])
-	}
-	hex := fmt.Sprintf("%032x", ip.To16())
-	chars := strings.Split(hex, "")
-	for left, right := 0, len(chars)-1; left < right; left, right = left+1, right-1 {
-		chars[left], chars[right] = chars[right], chars[left]
-	}
-	return strings.Join(chars, ".") + ".origin6.asn.cymru.com"
 }
 
 func ReloadReturnRouteSchedule() error {

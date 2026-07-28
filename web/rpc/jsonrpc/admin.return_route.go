@@ -2,6 +2,7 @@ package jsonrpc
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
@@ -19,6 +20,10 @@ func init() {
 	RegisterWithGroupAndMeta("editReturnRouteTask", rpc.RoleAdmin, adminEditReturnRouteTask, &rpc.MethodMeta{Name: "admin:editReturnRouteTask", Summary: "Edit a return route task"})
 	RegisterWithGroupAndMeta("deleteReturnRouteTask", rpc.RoleAdmin, adminDeleteReturnRouteTask, &rpc.MethodMeta{Name: "admin:deleteReturnRouteTask", Summary: "Delete return route tasks"})
 	RegisterWithGroupAndMeta("probeReturnRouteNow", rpc.RoleAdmin, adminProbeReturnRouteNow, &rpc.MethodMeta{Name: "admin:probeReturnRouteNow", Summary: "Dispatch a return route probe immediately"})
+	RegisterWithGroupAndMeta("getReturnRouteRules", rpc.RoleAdmin, adminGetReturnRouteRules, &rpc.MethodMeta{Name: "admin:getReturnRouteRules", Summary: "Get the active return route signature rules and reload status"})
+	RegisterWithGroupAndMeta("reloadReturnRouteRules", rpc.RoleAdmin, adminReloadReturnRouteRules, &rpc.MethodMeta{Name: "admin:reloadReturnRouteRules", Summary: "Reload return route signature rules from disk"})
+	RegisterWithGroupAndMeta("updateReturnRouteRules", rpc.RoleAdmin, adminUpdateReturnRouteRules, &rpc.MethodMeta{Name: "admin:updateReturnRouteRules", Summary: "Validate, store and activate return route signature rules"})
+	RegisterWithGroupAndMeta("refreshReturnRouteBGPRules", rpc.RoleAdmin, adminRefreshReturnRouteBGPRules, &rpc.MethodMeta{Name: "admin:refreshReturnRouteBGPRules", Summary: "Download and activate the latest filtered BGP prefix rules"})
 }
 
 func adminGetReturnRouteSummary(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
@@ -115,4 +120,41 @@ func adminProbeReturnRouteNow(_ context.Context, req *rpc.JsonRpcRequest) (any, 
 		return nil, rpc.MakeError(rpc.InternalError, "agent is offline or does not support route probes", nil)
 	}
 	return map[string]any{"dispatched": true}, nil
+}
+
+func adminGetReturnRouteRules(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	return tasks.GetReturnRouteRules(), nil
+}
+
+func adminReloadReturnRouteRules(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	result, err := tasks.ReloadReturnRouteRules()
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), result)
+	}
+	return result, nil
+}
+
+func adminUpdateReturnRouteRules(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		Rules json.RawMessage `json:"rules"`
+	}
+	if err := req.BindParams(&params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	if len(params.Rules) == 0 {
+		return nil, rpc.MakeError(rpc.InvalidParams, "rules are required", nil)
+	}
+	result, err := tasks.UpdateReturnRouteRules(params.Rules)
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), result)
+	}
+	return result, nil
+}
+
+func adminRefreshReturnRouteBGPRules(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	result, err := tasks.RefreshReturnRouteBGPRules(ctx)
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), result)
+	}
+	return result, nil
 }

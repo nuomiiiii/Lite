@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-29T00:00:00Z",
+  "source": "bgp.tools/table.jsonl + maintained overrides",
+  "prefix_groups": {
+    "cmin2": [],
+    "cmi": [],
+    "cn2_global": [],
+    "cn2_backbone": [],
+    "telecom_163": [],
+    "unicom_10099": [],
+    "unicom_9929": [
+      "210.14.0.0/16"
+    ],
+    "unicom_4837": [],
+    "cmnet": []
+  }
+}

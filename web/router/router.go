@@ -261,5 +261,9 @@ func registerAdminRoutes(r *gin.Engine) {
 		returnRoute.POST("/edit", jsonRpc.Bind("admin:editReturnRouteTask"))
 		returnRoute.POST("/delete", jsonRpc.Bind("admin:deleteReturnRouteTask"))
 		returnRoute.POST("/probe", jsonRpc.Bind("admin:probeReturnRouteNow"))
+		returnRoute.GET("/rules", jsonRpc.Bind("admin:getReturnRouteRules"))
+		returnRoute.POST("/rules/reload", jsonRpc.Bind("admin:reloadReturnRouteRules"))
+		returnRoute.POST("/rules/update", jsonRpc.Bind("admin:updateReturnRouteRules"))
+		returnRoute.POST("/rules/refresh", jsonRpc.Bind("admin:refreshReturnRouteBGPRules"))
 	}
 }

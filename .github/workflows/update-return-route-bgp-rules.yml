@@ -1,0 +1,35 @@
+name: Update return route BGP rules
+
+on:
+  schedule:
+    - cron: "17 */2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-return-route-bgp-rules
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Generate filtered BGP signature rules
+        run: python tools/update_return_route_bgp_rules.py
+      - name: Commit updated rules
+        run: |
+          if git diff --quiet -- database/tasks/return_route_bgp_prefixes.json; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add database/tasks/return_route_bgp_prefixes.json
+          git commit -m "chore: update return route BGP rules [skip ci]"
+          git push

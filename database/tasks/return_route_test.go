@@ -1,7 +1,13 @@
 package tasks
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net"
+	"os"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +27,7 @@ func TestClassifyReturnRoute(t *testing.T) {
 		{models.StringArray{"AS58453", "AS9808"}, "CMI"},
 		{models.StringArray{"AS23764", "AS4809"}, "CN2 GIA"},
 		{models.StringArray{"AS4809", "AS4134"}, "CN2 GT"},
+		{models.StringArray{"AS10099", "AS4837"}, "10099"},
 		{models.StringArray{"AS9929", "AS4134"}, "9929"},
 		{models.StringArray{"AS4134"}, "163"},
 		{models.StringArray{"AS4837"}, "4837"},
@@ -38,7 +45,7 @@ func TestReturnRouteLinesAllowCrossCarrierExpectations(t *testing.T) {
 	want := map[string]bool{
 		"CMIN2": true, "CMI": true, "CMNET": true,
 		"CN2 GIA": true, "CN2 GT": true, "163": true,
-		"9929": true, "4837": true,
+		"10099": true, "9929": true, "4837": true,
 	}
 	for _, line := range returnRouteLines() {
 		delete(want, line)
@@ -46,6 +53,19 @@ func TestReturnRouteLinesAllowCrossCarrierExpectations(t *testing.T) {
 	if len(want) != 0 {
 		t.Fatalf("return route options are missing cross-carrier lines: %v", want)
 	}
+	lines := returnRouteLines()
+	if indexOfReturnRouteLine(lines, "10099") >= indexOfReturnRouteLine(lines, "9929") {
+		t.Fatalf("10099 must be listed before 9929: %v", lines)
+	}
+}
+
+func indexOfReturnRouteLine(lines []string, wanted string) int {
+	for index, line := range lines {
+		if line == wanted {
+			return index
+		}
+	}
+	return len(lines)
 }
 
 func TestClassifyReturnRouteUsesLocalCN2PrefixWhenCymruMisses(t *testing.T) {
@@ -62,6 +82,47 @@ func TestClassifyReturnRouteUsesLocalCN2PrefixWhenCymruMisses(t *testing.T) {
 	gias := map[string]int{"207.57.144.1": 23764}
 	if line, confidence := classifyReturnRouteHops([]string{"207.57.144.1", "59.43.159.17"}, gias); line != "CN2 GIA" || confidence < 0.9 {
 		t.Fatalf("AS23764 -> 59.43 classified as %q, %.2f; want CN2 GIA", line, confidence)
+	}
+}
+
+func TestRemote9929PrefixOverridesConflictingASN(t *testing.T) {
+	data, err := os.ReadFile("return_route_bgp_prefixes.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bgp, err := compileReturnRouteBGPRules(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := mergeReturnRouteRules(currentReturnRouteRules(), bgp)
+	hops := []returnRouteSignature{{ip: "210.14.169.190", asn: 4837}}
+	if line, confidence := classifyReturnRouteSignaturesWithRules(hops, rules); line != "9929" || confidence < 0.9 {
+		t.Fatalf("remote 210.14.0.0/16 rule classified as %q, %.2f; want 9929", line, confidence)
+	}
+}
+
+func TestASNProvidersUseOrderedFallback(t *testing.T) {
+	calls := make([]string, 0, 3)
+	provider := func(name string, asn int, err error) returnRouteASNProvider {
+		return func(context.Context, net.IP) (int, error) {
+			calls = append(calls, name)
+			return asn, err
+		}
+	}
+	got := lookupASNWithProviders(context.Background(), net.ParseIP("162.219.85.173"), []returnRouteASNProvider{
+		provider("cymru", 0, errors.New("miss")),
+		provider("ripestat", 10099, nil),
+		provider("bgpview", 9929, nil),
+	})
+	if got != 10099 || strings.Join(calls, ",") != "cymru,ripestat" {
+		t.Fatalf("ordered fallback = AS%d via %v; want AS10099 via Cymru then RIPEstat", got, calls)
+	}
+}
+
+func TestReturnRouteCooldownDefaultIsThirtyMinutes(t *testing.T) {
+	field, ok := reflect.TypeOf(models.ReturnRouteTask{}).FieldByName("Cooldown")
+	if !ok || !strings.Contains(field.Tag.Get("gorm"), "default:1800") {
+		t.Fatalf("ReturnRouteTask cooldown tag = %q; want default:1800", field.Tag.Get("gorm"))
 	}
 }
 

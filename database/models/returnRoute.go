@@ -17,7 +17,7 @@ type ReturnRouteTask struct {
 	Interval        int       `json:"interval" gorm:"type:int;not null;default:180"`
 	SwitchConfirm   int       `json:"switch_confirm" gorm:"type:int;not null;default:2"`
 	RecoveryConfirm int       `json:"recovery_confirm" gorm:"type:int;not null;default:3"`
-	Cooldown        int       `json:"cooldown" gorm:"type:int;not null;default:240"`
+	Cooldown        int       `json:"cooldown" gorm:"type:int;not null;default:1800"`
 	Notify          bool      `json:"notify" gorm:"type:boolean;not null;default:true"`
 	NotifyRecovery  bool      `json:"notify_recovery" gorm:"type:boolean;not null;default:true"`
 	Enabled         bool      `json:"enabled" gorm:"type:boolean;not null;default:true"`

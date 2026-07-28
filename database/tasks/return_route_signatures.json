@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "rule_version": "2026.07.29.1",
+  "asn_groups": {
+    "cmin2": [58807],
+    "cmi": [58453],
+    "cn2_global": [23764],
+    "cn2_backbone": [4809],
+    "telecom_163": [4134, 4812],
+    "unicom_10099": [10099],
+    "unicom_9929": [9929],
+    "unicom_4837": [4837],
+    "cmnet": [9808, 56040, 56041, 56046]
+  },
+  "prefix_groups": {
+    "cmin2": [],
+    "cmi": [],
+    "cn2_global": [],
+    "cn2_backbone": ["59.43.0.0/16"],
+    "telecom_163": ["202.97.0.0/16"],
+    "unicom_10099": [],
+    "unicom_9929": [],
+    "unicom_4837": [],
+    "cmnet": []
+  },
+  "confidence": {
+    "cmin2": 0.98,
+    "cmi": 0.96,
+    "cn2_gia": 0.96,
+    "cn2_gt_strong": 0.94,
+    "cn2_gt": 0.88,
+    "cn2_gt_prefix_only": 0.86,
+    "unicom_10099": 0.98,
+    "unicom_9929": 0.98,
+    "unicom_4837": 0.96,
+    "telecom_163": 0.92,
+    "telecom_163_prefix": 0.88,
+    "cmnet": 0.90
+  }
+}
