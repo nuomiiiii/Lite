@@ -19,6 +19,13 @@ type returnRouteTaskManager struct {
 
 var returnRouteManager = &returnRouteTaskManager{tasks: map[uint]models.ReturnRouteTask{}}
 
+const returnRouteProbeTimeout = 90 * time.Second
+
+var returnRouteProbes = struct {
+	sync.Mutex
+	started map[uint]time.Time
+}{started: map[uint]time.Time{}}
+
 func (m *returnRouteTaskManager) Reload(tasks []models.ReturnRouteTask) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -49,10 +56,46 @@ func DispatchReturnRouteTask(task models.ReturnRouteTask) bool {
 	if !agentRuntime.IsV2Client(task.Client) {
 		return false
 	}
-	return agentRuntime.DispatchV2Event(task.Client, v2.MethodAgentRoute, v2.RouteParams{
+	dispatched := agentRuntime.DispatchV2Event(task.Client, v2.MethodAgentRoute, v2.RouteParams{
 		TaskID: task.Id, Protocol: task.Protocol, Target: task.Target,
 		IPVersion: task.IPVersion, MaxHops: 30,
 	})
+	if dispatched {
+		StartReturnRouteProbe(task.Id)
+	}
+	return dispatched
+}
+
+func StartReturnRouteProbe(taskID uint) {
+	if taskID == 0 {
+		return
+	}
+	returnRouteProbes.Lock()
+	if _, exists := returnRouteProbes.started[taskID]; !exists {
+		returnRouteProbes.started[taskID] = time.Now()
+	}
+	returnRouteProbes.Unlock()
+}
+
+func ProbingReturnRouteTaskIDs() []uint {
+	returnRouteProbes.Lock()
+	defer returnRouteProbes.Unlock()
+	now := time.Now()
+	ids := make([]uint, 0, len(returnRouteProbes.started))
+	for id, started := range returnRouteProbes.started {
+		if now.Sub(started) >= returnRouteProbeTimeout {
+			delete(returnRouteProbes.started, id)
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func FinishReturnRouteProbe(taskID uint) {
+	returnRouteProbes.Lock()
+	delete(returnRouteProbes.started, taskID)
+	returnRouteProbes.Unlock()
 }
 
 func ReloadReturnRouteSchedule(tasks []models.ReturnRouteTask) error {

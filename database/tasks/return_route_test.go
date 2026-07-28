@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/utils"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -156,6 +157,23 @@ func TestQueryReturnRouteTasksFiltersAndPaginates(t *testing.T) {
 	}
 	if disabled.Total != 1 || disabled.Tasks[0].Id != tasks[2].Id {
 		t.Fatalf("disabled tasks = %#v", disabled.Tasks)
+	}
+
+	utils.StartReturnRouteProbe(tasks[1].Id)
+	defer utils.FinishReturnRouteProbe(tasks[1].Id)
+	probing, err := queryReturnRouteTasks(db, ReturnRouteTaskQuery{State: "probing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probing.Total != 1 || len(probing.Tasks) != 1 || probing.Tasks[0].Id != tasks[1].Id || len(probing.ProbingTaskIDs) != 1 || probing.ProbingTaskIDs[0] != tasks[1].Id {
+		t.Fatalf("probing tasks = %#v, probing ids=%v, total=%d", probing.Tasks, probing.ProbingTaskIDs, probing.Total)
+	}
+	healthyWhileProbing, err := queryReturnRouteTasks(db, ReturnRouteTaskQuery{State: "healthy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if healthyWhileProbing.Total != 0 {
+		t.Fatalf("healthy filter included an in-flight probe: %#v", healthyWhileProbing.Tasks)
 	}
 }
 

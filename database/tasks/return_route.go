@@ -42,11 +42,12 @@ type ReturnRouteTaskQuery struct {
 }
 
 type ReturnRouteTaskPage struct {
-	Tasks    []models.ReturnRouteTask   `json:"tasks"`
-	Statuses []models.ReturnRouteStatus `json:"statuses"`
-	Total    int64                      `json:"total"`
-	Page     int                        `json:"page"`
-	PageSize int                        `json:"page_size"`
+	Tasks          []models.ReturnRouteTask   `json:"tasks"`
+	Statuses       []models.ReturnRouteStatus `json:"statuses"`
+	ProbingTaskIDs []uint                     `json:"probing_task_ids"`
+	Total          int64                      `json:"total"`
+	Page           int                        `json:"page"`
+	PageSize        int                        `json:"page_size"`
 }
 
 type ReturnRouteEventQuery struct {
@@ -83,7 +84,7 @@ func normalizeReturnRouteTask(task *models.ReturnRouteTask) error {
 	task.ExpectedLine = strings.ToUpper(strings.TrimSpace(task.ExpectedLine))
 	task.Protocol = strings.ToLower(strings.TrimSpace(task.Protocol))
 	if task.Name == "" || task.Client == "" || task.Target == "" || task.ExpectedLine == "" {
-		return fmt.Errorf("name, client, target and expected_line are required")
+		return fmt.Errorf("任务名称、客户端、探测目标和预期线路为必填项")
 	}
 	if task.Carrier != "mobile" && task.Carrier != "telecom" && task.Carrier != "unicom" {
 		return fmt.Errorf("unsupported carrier %q", task.Carrier)
@@ -241,7 +242,7 @@ func QueryReturnRouteTasks(params ReturnRouteTaskQuery) (ReturnRouteTaskPage, er
 func queryReturnRouteTasks(db *gorm.DB, params ReturnRouteTaskQuery) (ReturnRouteTaskPage, error) {
 	page, pageSize := normalizeReturnRoutePagination(params.Page, params.PageSize)
 	query, err := filterReturnRouteTasks(db.Model(&models.ReturnRouteTask{}), params, db)
-	result := ReturnRouteTaskPage{Tasks: []models.ReturnRouteTask{}, Statuses: []models.ReturnRouteStatus{}, Page: page, PageSize: pageSize}
+	result := ReturnRouteTaskPage{Tasks: []models.ReturnRouteTask{}, Statuses: []models.ReturnRouteStatus{}, ProbingTaskIDs: []uint{}, Page: page, PageSize: pageSize}
 	if err != nil {
 		return result, err
 	}
@@ -258,6 +259,15 @@ func queryReturnRouteTasks(db *gorm.DB, params ReturnRouteTaskQuery) (ReturnRout
 	if len(ids) > 0 {
 		if err := db.Where("task_id IN ?", ids).Find(&result.Statuses).Error; err != nil {
 			return result, err
+		}
+		pageTasks := make(map[uint]bool, len(ids))
+		for _, id := range ids {
+			pageTasks[id] = true
+		}
+		for _, id := range utils.ProbingReturnRouteTaskIDs() {
+			if pageTasks[id] {
+				result.ProbingTaskIDs = append(result.ProbingTaskIDs, id)
+			}
 		}
 	}
 	return result, nil
@@ -284,9 +294,22 @@ func filterReturnRouteTasks(query *gorm.DB, params ReturnRouteTaskQuery, db *gor
 		allStatuses := db.Model(&models.ReturnRouteStatus{}).Select("task_id")
 		pendingStatuses := db.Model(&models.ReturnRouteStatus{}).Select("task_id").Where("state = ?", "pending")
 		query = query.Where("enabled = ?", true).Where("(id NOT IN (?) OR id IN (?))", allStatuses, pendingStatuses)
+		if probing := utils.ProbingReturnRouteTaskIDs(); len(probing) > 0 {
+			query = query.Where("id NOT IN ?", probing)
+		}
+	case "probing":
+		probing := utils.ProbingReturnRouteTaskIDs()
+		if len(probing) == 0 {
+			query = query.Where("1 = 0")
+		} else {
+			query = query.Where("enabled = ? AND id IN ?", true, probing)
+		}
 	case "observing", "healthy", "switched", "unknown":
 		statuses := db.Model(&models.ReturnRouteStatus{}).Select("task_id").Where("state = ?", state)
 		query = query.Where("id IN (?)", statuses)
+		if probing := utils.ProbingReturnRouteTaskIDs(); len(probing) > 0 {
+			query = query.Where("id NOT IN ?", probing)
+		}
 	default:
 		return query, fmt.Errorf("unsupported state %q", state)
 	}
@@ -445,6 +468,7 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 	if !task.Enabled || task.Client != client {
 		return fmt.Errorf("return route task is not assigned to this client")
 	}
+	defer utils.FinishReturnRouteProbe(task.Id)
 	now := result.FinishedAt.UTC()
 	if now.IsZero() || now.After(time.Now().UTC().Add(time.Minute)) {
 		now = time.Now().UTC()
