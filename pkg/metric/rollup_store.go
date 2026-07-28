@@ -154,6 +154,10 @@ func (s *Store) compactMetricIncrementalChunk(ctx context.Context, metricName st
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		written, completed, err := s.compactMetricIncrementalChunkOnce(ctx, metricName, now, policy, obsoleteIntervals)
+		if errors.Is(err, errSQLiteV4DigestHandoffDeferred) {
+			log.Printf("metric: 摘要接力暂缓，原数据已保留，将在后续压缩周期自动重试: metric=%q", metricName)
+			return 0, true, nil
+		}
 		if err == nil {
 			return written, completed, nil
 		}
