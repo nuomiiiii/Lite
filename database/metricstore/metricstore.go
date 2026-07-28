@@ -524,14 +524,20 @@ func Compact(ctx context.Context, now time.Time) (int, error) {
 	var compactErrors []error
 	for i := 0; i < len(defs); i++ {
 		idx := (start + i) % len(defs)
-		n, err := activeStore.CompactMetric(ctx, defs[idx].Name, now)
+		metricName := defs[idx].Name
+		n, err := activeStore.CompactMetric(ctx, metricName, now)
+		if metric.IsDigestHandoffDeferred(err) {
+			handleDigestHandoffDeferred(metricName, err, time.Now().UTC())
+			continue
+		}
 		if err != nil {
 			if failedAt < 0 {
 				failedAt = idx
 			}
-			compactErrors = append(compactErrors, fmt.Errorf("compact metric %q: %w", defs[idx].Name, err))
+			compactErrors = append(compactErrors, fmt.Errorf("compact metric %q: %w", metricName, err))
 			continue
 		}
+		clearDigestHandoffDeferred(metricName)
 		total += n
 	}
 	if err := finishCompactCycle(ctx, activeStore, now); err != nil {
@@ -543,6 +549,34 @@ func Compact(ctx context.Context, now time.Time) (int, error) {
 		compactAt = start
 	}
 	return total, errors.Join(compactErrors...)
+}
+
+func handleDigestHandoffDeferred(metricName string, err error, at time.Time) {
+	reason := digestHandoffDeferredReason(err)
+	recordDigestHandoffDeferred(metricName, reason, at)
+	logger.Infof("metricstore", "摘要接力暂缓，原数据已保留，将在后续压缩周期自动重试: metric=%q; reason=%s; detail=%v", metricName, reason, err)
+}
+
+func digestHandoffDeferredReason(err error) string {
+	detail := err.Error()
+	coordinate := ""
+	if index := strings.Index(detail, "series="); index >= 0 {
+		coordinate = detail[index:]
+	} else if index := strings.Index(detail, "bucket="); index >= 0 {
+		coordinate = detail[index:]
+	}
+	if index := strings.IndexAny(coordinate, "\r\n"); index >= 0 {
+		coordinate = coordinate[:index]
+	}
+
+	reason := "细粒度与粗粒度摘要校验暂未通过"
+	if strings.Contains(detail, "finer digest missing") {
+		reason = "细粒度摘要尚未完整"
+	}
+	if coordinate != "" {
+		reason += "（" + coordinate + "）"
+	}
+	return reason + "，原数据已保留，将在后续压缩周期自动重试"
 }
 
 // CompactStep compacts one metric and advances the rotating cursor. Cleanup
@@ -585,9 +619,15 @@ func CompactStep(ctx context.Context, now time.Time) (written int, cycleComplete
 	compactAt = (compactAt + 1) % len(defs)
 	cycleCompleted = compactAt == 0
 	beginCompactStep(activeStore.Driver(), defs[idx].Name, idx, len(defs), time.Now().UTC())
-	written, compactErr := activeStore.CompactMetric(ctx, defs[idx].Name, now)
-	if compactErr != nil {
-		compactErr = fmt.Errorf("compact metric %q: %w", defs[idx].Name, compactErr)
+	metricName := defs[idx].Name
+	written, compactErr := activeStore.CompactMetric(ctx, metricName, now)
+	if metric.IsDigestHandoffDeferred(compactErr) {
+		handleDigestHandoffDeferred(metricName, compactErr, time.Now().UTC())
+		compactErr = nil
+	} else if compactErr == nil {
+		clearDigestHandoffDeferred(metricName)
+	} else {
+		compactErr = fmt.Errorf("compact metric %q: %w", metricName, compactErr)
 	}
 	if !cycleCompleted {
 		finishCompactStep(written, false, compactErr, time.Now().UTC())
