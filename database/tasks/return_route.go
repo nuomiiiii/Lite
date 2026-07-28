@@ -544,7 +544,7 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 		if shouldSendReturnRouteEventNotification(task, *event) {
 			go sendReturnRouteNotification(task, *event, false)
 		}
-	} else if task.Notify {
+	} else if shouldSendReturnRouteRepeatNotification(task, statusSnapshot, now) {
 		if reminder := buildReturnRouteRepeatNotification(task, statusSnapshot, now); reminder != nil {
 			go sendReturnRouteNotification(task, *reminder, true)
 		}
@@ -561,6 +561,17 @@ func shouldSendReturnRouteEventNotification(task models.ReturnRouteTask, event m
 	default:
 		return false
 	}
+}
+
+func shouldSendReturnRouteRepeatNotification(task models.ReturnRouteTask, status models.ReturnRouteStatus, now time.Time) bool {
+	if !task.Notify || status.State != "switched" || strings.TrimSpace(status.CurrentLine) == "" {
+		return false
+	}
+	return returnRouteRepeatNotificationDue(status.LastNotifiedAt, task.Cooldown, now)
+}
+
+func returnRouteRepeatNotificationDue(lastNotifiedAt *time.Time, cooldown int, now time.Time) bool {
+	return lastNotifiedAt == nil || cooldown <= 0 || !now.Before(lastNotifiedAt.Add(time.Duration(cooldown)*time.Second))
 }
 
 func advanceReturnRouteState(status *models.ReturnRouteStatus, task models.ReturnRouteTask, line string, now time.Time) *models.ReturnRouteEvent {
@@ -629,7 +640,24 @@ func buildReturnRouteRepeatNotification(task models.ReturnRouteTask, status mode
 
 func sendReturnRouteNotification(task models.ReturnRouteTask, event models.ReturnRouteEvent, repeated bool) {
 	db := dbcore.GetDBInstance()
+	var currentTask models.ReturnRouteTask
+	if err := db.Select("notify", "notify_recovery", "cooldown").First(&currentTask, task.Id).Error; err != nil {
+		return
+	}
+	if repeated {
+		if !currentTask.Notify {
+			return
+		}
+	} else if !shouldSendReturnRouteEventNotification(currentTask, event) {
+		return
+	}
 	now := time.Now().UTC()
+	if repeated {
+		var status models.ReturnRouteStatus
+		if err := db.First(&status, "task_id = ?", task.Id).Error; err != nil || !returnRouteRepeatNotificationDue(status.LastNotifiedAt, currentTask.Cooldown, now) {
+			return
+		}
+	}
 	title := "回程线路已切换"
 	if repeated {
 		title = "回程线路仍处于切线状态"
