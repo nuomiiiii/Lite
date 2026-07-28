@@ -40,6 +40,12 @@ type databaseStorageStatus struct {
 	Error    string                 `json:"error,omitempty"`
 }
 
+type databaseDigestHandoffStatus struct {
+	Metric string     `json:"metric"`
+	Reason string     `json:"reason"`
+	At     *time.Time `json:"at"`
+}
+
 type databaseRuntimeStatus struct {
 	Compacting                    bool       `json:"compacting"`
 	CurrentMetric                 string     `json:"current_metric"`
@@ -56,7 +62,8 @@ type databaseRuntimeStatus struct {
 	CheckpointPending             bool       `json:"checkpoint_pending"`
 	ConsecutiveCheckpointFailures int        `json:"consecutive_checkpoint_failures"`
 	ConsecutiveCycleFailures      int        `json:"consecutive_cycle_failures"`
-	LastError                     string     `json:"last_error,omitempty"`
+	LastError                     string                         `json:"last_error,omitempty"`
+	DigestHandoffDeferred         []databaseDigestHandoffStatus `json:"digest_handoff_deferred"`
 }
 
 type databaseStatusResponse struct {
@@ -210,6 +217,13 @@ func newDatabaseRuntimeStatus(driver metric.Driver, runtime metricstore.RuntimeS
 		status.LastCheckpointAttemptAt = nonZeroTimePointer(runtime.LastCheckpointAttemptAt)
 		status.LastCheckpointSuccessAt = nonZeroTimePointer(runtime.LastCheckpointSuccessAt)
 		status.NextCheckpointAt = nonZeroTimePointer(runtime.NextCheckpointAt)
+	}
+	for _, deferred := range runtime.DigestHandoffDeferred {
+		status.DigestHandoffDeferred = append(status.DigestHandoffDeferred, databaseDigestHandoffStatus{
+			Metric: deferred.Metric,
+			Reason: deferred.Reason,
+			At:     nonZeroTimePointer(deferred.At),
+		})
 	}
 	return status
 }
