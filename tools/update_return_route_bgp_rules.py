@@ -14,6 +14,20 @@ OUTPUT = ROOT / "database/tasks/return_route_bgp_prefixes.json"
 TABLE_URL = "https://bgp.tools/table.jsonl"
 USER_AGENT = "Komari-Return-Route (+https://github.com/nuomiiiii/komari)"
 
+# Equal-length BGP prefixes can legitimately have more than one origin ASN.
+# Keep the route family that is checked first by the runtime classifier.
+GROUP_PRIORITY = [
+    "cmin2",
+    "cmi",
+    "cn2_global",
+    "unicom_10099",
+    "unicom_9929",
+    "cn2_backbone",
+    "telecom_163",
+    "unicom_4837",
+    "cmnet",
+]
+
 
 def collapse(values):
     networks = {ipaddress.ip_network(value, strict=False) for value in values}
@@ -22,10 +36,71 @@ def collapse(values):
     return [str(network) for network in [*ipv4, *ipv6]]
 
 
+def network_sort_key(network):
+    return network.version, int(network.network_address), network.prefixlen
+
+
+def resolve_prefix_groups(automatic_groups, overrides, priority=GROUP_PRIORITY):
+    unknown = set(overrides) - set(automatic_groups)
+    if unknown:
+        raise ValueError(f"override contains unknown groups: {sorted(unknown)}")
+
+    groups = {
+        group: {ipaddress.ip_network(value, strict=False) for value in collapse(values)}
+        for group, values in automatic_groups.items()
+    }
+
+    ordered_groups = [group for group in priority if group in groups]
+    ordered_groups.extend(sorted(set(groups) - set(ordered_groups)))
+    owner_by_prefix = {}
+    for group in ordered_groups:
+        for network in groups[group]:
+            owner_by_prefix.setdefault(network, group)
+    for group in groups:
+        groups[group] = {
+            network for network in groups[group] if owner_by_prefix[network] == group
+        }
+
+    manual_groups = {
+        group: {
+            ipaddress.ip_network(value, strict=False)
+            for value in overrides.get(group, [])
+        }
+        for group in groups
+    }
+    claimed = []
+    for group, networks in manual_groups.items():
+        for network in sorted(networks, key=network_sort_key):
+            for previous_group, previous_network in claimed:
+                if previous_group != group and network.overlaps(previous_network):
+                    raise ValueError(
+                        f"manual prefixes {network} ({group}) and "
+                        f"{previous_network} ({previous_group}) overlap"
+                    )
+            claimed.append((group, network))
+
+    # A maintained CIDR owns its complete range. Remove automatic sub-prefixes
+    # from every group before adding the maintained rule.
+    for group, networks in manual_groups.items():
+        for network in sorted(networks, key=network_sort_key):
+            for candidate_group in groups:
+                groups[candidate_group] = {
+                    candidate
+                    for candidate in groups[candidate_group]
+                    if not candidate.subnet_of(network)
+                }
+            groups[group].add(network)
+
+    return {
+        group: [str(network) for network in sorted(networks, key=network_sort_key)]
+        for group, networks in groups.items()
+    }
+
+
 def main():
     base = json.loads(BASE_RULES.read_text(encoding="utf-8"))
     overrides = json.loads(OVERRIDES.read_text(encoding="utf-8"))
-    groups = {name: set(overrides.get(name, [])) for name in base["asn_groups"]}
+    groups = {name: set() for name in base["asn_groups"]}
     asn_to_group = {}
     for group, asns in base["asn_groups"].items():
         for asn in asns:
@@ -50,7 +125,7 @@ def main():
         "schema_version": 1,
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "source": "bgp.tools/table.jsonl + maintained overrides",
-        "prefix_groups": {group: collapse(groups[group]) for group in base["asn_groups"]},
+        "prefix_groups": resolve_prefix_groups(groups, overrides),
     }
     OUTPUT.write_text(json.dumps(output, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
