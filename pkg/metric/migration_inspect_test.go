@@ -14,9 +14,10 @@ func TestSQLiteMigrationCompatibilityMatrix(t *testing.T) {
 		name   string
 		layout string
 	}{
-		{name: "2.1.x-v3", layout: "normalized"},
+		{name: "2.1.7-v3", layout: "normalized"},
 		{name: "2.1.8", layout: "v4"},
 		{name: "2.1.8-fix", layout: "v4"},
+		{name: "2.1.9", layout: "v4"},
 	}
 
 	for _, version := range versions {
