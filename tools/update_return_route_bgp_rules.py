@@ -72,7 +72,11 @@ def resolve_prefix_groups(automatic_groups, overrides, priority=GROUP_PRIORITY):
     for group, networks in manual_groups.items():
         for network in sorted(networks, key=network_sort_key):
             for previous_group, previous_network in claimed:
-                if previous_group != group and network.overlaps(previous_network):
+                if (
+                    previous_group != group
+                    and network.version == previous_network.version
+                    and network.overlaps(previous_network)
+                ):
                     raise ValueError(
                         f"manual prefixes {network} ({group}) and "
                         f"{previous_network} ({previous_group}) overlap"
@@ -87,7 +91,8 @@ def resolve_prefix_groups(automatic_groups, overrides, priority=GROUP_PRIORITY):
                 groups[candidate_group] = {
                     candidate
                     for candidate in groups[candidate_group]
-                    if not candidate.subnet_of(network)
+                    if candidate.version != network.version
+                    or not candidate.subnet_of(network)
                 }
             groups[group].add(network)
 
