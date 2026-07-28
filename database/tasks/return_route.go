@@ -26,6 +26,13 @@ type ReturnRouteOverview struct {
 	Events   []models.ReturnRouteEvent  `json:"events"`
 }
 
+type ReturnRouteSummary struct {
+	Tasks        int64 `json:"tasks"`
+	Healthy      int64 `json:"healthy"`
+	Switched     int64 `json:"switched"`
+	RecentEvents int64 `json:"recent_events"`
+}
+
 type ReturnRouteTaskQuery struct {
 	Page     int    `json:"page"`
 	PageSize int    `json:"page_size"`
@@ -199,6 +206,29 @@ func GetReturnRouteOverview() (ReturnRouteOverview, error) {
 		return result, err
 	}
 	if err := db.Order("occurred_at DESC").Limit(200).Find(&result.Events).Error; err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func GetReturnRouteSummary() (ReturnRouteSummary, error) {
+	return getReturnRouteSummary(dbcore.GetDBInstance(), time.Now().UTC())
+}
+
+func getReturnRouteSummary(db *gorm.DB, now time.Time) (ReturnRouteSummary, error) {
+	var result ReturnRouteSummary
+	if err := db.Model(&models.ReturnRouteTask{}).Count(&result.Tasks).Error; err != nil {
+		return result, err
+	}
+	activeTasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("enabled = ?", true)
+	if err := db.Model(&models.ReturnRouteStatus{}).Where("task_id IN (?) AND state = ?", activeTasks, "healthy").Count(&result.Healthy).Error; err != nil {
+		return result, err
+	}
+	activeTasks = db.Model(&models.ReturnRouteTask{}).Select("id").Where("enabled = ?", true)
+	if err := db.Model(&models.ReturnRouteStatus{}).Where("task_id IN (?) AND state = ?", activeTasks, "switched").Count(&result.Switched).Error; err != nil {
+		return result, err
+	}
+	if err := db.Model(&models.ReturnRouteEvent{}).Where("occurred_at >= ?", now.Add(-24*time.Hour)).Count(&result.RecentEvents).Error; err != nil {
 		return result, err
 	}
 	return result, nil

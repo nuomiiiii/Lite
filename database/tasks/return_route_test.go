@@ -142,6 +142,26 @@ func TestQueryReturnRouteTasksFiltersAndPaginates(t *testing.T) {
 	}
 }
 
+func TestGetReturnRouteSummary(t *testing.T) {
+	db, tasks := seedReturnRouteQueryData(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	events := []models.ReturnRouteEvent{
+		{TaskId: tasks[0].Id, Client: tasks[0].Client, Kind: "switch", FromLine: "CN2 GIA", ToLine: "CMIN2", Confidence: 0.98, OccurredAt: now.Add(-time.Hour)},
+		{TaskId: tasks[1].Id, Client: tasks[1].Client, Kind: "recovery", FromLine: "4837", ToLine: "9929", Confidence: 0.96, OccurredAt: now.Add(-25 * time.Hour)},
+	}
+	if err := db.Create(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := getReturnRouteSummary(db, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Tasks != 3 || result.Healthy != 1 || result.Switched != 1 || result.RecentEvents != 1 {
+		t.Fatalf("summary = %#v", result)
+	}
+}
+
 func TestQueryReturnRouteEventsFiltersSnapshotsAndLegacyRows(t *testing.T) {
 	db, tasks := seedReturnRouteQueryData(t)
 	now := time.Now().UTC().Truncate(time.Second)

@@ -254,6 +254,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	returnRoute := g.Group("/return-route")
 	{
 		returnRoute.GET("/", jsonRpc.Bind("admin:getReturnRouteOverview"))
+		returnRoute.GET("/summary", jsonRpc.Bind("admin:getReturnRouteSummary"))
 		returnRoute.POST("/tasks/query", jsonRpc.Bind("admin:queryReturnRouteTasks"))
 		returnRoute.POST("/events/query", jsonRpc.Bind("admin:queryReturnRouteEvents"))
 		returnRoute.POST("/add", jsonRpc.Bind("admin:addReturnRouteTask"))
