@@ -4,9 +4,39 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 )
+
+func TestSQLiteV4DigestHandoffAcceptsAssociativeRoundingDrift(t *testing.T) {
+	stored := &rollupBucket{
+		count:    150,
+		sum:      math.Float64frombits(4645082735656904392),
+		sumSq:    math.Float64frombits(4659346703785820420),
+		min:      0.001,
+		max:      19.240506329576526,
+		firstVal: 1.4999999956635293,
+		firstTS:  1785042601405271820,
+		lastVal:  0.7499999949213816,
+		lastTS:   1785042899404025910,
+	}
+	rebuilt := *stored
+	rebuilt.sumSq = math.Float64frombits(math.Float64bits(stored.sumSq) - 2)
+	if !sqliteV4RollupSummariesEqual(&rebuilt, stored) {
+		t.Fatal("two-ULP accumulation drift from the supplied backup should be accepted")
+	}
+
+	rebuilt.sumSq = math.Float64frombits(math.Float64bits(stored.sumSq) - 3)
+	if sqliteV4RollupSummariesEqual(&rebuilt, stored) {
+		t.Fatal("a drift beyond the verified bound should still defer handoff")
+	}
+	rebuilt = *stored
+	rebuilt.lastTS--
+	if sqliteV4RollupSummariesEqual(&rebuilt, stored) {
+		t.Fatal("sample identity fields must remain exact")
+	}
+}
 
 func TestSQLiteStorageV4DefersIncompleteDigestHandoffWithoutChangingBlock(t *testing.T) {
 	ctx := context.Background()
