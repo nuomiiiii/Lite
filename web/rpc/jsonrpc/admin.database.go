@@ -212,6 +212,7 @@ func newDatabaseRuntimeStatus(driver metric.Driver, runtime metricstore.RuntimeS
 		ConsecutiveCheckpointFailures: runtime.ConsecutiveCheckpointFailures,
 		ConsecutiveCycleFailures:      runtime.ConsecutiveCycleFailures,
 		LastError:                     runtime.LastError,
+		DigestHandoffDeferred:         make([]databaseDigestHandoffStatus, 0, len(runtime.DigestHandoffDeferred)),
 	}
 	if status.CheckpointApplicable {
 		status.LastCheckpointAttemptAt = nonZeroTimePointer(runtime.LastCheckpointAttemptAt)
