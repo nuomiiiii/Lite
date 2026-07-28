@@ -180,6 +180,31 @@ func TestReturnRouteNotificationSwitchesAreIndependent(t *testing.T) {
 	}
 }
 
+func TestReturnRouteRepeatNotificationRequiresCooldownAndSwitchToggle(t *testing.T) {
+	now := time.Now().UTC()
+	last := now.Add(-239 * time.Second)
+	task := models.ReturnRouteTask{Notify: true, Cooldown: 240}
+	status := models.ReturnRouteStatus{State: "switched", CurrentLine: "CMIN2", LastNotifiedAt: &last}
+
+	if shouldSendReturnRouteRepeatNotification(task, status, now) {
+		t.Fatal("repeat notification fired during the cooldown")
+	}
+	last = now.Add(-240 * time.Second)
+	status.LastNotifiedAt = &last
+	if !shouldSendReturnRouteRepeatNotification(task, status, now) {
+		t.Fatal("repeat notification did not fire after the cooldown")
+	}
+	task.Notify = false
+	if shouldSendReturnRouteRepeatNotification(task, status, now) {
+		t.Fatal("repeat notification fired while switch notifications were disabled")
+	}
+	task.Notify = true
+	status.State = "healthy"
+	if shouldSendReturnRouteRepeatNotification(task, status, now) {
+		t.Fatal("repeat notification fired after the route recovered")
+	}
+}
+
 func TestQueryReturnRouteTasksFiltersAndPaginates(t *testing.T) {
 	db, tasks := seedReturnRouteQueryData(t)
 
