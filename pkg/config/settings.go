@@ -17,16 +17,17 @@ type Settings struct {
 	ScriptDomain           string `json:"script_domain" default:""`                            // 自定义脚本域名
 	SendIpAddrToGuest      bool   `json:"send_ip_addr_to_guest" default:"false"`               // 是否向访客页面发送 IP 地址，默认 false
 	VisitorAuditEnabled    bool   `json:"visitor_audit_enabled" default:"false"`               // 是否允许公开访客事件写入审计日志，默认 false
-	LowResourceMode        bool   `json:"low_resource_mode"`                                   // 低资源模式；首次启动按主机性能自动选择
+	LowResourceMode        bool   `json:"low_resource_mode"`                                   // 低资源模式；默认关闭，可由管理员手动启用
 	EulaAccepted           bool   `json:"eula_accepted" default:"false"`
 	BaseScriptsURLKey      string `json:"base_scripts_url" default:""`
 	// GeoIP 配置
 	GeoIpEnabled  bool   `json:"geo_ip_enabled" default:"true"`
 	GeoIpProvider string `json:"geo_ip_provider" default:"ipinfo"` // empty, mmdb, ip-api, geojs
 	// OAuth 配置
-	OAuthEnabled         bool   `json:"o_auth_enabled" default:"false"`
-	OAuthProvider        string `json:"o_auth_provider" default:"github"`
-	DisablePasswordLogin bool   `json:"disable_password_login" default:"false"`
+	OAuthEnabled          bool   `json:"o_auth_enabled" default:"false"`
+	OAuthProvider         string `json:"o_auth_provider" default:"github"`
+	DisablePasswordLogin  bool   `json:"disable_password_login" default:"false"`
+	CloudflareTunnelToken string `json:"cloudflare_tunnel_token" default:""`
 	// 自定义美化
 	CustomHead string `json:"custom_head" default:""`
 	CustomBody string `json:"custom_body" default:""`
@@ -65,6 +66,7 @@ const (
 	OAuthEnabledKey           = "o_auth_enabled"
 	OAuthProviderKey          = "o_auth_provider"
 	DisablePasswordLoginKey   = "disable_password_login"
+	CloudflareTunnelTokenKey  = "cloudflare_tunnel_token"
 	CustomHeadKey             = "custom_head"
 	CustomBodyKey             = "custom_body"
 

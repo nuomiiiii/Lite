@@ -3,18 +3,18 @@ package notification
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/trafficledger"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 const (
-	dailyReportRetentionDays   = 2
-	weeklyReportRetentionDays  = 8
-	monthlyReportRetentionDays = 35
+	dailyReportRetentionDays = trafficledger.MetricSafetyRetentionDays
 )
 
 func validateTrafficReportNotification(notification models.TrafficReportNotification) error {
@@ -185,65 +185,129 @@ func GetEnabledTrafficReportByType(daily, weekly, monthly bool) ([]models.Traffi
 }
 
 func RequiredTrafficReportRetentionDays(notifications []models.TrafficReportNotification) int {
-	required := 0
 	for _, notification := range notifications {
-		if !notification.Enable {
-			continue
-		}
-		switch {
-		case notification.Monthly && required < monthlyReportRetentionDays:
-			required = monthlyReportRetentionDays
-		case notification.Weekly && required < weeklyReportRetentionDays:
-			required = weeklyReportRetentionDays
-		case notification.Daily && required < dailyReportRetentionDays:
-			required = dailyReportRetentionDays
+		if notification.Enable && (notification.Daily || notification.Weekly || notification.Monthly) {
+			return dailyReportRetentionDays
 		}
 	}
-	return required
+	return 0
 }
 
-// trafficReportRetentionTarget only raises retention to satisfy enabled
-// reports. Disabling a longer cadence must not silently discard history that
-// was retained for it or explicitly configured by an administrator.
-func trafficReportRetentionTarget(currentDays, requiredDays int) (int, bool) {
-	if requiredDays <= 0 || currentDays >= requiredDays {
+func trafficReportRetentionTarget(currentDays, requiredDays, baselineDays int, backfillComplete bool) (int, bool) {
+	if currentDays == 0 && requiredDays == 0 {
 		return currentDays, false
 	}
-	return requiredDays, true
+	desiredDays := requiredDays
+	if baselineDays > desiredDays {
+		desiredDays = baselineDays
+	}
+	if requiredDays > 0 && currentDays < desiredDays {
+		return desiredDays, true
+	}
+	if !backfillComplete || currentDays <= desiredDays {
+		return currentDays, false
+	}
+	// Only the exact legacy auto-raised weekly/monthly values can be safely
+	// restored. Other longer values are considered administrator choices.
+	if currentDays == 8 || currentDays == 35 {
+		return desiredDays, true
+	}
+	return currentDays, false
 }
 
-// EnsureTrafficReportMetricRetention raises the four traffic metrics to the
-// minimum history required by enabled daily, weekly, or monthly reports.
+func commonMetricRetentionDays(ctx context.Context) (int, error) {
+	store := metricstore.GetStore()
+	if store == nil {
+		return 0, fmt.Errorf("metric store is not initialized")
+	}
+	metricNames := []string{
+		metricstore.MetricCPU,
+		metricstore.MetricRAM,
+		metricstore.MetricSwap,
+		metricstore.MetricLoad,
+		metricstore.MetricDisk,
+		metricstore.MetricNetIn,
+		metricstore.MetricNetOut,
+		metricstore.MetricProcess,
+		metricstore.MetricConnections,
+		metricstore.MetricConnectionsUDP,
+	}
+	counts := make(map[int]int)
+	for _, metricName := range metricNames {
+		definition, err := store.GetMetric(ctx, metricName)
+		if err != nil {
+			return 0, fmt.Errorf("get retention for %s: %w", metricName, err)
+		}
+		if definition.RetentionDays > 0 {
+			counts[definition.RetentionDays]++
+		}
+	}
+	bestDays, bestCount := 1, 0
+	for days, count := range counts {
+		if count > bestCount || (count == bestCount && days < bestDays) {
+			bestDays, bestCount = days, count
+		}
+	}
+	return bestDays, nil
+}
+
+var trafficReportMetricNames = []string{
+	metricstore.MetricTrafficUp,
+	metricstore.MetricTrafficDown,
+	metricstore.MetricNetTotalUp,
+	metricstore.MetricNetTotalDown,
+}
+
+// EnsureTrafficReportMetricRetention first creates the independent daily
+// ledger, then restores only old report-imposed 8/35-day retention values.
+// Failed backfills never shorten the source metric retention.
 func EnsureTrafficReportMetricRetention(ctx context.Context) error {
 	db := dbcore.GetDBInstance()
 	var notifications []models.TrafficReportNotification
-	if err := db.Where("enable = ?", true).Find(&notifications).Error; err != nil {
+	if err := db.WithContext(ctx).Where("enable = ?", true).Find(&notifications).Error; err != nil {
 		return err
 	}
 	requiredDays := RequiredTrafficReportRetentionDays(notifications)
-	if requiredDays == 0 {
-		return nil
-	}
 	store := metricstore.GetStore()
 	if store == nil {
 		return fmt.Errorf("metric store is not initialized")
 	}
-	for _, metricName := range []string{
-		metricstore.MetricTrafficUp,
-		metricstore.MetricTrafficDown,
-		metricstore.MetricNetTotalUp,
-		metricstore.MetricNetTotalDown,
-	} {
+	baselineDays, err := commonMetricRetentionDays(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Raising retention is always safe and protects the next settlement while
+	// the one-time ledger backfill is still running.
+	for _, metricName := range trafficReportMetricNames {
 		definition, err := store.GetMetric(ctx, metricName)
 		if err != nil {
 			return fmt.Errorf("get retention for %s: %w", metricName, err)
 		}
-		targetDays, changed := trafficReportRetentionTarget(definition.RetentionDays, requiredDays)
+		targetDays, changed := trafficReportRetentionTarget(definition.RetentionDays, requiredDays, baselineDays, false)
 		if !changed {
 			continue
 		}
 		if _, err := store.SetMetricRetention(ctx, metricName, targetDays); err != nil {
 			return fmt.Errorf("set retention for %s: %w", metricName, err)
+		}
+	}
+
+	if err := trafficledger.BackfillEnabledHistory(ctx, db, time.Now().UTC()); err != nil {
+		return fmt.Errorf("backfill daily traffic ledger: %w", err)
+	}
+
+	for _, metricName := range trafficReportMetricNames {
+		definition, err := store.GetMetric(ctx, metricName)
+		if err != nil {
+			return fmt.Errorf("get retention for %s after ledger backfill: %w", metricName, err)
+		}
+		targetDays, changed := trafficReportRetentionTarget(definition.RetentionDays, requiredDays, baselineDays, true)
+		if !changed {
+			continue
+		}
+		if _, err := store.SetMetricRetention(ctx, metricName, targetDays); err != nil {
+			return fmt.Errorf("restore retention for %s: %w", metricName, err)
 		}
 	}
 	return nil

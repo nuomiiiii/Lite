@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 )
@@ -28,6 +29,18 @@ const (
 	sqliteCheckpointSQL = "PRAGMA wal_checkpoint(TRUNCATE)"
 	sqliteVacuumSQL     = "VACUUM"
 )
+
+// SQLiteFileSizes separates retained database pages from WAL/SHM runtime
+// sidecars so callers can present stable data size and transient disk usage.
+type SQLiteFileSizes struct {
+	Database int64
+	WAL      int64
+	SHM      int64
+}
+
+func (sizes SQLiteFileSizes) Total() int64 {
+	return sizes.Database + sizes.WAL + sizes.SHM
+}
 
 // Driver returns the Store's configured database backend.
 //
@@ -62,7 +75,8 @@ func (s *Store) StorageSize(ctx context.Context) (int64, error) {
 	}
 
 	if s.cfg.Driver == DriverSQLite {
-		return s.sqliteStorageSize(ctx)
+		files, err := s.sqliteFileSizes(ctx)
+		return files.Total(), err
 	}
 
 	query, args, err := managedStorageSizeQuery(s.cfg.Driver, s.tables)
@@ -74,6 +88,41 @@ func (s *Store) StorageSize(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("metric: query %s storage size: %w", s.cfg.Driver, err)
 	}
 	return size, nil
+}
+
+// SQLiteFiles returns the local SQLite database and sidecar sizes. It is only
+// available for SQLite stores; in-memory databases return zero-valued files.
+func (s *Store) SQLiteFiles(ctx context.Context) (SQLiteFileSizes, error) {
+	s.maintenanceMu.RLock()
+	defer s.maintenanceMu.RUnlock()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed || s.db == nil {
+		return SQLiteFileSizes{}, ErrClosed
+	}
+	if s.cfg.Driver != DriverSQLite {
+		return SQLiteFileSizes{}, fmt.Errorf("%w: storage files are only available for SQLite", ErrInvalidArgument)
+	}
+	return s.sqliteFileSizes(ctx)
+}
+
+// CheckpointWAL copies committed SQLite WAL pages into the main database and
+// truncates the sidecar without rewriting the database. Other backends have no
+// local WAL sidecar, so this is a no-op for them.
+func (s *Store) CheckpointWAL(ctx context.Context) error {
+	s.maintenanceMu.Lock()
+	defer s.maintenanceMu.Unlock()
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.closed || s.db == nil {
+		return ErrClosed
+	}
+	if s.cfg.Driver != DriverSQLite {
+		return nil
+	}
+	return sqliteCheckpoint(ctx, s.db)
 }
 
 // ReclaimSpace performs the backend-specific blocking operation that returns
@@ -93,6 +142,22 @@ func (s *Store) ReclaimSpace(ctx context.Context) error {
 	}
 	if _, err := s.cleanupOrphanedMetricData(ctx); err != nil {
 		return err
+	}
+	if s.sqliteStorageV4 {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("metric: begin SQLite V4 reclaim seal: %w", err)
+		}
+		defer func() { _ = tx.Rollback() }()
+		if _, err := s.sealSQLiteV4PointsTx(ctx, tx, "", math.MaxInt64, 0, 0); err != nil {
+			return fmt.Errorf("metric: seal SQLite V4 points before reclaim: %w", err)
+		}
+		if _, err := s.sealAllSQLiteV4RollupsTx(ctx, tx, 0, 0); err != nil {
+			return fmt.Errorf("metric: seal SQLite V4 rollups before reclaim: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("metric: commit SQLite V4 reclaim seal: %w", err)
+		}
 	}
 
 	switch s.cfg.Driver {
@@ -131,6 +196,66 @@ func (s *Store) ReclaimSpace(ctx context.Context) error {
 // the physical rewrite returns the freed pages to the filesystem in the same
 // maintenance window.
 func (s *Store) cleanupOrphanedMetricData(ctx context.Context) (int64, error) {
+	if s.sqliteStorageV4 {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return 0, err
+		}
+		defer func() { _ = tx.Rollback() }()
+		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
+			`SELECT DISTINCT s.metric_name FROM %s s
+			 WHERE NOT EXISTS (SELECT 1 FROM %s d WHERE d.name = s.metric_name)`,
+			s.tables.series, s.tables.definitions,
+		))
+		if err != nil {
+			return 0, err
+		}
+		var orphanMetrics []string
+		for rows.Next() {
+			var metricName string
+			if err := rows.Scan(&metricName); err != nil {
+				_ = rows.Close()
+				return 0, err
+			}
+			orphanMetrics = append(orphanMetrics, metricName)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		if err := rows.Close(); err != nil {
+			return 0, err
+		}
+		var deleted int64
+		for _, metricName := range orphanMetrics {
+			count, err := s.deleteSQLiteV4PointsTx(ctx, tx, Query{MetricName: metricName}, nil)
+			if err != nil {
+				return deleted, err
+			}
+			deleted += count
+			count, err = s.deleteSQLiteV4RollupsTx(ctx, tx, Query{MetricName: metricName}, nil, nil)
+			if err != nil {
+				return deleted, err
+			}
+			deleted += count
+		}
+		for _, table := range []string{s.tables.watermarks} {
+			where := fmt.Sprintf(`NOT EXISTS (SELECT 1 FROM %s WHERE %s.name = %s.metric_name)`,
+				s.tables.definitions, s.tables.definitions, table)
+			count, err := s.deleteRows(ctx, tx, table, where)
+			if err != nil {
+				return deleted, fmt.Errorf("metric: delete orphaned rows from %s: %w", table, err)
+			}
+			deleted += count
+		}
+		if err := s.pruneUnusedSQLiteSeries(ctx, tx); err != nil {
+			return deleted, fmt.Errorf("metric: delete orphaned SQLite series: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return deleted, err
+		}
+		return deleted, nil
+	}
 	var deleted int64
 	for _, table := range []string{s.tables.points, s.tables.rollups, s.tables.watermarks} {
 		if table == "" {
@@ -151,9 +276,14 @@ func (s *Store) cleanupOrphanedMetricData(ctx context.Context) (int64, error) {
 }
 
 func (s *Store) sqliteStorageSize(ctx context.Context) (int64, error) {
+	files, err := s.sqliteFileSizes(ctx)
+	return files.Total(), err
+}
+
+func (s *Store) sqliteFileSizes(ctx context.Context) (SQLiteFileSizes, error) {
 	rows, err := s.db.QueryContext(ctx, "PRAGMA database_list")
 	if err != nil {
-		return 0, fmt.Errorf("metric: list sqlite databases: %w", err)
+		return SQLiteFileSizes{}, fmt.Errorf("metric: list sqlite databases: %w", err)
 	}
 
 	var path string
@@ -162,7 +292,7 @@ func (s *Store) sqliteStorageSize(ctx context.Context) (int64, error) {
 		var name, file string
 		if err := rows.Scan(&sequence, &name, &file); err != nil {
 			_ = rows.Close()
-			return 0, fmt.Errorf("metric: scan sqlite database path: %w", err)
+			return SQLiteFileSizes{}, fmt.Errorf("metric: scan sqlite database path: %w", err)
 		}
 		if name == "main" {
 			path = file
@@ -170,28 +300,36 @@ func (s *Store) sqliteStorageSize(ctx context.Context) (int64, error) {
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return 0, fmt.Errorf("metric: list sqlite databases: %w", err)
+		return SQLiteFileSizes{}, fmt.Errorf("metric: list sqlite databases: %w", err)
 	}
 	if err := rows.Close(); err != nil {
-		return 0, fmt.Errorf("metric: close sqlite database list: %w", err)
+		return SQLiteFileSizes{}, fmt.Errorf("metric: close sqlite database list: %w", err)
 	}
 	if path == "" {
 		// SQLite reports an empty path for in-memory databases.
-		return 0, nil
+		return SQLiteFileSizes{}, nil
 	}
 
-	var size int64
-	for _, name := range []string{path, path + "-wal", path + "-shm"} {
+	var sizes SQLiteFileSizes
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		name := path + suffix
 		info, err := os.Stat(name)
 		switch {
 		case err == nil:
-			size += info.Size()
+			switch suffix {
+			case "":
+				sizes.Database = info.Size()
+			case "-wal":
+				sizes.WAL = info.Size()
+			case "-shm":
+				sizes.SHM = info.Size()
+			}
 		case errors.Is(err, os.ErrNotExist):
 		default:
-			return 0, fmt.Errorf("metric: stat sqlite storage file %q: %w", name, err)
+			return SQLiteFileSizes{}, fmt.Errorf("metric: stat sqlite storage file %q: %w", name, err)
 		}
 	}
-	return size, nil
+	return sizes, nil
 }
 
 func sqliteCheckpoint(ctx context.Context, db *sql.DB) error {

@@ -22,6 +22,19 @@ func EnableWebSocketCompression(upgrader *websocket.Upgrader) {
 	upgrader.EnableCompression = true
 }
 
+func RequireSameOriginWebSocket(upgrader *websocket.Upgrader) {
+	upgrader.CheckOrigin = func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		return origin != "" && security.OriginMatchesHost(origin, r.Host)
+	}
+}
+
+func AllowAgentWebSocket(upgrader *websocket.Upgrader) {
+	upgrader.CheckOrigin = func(r *http.Request) bool {
+		return r.Header.Get("Origin") == ""
+	}
+}
+
 func UpgradeWebSocket(c *gin.Context, options ...WebSocketUpgradeOption) (*websocket.Conn, error) {
 	if !IsWebSocketUpgrade(c) {
 		return nil, fmt.Errorf("require websocket upgrade")

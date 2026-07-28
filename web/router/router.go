@@ -6,6 +6,7 @@ import (
 	"github.com/komari-monitor/komari/web/api/admin"
 	"github.com/komari-monitor/komari/web/api/client"
 	public_api "github.com/komari-monitor/komari/web/api/public"
+	"github.com/komari-monitor/komari/web/api/remote"
 	"github.com/komari-monitor/komari/web/api/terminal"
 	"github.com/komari-monitor/komari/web/public"
 	jsonRpc "github.com/komari-monitor/komari/web/rpc/jsonrpc"
@@ -70,6 +71,7 @@ func registerAgentRoutes(r *gin.Engine) {
 		tokenAuthorized.GET("/v2/rpc", client.WebSocketV2RPC)
 		tokenAuthorized.POST("/v2/rpc", client.UploadV2RPC)
 		tokenAuthorized.GET("/terminal", terminal.EstablishConnection)
+		tokenAuthorized.GET("/remote", remote.EstablishAgent)
 
 		// JSON 接口 -> RPC2 (client: 命名空间)。
 		tokenAuthorized.POST("/task/result", jsonRpc.Bind("client:taskResult", jsonRpc.WithRaw()))
@@ -149,6 +151,10 @@ func registerAdminRoutes(r *gin.Engine) {
 		settings.GET("/oidc", jsonRpc.Bind("admin:getOidcProvider", jsonRpc.WithQuery("provider")))
 		settings.POST("/message-sender", jsonRpc.Bind("admin:setMessageSenderProvider"))
 		settings.GET("/message-sender", jsonRpc.Bind("admin:getMessageSenderProvider", jsonRpc.WithQuery("provider")))
+		settings.GET("/cloudflared", jsonRpc.Bind("admin:getCloudflaredStatus"))
+		settings.POST("/cloudflared/start", jsonRpc.Bind("admin:startCloudflared"))
+		settings.POST("/cloudflared/stop", jsonRpc.Bind("admin:stopCloudflared"))
+		settings.POST("/cloudflared/remove-token", jsonRpc.Bind("admin:removeCloudflaredToken"))
 	}
 
 	// database storage inspection and maintenance
@@ -161,12 +167,16 @@ func registerAdminRoutes(r *gin.Engine) {
 	// clients
 	clientGroup := g.Group("/client")
 	{
+		clientGroup.POST("/remote/authorize", remote.Authorize)
+		clientGroup.POST("/remote/session", remote.CreateSession)
+		clientGroup.GET("/remote", remote.ConnectBrowser)
 		clientGroup.POST("/add", jsonRpc.Bind("admin:addClient", jsonRpc.WithFlat()))
 		clientGroup.GET("/list", jsonRpc.Bind("admin:listClients", jsonRpc.WithRaw()))
 		clientGroup.GET("/:uuid", jsonRpc.Bind("admin:getClient", jsonRpc.WithPath("uuid"), jsonRpc.WithRaw()))
 		clientGroup.POST("/:uuid/edit", jsonRpc.Bind("admin:editClient", jsonRpc.WithPath("uuid")))
 		clientGroup.POST("/:uuid/remove", jsonRpc.Bind("admin:removeClient", jsonRpc.WithPath("uuid")))
 		clientGroup.GET("/:uuid/token", jsonRpc.Bind("admin:getClientToken", jsonRpc.WithPath("uuid"), jsonRpc.WithFlat()))
+		clientGroup.POST("/token/rotate", api.RequireSensitive2FA(), jsonRpc.Bind("admin:rotateClientToken"))
 		clientGroup.POST("/order", jsonRpc.Bind("admin:orderClients"))
 		clientGroup.GET("/:uuid/terminal", api.RequireSensitive2FA(), terminal.RequestTerminal)
 	}
@@ -239,5 +249,17 @@ func registerAdminRoutes(r *gin.Engine) {
 		pingTask.POST("/delete", jsonRpc.Bind("admin:deletePingTask"))
 		pingTask.POST("/edit", jsonRpc.Bind("admin:editPingTask"))
 		pingTask.POST("/order", jsonRpc.Bind("admin:orderPingTask"))
+	}
+
+	returnRoute := g.Group("/return-route")
+	{
+		returnRoute.GET("/", jsonRpc.Bind("admin:getReturnRouteOverview"))
+		returnRoute.GET("/summary", jsonRpc.Bind("admin:getReturnRouteSummary"))
+		returnRoute.POST("/tasks/query", jsonRpc.Bind("admin:queryReturnRouteTasks"))
+		returnRoute.POST("/events/query", jsonRpc.Bind("admin:queryReturnRouteEvents"))
+		returnRoute.POST("/add", jsonRpc.Bind("admin:addReturnRouteTask"))
+		returnRoute.POST("/edit", jsonRpc.Bind("admin:editReturnRouteTask"))
+		returnRoute.POST("/delete", jsonRpc.Bind("admin:deleteReturnRouteTask"))
+		returnRoute.POST("/probe", jsonRpc.Bind("admin:probeReturnRouteNow"))
 	}
 }

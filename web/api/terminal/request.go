@@ -1,12 +1,13 @@
 package terminal
 
 import (
-	"log"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/utils"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
 	"github.com/komari-monitor/komari/web/api"
@@ -15,11 +16,18 @@ import (
 func RequestTerminal(c *gin.Context) {
 	uuid := c.Param("uuid")
 	user_uuid, _ := c.Get("uuid")
-	_, err := clients.GetClientByUUID(uuid)
+	client, err := clients.GetClientByUUID(uuid)
 	if err != nil {
 		c.JSON(400, gin.H{
 			"status":  "error",
 			"message": "Client not found",
+		})
+		return
+	}
+	if client.RemoteControlProtected {
+		c.JSON(http.StatusForbidden, gin.H{
+			"status":  "error",
+			"message": "Remote control is disabled for the Komari Server node",
 		})
 		return
 	}
@@ -43,10 +51,15 @@ func RequestTerminal(c *gin.Context) {
 	}
 
 	TerminalSessionsMutex.Lock()
+	if metricstore.EntityWritesBlocked(uuid) {
+		TerminalSessionsMutex.Unlock()
+		conn.Close()
+		return
+	}
 	TerminalSessions[id] = session
 	TerminalSessionsMutex.Unlock()
 	conn.SetCloseHandler(func(code int, text string) error {
-		log.Println("Terminal connection closed:", code, text)
+		logger.InfoArgs("terminal", "Terminal connection closed:", code, text)
 		TerminalSessionsMutex.Lock()
 		delete(TerminalSessions, id)
 		TerminalSessionsMutex.Unlock()

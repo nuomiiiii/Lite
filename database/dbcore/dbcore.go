@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +14,7 @@ import (
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/pkg/config"
 	"github.com/komari-monitor/komari/pkg/migrations"
-	logutil "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -241,17 +240,17 @@ func backupOnVersionUpgrade() {
 	}
 
 	if err := os.MkdirAll("./backup", 0755); err != nil {
-		log.Printf("[upgrade-backup] failed to create backup dir: %v", err)
+		logger.Errorf("dbcore", "[upgrade-backup] failed to create backup dir: %v", err)
 		return
 	}
 	tsName := time.Now().UTC().Format("20060102-150405")
 	bakPath := filepath.Join("./backup", fmt.Sprintf("upgrade-%s.zip", tsName))
 	backupZipPath := filepath.Join(".", "data", "backup.zip")
 	if zipErr := zipDirectoryExcluding("./data", bakPath, map[string]struct{}{backupZipPath: {}}); zipErr != nil {
-		log.Printf("[upgrade-backup] failed to backup ./data before upgrade (from %q to %q): %v", prevVersion, versionID, zipErr)
+		logger.Errorf("dbcore", "[upgrade-backup] failed to backup ./data before upgrade (from %q to %q): %v", prevVersion, versionID, zipErr)
 		return
 	}
-	log.Printf("[upgrade-backup] ./data backed up to %s before upgrade (from %q to %q)", bakPath, prevVersion, versionID)
+	logger.Infof("dbcore", "[upgrade-backup] ./data backed up to %s before upgrade (from %q to %q)", bakPath, prevVersion, versionID)
 
 	writeVersionMarker()
 }
@@ -259,7 +258,7 @@ func backupOnVersionUpgrade() {
 // writeVersionMarker 将当前 versionID 写入配置库。
 func writeVersionMarker() {
 	if err := config.Set(SystemVersionKey, versionID); err != nil {
-		log.Printf("[upgrade-backup] failed to persist version marker: %v", err)
+		logger.Errorf("dbcore", "[upgrade-backup] failed to persist version marker: %v", err)
 	}
 }
 
@@ -300,7 +299,7 @@ func Initialize() error {
 // 需要错误处理的启动流程应优先调用 Initialize()。
 func GetDBInstance() *gorm.DB {
 	if err := Initialize(); err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
+		logger.Fatalf("dbcore", "Failed to initialize database: %v", err)
 	}
 	return instance
 }
@@ -326,40 +325,40 @@ func doInitialize() error {
 		if _, statErr := os.Stat(backupZipPath); statErr == nil {
 			// 4. 把除了 ./data/backup.zip 之外的所有文件压缩到 ./backup/{time}.zip
 			if err := os.MkdirAll("./backup", 0755); err != nil {
-				log.Printf("[restore] failed to create backup dir: %v", err)
+				logger.Errorf("dbcore", "[restore] failed to create backup dir: %v", err)
 			} else {
 				tsName := time.Now().UTC().Format("20060102-150405")
 				bakPath := filepath.Join("./backup", fmt.Sprintf("%s.zip", tsName))
 				if zipErr := zipDirectoryExcluding("./data", bakPath, map[string]struct{}{backupZipPath: {}}); zipErr != nil {
-					log.Printf("[restore] failed to zip current data: %v", zipErr)
+					logger.Errorf("dbcore", "[restore] failed to zip current data: %v", zipErr)
 				} else {
-					log.Printf("[restore] current data zipped to %s", bakPath)
+					logger.Infof("dbcore", "[restore] current data zipped to %s", bakPath)
 				}
 			}
 
 			// 5. 删除除了 ./data/backup.zip 之外的所有文件
 			if delErr := removeAllInDirExcept("./data", map[string]struct{}{backupZipPath: {}}); delErr != nil {
-				log.Printf("[restore] failed to cleanup data dir: %v", delErr)
+				logger.Errorf("dbcore", "[restore] failed to cleanup data dir: %v", delErr)
 			}
 
 			// 6. 解压 ./data/backup.zip 到 ./data
 			if unzipErr := unzipToDir(backupZipPath, "./data"); unzipErr != nil {
-				log.Printf("[restore] failed to unzip backup into data: %v", unzipErr)
+				logger.Errorf("dbcore", "[restore] failed to unzip backup into data: %v", unzipErr)
 			} else {
-				log.Printf("[restore] backup.zip extracted to ./data")
+				logger.Infof("dbcore", "[restore] backup.zip extracted to ./data")
 			}
 
 			// 7. 删除 ./data/backup.zip
 			if rmErr := os.Remove(backupZipPath); rmErr != nil {
-				log.Printf("[restore] failed to remove backup.zip: %v", rmErr)
+				logger.Errorf("dbcore", "[restore] failed to remove backup.zip: %v", rmErr)
 			} else {
-				log.Printf("[restore] backup.zip removed")
+				logger.Infof("dbcore", "[restore] backup.zip removed")
 			}
 			// 8. 删除标记
 			if rmErr := os.Remove("./data/komari-backup-markup"); rmErr != nil {
-				log.Printf("[restore] failed to remove komari-backup-markup: %v", rmErr)
+				logger.Errorf("dbcore", "[restore] failed to remove komari-backup-markup: %v", rmErr)
 			} else {
-				log.Printf("[restore] komari-backup-markup removed")
+				logger.Infof("dbcore", "[restore] komari-backup-markup removed")
 			}
 		}
 	}()
@@ -372,7 +371,7 @@ func doInitialize() error {
 	}
 
 	logConfig := &gorm.Config{
-		Logger:  logutil.NewGormLogger(),
+		Logger:  logger.NewGormLogger(),
 		NowFunc: func() time.Time { return time.Now().UTC() },
 	}
 
@@ -394,7 +393,6 @@ func doInitialize() error {
 		if err != nil {
 			return fmt.Errorf("failed to connect to SQLite3 database: %w", err)
 		}
-		log.Printf("Using SQLite database file: %s", flags.DatabaseFile)
 		if sqlDB, dbErr := instance.DB(); dbErr == nil {
 			// SQLite 同一时刻只允许一个写者；限制连接数可避免连接池层面的写写竞争。
 			// 负载历史每分钟会执行包含读和写的事务，若连接池允许多个连接，容易与
@@ -403,14 +401,16 @@ func doInitialize() error {
 			sqlDB.SetMaxIdleConns(1)
 			sqlDB.SetConnMaxLifetime(0)
 		} else {
-			log.Printf("Failed to access underlying sql.DB for SQLite tuning: %v", dbErr)
+			logger.Errorf("dbcore", "Failed to access underlying sql.DB for SQLite tuning: %v", dbErr)
 		}
 		instance.Exec("PRAGMA wal = ON;")
 		if err := instance.Exec("PRAGMA journal_mode = WAL;").Error; err != nil {
-			log.Printf("Failed to enable WAL mode for SQLite: %v", err)
+			logger.Errorf("dbcore", "Failed to enable WAL mode for SQLite: %v", err)
 		}
 		instance.Exec("PRAGMA synchronous = NORMAL;")
 		instance.Exec("PRAGMA busy_timeout = 5000;")
+		instance.Exec("PRAGMA wal_autocheckpoint = 256;")
+		instance.Exec("PRAGMA journal_size_limit = 1048576;")
 		instance.Exec("PRAGMA cache_size = -65536;")
 		instance.Exec("PRAGMA temp_store = MEMORY;")
 		instance.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
@@ -435,6 +435,8 @@ func doInitialize() error {
 	// models.Record / models.PingRecord / models.GPURecord 结构体仍作为
 	// metric store 的读写 DTO 和旧表导入 DTO 保留在 models 包中。
 
+	copyLegacyReturnRouteNotify := instance.Migrator().HasTable("return_route_tasks") &&
+		!instance.Migrator().HasColumn("return_route_tasks", "notify_recovery")
 	err = instance.AutoMigrate(
 		&models.User{},
 		&models.Client{},
@@ -443,8 +445,12 @@ func doInitialize() error {
 		&models.LoadNotification{},
 		&models.OfflineNotification{},
 		&models.TrafficReportNotification{},
+		&models.TrafficDailyLedger{},
 		&models.PingTask{},
 		&models.PingLossNotification{},
+		&models.ReturnRouteTask{},
+		&models.ReturnRouteStatus{},
+		&models.ReturnRouteEvent{},
 		&models.OidcProvider{},
 		&models.MessageSenderProvider{},
 		&models.ThemeConfiguration{},
@@ -452,22 +458,27 @@ func doInitialize() error {
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
 	}
+	if copyLegacyReturnRouteNotify {
+		if err := instance.Exec("UPDATE return_route_tasks SET notify_recovery = notify").Error; err != nil {
+			return fmt.Errorf("failed to migrate return route notification settings: %w", err)
+		}
+	}
 	if err := migrations.MigrateTrafficResetDayFromTags(instance); err != nil {
 		return fmt.Errorf("failed to migrate traffic reset days: %w", err)
-	}
-	if err := cleanupOrphanedPingLossNotifications(instance); err != nil {
-		return fmt.Errorf("failed to clean orphaned ping loss notifications: %w", err)
 	}
 	if err := instance.AutoMigrate(
 		&models.Session{},
 	); err != nil {
-		log.Printf("Failed to create Session table, it may already exist: %v", err)
+		logger.Errorf("dbcore", "Failed to create Session table, it may already exist: %v", err)
 	}
 	if err := instance.AutoMigrate(
 		&models.Task{},
 		&models.TaskResult{},
 	); err != nil {
-		log.Printf("Failed to create Task and TaskResult table, it may already exist: %v", err)
+		logger.Errorf("dbcore", "Failed to create Task and TaskResult table, it may already exist: %v", err)
+	}
+	if err := cleanupOrphanedClientData(instance); err != nil {
+		return fmt.Errorf("failed to clean orphaned client data: %w", err)
 	}
 
 	return nil
@@ -486,6 +497,147 @@ func cleanupOrphanedPingLossNotifications(db *gorm.DB) error {
 	).Delete(&models.PingLossNotification{}).Error
 }
 
+func cleanupOrphanedClientData(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if tx.Migrator().HasTable("return_route_tasks") {
+			var orphanTaskIDs []uint
+			if err := tx.Model(&models.ReturnRouteTask{}).Where(`NOT EXISTS (
+				SELECT 1 FROM clients WHERE clients.uuid = return_route_tasks.client
+			)`).Pluck("id", &orphanTaskIDs).Error; err != nil {
+				return fmt.Errorf("list orphaned return route tasks: %w", err)
+			}
+			if len(orphanTaskIDs) > 0 {
+				if err := tx.Where("task_id IN ?", orphanTaskIDs).Delete(&models.ReturnRouteEvent{}).Error; err != nil {
+					return fmt.Errorf("delete orphaned return route events: %w", err)
+				}
+				if err := tx.Where("task_id IN ?", orphanTaskIDs).Delete(&models.ReturnRouteStatus{}).Error; err != nil {
+					return fmt.Errorf("delete orphaned return route states: %w", err)
+				}
+				if err := tx.Where("id IN ?", orphanTaskIDs).Delete(&models.ReturnRouteTask{}).Error; err != nil {
+					return fmt.Errorf("delete orphaned return route tasks: %w", err)
+				}
+			}
+		}
+		for label, model := range map[string]any{
+			"offline notifications":        &models.OfflineNotification{},
+			"traffic report notifications": &models.TrafficReportNotification{},
+			"traffic daily ledger":         &models.TrafficDailyLedger{},
+		} {
+			if err := tx.Where(`NOT EXISTS (
+				SELECT 1 FROM clients WHERE clients.uuid = client
+			)`).Delete(model).Error; err != nil {
+				return fmt.Errorf("delete orphaned %s: %w", label, err)
+			}
+		}
+		if err := cleanupOrphanedPingLossNotifications(tx); err != nil {
+			return err
+		}
+		if err := tx.Where(`
+			NOT EXISTS (SELECT 1 FROM clients WHERE clients.uuid = task_results.client)
+			OR NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.task_id = task_results.task_id)
+		`).Delete(&models.TaskResult{}).Error; err != nil {
+			return fmt.Errorf("delete orphaned task results: %w", err)
+		}
+
+		var clients []models.Client
+		if err := tx.Select("uuid").Find(&clients).Error; err != nil {
+			return fmt.Errorf("list clients for orphan cleanup: %w", err)
+		}
+		validClients := make(map[string]struct{}, len(clients))
+		for _, client := range clients {
+			validClients[client.UUID] = struct{}{}
+		}
+
+		var pingTasks []models.PingTask
+		if err := tx.Select("id", "clients").Find(&pingTasks).Error; err != nil {
+			return fmt.Errorf("list ping tasks for orphan cleanup: %w", err)
+		}
+		for _, task := range pingTasks {
+			remaining, changed := keepKnownClients(task.Clients, validClients)
+			if changed {
+				if err := tx.Model(&models.PingTask{}).Where("id = ?", task.Id).Update("clients", remaining).Error; err != nil {
+					return fmt.Errorf("clean ping task %d clients: %w", task.Id, err)
+				}
+			}
+		}
+
+		var loadNotifications []models.LoadNotification
+		if err := tx.Select("id", "clients").Find(&loadNotifications).Error; err != nil {
+			return fmt.Errorf("list load notifications for orphan cleanup: %w", err)
+		}
+		for _, notification := range loadNotifications {
+			remaining, changed := keepKnownClients(notification.Clients, validClients)
+			if len(remaining) == 0 {
+				if err := tx.Delete(&models.LoadNotification{}, notification.Id).Error; err != nil {
+					return fmt.Errorf("delete empty load notification %d: %w", notification.Id, err)
+				}
+				continue
+			}
+			if !changed {
+				continue
+			}
+			if err := tx.Model(&models.LoadNotification{}).Where("id = ?", notification.Id).Update("clients", remaining).Error; err != nil {
+				return fmt.Errorf("clean load notification %d clients: %w", notification.Id, err)
+			}
+		}
+
+		var commandTasks []models.Task
+		if err := tx.Select("task_id", "clients").Find(&commandTasks).Error; err != nil {
+			return fmt.Errorf("list command tasks for orphan cleanup: %w", err)
+		}
+		for _, task := range commandTasks {
+			remaining, changed := keepKnownClients(task.Clients, validClients)
+			if len(remaining) == 0 {
+				if err := tx.Where("task_id = ?", task.TaskId).Delete(&models.TaskResult{}).Error; err != nil {
+					return fmt.Errorf("delete empty command task %s results: %w", task.TaskId, err)
+				}
+				if err := tx.Where("task_id = ?", task.TaskId).Delete(&models.Task{}).Error; err != nil {
+					return fmt.Errorf("delete empty command task %s: %w", task.TaskId, err)
+				}
+				continue
+			}
+			if !changed {
+				continue
+			}
+			if err := tx.Model(&models.Task{}).Where("task_id = ?", task.TaskId).Update("clients", remaining).Error; err != nil {
+				return fmt.Errorf("clean command task %s clients: %w", task.TaskId, err)
+			}
+		}
+
+		for _, table := range []string{"records", "records_long_term", "gpu_records", "ping_records"} {
+			if !tx.Migrator().HasTable(table) {
+				continue
+			}
+			predicate := fmt.Sprintf(`NOT EXISTS (
+				SELECT 1 FROM clients WHERE clients.uuid = %s.client
+			)`, table)
+			if table == "ping_records" {
+				predicate += ` OR NOT EXISTS (
+					SELECT 1 FROM ping_tasks WHERE ping_tasks.id = ping_records.task_id
+				)`
+			}
+			query := "DELETE FROM " + table + " WHERE " + predicate
+			if err := tx.Exec(query).Error; err != nil {
+				return fmt.Errorf("delete orphaned rows from legacy table %s: %w", table, err)
+			}
+		}
+		return nil
+	})
+}
+
+func keepKnownClients(clients models.StringArray, valid map[string]struct{}) (models.StringArray, bool) {
+	remaining := make(models.StringArray, 0, len(clients))
+	changed := false
+	for _, client := range clients {
+		if _, ok := valid[client]; !ok {
+			changed = true
+			continue
+		}
+		remaining = append(remaining, client)
+	}
+	return remaining, changed
+}
+
 // ConfigureLowResourceMode updates connection-local SQLite memory settings.
 // The main database uses one connection, so these PRAGMAs remain effective for
 // the lifetime of the pool and can be switched without reopening the database.
@@ -493,25 +645,30 @@ func ConfigureLowResourceMode(enabled bool) error {
 	if instance == nil || flags.ApplyDatabaseTypeNormalization() != flags.DatabaseTypeSQLite {
 		return nil
 	}
-	pragmas := []string{
-		"PRAGMA synchronous = NORMAL;",
-		"PRAGMA mmap_size = 0;",
-	}
-	if enabled {
-		pragmas = append(pragmas,
-			"PRAGMA cache_size = -8192;",
-			"PRAGMA temp_store = FILE;",
-		)
-	} else {
-		pragmas = append(pragmas,
-			"PRAGMA cache_size = -65536;",
-			"PRAGMA temp_store = MEMORY;",
-		)
-	}
-	for _, pragma := range pragmas {
+	for _, pragma := range sqliteResourcePragmas(enabled) {
 		if err := instance.Exec(pragma).Error; err != nil {
 			return fmt.Errorf("apply SQLite resource setting %q: %w", pragma, err)
 		}
 	}
 	return nil
+}
+
+func sqliteResourcePragmas(enabled bool) []string {
+	pragmas := []string{
+		"PRAGMA synchronous = NORMAL;",
+	}
+	if enabled {
+		pragmas = append(pragmas,
+			"PRAGMA mmap_size = 0;",
+			"PRAGMA cache_size = -8192;",
+			"PRAGMA temp_store = FILE;",
+		)
+	} else {
+		pragmas = append(pragmas,
+			"PRAGMA mmap_size = 268435456;",
+			"PRAGMA cache_size = -65536;",
+			"PRAGMA temp_store = MEMORY;",
+		)
+	}
+	return pragmas
 }

@@ -8,12 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"log"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/komari-monitor/komari/database/clients"
 	v1 "github.com/komari-monitor/komari/protocol/v1"
 	"github.com/komari-monitor/komari/utils/notifier"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
@@ -99,7 +98,7 @@ func postPresenceExpired(uuid string, connID int64, gen uint64) {
 func UploadReport(c *gin.Context) {
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		log.Println("Failed to read request body:", err)
+		logger.ErrorArgs("client-api", "Failed to read request body:", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
@@ -117,15 +116,10 @@ func UploadReport(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
 		return
 	}
-	// 优先使用 body 中的 UUID，若为空则从中间件注入的上下文中获取
-	uuid := report.UUID
-	if uuid == "" {
-		if v, ok := c.Get("client_uuid"); ok {
-			uuid, _ = v.(string)
-		}
-	}
-	if uuid == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "UUID is required"})
+	// 节点身份只能来自已认证的 Token，不能信任上报正文中的 UUID。
+	uuid, ok := clientUUIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
 		return
 	}
 
@@ -146,7 +140,7 @@ func WebSocketReport(c *gin.Context) {
 		return
 	}
 	// Upgrade the HTTP connection to a WebSocket connection
-	unsafeConn, err := api.UpgradeWebSocket(c)
+	unsafeConn, err := api.UpgradeWebSocket(c, api.AllowAgentWebSocket)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to upgrade to WebSocket." + err.Error()})
 		return
@@ -156,45 +150,25 @@ func WebSocketReport(c *gin.Context) {
 
 	_, message, err := conn.ReadMessage()
 	if err != nil {
-		log.Println("Error reading message:", err)
+		logger.ErrorArgs("client-api", "Error reading message:", err)
 		return
 	}
 
-	// 第一次数据拿token
-	data := map[string]interface{}{}
-	err = json.Unmarshal(message, &data)
-	if err != nil {
-		conn.WriteJSON(gin.H{"status": "error", "error": "Invalid JSON"})
-		return
-	}
-	// it should ok,token was verfied in the middleware
-	token := ""
-	var errMsg string
-
-	// 优先检查查询参数中的 token
-	token = c.Query("token")
-
-	// 如果 token 为空，返回错误
-	if token == "" {
-		conn.WriteJSON(gin.H{"status": "error", "error": errMsg})
-		return
-	}
-
-	uuid, err := clients.GetClientUUIDByToken(token)
-	if err != nil {
-		conn.WriteJSON(gin.H{"status": "error", "error": errMsg})
+	uuid, ok := clientUUIDFromContext(c)
+	if !ok {
+		conn.WriteJSON(gin.H{"status": "error", "error": "Invalid token"})
 		return
 	}
 
 	// 接受新连接，并处理旧连接
 	if oldConn, exists := agent_runtime.GetConnectedClients()[uuid]; exists {
-		log.Printf("Client %s is reconnecting. Closing the old connection.", uuid)
+		logger.Infof("client-api", "Client %s is reconnecting. Closing the old connection.", uuid)
 
 		// 强制关闭旧连接。这将导致旧连接的 ReadMessage() 循环出错退出。
 		go oldConn.Close()
 	}
 	agent_runtime.SetConnectedClients(uuid, conn)
-	log.Printf("Client %s is reconnect success, connID: %d", uuid, conn.ID)
+	logger.Infof("client-api", "Client %s is reconnect success, connID: %d", uuid, conn.ID)
 	go notifier.OnlineNotification(uuid, conn.ID)
 	defer func() {
 		agent_runtime.DeleteClientConditionally(uuid, conn)
@@ -210,7 +184,7 @@ func WebSocketReport(c *gin.Context) {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("Client %s connection error: %v", uuid, err)
+				logger.Errorf("client-api", "Client %s connection error: %v", uuid, err)
 			}
 			break // 任何读错误（包括超时）都意味着连接已断开，退出循环
 		}
@@ -258,7 +232,7 @@ func processMessage(conn *connection.SafeConn, message []byte, uuid string) {
 			conn.WriteJSON(gin.H{"status": "error", "error": "Failed to save ping result"})
 		}
 	default:
-		log.Printf("Unknown message type: %s", msgType.Type)
+		logger.Warnf("client-api", "Unknown message type: %s", msgType.Type)
 		conn.WriteJSON(gin.H{"status": "error", "error": "Unknown message type"})
 	}
 }

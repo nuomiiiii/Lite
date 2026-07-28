@@ -2,6 +2,7 @@ package client
 
 import (
 	"net"
+	"net/http"
 
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/pkg/config"
@@ -96,10 +97,9 @@ func UploadBasicInfo(c *gin.Context) {
 		return
 	}
 
-	token := c.Query("token")
-	uuid, err := clients.GetClientUUIDByToken(token)
-	if uuid == "" || err != nil {
-		c.JSON(400, gin.H{"status": "error", "error": "Invalid token"})
+	uuid, ok := clientUUIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "Invalid token"})
 		return
 	}
 

@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -26,18 +26,21 @@ import (
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/pkg/config"
 	"github.com/komari-monitor/komari/pkg/corn"
+	"github.com/komari-monitor/komari/pkg/metric"
 	"github.com/komari-monitor/komari/pkg/migrations"
-	"github.com/komari-monitor/komari/pkg/resourceprobe"
 	"github.com/komari-monitor/komari/utils"
+	"github.com/komari-monitor/komari/utils/cloudflared"
 	"github.com/komari-monitor/komari/utils/geoip"
-	logutil "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/utils/messageSender"
 	"github.com/komari-monitor/komari/utils/notifier"
 	"github.com/komari-monitor/komari/web/api"
+	installweb "github.com/komari-monitor/komari/web/install"
 	"github.com/komari-monitor/komari/web/oauth"
 	frontendpublic "github.com/komari-monitor/komari/web/public"
 	"github.com/komari-monitor/komari/web/router"
 	"github.com/komari-monitor/komari/web/security"
+	storageupdateweb "github.com/komari-monitor/komari/web/storageupdate"
 	upgradeweb "github.com/komari-monitor/komari/web/update"
 )
 
@@ -55,7 +58,7 @@ type cleanupFunc struct {
 //
 // App 把这些拆成有序阶段：
 //
-//	Bootstrap    基础设施：目录、数据库、默认管理员、配置快照
+//	Bootstrap    基础设施：目录、数据库、配置快照
 //	InitStores   存储：metric store
 //	InitProviders 外部 provider：OAuth（同步，路由依赖）、GeoIP、消息发送
 //	StartBackground 后台：定时任务
@@ -88,7 +91,7 @@ func (a *App) addCleanup(name string, fn func(ctx context.Context) error) {
 	a.cleanups = append(a.cleanups, cleanupFunc{name: name, fn: fn})
 }
 
-// Bootstrap 初始化基础设施：数据目录、数据库、默认管理员账号、配置快照。
+// Bootstrap 初始化基础设施：数据目录、数据库、配置快照。
 func (a *App) Bootstrap() error {
 	if err := os.MkdirAll("./data/theme", os.ModePerm); err != nil {
 		return fmt.Errorf("failed to create theme directory: %w", err)
@@ -108,14 +111,7 @@ func (a *App) Bootstrap() error {
 		return dbcore.Close()
 	})
 
-	if utils.VersionHash != "unknown" {
-		gin.SetMode(gin.ReleaseMode)
-	}
-
-	// 首次启动创建默认管理员账号。
-	if err := ensureDefaultAdmin(); err != nil {
-		return fmt.Errorf("failed to ensure default admin account: %w", err)
-	}
+	gin.SetMode(gin.ReleaseMode)
 
 	lowResourceMode, err := ensureLowResourceModeDefault()
 	if err != nil {
@@ -144,24 +140,11 @@ func ensureLowResourceModeDefault() (bool, error) {
 		}
 		return false, fmt.Errorf("%s must be a boolean", config.LowResourceModeKey)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 55*time.Second)
-	defer cancel()
-	result := resourceprobe.Detect(ctx, "./data")
-	if err := config.Set(config.LowResourceModeKey, result.LowResource); err != nil {
+	if err := config.Set(config.LowResourceModeKey, false); err != nil {
 		return false, err
 	}
-	log.Printf(
-		"Low resource mode auto-detection: enabled=%t memory=%dMiB disk_free=%dMiB cpu=%.0fops/s random_write=%.2fMiB/s iops=%.0f reasons=%v",
-		result.LowResource,
-		result.MemoryBytes/(1024*1024),
-		result.DiskFreeBytes/(1024*1024),
-		result.CPUOpsPerSecond,
-		result.WriteBytesPerSecond/(1024*1024),
-		result.WriteIOPS,
-		result.Reasons,
-	)
-	return result.LowResource, nil
+	logger.Infof("server", "Low resource mode defaulted to disabled")
+	return false, nil
 }
 
 // InitStores 初始化独立存储组件（metric store）并执行 metrics 迁移。
@@ -195,6 +178,29 @@ func (a *App) InitStores() error {
 		auditlog.EventLog("error", fmt.Sprintf("Metrics startup migration failed: %v", err))
 
 		return fmt.Errorf("metrics startup migration failed: %w", err)
+	}
+	var registeredClients []models.Client
+	if err := dbcore.GetDBInstance().Select("uuid").Find(&registeredClients).Error; err != nil {
+		return fmt.Errorf("failed to list clients for metrics orphan cleanup: %w", err)
+	}
+	validEntities := make(map[string]struct{}, len(registeredClients))
+	for _, client := range registeredClients {
+		validEntities[client.UUID] = struct{}{}
+	}
+	var pingTasks []models.PingTask
+	if err := dbcore.GetDBInstance().Select("id").Find(&pingTasks).Error; err != nil {
+		return fmt.Errorf("failed to list ping tasks for metrics orphan cleanup: %w", err)
+	}
+	validPingTasks := make(map[uint]struct{}, len(pingTasks))
+	for _, task := range pingTasks {
+		validPingTasks[task.Id] = struct{}{}
+	}
+	orphanResult, err := metricstore.CleanupOrphanedData(context.Background(), validEntities, validPingTasks)
+	if err != nil {
+		return fmt.Errorf("failed to clean orphaned metrics: %w", err)
+	}
+	if orphanResult.Entities > 0 || orphanResult.PingTasks > 0 {
+		logger.Infof("metricstore", "Removed orphaned metric data (entities=%d ping_tasks=%d)", orphanResult.Entities, orphanResult.PingTasks)
 	}
 	metricstore.StartReportBatcher()
 	a.addCleanup("metric-report-batcher", func(ctx context.Context) error {
@@ -234,7 +240,7 @@ func (a *App) initOAuth() {
 	}
 	if err := oauth.Initialize(); err != nil {
 		// Keep password login available when an OAuth provider is misconfigured.
-		log.Printf("Failed to initialize OAuth provider: %v", err)
+		logger.Errorf("server", "Failed to initialize OAuth provider: %v", err)
 		auditlog.EventLog("error", fmt.Sprintf("Failed to initialize OAuth provider: %v", err))
 	}
 	a.oauthReady = true
@@ -247,6 +253,88 @@ func (a *App) LegacyUpgradeRequired() (bool, migrations.LegacyMonitoringSummary,
 	return migrations.LegacyMonitoringMigrationRequired(dbcore.GetDBInstance())
 }
 
+func (a *App) MetricStorageUpgradeRequired() (bool, metric.SQLiteMigrationSummary, error) {
+	summary, err := metricstore.InspectSQLiteStorageMigration(context.Background())
+	return summary.Required, summary, err
+}
+
+// InstallRequired reports whether the instance still needs the first-run guide.
+// A zero-user database is deliberately treated as incomplete so an interrupted
+// guide can be resumed after a restart.
+func (a *App) InstallRequired() (bool, error) {
+	var count int64
+	if err := dbcore.GetDBInstance().Model(&models.User{}).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count == 0, nil
+}
+
+// RunInstallGuide starts the restricted first-run HTTP server.
+func (a *App) RunInstallGuide() (bool, error) {
+	controller := installweb.NewController(dbcore.GetDBInstance())
+	controller.Activate()
+	defer controller.Deactivate()
+
+	r := gin.New()
+	r.Use(logger.GinLogger())
+	r.Use(logger.GinRecovery())
+	r.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api") {
+			c.Header("Cache-Control", "no-store")
+		}
+		c.Next()
+	})
+	controller.Register(r)
+	frontendpublic.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
+		r.NoRoute(func(c *gin.Context) {
+			requestPath := c.Request.URL.Path
+			if strings.HasPrefix(requestPath, "/api") {
+				api.RespondError(c, http.StatusNotFound, "Not found in install mode")
+				return
+			}
+			if c.Request.Method == http.MethodGet && requestPath != installweb.PagePath && filepath.Ext(requestPath) == "" {
+				c.Redirect(http.StatusTemporaryRedirect, installweb.PagePath)
+				return
+			}
+			for _, handler := range handlers {
+				handler(c)
+				if c.IsAborted() {
+					return
+				}
+			}
+		})
+	})
+
+	a.engine = r
+	a.server = &http.Server{Addr: flags.Listen, Handler: r}
+	serverErr := make(chan error, 1)
+	logger.Infof("server", "First-run installation guide is available on %s", flags.Listen)
+	go func() {
+		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(quit)
+	select {
+	case err := <-serverErr:
+		return false, fmt.Errorf("listen in install mode: %w", err)
+	case <-quit:
+		return false, a.Shutdown()
+	case <-controller.Done():
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := a.server.Shutdown(ctx); err != nil {
+			return false, fmt.Errorf("stop install server: %w", err)
+		}
+		a.server = nil
+		a.engine = nil
+		return true, nil
+	}
+}
+
 // RunLegacyUpgrade starts a restricted HTTP server on the normal listen
 // address. It returns only after the migration finishes and the restricted
 // listener has released the port, or after shutdown/interruption.
@@ -257,8 +345,8 @@ func (a *App) RunLegacyUpgrade(summary migrations.LegacyMonitoringSummary) (bool
 	defer controller.Deactivate()
 
 	r := gin.New()
-	r.Use(logutil.GinLogger())
-	r.Use(logutil.GinRecovery())
+	r.Use(logger.GinLogger())
+	r.Use(logger.GinRecovery())
 	cors := security.NewCorsController(a.settings.CorsOriginCheckEnabled, a.settings.CorsAllowedOrigins)
 	r.Use(cors.Middleware())
 	r.Use(api.IdentityMiddleware())
@@ -293,7 +381,7 @@ func (a *App) RunLegacyUpgrade(summary migrations.LegacyMonitoringSummary) (bool
 	a.engine = r
 	a.server = &http.Server{Addr: flags.Listen, Handler: r}
 	serverErr := make(chan error, 1)
-	log.Printf("Legacy monitoring data requires the 1.2.7 upgrade wizard on %s", flags.Listen)
+	logger.Infof("server", "Legacy monitoring data requires the 1.2.7 upgrade wizard on %s", flags.Listen)
 	go func() {
 		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
@@ -321,11 +409,93 @@ func (a *App) RunLegacyUpgrade(summary migrations.LegacyMonitoringSummary) (bool
 	}
 }
 
+// RunMetricStorageUpgrade exposes only authentication and SQLite migration
+// progress. Normal application routes remain unavailable until validation
+// succeeds and the restricted listener releases the port.
+func (a *App) RunMetricStorageUpgrade(summary metric.SQLiteMigrationSummary) (bool, error) {
+	a.initOAuth()
+	controller := storageupdateweb.NewController(summary)
+	controller.Activate()
+	defer controller.Deactivate()
+
+	r := gin.New()
+	r.Use(logger.GinLogger())
+	r.Use(logger.GinRecovery())
+	cors := security.NewCorsController(a.settings.CorsOriginCheckEnabled, a.settings.CorsAllowedOrigins)
+	r.Use(cors.Middleware())
+	r.Use(api.IdentityMiddleware())
+	r.Use(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api") {
+			c.Header("Cache-Control", "no-store")
+		}
+		c.Next()
+	})
+
+	controller.Register(r)
+	frontendpublic.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
+		r.NoRoute(func(c *gin.Context) {
+			requestPath := c.Request.URL.Path
+			if strings.HasPrefix(requestPath, "/api") {
+				api.RespondError(c, http.StatusNotFound, "Not found in metric storage upgrade mode")
+				return
+			}
+			if c.Request.Method == http.MethodGet && requestPath != storageupdateweb.PagePath && filepath.Ext(requestPath) == "" {
+				c.Redirect(http.StatusTemporaryRedirect, storageupdateweb.PagePath)
+				return
+			}
+			for _, handler := range handlers {
+				handler(c)
+				if c.IsAborted() {
+					return
+				}
+			}
+		})
+	})
+
+	a.engine = r
+	a.server = &http.Server{Addr: flags.Listen, Handler: r}
+	serverErr := make(chan error, 1)
+	logger.Infof("server", "Metric storage upgrade progress is available on %s", flags.Listen)
+	go func() {
+		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(quit)
+
+	select {
+	case err := <-serverErr:
+		return false, fmt.Errorf("listen in metric storage upgrade mode: %w", err)
+	case <-quit:
+		return false, a.Shutdown()
+	case <-controller.Done():
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := a.server.Shutdown(ctx); err != nil {
+			return false, fmt.Errorf("stop metric storage upgrade server: %w", err)
+		}
+		a.server = nil
+		a.engine = nil
+		return true, nil
+	}
+}
+
 // StartBackground 启动后台工作：定时任务。
 func (a *App) StartBackground() error {
 	registerScheduledWork()
 	a.addCleanup("scheduler", func(context.Context) error {
 		corn.StopAll()
+		return nil
+	})
+
+	if err := cloudflared.AutoStart(GetEnv("KOMARI_CLOUDFLARED_TOKEN", "")); err != nil {
+		logger.Errorf("cloudflared", "failed to auto start: %v", err)
+	}
+	a.addCleanup("cloudflared", func(context.Context) error {
+		cloudflared.Shutdown()
 		return nil
 	})
 	return nil
@@ -341,10 +511,10 @@ func (a *App) registerReloadHandlers(cors *security.CorsController) {
 			}
 			oidcProvider, err := database.GetOidcConfigByName(t)
 			if err != nil {
-				log.Printf("Failed to get OIDC provider config: %v", err)
+				logger.Errorf("server", "Failed to get OIDC provider config: %v", err)
 				return
 			}
-			log.Printf("Using %s as OIDC provider", oidcProvider.Name)
+			logger.Infof("server", "Using %s as OIDC provider", oidcProvider.Name)
 			if err := oauth.LoadProvider(oidcProvider.Name, oidcProvider.Addition); err != nil {
 				auditlog.EventLog("error", fmt.Sprintf("Failed to load OIDC provider: %v", err))
 			}
@@ -369,7 +539,7 @@ func (a *App) registerReloadHandlers(cors *security.CorsController) {
 	a.reload.Register("traffic-report-schedule", func(event config.ConfigEvent) {
 		if event.IsChanged(config.TrafficReportTimeKey) {
 			if err := notifier.ReloadTrafficReportSchedule(); err != nil {
-				log.Printf("Failed to reload traffic report schedule: %v", err)
+				logger.Errorf("server", "Failed to reload traffic report schedule: %v", err)
 			}
 		}
 	})
@@ -383,8 +553,8 @@ func (a *App) registerReloadHandlers(cors *security.CorsController) {
 // BuildRouter 构建 Gin 引擎、中间件与全部路由，并登记热重载处理器。
 func (a *App) BuildRouter() error {
 	r := gin.New()
-	r.Use(logutil.GinLogger())
-	r.Use(logutil.GinRecovery())
+	r.Use(logger.GinLogger())
+	r.Use(logger.GinRecovery())
 
 	cors := security.NewCorsController(a.settings.CorsOriginCheckEnabled, a.settings.CorsAllowedOrigins)
 	r.Use(cors.Middleware())
@@ -417,7 +587,7 @@ func (a *App) Run() error {
 	}
 
 	serverErr := make(chan error, 1)
-	log.Printf("Starting server on %s ...", flags.Listen)
+	logger.Infof("server", "Starting server on %s ...", flags.Listen)
 	go func() {
 		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
@@ -448,7 +618,7 @@ func (a *App) Shutdown() error {
 	// 先关闭 HTTP 服务，停止接收新请求。
 	if a.server != nil {
 		if err := a.server.Shutdown(ctx); err != nil {
-			log.Printf("HTTP server forced to shutdown: %v", err)
+			logger.Infof("server", "HTTP server forced to shutdown: %v", err)
 		}
 	}
 
@@ -456,7 +626,7 @@ func (a *App) Shutdown() error {
 	for i := len(a.cleanups) - 1; i >= 0; i-- {
 		c := a.cleanups[i]
 		if err := c.fn(ctx); err != nil {
-			log.Printf("cleanup %q failed: %v", c.name, err)
+			logger.Errorf("server", "cleanup %q failed: %v", c.name, err)
 		}
 	}
 	return nil
@@ -472,51 +642,41 @@ func (a *App) onFatal(err error) {
 	for i := len(a.cleanups) - 1; i >= 0; i-- {
 		c := a.cleanups[i]
 		if cerr := c.fn(ctx); cerr != nil {
-			log.Printf("cleanup %q failed: %v", c.name, cerr)
+			logger.Errorf("server", "cleanup %q failed: %v", c.name, cerr)
 		}
 	}
-}
-
-// ensureDefaultAdmin 首次启动（无任何用户）时创建默认管理员账号。
-func ensureDefaultAdmin() error {
-	var count int64
-	dbcore.GetDBInstance().Model(&models.User{}).Count(&count)
-	if count != 0 {
-		return nil
-	}
-	user, passwd, err := accounts.CreateDefaultAdminAccount()
-	if err != nil {
-		return err
-	}
-	log.Println("Default admin account created. Username:", user, ", Password:", passwd)
-	return nil
 }
 
 // registerScheduledWork 注册所有定时任务与首启动同步逻辑。
 func registerScheduledWork() {
 	if err := tasks.ReloadPingSchedule(); err != nil {
-		log.Println("Failed to reload ping schedule:", err)
+		logger.ErrorArgs("server", "Failed to reload ping schedule:", err)
+	}
+	if err := tasks.ReloadReturnRouteSchedule(); err != nil {
+		logger.ErrorArgs("server", "Failed to reload return route schedule:", err)
 	}
 	if err := d_notification.ReloadLoadNotificationSchedule(); err != nil {
-		log.Println("Failed to reload load notification schedule:", err)
+		logger.ErrorArgs("server", "Failed to reload load notification schedule:", err)
+	}
+	// Finish the one-time traffic-ledger backfill before compaction starts so a
+	// low-resource server never performs both history scans concurrently.
+	if err := d_notification.EnsureTrafficReportMetricRetention(context.Background()); err != nil {
+		logger.Errorf("server", "Failed to ensure traffic report metric retention: %v", err)
 	}
 
 	if err := corn.AddFunc("records:cleanup", "@every 30m", cleanupScheduledData); err != nil {
-		log.Println("Failed to add cleanup scheduled task:", err)
+		logger.ErrorArgs("server", "Failed to add cleanup scheduled task:", err)
 	}
-	if err := corn.AddContextFunc("metrics:compact", "@every 5m", true, compactMetricStore); err != nil {
-		log.Println("Failed to add metric compact scheduled task:", err)
+	if err := corn.AddContextFunc("metrics:compact", "@every 10s", true, compactMetricStore); err != nil {
+		logger.ErrorArgs("server", "Failed to add metric compact scheduled task:", err)
 	}
 	if err := corn.AddFunc("notifier:traffic", "@every 1m", notifier.CheckTraffic); err != nil {
-		log.Println("Failed to add traffic notification task:", err)
+		logger.ErrorArgs("server", "Failed to add traffic notification task:", err)
 	}
 	if err := corn.AddFunc("notifier:expire", "0 0 9 * * *", notifier.CheckExpireScheduledWork); err != nil {
-		log.Println("Failed to add expire notification scheduled task:", err)
+		logger.ErrorArgs("server", "Failed to add expire notification scheduled task:", err)
 	}
 
-	if err := d_notification.EnsureTrafficReportMetricRetention(context.Background()); err != nil {
-		log.Printf("Failed to ensure traffic report metric retention: %v", err)
-	}
 	notifier.InitTrafficReportSchedule()
 	notifier.InitPingLossNotificationSchedule()
 }
@@ -526,7 +686,7 @@ const taskResultRetentionDays = 30
 func cleanupScheduledData() {
 	before := time.Now().UTC().Add(-24 * time.Hour * taskResultRetentionDays)
 	if err := tasks.ClearTaskResultsByTimeBefore(before); err != nil {
-		log.Printf("Failed to clean expired task results: %v", err)
+		logger.Errorf("server", "Failed to clean expired task results: %v", err)
 	}
 
 	auditlog.RemoveOldLogs()
@@ -534,18 +694,50 @@ func cleanupScheduledData() {
 }
 
 func compactMetricStore(ctx context.Context) {
-	compactCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	compactCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	written, err := metricstore.Compact(compactCtx, time.Now().UTC())
+	written, cycleCompleted, err := metricstore.CompactStep(compactCtx, time.Now().UTC())
 	if errors.Is(err, metricstore.ErrCompactInProgress) {
 		return
 	}
-	if err != nil {
-		log.Printf("Failed to compact metric store after writing %d rollup buckets: %v", written, err)
+	metricCompactCycle.add(written, err)
+	if !cycleCompleted {
 		return
 	}
-	if written > 0 {
-		log.Printf("Metric store compacted %d rollup buckets", written)
+	cycleWritten, cycleErr := metricCompactCycle.finish()
+	if cycleErr != nil {
+		logger.Errorf("server", "Metric store compact cycle finished after writing %d rollup buckets: %v", cycleWritten, cycleErr)
+		return
 	}
+	if cycleWritten > 0 {
+		logger.Infof("server", "Metric store compacted %d rollup buckets", cycleWritten)
+	}
+}
+
+type metricCompactCycleState struct {
+	sync.Mutex
+	written int
+	errors  []error
+}
+
+var metricCompactCycle metricCompactCycleState
+
+func (s *metricCompactCycleState) add(written int, err error) {
+	s.Lock()
+	defer s.Unlock()
+	s.written += written
+	if err != nil {
+		s.errors = append(s.errors, err)
+	}
+}
+
+func (s *metricCompactCycleState) finish() (int, error) {
+	s.Lock()
+	defer s.Unlock()
+	written := s.written
+	err := errors.Join(s.errors...)
+	s.written = 0
+	s.errors = nil
+	return written, err
 }

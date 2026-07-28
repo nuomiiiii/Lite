@@ -105,6 +105,7 @@ func adminGetSettings(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonR
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to get settings: "+err.Error(), nil)
 	}
+	delete(cst, config.CloudflareTunnelTokenKey)
 	return cst, nil
 }
 

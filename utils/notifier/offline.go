@@ -2,7 +2,7 @@ package notifier
 
 import (
 	"fmt"
-	"log"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"sync"
 	"time"
 
@@ -29,6 +29,19 @@ type notificationState struct {
 // 映射关系：clientID (string) -> *notificationState
 var clientStates sync.Map
 
+func ForgetClient(clientID string) {
+	value, exists := clientStates.LoadAndDelete(clientID)
+	if !exists {
+		return
+	}
+	state := value.(*notificationState)
+	state.mu.Lock()
+	state.pendingOfflineSince = time.Time{}
+	state.isConnExist = false
+	state.connectionID++
+	state.mu.Unlock()
+}
+
 // getNotificationConfig 获取指定客户端的通知配置。
 // 返回配置对象和一个布尔值，指示全局和该客户端是否启用通知。
 func getNotificationConfig(clientID string) (*models.OfflineNotification, bool) {
@@ -40,7 +53,7 @@ func getNotificationConfig(clientID string) (*models.OfflineNotification, bool) 
 	notiConf := models.OfflineNotification{Client: clientID}
 	db := dbcore.GetDBInstance()
 	if err := db.Model(&models.OfflineNotification{}).Where("client = ?", clientID).FirstOrCreate(&notiConf).Error; err != nil {
-		log.Printf("Failed to get or create offline notification config for client %s: %v", clientID, err)
+		logger.Errorf("notifier", "Failed to get or create offline notification config for client %s: %v", clientID, err)
 		return nil, false
 	}
 
@@ -52,6 +65,43 @@ func getOrInitState(clientID string) *notificationState {
 	// 原子性地加载或存储该客户端的状态。
 	val, _ := clientStates.LoadOrStore(clientID, &notificationState{isFirstConnection: true})
 	return val.(*notificationState)
+}
+
+func beginOfflineGrace(state *notificationState, endedConnectionID int64, now time.Time) bool {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	// 只接受当前连接的首次离线事件。旧连接的延迟事件必须被忽略。
+	if !state.pendingOfflineSince.IsZero() || state.connectionID != endedConnectionID {
+		return false
+	}
+	state.pendingOfflineSince = now
+	return true
+}
+
+func recordOnlineConnection(state *notificationState, connectionID int64) (notifyOnline, duplicate bool) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	state.connectionID = connectionID
+	if state.isFirstConnection {
+		state.isFirstConnection = false
+		state.pendingOfflineSince = time.Time{}
+		state.isConnExist = true
+		return false, false
+	}
+
+	wasPending := !state.pendingOfflineSince.IsZero()
+	state.pendingOfflineSince = time.Time{}
+	if wasPending {
+		return false, false
+	}
+
+	if state.isConnExist {
+		return false, true
+	}
+	state.isConnExist = true
+	return true, false
 }
 
 // OfflineNotification 在启用通知且未在宽限期内发送的情况下，发送客户端离线通知。
@@ -73,17 +123,9 @@ func OfflineNotification(clientID string, endedConnectionID int64) {
 
 	now := time.Now().UTC()
 	state := getOrInitState(clientID)
-
-	state.mu.Lock()
-	// 如果已处于待通知状态，则不做处理。
-	// 只有当离线事件来自当前的连接会话时，我们才认为它有效。
-	if !state.pendingOfflineSince.IsZero() || state.connectionID != endedConnectionID {
-		state.mu.Unlock()
+	if !beginOfflineGrace(state, endedConnectionID, now) {
 		return
 	}
-	// 标记该客户端为待离线。
-	state.pendingOfflineSince = now
-	state.mu.Unlock()
 
 	// 新建协程，等待宽限期后判断是否需要发送通知。
 	go func(startTime time.Time, expectedConnectionID int64) {
@@ -96,7 +138,7 @@ func OfflineNotification(clientID string, endedConnectionID int64) {
 		// 若为零值，说明客户端已重连。
 		// 当前的 connectionID 是否还是我们触发离线时的那个ID。如果不是，说明客户端重连过，本次离线通知已失效。
 		if state.pendingOfflineSince.IsZero() || state.connectionID != expectedConnectionID {
-			log.Printf("%s is reconnected new connID: %d, old connID: %d", clientID, state.connectionID, expectedConnectionID)
+			logger.Infof("notifier", "%s is reconnected new connID: %d, old connID: %d", clientID, state.connectionID, expectedConnectionID)
 			return
 		}
 
@@ -115,14 +157,14 @@ func OfflineNotification(clientID string, endedConnectionID int64) {
 				//Message: msg,
 				Emoji: "🔴",
 			}); err != nil {
-				log.Println("Failed to send offline notification:", err)
+				logger.ErrorArgs("notifier", "Failed to send offline notification:", err)
 			}
 		}(message)
 
 		// 更新数据库中的最后通知时间
 		db := dbcore.GetDBInstance()
 		if err := db.Model(&models.OfflineNotification{}).Where("client = ?", clientID).Update("last_notified", now.UTC()).Error; err != nil {
-			log.Printf("Failed to update last_notified for client %s: %v", clientID, err)
+			logger.Errorf("notifier", "Failed to update last_notified for client %s: %v", clientID, err)
 		}
 	}(now, endedConnectionID)
 }
@@ -135,43 +177,22 @@ func OnlineNotification(clientID string, connectionID int64) {
 	}
 	// 上线时检测续费
 	renewal.CheckAndAutoRenewal(client)
+
+	// 连接状态必须始终维护。通知开关只控制消息发送，不能让当前连接 ID
+	// 缺失，否则节点在线时启用通知后的首次断线会被误判为旧连接事件。
+	state := getOrInitState(clientID)
+	notifyOnline, duplicate := recordOnlineConnection(state, connectionID)
+
 	_, enabled := getNotificationConfig(clientID)
 	if !enabled {
 		return
 	}
-
-	state := getOrInitState(clientID)
-
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	state.connectionID = connectionID
-
-	// 规则1：首次连接不通知。
-	if state.isFirstConnection {
-		state.isFirstConnection = false
-		// 同时清除任何待离线状态（如服务器重启时客户端本已离线）
-		state.pendingOfflineSince = time.Time{}
-		state.isConnExist = true
+	if duplicate {
+		logger.Infof("notifier", "%s has connection exist: %d", clientID, connectionID)
 		return
 	}
-
-	// 检查客户端是否处于待离线状态。
-	wasPending := !state.pendingOfflineSince.IsZero()
-	// 上线时总是清除待离线状态。
-	state.pendingOfflineSince = time.Time{}
-
-	// 规则2：宽限期内重连，不通知。
-	if wasPending {
+	if !notifyOnline {
 		return
-	}
-
-	// 规则3: 没断开后重连, 不通知
-	// 为了解决OfflineNotify中不是全程加锁
-	if state.isConnExist {
-		log.Printf("%s has connection exist: %d", clientID, connectionID)
-		return
-	} else {
-		state.isConnExist = true
 	}
 
 	// 规则4：客户端离线足够久已通知（或未待离线），现在重新上线，发送上线通知。
@@ -184,7 +205,7 @@ func OnlineNotification(clientID string, connectionID int64) {
 			//Message: msg,
 			Emoji: "🟢",
 		}); err != nil {
-			log.Println("Failed to send online notification:", err)
+			logger.ErrorArgs("notifier", "Failed to send online notification:", err)
 		}
 	}(message)
 }

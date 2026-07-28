@@ -114,22 +114,22 @@ func TestRequiredTrafficReportRetentionDays(t *testing.T) {
 			want: 2,
 		},
 		{
-			name: "weekly overrides daily",
+			name: "weekly uses daily ledger safety window",
 			notifications: []models.TrafficReportNotification{
 				{Enable: true, Daily: true},
 				{Enable: true, Weekly: true},
 			},
-			want: 8,
+			want: 2,
 		},
 		{
-			name: "monthly overrides shorter cadences",
+			name: "monthly uses daily ledger safety window",
 			notifications: []models.TrafficReportNotification{{
 				Enable:  true,
 				Daily:   true,
 				Weekly:  true,
 				Monthly: true,
 			}},
-			want: 35,
+			want: 2,
 		},
 	}
 
@@ -140,23 +140,28 @@ func TestRequiredTrafficReportRetentionDays(t *testing.T) {
 	}
 }
 
-func TestTrafficReportRetentionNeverDropsWhenCadenceIsDisabled(t *testing.T) {
+func TestTrafficReportRetentionRestoresOnlyLegacyAutomaticValuesAfterBackfill(t *testing.T) {
 	tests := []struct {
 		name         string
 		currentDays  int
 		requiredDays int
+		baselineDays int
+		backfilled   bool
 		wantDays     int
 		wantChanged  bool
 	}{
-		{name: "monthly enables 35 days", currentDays: 1, requiredDays: 35, wantDays: 35, wantChanged: true},
-		{name: "monthly disabled keeps 35 days", currentDays: 35, requiredDays: 0, wantDays: 35},
-		{name: "monthly to weekly keeps 35 days", currentDays: 35, requiredDays: 8, wantDays: 35},
-		{name: "manual longer retention is preserved", currentDays: 90, requiredDays: 35, wantDays: 90},
+		{name: "reports keep two days", currentDays: 1, requiredDays: 2, baselineDays: 1, wantDays: 2, wantChanged: true},
+		{name: "common metric baseline is retained", currentDays: 2, requiredDays: 2, baselineDays: 7, wantDays: 7, wantChanged: true},
+		{name: "monthly source remains before backfill", currentDays: 35, requiredDays: 2, baselineDays: 7, wantDays: 35},
+		{name: "monthly source restores after backfill", currentDays: 35, requiredDays: 2, baselineDays: 7, backfilled: true, wantDays: 7, wantChanged: true},
+		{name: "weekly source restores after backfill", currentDays: 8, requiredDays: 0, baselineDays: 1, backfilled: true, wantDays: 1, wantChanged: true},
+		{name: "manual longer retention is preserved", currentDays: 90, requiredDays: 2, baselineDays: 7, backfilled: true, wantDays: 90},
+		{name: "disabled metric remains disabled without reports", currentDays: 0, requiredDays: 0, baselineDays: 7, backfilled: true, wantDays: 0},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			gotDays, gotChanged := trafficReportRetentionTarget(test.currentDays, test.requiredDays)
+			gotDays, gotChanged := trafficReportRetentionTarget(test.currentDays, test.requiredDays, test.baselineDays, test.backfilled)
 			assert.Equal(t, test.wantDays, gotDays)
 			assert.Equal(t, test.wantChanged, gotChanged)
 		})

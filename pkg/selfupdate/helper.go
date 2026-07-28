@@ -34,7 +34,7 @@ func RunHelper(configPath string) error {
 	if err := json.Unmarshal(content, &config); err != nil {
 		return err
 	}
-	if err := validateHelperConfig(config); err != nil {
+	if err := validateHelperConfig(&config); err != nil {
 		return err
 	}
 	helperHealthURL = config.HealthURL
@@ -50,7 +50,10 @@ func RunHelper(configPath string) error {
 	return err
 }
 
-func validateHelperConfig(config HelperConfig) error {
+func validateHelperConfig(config *HelperConfig) error {
+	if config == nil {
+		return errors.New("missing helper configuration")
+	}
 	if config.JobID == "" || !versionPattern.MatchString(config.ExpectedVersion) || !hashPattern.MatchString(config.ExpectedHash) {
 		return errors.New("invalid helper configuration")
 	}
@@ -61,10 +64,10 @@ func validateHelperConfig(config HelperConfig) error {
 		return errors.New("unsafe update path in helper configuration")
 	}
 	if config.HealthTimeout <= 0 {
-		config.HealthTimeout = 90 * time.Second
+		config.HealthTimeout = defaultHealthTimeout
 	}
 	if config.StableWindow <= 0 {
-		config.StableWindow = 15 * time.Second
+		config.StableWindow = defaultStableWindow
 	}
 	return nil
 }

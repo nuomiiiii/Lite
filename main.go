@@ -1,13 +1,12 @@
 package main
 
 import (
-	"log"
 	"log/slog"
 	"os"
 
 	"github.com/komari-monitor/komari/cmd"
 	"github.com/komari-monitor/komari/utils"
-	logutil "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/komari-monitor/komari/utils/log"
 )
 
 func main() {
@@ -17,12 +16,12 @@ func main() {
 		return
 	}
 	if utils.VersionHash == "unknown" {
-		logutil.SetupGlobalLogger(slog.LevelDebug)
+		logger.Setup(slog.LevelDebug)
 	} else {
-		logutil.SetupGlobalLogger(slog.LevelInfo)
+		logger.Setup(slog.LevelInfo)
 	}
 
-	log.Printf("Komari Monitor %s (%s)", utils.CurrentVersion, utils.VersionHash)
+	logger.Infof("server", "Komari Monitor %s (%s)", utils.CurrentVersion, utils.VersionHash)
 
 	cmd.Execute()
 }

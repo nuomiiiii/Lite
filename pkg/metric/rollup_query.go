@@ -56,6 +56,7 @@ func (s *Store) AggregateRollup(ctx context.Context, query AggregateQuery, resol
 
 	q := query.Query.normalized()
 	comp := s.cfg.RollupPolicy.compression()
+	needDigest := isPercentile(query.Aggregation)
 
 	// Read rollup buckets at this resolution that are FULLY contained in the
 	// inclusive window [Start, End] (entity and tag filters pushed into SQL),
@@ -66,11 +67,11 @@ func (s *Store) AggregateRollup(ctx context.Context, query AggregateQuery, resol
 	// trimmed to the window and is therefore excluded. Callers that need every
 	// sample in a sub-bucket window must align the window to resolution
 	// boundaries (or query raw points).
-	rows, err := s.scanRollupRowsContained(ctx, q.MetricName, q.EntityID, q.Tags, resolution, q.Start, q.End)
+	rows, err := s.scanRollupRowsContained(ctx, q.MetricName, q.EntityID, q.Tags, resolution, q.Start, q.End, needDigest)
 	if err != nil {
 		return nil, err
 	}
-	groups := foldRollupRows(nil, rows, query.Interval, comp, query.PreserveSeries)
+	groups := foldRollupRows(nil, rows, query.Interval, comp, query.PreserveSeries, needDigest)
 
 	out, err := rollupGroupsToPoints(groups, query)
 	if err != nil {
@@ -167,7 +168,7 @@ func mergedRollupGroupsToPoints(groups map[rollupKey]*rollupBucket, query Aggreg
 // end 边界为闭区间，以匹配原始查询语义（raw 使用 ts <= end）；因此最后覆盖纳秒
 // 恰为 end 的桶仍算被包含。零宽窗口（start == end）不包含任何完整桶，返回空结果，
 // 需要亚桶精度的调用方应查询原始点。
-func (s *Store) scanRollupRowsContained(ctx context.Context, metricName, entityID string, tags map[string]string, resolution time.Duration, start, end time.Time) ([]storedRollup, error) {
+func (s *Store) scanRollupRowsContained(ctx context.Context, metricName, entityID string, tags map[string]string, resolution time.Duration, start, end time.Time, needDigest bool) ([]storedRollup, error) {
 	resNano := resolution.Nanoseconds()
 	startNano := start.UTC().UnixNano()
 	endNano := end.UTC().UnixNano()
@@ -179,7 +180,7 @@ func (s *Store) scanRollupRowsContained(ctx context.Context, metricName, entityI
 	if upper < lower {
 		return nil, nil // window narrower than one bucket: nothing is contained
 	}
-	rows, err := s.scanRollupRowsBetween(ctx, metricName, entityID, tags, resNano, lower, upper)
+	rows, err := s.scanRollupRowsBetween(ctx, metricName, entityID, tags, resNano, lower, upper, needDigest)
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +196,14 @@ func (s *Store) scanRollupRowsContained(ctx context.Context, metricName, entityI
 // scanRollupRowsBetween 读取某分辨率下桶起点落在闭区间
 // [lowerBucket, upperBucket] 内的 rollup 行，并可把实体和标签过滤下推到 SQL。
 // 它是包含扫描和混合扫描共用的 SQL 原语；桶窗口语义由调用方通过传入的边界决定。
-func (s *Store) scanRollupRowsBetween(ctx context.Context, metricName, entityID string, tags map[string]string, resNano, lowerBucket, upperBucket int64) ([]storedRollup, error) {
+func (s *Store) scanRollupRowsBetween(ctx context.Context, metricName, entityID string, tags map[string]string, resNano, lowerBucket, upperBucket int64, needDigest bool) ([]storedRollup, error) {
+	if s.sqliteStorageV4 {
+		rows, err := s.querySQLiteV4Rollups(ctx, s.reader(), metricName, entityID, tags, resNano, lowerBucket, upperBucket, needDigest)
+		if err != nil || !needDigest {
+			return rows, err
+		}
+		return s.hydrateSQLiteV4RollupDigests(ctx, metricName, entityID, tags, resNano, rows)
+	}
 	args := []any{metricName, resNano, lowerBucket, upperBucket}
 	parts := []string{
 		"metric_name = " + s.dialect.placeholder(1),
@@ -211,28 +219,92 @@ func (s *Store) scanRollupRowsBetween(ctx context.Context, metricName, entityID 
 		args = append(args, tags[k])
 		parts = append(parts, s.dialect.jsonExtractEquals("tags", k, s.dialect.placeholder(len(args))))
 	}
-	sqlText := fmt.Sprintf(
-		`SELECT entity_id, tags_hash, tags, bucket_nano, count, sum, sum_sq, min_val, max_val, first_val, first_ts, last_val, last_ts, digest
-		 FROM %s WHERE %s ORDER BY bucket_nano ASC`,
-		s.tables.rollups, strings.Join(parts, " AND "),
-	)
+	columns := "entity_id, tags_hash, tags, bucket_nano, count, sum, sum_sq, min_val, max_val, first_val, first_ts, last_val, last_ts"
+	if needDigest {
+		columns += ", digest"
+	}
+	sqlText := fmt.Sprintf("SELECT %s FROM %s WHERE %s ORDER BY bucket_nano ASC", columns, s.tables.rollups, strings.Join(parts, " AND "))
 	rows, err := s.reader().QueryContext(ctx, sqlText, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanStoredRollups(rows)
+	return scanStoredRollups(rows, needDigest)
 }
 
-// foldRollupRows folds stored rollup rows into interval-wide output buckets,
-// merging summaries (including the t-digest) per bucket. groups may be nil, in
-// which case a fresh map is allocated; passing an existing map lets a caller
-// accumulate rollup and raw contributions into the same output buckets.
+// foldRollupRows folds stored rollup rows into interval-wide output buckets.
+// Percentile queries merge t-digests; other aggregations only carry their exact
+// summaries. groups may be nil, in which case a fresh map is allocated; passing
+// an existing map lets a caller accumulate rollup and raw contributions into
+// the same output buckets.
 //
-// foldRollupRows 将存储的 rollup 行折叠进 interval 宽的输出桶，按桶合并摘要
-// （包括 t-digest）。groups 可为 nil，此时会分配新 map；传入已有 map 可让调用方
-// 把 rollup 和 raw 的贡献累加到同一批输出桶中。
-func foldRollupRows(groups map[rollupKey]*rollupBucket, rows []storedRollup, interval time.Duration, comp float64, preserveSeries bool) map[rollupKey]*rollupBucket {
+// foldRollupRows 将存储的 rollup 行折叠进 interval 宽的输出桶。百分位查询会
+// 按桶合并 t-digest，其他聚合只携带精确摘要。groups 可为 nil，此时会分配新 map；
+// 传入已有 map 可让调用方把 rollup 和 raw 的贡献累加到同一批输出桶中。
+func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, entityID string, tags map[string]string, resolution int64, rows []storedRollup) ([]storedRollup, error) {
+	missing := make([]int, 0)
+	var lower, upper int64
+	for index := range rows {
+		if rows[index].bucketData.digest != nil {
+			continue
+		}
+		missing = append(missing, index)
+		if len(missing) == 1 || rows[index].bucket < lower {
+			lower = rows[index].bucket
+		}
+		if len(missing) == 1 || rows[index].bucket > upper {
+			upper = rows[index].bucket
+		}
+	}
+	if len(missing) == 0 {
+		return rows, nil
+	}
+
+	var finer int64
+	for index, tier := range s.cfg.RollupPolicy.Tiers {
+		if tier.Interval.Nanoseconds() == resolution && index > 0 {
+			finer = s.cfg.RollupPolicy.Tiers[index-1].Interval.Nanoseconds()
+			break
+		}
+	}
+	if finer <= 0 || resolution%finer != 0 {
+		return nil, fmt.Errorf("metric: %d SQLite V4 rollup digests are unavailable at resolution %d", len(missing), resolution)
+	}
+	fineUpper, err := checkedAddInt64(upper, resolution-finer)
+	if err != nil {
+		return nil, err
+	}
+	fineRows, err := s.scanRollupRowsBetween(ctx, metricName, entityID, tags, finer, lower, fineUpper, true)
+	if err != nil {
+		return nil, err
+	}
+	comp := s.cfg.RollupPolicy.compression()
+	groups := make(map[rollupKey]*rollupBucket)
+	for _, row := range fineRows {
+		if row.bucketData.digest == nil {
+			return nil, fmt.Errorf("metric: finer SQLite V4 rollup digest is unavailable at resolution %d bucket %d", finer, row.bucket)
+		}
+		key := rollupKey{entityID: row.entityID, tagsHash: row.bucketData.tagsHash, bucket: floorDivNano(row.bucket, resolution)}
+		bucket := groups[key]
+		if bucket == nil {
+			bucket = newRollupBucketWithDigest(comp, true)
+			groups[key] = bucket
+		}
+		bucket.mergeStored(row.bucketData)
+	}
+	for _, index := range missing {
+		coarse := rows[index].bucketData
+		key := rollupKey{entityID: rows[index].entityID, tagsHash: coarse.tagsHash, bucket: rows[index].bucket}
+		rebuilt := groups[key]
+		if rebuilt == nil || rebuilt.digest == nil || !sqliteV4RollupSummariesEqual(rebuilt, coarse) {
+			return nil, fmt.Errorf("metric: cannot losslessly rebuild SQLite V4 rollup digest at resolution %d bucket %d", resolution, rows[index].bucket)
+		}
+		coarse.digest = rebuilt.digest
+	}
+	return rows, nil
+}
+
+func foldRollupRows(groups map[rollupKey]*rollupBucket, rows []storedRollup, interval time.Duration, comp float64, preserveSeries, needDigest bool) map[rollupKey]*rollupBucket {
 	if groups == nil {
 		groups = make(map[rollupKey]*rollupBucket)
 	}
@@ -242,7 +314,7 @@ func foldRollupRows(groups map[rollupKey]*rollupBucket, rows []storedRollup, int
 		key := foldedRollupKey(r.entityID, r.bucketData.tagsHash, bkt, preserveSeries)
 		b := groups[key]
 		if b == nil {
-			b = newRollupBucket(comp)
+			b = newRollupBucketWithDigest(comp, needDigest)
 			b.tagsHash = r.bucketData.tagsHash
 			b.tagsJSON = r.bucketData.tagsJSON
 			groups[key] = b
@@ -261,7 +333,7 @@ func foldRollupRows(groups map[rollupKey]*rollupBucket, rows []storedRollup, int
 // foldRawPoints 将原始点折叠进 interval 宽的输出桶，把每个观测值加入对应桶的
 // 累加器。它与 foldRollupRows 共用桶 map，因此混合查询可以把旧 rollup 半边和
 // 近期 raw 半边合并到同一批输出桶中并一起聚合（跨边界的 count/avg/百分位正确）。
-func foldRawPoints(groups map[rollupKey]*rollupBucket, points []Point, interval time.Duration, comp float64, preserveSeries bool) (map[rollupKey]*rollupBucket, error) {
+func foldRawPoints(groups map[rollupKey]*rollupBucket, points []Point, interval time.Duration, comp float64, preserveSeries, needDigest bool) (map[rollupKey]*rollupBucket, error) {
 	if groups == nil {
 		groups = make(map[rollupKey]*rollupBucket)
 	}
@@ -277,7 +349,7 @@ func foldRawPoints(groups map[rollupKey]*rollupBucket, points []Point, interval 
 		key := foldedRollupKey(p.EntityID, tagsHash, bkt, preserveSeries)
 		b := groups[key]
 		if b == nil {
-			b = newRollupBucket(comp)
+			b = newRollupBucketWithDigest(comp, needDigest)
 			b.tagsHash = tagsHash
 			b.tagsJSON = tagsJSON
 			groups[key] = b
@@ -314,16 +386,16 @@ func rollupTagsFromJSON(tagsJSON string) (map[string]string, error) {
 	return cloneStringMap(tags), nil
 }
 
-// scanStoredRollups reconstructs storedRollup rows (including tag identity and
-// the decoded t-digest) from a result set whose columns are, in order:
+// scanStoredRollups reconstructs storedRollup rows from a result set whose
+// columns are, in order:
 // entity_id, tags_hash, tags, bucket_nano, count, sum, sum_sq, min_val, max_val,
-// first_val, first_ts, last_val, last_ts, digest.
+// first_val, first_ts, last_val, last_ts, and optionally digest.
 //
-// scanStoredRollups 从结果集中还原 storedRollup 行（包括标签身份和解码后的
-// t-digest）。结果集的列顺序必须是：entity_id、tags_hash、tags、bucket_nano、
+// scanStoredRollups 从结果集中还原 storedRollup 行。结果集的列顺序必须是：
+// entity_id、tags_hash、tags、bucket_nano、
 // count、sum、sum_sq、min_val、max_val、first_val、first_ts、last_val、
-// last_ts、digest。
-func scanStoredRollups(rows *sql.Rows) ([]storedRollup, error) {
+// last_ts，以及可选的 digest。
+func scanStoredRollups(rows *sql.Rows, needDigest bool) ([]storedRollup, error) {
 	var out []storedRollup
 	for rows.Next() {
 		var (
@@ -336,12 +408,20 @@ func scanStoredRollups(rows *sql.Rows) ([]storedRollup, error) {
 			firstTS, lastTS                       int64
 			digestBlob                            []byte
 		)
-		if err := rows.Scan(&eid, &tagsHash, &rawTags, &bucketNano, &count, &sum, &sumSq, &minV, &maxV, &firstV, &firstTS, &lastV, &lastTS, &digestBlob); err != nil {
+		scanArgs := []any{&eid, &tagsHash, &rawTags, &bucketNano, &count, &sum, &sumSq, &minV, &maxV, &firstV, &firstTS, &lastV, &lastTS}
+		if needDigest {
+			scanArgs = append(scanArgs, &digestBlob)
+		}
+		if err := rows.Scan(scanArgs...); err != nil {
 			return nil, err
 		}
-		td, err := DecodeTDigest(digestBlob)
-		if err != nil {
-			return nil, err
+		var digest *TDigest
+		if needDigest {
+			var err error
+			digest, err = DecodeTDigest(digestBlob)
+			if err != nil {
+				return nil, err
+			}
 		}
 		tagsJSON, err := rawTagsToJSON(rawTags)
 		if err != nil {
@@ -355,7 +435,7 @@ func scanStoredRollups(rows *sql.Rows) ([]storedRollup, error) {
 				min: minV, max: maxV,
 				firstVal: firstV, firstTS: firstTS,
 				lastVal: lastV, lastTS: lastTS,
-				digest:   td,
+				digest:   digest,
 				tagsHash: tagsHash,
 				tagsJSON: tagsJSON,
 			},
@@ -518,31 +598,89 @@ func (s *Store) Series(ctx context.Context, query AggregateQuery, now time.Time)
 	}
 
 	servicingTier := bestRollupTier(policy, query.Interval, q.Start, now)
-	if q.Start.Before(rawCutoff) && !q.End.Before(rawCutoff) && servicingTier != nil {
-		if hasWatermark {
-			boundary := rawCutoff
-			if watermark.Before(boundary) {
-				boundary = watermark
-			}
-			if !q.Start.Before(boundary) {
-				return s.Aggregate(ctx, query)
-			}
-			return s.seriesHybrid(ctx, query, boundary, servicingTier)
-		}
-
-		// Existing stores may have rollups but no watermark yet. Read all raw
-		// data from the requested start and use the dynamic cutoff only as the
-		// rollup scan's upper bound. Compaction's raw/rollup invariant makes
-		// these two ranges disjoint; the next successful compact persists the
-		// precise boundary for subsequent queries.
-		return s.seriesHybridWithRollupEnd(ctx, query, q.Start, rawCutoff, servicingTier)
-	}
-
 	if servicingTier == nil {
 		return s.Aggregate(ctx, query)
 	}
+	if hasWatermark {
+		boundary := rawCutoff
+		if watermark.Before(boundary) {
+			boundary = watermark
+		}
+		if !q.Start.Before(boundary) {
+			return s.Aggregate(ctx, query)
+		}
+		if !q.End.Before(boundary) {
+			return s.seriesHybrid(ctx, query, boundary, servicingTier)
+		}
+		return s.AggregateRollup(ctx, query, servicingTier.Interval)
+	}
 
-	return s.AggregateRollup(ctx, query, servicingTier.Interval)
+	// Upgraded stores can have rollups but no watermark until their first V4
+	// compaction. Legacy layouts may also retain raw points already represented
+	// by those rollups, so the fallback must merge per-series without counting
+	// that overlap twice.
+	return s.seriesWithoutWatermark(ctx, query, servicingTier)
+}
+
+func (s *Store) seriesWithoutWatermark(ctx context.Context, query AggregateQuery, tier *RollupTier) ([]AggregatePoint, error) {
+	q := query.Query.normalized()
+	comp := s.cfg.RollupPolicy.compression()
+	needDigest := isPercentile(query.Aggregation)
+	resNano := tier.Interval.Nanoseconds()
+
+	rows, err := s.scanRollupRowsContained(ctx, q.MetricName, q.EntityID, q.Tags, tier.Interval, q.Start, q.End, needDigest)
+	if err != nil {
+		return nil, err
+	}
+	groups := foldRollupRows(nil, rows, query.Interval, comp, query.PreserveSeries, needDigest)
+
+	type coveredBucketKey struct {
+		entityID string
+		tagsHash string
+		bucket   int64
+	}
+	coveredBuckets := make(map[coveredBucketKey]struct{}, len(rows))
+	for _, row := range rows {
+		coveredBuckets[coveredBucketKey{
+			entityID: row.entityID,
+			tagsHash: row.bucketData.tagsHash,
+			bucket:   row.bucket,
+		}] = struct{}{}
+	}
+
+	rawQuery := q
+	rawQuery.Limit = 0
+	rawQuery.Offset = 0
+	points, err := s.Query(ctx, rawQuery)
+	if err != nil {
+		return nil, err
+	}
+	remaining := points[:0]
+	for _, point := range points {
+		point = point.normalized()
+		tagsHash, _, err := tagsFingerprint(point.Tags)
+		if err != nil {
+			return nil, err
+		}
+		key := coveredBucketKey{
+			entityID: point.EntityID,
+			tagsHash: tagsHash,
+			bucket:   floorDivNano(point.Timestamp.UnixNano(), resNano),
+		}
+		if _, covered := coveredBuckets[key]; covered {
+			continue
+		}
+		remaining = append(remaining, point)
+	}
+	if _, err := foldRawPoints(groups, remaining, query.Interval, comp, query.PreserveSeries, needDigest); err != nil {
+		return nil, err
+	}
+
+	out, err := rollupGroupsToPoints(groups, query)
+	if err != nil {
+		return nil, err
+	}
+	return pageBuckets(out, query.BucketLimit, query.BucketOffset), nil
 }
 
 // seriesHybrid answers a query that spans the raw-retention boundary by reading
@@ -581,6 +719,7 @@ func (s *Store) seriesHybrid(ctx context.Context, query AggregateQuery, boundary
 func (s *Store) seriesHybridWithRollupEnd(ctx context.Context, query AggregateQuery, boundary, rollupEnd time.Time, tier *RollupTier) ([]AggregatePoint, error) {
 	q := query.Query.normalized()
 	comp := s.cfg.RollupPolicy.compression()
+	needDigest := isPercentile(query.Aggregation)
 	resNano := tier.Interval.Nanoseconds()
 	startNano := q.Start.UnixNano()
 	endNano := q.End.UnixNano()
@@ -592,11 +731,11 @@ func (s *Store) seriesHybridWithRollupEnd(ctx context.Context, query AggregateQu
 	// contains compacted points before splitAt; the raw half starts at splitAt.
 	upperBucket := floorDivNano(rollupEnd.UTC().UnixNano(), resNano)
 	if upperBucket >= startNano {
-		rows, err := s.scanRollupRowsBetween(ctx, q.MetricName, q.EntityID, q.Tags, resNano, startNano, upperBucket)
+		rows, err := s.scanRollupRowsBetween(ctx, q.MetricName, q.EntityID, q.Tags, resNano, startNano, upperBucket, needDigest)
 		if err != nil {
 			return nil, err
 		}
-		foldRollupRows(groups, rows, query.Interval, comp, query.PreserveSeries)
+		foldRollupRows(groups, rows, query.Interval, comp, query.PreserveSeries, needDigest)
 	}
 
 	// Recent half: raw points in [splitAt, End]. Reuse the raw Query path so the
@@ -612,7 +751,7 @@ func (s *Store) seriesHybridWithRollupEnd(ctx context.Context, query AggregateQu
 		if err != nil {
 			return nil, err
 		}
-		if _, err := foldRawPoints(groups, points, query.Interval, comp, query.PreserveSeries); err != nil {
+		if _, err := foldRawPoints(groups, points, query.Interval, comp, query.PreserveSeries, needDigest); err != nil {
 			return nil, err
 		}
 	}

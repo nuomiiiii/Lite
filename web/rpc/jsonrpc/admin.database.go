@@ -3,6 +3,7 @@ package jsonrpc
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/komari-monitor/komari/cmd/flags"
 	"github.com/komari-monitor/komari/database/auditlog"
@@ -19,12 +20,50 @@ const (
 
 var databaseMaintenanceMu sync.Mutex
 
+type databaseFileSizes struct {
+	Database int64 `json:"database"`
+	WAL      int64 `json:"wal"`
+	SHM      int64 `json:"shm"`
+}
+
+func (sizes databaseFileSizes) total() int64 {
+	return sizes.Database + sizes.WAL + sizes.SHM
+}
+
 type databaseStorageStatus struct {
-	Driver   string `json:"driver"`
-	Location string `json:"location"`
-	Size     *int64 `json:"size"`
-	Action   string `json:"action"`
-	Error    string `json:"error,omitempty"`
+	Driver   string                 `json:"driver"`
+	Location string                 `json:"location"`
+	Size     *int64                 `json:"size"`
+	Files    *databaseFileSizes     `json:"files,omitempty"`
+	Runtime  *databaseRuntimeStatus `json:"runtime,omitempty"`
+	Action   string                 `json:"action"`
+	Error    string                 `json:"error,omitempty"`
+}
+
+type databaseDigestHandoffStatus struct {
+	Metric string     `json:"metric"`
+	Reason string     `json:"reason"`
+	At     *time.Time `json:"at"`
+}
+
+type databaseRuntimeStatus struct {
+	Compacting                    bool       `json:"compacting"`
+	CurrentMetric                 string     `json:"current_metric"`
+	Progress                      int        `json:"progress"`
+	Total                         int        `json:"total"`
+	CycleWritten                  int        `json:"cycle_written"`
+	CycleStartedAt                *time.Time `json:"cycle_started_at"`
+	LastStepAt                    *time.Time `json:"last_step_at"`
+	LastCycleCompletedAt          *time.Time `json:"last_cycle_completed_at"`
+	CheckpointApplicable          bool       `json:"checkpoint_applicable"`
+	LastCheckpointAttemptAt       *time.Time `json:"last_checkpoint_attempt_at"`
+	LastCheckpointSuccessAt       *time.Time `json:"last_checkpoint_success_at"`
+	NextCheckpointAt              *time.Time `json:"next_checkpoint_at"`
+	CheckpointPending             bool       `json:"checkpoint_pending"`
+	ConsecutiveCheckpointFailures int        `json:"consecutive_checkpoint_failures"`
+	ConsecutiveCycleFailures      int        `json:"consecutive_cycle_failures"`
+	LastError                     string                         `json:"last_error,omitempty"`
+	DigestHandoffDeferred         []databaseDigestHandoffStatus `json:"digest_handoff_deferred"`
 }
 
 type databaseStatusResponse struct {
@@ -119,12 +158,17 @@ func mainDatabaseStatus() databaseStorageStatus {
 		Location: databaseLocationLocal,
 		Action:   string(metric.MaintenanceVacuum),
 	}
-	size, err := dbcore.StorageSize()
+	files, err := dbcore.StorageFiles()
 	if err != nil {
 		status.Error = err.Error()
 		return status
 	}
-	status.Size = int64Pointer(size)
+	status.Files = &databaseFileSizes{
+		Database: files.Database,
+		WAL:      files.WAL,
+		SHM:      files.SHM,
+	}
+	status.Size = int64Pointer(status.Files.total())
 	return status
 }
 
@@ -135,11 +179,53 @@ func monitoringDatabaseStatus(ctx context.Context) databaseStorageStatus {
 		Action: string(info.Action),
 	}
 	status.Location = databaseLocationForDriver(info.Driver)
+	if info.Driver != "" {
+		status.Runtime = newDatabaseRuntimeStatus(info.Driver, metricstore.GetRuntimeStatus())
+	}
 	if err != nil {
 		status.Error = err.Error()
 		return status
 	}
+	if info.Files != nil {
+		status.Files = &databaseFileSizes{
+			Database: info.Files.Database,
+			WAL:      info.Files.WAL,
+			SHM:      info.Files.SHM,
+		}
+	}
 	status.Size = int64Pointer(info.Size)
+	return status
+}
+
+func newDatabaseRuntimeStatus(driver metric.Driver, runtime metricstore.RuntimeStatus) *databaseRuntimeStatus {
+	status := &databaseRuntimeStatus{
+		Compacting:                    runtime.Compacting,
+		CurrentMetric:                 runtime.CurrentMetric,
+		Progress:                      runtime.Progress,
+		Total:                         runtime.Total,
+		CycleWritten:                  runtime.CycleWritten,
+		CycleStartedAt:                nonZeroTimePointer(runtime.CycleStartedAt),
+		LastStepAt:                    nonZeroTimePointer(runtime.LastStepAt),
+		LastCycleCompletedAt:          nonZeroTimePointer(runtime.LastCycleCompletedAt),
+		CheckpointApplicable:          driver == metric.DriverSQLite,
+		CheckpointPending:             runtime.CheckpointPending,
+		ConsecutiveCheckpointFailures: runtime.ConsecutiveCheckpointFailures,
+		ConsecutiveCycleFailures:      runtime.ConsecutiveCycleFailures,
+		LastError:                     runtime.LastError,
+		DigestHandoffDeferred:         make([]databaseDigestHandoffStatus, 0, len(runtime.DigestHandoffDeferred)),
+	}
+	if status.CheckpointApplicable {
+		status.LastCheckpointAttemptAt = nonZeroTimePointer(runtime.LastCheckpointAttemptAt)
+		status.LastCheckpointSuccessAt = nonZeroTimePointer(runtime.LastCheckpointSuccessAt)
+		status.NextCheckpointAt = nonZeroTimePointer(runtime.NextCheckpointAt)
+	}
+	for _, deferred := range runtime.DigestHandoffDeferred {
+		status.DigestHandoffDeferred = append(status.DigestHandoffDeferred, databaseDigestHandoffStatus{
+			Metric: deferred.Metric,
+			Reason: deferred.Reason,
+			At:     nonZeroTimePointer(deferred.At),
+		})
+	}
 	return status
 }
 
@@ -224,6 +310,14 @@ func appendMeasurementError(current, phase string, err error) string {
 }
 
 func int64Pointer(value int64) *int64 {
+	return &value
+}
+
+func nonZeroTimePointer(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	value = value.UTC()
 	return &value
 }
 

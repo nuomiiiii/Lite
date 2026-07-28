@@ -7,18 +7,21 @@ import (
 )
 
 const (
-	Version               = "2.0"
-	MethodAgentReport     = "agent.report"
-	MethodAgentBasicInfo  = "agent.basicInfo"
-	MethodAgentPingResult = "agent.pingResult"
-	MethodAgentTaskResult = "agent.taskResult"
-	MethodAgentExec       = "agent.exec"
-	MethodAgentPing       = "agent.ping"
-	MethodAgentMessage    = "agent.message"
-	MethodAgentEvent      = "agent.event"
-	MethodAgentTerminal   = "agent.terminal.request"
-	MethodAgentConfig     = "agent.config"
-	MethodAgentPull       = "agent.pull"
+	Version                = "2.0"
+	MethodAgentReport      = "agent.report"
+	MethodAgentBasicInfo   = "agent.basicInfo"
+	MethodAgentPingResult  = "agent.pingResult"
+	MethodAgentRouteResult = "agent.routeResult"
+	MethodAgentTaskResult  = "agent.taskResult"
+	MethodAgentExec        = "agent.exec"
+	MethodAgentPing        = "agent.ping"
+	MethodAgentRoute       = "agent.route"
+	MethodAgentMessage     = "agent.message"
+	MethodAgentEvent       = "agent.event"
+	MethodAgentTerminal    = "agent.terminal.request"
+	MethodAgentRemote      = "agent.remote.request"
+	MethodAgentConfig      = "agent.config"
+	MethodAgentPull        = "agent.pull"
 )
 
 type Request struct {
@@ -65,6 +68,23 @@ type PingResultParams struct {
 	FinishedAt time.Time `json:"finished_at"`
 }
 
+type RouteHop struct {
+	TTL       int     `json:"ttl"`
+	IP        string  `json:"ip,omitempty"`
+	LatencyMS float64 `json:"latency_ms,omitempty"`
+	Timeout   bool    `json:"timeout,omitempty"`
+}
+
+type RouteResultParams struct {
+	TaskID     uint       `json:"task_id"`
+	Protocol   string     `json:"protocol"`
+	Target     string     `json:"target"`
+	IPVersion  int        `json:"ip_version"`
+	Hops       []RouteHop `json:"hops,omitempty"`
+	Error      string     `json:"error,omitempty"`
+	FinishedAt time.Time  `json:"finished_at"`
+}
+
 type PullParams struct {
 	Capabilities []string `json:"capabilities,omitempty"`
 	AckEventIDs  []string `json:"ack_event_ids,omitempty"`
@@ -82,6 +102,14 @@ type PingParams struct {
 	Target string `json:"ping_target"`
 }
 
+type RouteParams struct {
+	TaskID    uint   `json:"task_id"`
+	Protocol  string `json:"protocol"`
+	Target    string `json:"target"`
+	IPVersion int    `json:"ip_version"`
+	MaxHops   int    `json:"max_hops"`
+}
+
 type MessageParams struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
@@ -95,6 +123,11 @@ type EventParams struct {
 
 type TerminalRequestParams struct {
 	RequestID string `json:"request_id"`
+}
+
+type RemoteRequestParams struct {
+	RequestID string `json:"request_id"`
+	Ticket    string `json:"ticket"`
 }
 
 type ConfigParams struct {

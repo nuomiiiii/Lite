@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"sort"
 	"strings"
 	"sync"
@@ -19,7 +19,7 @@ var (
 	store             *metric.Store
 	storeFingerprint  string
 	storeMu           sync.RWMutex
-	storeOnce         sync.Once
+	storeInitMu       sync.Mutex
 	storeOperations   = newStoreOperationGate()
 	compactOperations = newStoreOperationGate()
 	compactAt         int
@@ -33,6 +33,7 @@ const (
 	DefaultRollupRawRetention = 15 * time.Minute
 	DefaultRollupFinestTier   = time.Minute
 	externalStoreInitTimeout  = 30 * time.Second
+	checkpointRetryTimeout    = 250 * time.Millisecond
 )
 
 // MetricStoreConfig 保存 metric store 配置。
@@ -43,7 +44,7 @@ type MetricStoreConfig struct {
 	Driver              string `json:"metric_db_driver" default:"sqlite"`          // 数据库类型: sqlite, mysql, postgresql
 	DSN                 string `json:"metric_db_dsn" default:"./data/metrics.db"`  // 数据库连接串
 	DownsamplingEnabled bool   `json:"metric_downsampling_enabled" default:"true"` // 是否启用分层降采样
-	LowResourceMode     bool   `json:"low_resource_mode"`                          // 低资源模式由首次探测或后台设置决定
+	LowResourceMode     bool   `json:"low_resource_mode"`                          // 低资源模式默认关闭，可由管理员手动启用
 	TablePrefix         string `json:"metric_table_prefix" default:"metric_"`      // 表名前缀
 	MaxOpenConns        int    `json:"metric_max_open_conns" default:"25"`         // 最大连接数
 	MaxIdleConns        int    `json:"metric_max_idle_conns" default:"5"`          // 最大空闲连接数
@@ -267,10 +268,15 @@ func openStore(ctx context.Context, cfg *MetricStoreConfig) (*metric.Store, erro
 }
 
 func openStoreWithDefaultRetention(ctx context.Context, cfg *MetricStoreConfig, defaultRetentionDays int) (*metric.Store, error) {
+	return openStoreWithDefaultRetentionAndProgress(ctx, cfg, defaultRetentionDays, nil)
+}
+
+func openStoreWithDefaultRetentionAndProgress(ctx context.Context, cfg *MetricStoreConfig, defaultRetentionDays int, progress metric.MigrationProgressFunc) (*metric.Store, error) {
 	metricCfg, err := buildMetricConfig(cfg, true)
 	if err != nil {
 		return nil, err
 	}
+	metricCfg.MigrationProgress = progress
 
 	s, err := metric.Open(ctx, metricCfg)
 	if err != nil {
@@ -296,10 +302,40 @@ func OpenStore(ctx context.Context, cfg *MetricStoreConfig) (*metric.Store, erro
 // as the initial retention for definitions that do not exist yet. Existing
 // definitions keep their configured retention, including an explicit zero.
 func OpenStoreForMigration(ctx context.Context, cfg *MetricStoreConfig, legacyRetentionDays int) (*metric.Store, error) {
+	return OpenStoreForMigrationWithProgress(ctx, cfg, legacyRetentionDays, nil)
+}
+
+// OpenStoreForMigrationWithProgress is OpenStoreForMigration with observable
+// SQLite schema migration progress.
+func OpenStoreForMigrationWithProgress(ctx context.Context, cfg *MetricStoreConfig, legacyRetentionDays int, progress metric.MigrationProgressFunc) (*metric.Store, error) {
 	if legacyRetentionDays < defaultBuiltinMetricRetentionDays {
 		legacyRetentionDays = defaultBuiltinMetricRetentionDays
 	}
-	return openStoreWithDefaultRetention(ctx, cfg, legacyRetentionDays)
+	return openStoreWithDefaultRetentionAndProgress(ctx, cfg, legacyRetentionDays, progress)
+}
+
+// InspectSQLiteStorageMigration checks whether the configured metric store
+// needs a potentially long local SQLite schema migration. It is read-only.
+func InspectSQLiteStorageMigration(ctx context.Context) (metric.SQLiteMigrationSummary, error) {
+	cfg, err := config.GetManyAs[MetricStoreConfig]()
+	if err != nil {
+		return metric.SQLiteMigrationSummary{}, fmt.Errorf("failed to load metric store config: %w", err)
+	}
+	metricCfg, err := buildMetricConfig(cfg, false)
+	if err != nil {
+		return metric.SQLiteMigrationSummary{}, err
+	}
+	return metric.InspectSQLiteMigration(ctx, metricCfg)
+}
+
+// OpenConfiguredStoreForMigration runs the configured store's automatic
+// schema migration without activating it as the process-wide store.
+func OpenConfiguredStoreForMigration(ctx context.Context, progress metric.MigrationProgressFunc) (*metric.Store, error) {
+	cfg, err := config.GetManyAs[MetricStoreConfig]()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load metric store config: %w", err)
+	}
+	return openStoreWithDefaultRetentionAndProgress(ctx, cfg, defaultBuiltinMetricRetentionDays, progress)
 }
 
 // TestConnection 使用给定配置尝试连接 metrics 数据库（不影响当前运行的 store）。
@@ -319,41 +355,43 @@ func TestConnection(ctx context.Context, cfg *MetricStoreConfig) error {
 	return s.Ping(ctx)
 }
 
-// InitializeStore 初始化 metric store（启动时调用，仅执行一次）。
+// InitializeStore 初始化 metric store（启动时调用，可在失败或关闭后重试）。
 func InitializeStore() error {
-	var initErr error
-	storeOnce.Do(func() {
-		cfg, err := config.GetManyAs[MetricStoreConfig]()
-		if err != nil {
-			initErr = fmt.Errorf("failed to load metric store config: %w", err)
-			return
-		}
+	storeInitMu.Lock()
+	defer storeInitMu.Unlock()
 
-		// SQLite V3 migration can legitimately take longer than the connection
-		// timeout for a large legacy database. The SQLite driver still applies its
-		// own bounded connect and busy timeouts; only the atomic data migration is
-		// allowed to run to completion. Remote stores keep the startup deadline so
-		// an unavailable database cannot block startup indefinitely.
-		ctx, cancel := startupStoreContext(cfg)
-		defer cancel()
+	storeMu.RLock()
+	initialized := store != nil
+	storeMu.RUnlock()
+	if initialized {
+		return nil
+	}
 
-		s, err := openStore(ctx, cfg)
-		if err != nil {
-			initErr = err
-			return
-		}
+	cfg, err := config.GetManyAs[MetricStoreConfig]()
+	if err != nil {
+		return fmt.Errorf("failed to load metric store config: %w", err)
+	}
 
-		storeMu.Lock()
-		store = s
-		storeFingerprint = targetFingerprint(cfg)
-		storeMu.Unlock()
-		setLowResourceMode(cfg.LowResourceMode)
-		clearStoreClosing()
+	// SQLite V3/V4 migration can legitimately take longer than a connection
+	// timeout. Remote stores retain a bounded startup deadline.
+	ctx, cancel := startupStoreContext(cfg)
+	defer cancel()
 
-		log.Printf("Metric store initialized successfully (driver=%s)", ResolveDriverFromConfig(cfg.Driver, cfg.DSN))
-	})
+	s, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
 
-	return initErr
+	storeMu.Lock()
+	store = s
+	storeFingerprint = targetFingerprint(cfg)
+	storeMu.Unlock()
+	resetRuntimeStatus(s.Driver())
+	setLowResourceMode(cfg.LowResourceMode)
+	clearStoreClosing()
+
+	logger.Infof("metricstore", "Metric store initialized successfully (driver=%s)", ResolveDriverFromConfig(cfg.Driver, cfg.DSN))
+	return nil
 }
 
 func startupStoreContext(cfg *MetricStoreConfig) (context.Context, context.CancelFunc) {
@@ -395,15 +433,16 @@ func Reload(ctx context.Context) error {
 	store = s
 	storeFingerprint = targetFingerprint(cfg)
 	storeMu.Unlock()
+	resetRuntimeStatus(s.Driver())
 	setLowResourceMode(cfg.LowResourceMode)
 
 	if old != nil {
 		if cerr := old.Close(); cerr != nil {
-			log.Printf("Failed to close previous metric store on reload: %v", cerr)
+			logger.Errorf("metricstore", "Failed to close previous metric store on reload: %v", cerr)
 		}
 	}
 
-	log.Printf("Metric store reloaded successfully (driver=%s)", ResolveDriverFromConfig(cfg.Driver, cfg.DSN))
+	logger.Infof("metricstore", "Metric store reloaded successfully (driver=%s)", ResolveDriverFromConfig(cfg.Driver, cfg.DSN))
 	return nil
 }
 
@@ -455,14 +494,14 @@ func Compact(ctx context.Context, now time.Time) (int, error) {
 		return 0, ErrCompactInProgress
 	}
 	defer compactOperations.Release()
-	if err := storeOperations.Acquire(ctx); err != nil {
-		return 0, fmt.Errorf("wait for metric store operations before compaction: %w", err)
+	if err := storeOperations.AcquireShared(ctx); err != nil {
+		return 0, fmt.Errorf("wait for metric store operation before compaction: %w", err)
 	}
-	defer storeOperations.Release()
+	defer storeOperations.ReleaseShared()
 
 	storeMu.RLock()
+	defer storeMu.RUnlock()
 	activeStore := store
-	storeMu.RUnlock()
 	if activeStore == nil {
 		return 0, fmt.Errorf("metric store not initialized")
 	}
@@ -485,18 +524,24 @@ func Compact(ctx context.Context, now time.Time) (int, error) {
 	var compactErrors []error
 	for i := 0; i < len(defs); i++ {
 		idx := (start + i) % len(defs)
-		n, err := activeStore.CompactMetric(ctx, defs[idx].Name, now)
+		metricName := defs[idx].Name
+		n, err := activeStore.CompactMetric(ctx, metricName, now)
+		if metric.IsDigestHandoffDeferred(err) {
+			handleDigestHandoffDeferred(metricName, err, time.Now().UTC())
+			continue
+		}
 		if err != nil {
 			if failedAt < 0 {
 				failedAt = idx
 			}
-			compactErrors = append(compactErrors, fmt.Errorf("compact metric %q: %w", defs[idx].Name, err))
+			compactErrors = append(compactErrors, fmt.Errorf("compact metric %q: %w", metricName, err))
 			continue
 		}
+		clearDigestHandoffDeferred(metricName)
 		total += n
 	}
-	if _, err := activeStore.CleanupExpired(ctx, now); err != nil {
-		compactErrors = append(compactErrors, fmt.Errorf("clean up expired raw metrics: %w", err))
+	if err := finishCompactCycle(ctx, activeStore, now); err != nil {
+		compactErrors = append(compactErrors, err)
 	}
 	if failedAt >= 0 {
 		compactAt = failedAt
@@ -504,6 +549,124 @@ func Compact(ctx context.Context, now time.Time) (int, error) {
 		compactAt = start
 	}
 	return total, errors.Join(compactErrors...)
+}
+
+func handleDigestHandoffDeferred(metricName string, err error, at time.Time) {
+	reason := digestHandoffDeferredReason(err)
+	recordDigestHandoffDeferred(metricName, reason, at)
+	logger.Infof("metricstore", "摘要接力暂缓，原数据已保留，将在后续压缩周期自动重试: metric=%q; reason=%s; detail=%v", metricName, reason, err)
+}
+
+func digestHandoffDeferredReason(err error) string {
+	detail := err.Error()
+	coordinate := ""
+	if index := strings.Index(detail, "series="); index >= 0 {
+		coordinate = detail[index:]
+	} else if index := strings.Index(detail, "bucket="); index >= 0 {
+		coordinate = detail[index:]
+	}
+	if index := strings.IndexAny(coordinate, "\r\n"); index >= 0 {
+		coordinate = coordinate[:index]
+	}
+
+	reason := "细粒度与粗粒度摘要校验暂未通过"
+	if strings.Contains(detail, "finer digest missing") {
+		reason = "细粒度摘要尚未完整"
+	}
+	if coordinate != "" {
+		reason += "（" + coordinate + "）"
+	}
+	return reason + "，原数据已保留，将在后续压缩周期自动重试"
+}
+
+// CompactStep compacts one metric and advances the rotating cursor. Cleanup
+// and the SQLite WAL checkpoint run only after the cursor completes a cycle,
+// keeping scheduled maintenance work short on low-performance single-core
+// servers. A failed metric still advances so it cannot block the other metrics.
+func CompactStep(ctx context.Context, now time.Time) (written int, cycleCompleted bool, err error) {
+	if !compactOperations.TryAcquire() {
+		return 0, false, ErrCompactInProgress
+	}
+	defer compactOperations.Release()
+	if err := storeOperations.AcquireShared(ctx); err != nil {
+		return 0, false, fmt.Errorf("wait for metric store operation before compaction: %w", err)
+	}
+	defer storeOperations.ReleaseShared()
+
+	storeMu.RLock()
+	defer storeMu.RUnlock()
+	activeStore := store
+	if activeStore == nil {
+		return 0, false, fmt.Errorf("metric store not initialized")
+	}
+	retryMetricWALCheckpoint(ctx, activeStore)
+
+	defs, err := activeStore.ListMetrics(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	if len(defs) == 0 {
+		compactAt = 0
+		cycleErr := finishCompactCycle(ctx, activeStore, now)
+		finishEmptyCompactCycle(activeStore.Driver(), cycleErr, time.Now().UTC())
+		return 0, true, cycleErr
+	}
+	if compactAt < 0 || compactAt >= len(defs) {
+		compactAt = 0
+	}
+
+	idx := compactAt
+	compactAt = (compactAt + 1) % len(defs)
+	cycleCompleted = compactAt == 0
+	beginCompactStep(activeStore.Driver(), defs[idx].Name, idx, len(defs), time.Now().UTC())
+	metricName := defs[idx].Name
+	written, compactErr := activeStore.CompactMetric(ctx, metricName, now)
+	if metric.IsDigestHandoffDeferred(compactErr) {
+		handleDigestHandoffDeferred(metricName, compactErr, time.Now().UTC())
+		compactErr = nil
+	} else if compactErr == nil {
+		clearDigestHandoffDeferred(metricName)
+	} else {
+		compactErr = fmt.Errorf("compact metric %q: %w", metricName, compactErr)
+	}
+	if !cycleCompleted {
+		finishCompactStep(written, false, compactErr, time.Now().UTC())
+		return written, false, compactErr
+	}
+	cycleErr := errors.Join(compactErr, finishCompactCycle(ctx, activeStore, now))
+	finishCompactStep(written, true, cycleErr, time.Now().UTC())
+	return written, true, cycleErr
+}
+
+func finishCompactCycle(ctx context.Context, activeStore *metric.Store, now time.Time) error {
+	var compactErrors []error
+	if _, err := activeStore.CleanupExpired(ctx, now); err != nil {
+		compactErrors = append(compactErrors, fmt.Errorf("clean up expired raw metrics: %w", err))
+	}
+	if activeStore.Driver() == metric.DriverSQLite {
+		checkpointCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		checkpointErr := activeStore.CheckpointWAL(checkpointCtx)
+		recordCheckpointResult(activeStore.Driver(), checkpointErr, time.Now().UTC())
+		if checkpointErr != nil {
+			logger.Warnf("metricstore", "Failed to truncate metric WAL after compaction: %v", checkpointErr)
+		}
+		cancel()
+	}
+	return errors.Join(compactErrors...)
+}
+
+func retryMetricWALCheckpoint(ctx context.Context, activeStore *metric.Store) {
+	if !checkpointIsPending() {
+		return
+	}
+	if activeStore.Driver() != metric.DriverSQLite {
+		clearCheckpointForExternal(activeStore.Driver())
+		return
+	}
+	retryCtx, cancel := context.WithTimeout(ctx, checkpointRetryTimeout)
+	err := activeStore.CheckpointWAL(retryCtx)
+	cancel()
+	recordCheckpointResult(activeStore.Driver(), err, time.Now().UTC())
 }
 
 // CloseStoreContext stops the asynchronous store migration before taking the
@@ -526,9 +689,11 @@ func CloseStoreContext(ctx context.Context) error {
 		err := store.Close()
 		store = nil
 		storeFingerprint = ""
+		resetRuntimeStatus("")
 		return err
 	}
 	storeFingerprint = ""
+	resetRuntimeStatus("")
 	return nil
 }
 
@@ -602,6 +767,16 @@ func createMetricDefinitionsWithDefaultRetention(ctx context.Context, s *metric.
 
 // WritePingRecord 将 ping 记录写入 metric store
 func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
+	if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) {
+		return ErrMetricWriteBlocked
+	}
+	if err := storeOperations.AcquireShared(ctx); err != nil {
+		return fmt.Errorf("wait for metric store operation before writing ping record: %w", err)
+	}
+	defer storeOperations.ReleaseShared()
+	if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) {
+		return ErrMetricWriteBlocked
+	}
 	s := GetStore()
 	if s == nil {
 		return fmt.Errorf("metric store not enabled")
@@ -644,7 +819,24 @@ func GetRecordsByClientAndTime(ctx context.Context, clientUUID string, start, en
 		return nil, fmt.Errorf("metric store not enabled")
 	}
 
-	return getRecordsByClientAndTimeFromSeries(ctx, s, clientUUID, start, end)
+	return getRecordsByClientAndTimeFromSeries(ctx, s, clientUUID, start, end, loadRecordMetricNames)
+}
+
+// GetTrafficRecordsByClientAndTime reconstructs only the four traffic series
+// needed by report accounting. Avoiding unrelated system metrics keeps ledger
+// settlement inexpensive on low-resource servers.
+func GetTrafficRecordsByClientAndTime(ctx context.Context, clientUUID string, start, end time.Time) ([]models.Record, error) {
+	s := GetStore()
+	if s == nil {
+		return nil, fmt.Errorf("metric store not enabled")
+	}
+
+	return getRecordsByClientAndTimeFromSeries(ctx, s, clientUUID, start, end, []string{
+		MetricNetTotalUp,
+		MetricNetTotalDown,
+		MetricTrafficUp,
+		MetricTrafficDown,
+	})
 }
 
 // GetRecordsByTime 从 metric store 查询所有客户端在时间范围内的记录
@@ -661,7 +853,7 @@ func GetRecordsByTime(ctx context.Context, start, end time.Time) ([]models.Recor
 	}
 	var records []models.Record
 	for _, entityID := range entityIDs {
-		items, err := getRecordsByClientAndTimeFromSeries(ctx, s, entityID, start, end)
+		items, err := getRecordsByClientAndTimeFromSeries(ctx, s, entityID, start, end, loadRecordMetricNames)
 		if err != nil {
 			return nil, err
 		}
@@ -676,12 +868,12 @@ type recordSeriesKey struct {
 	ts     int64
 }
 
-func getRecordsByClientAndTimeFromSeries(ctx context.Context, s *metric.Store, clientUUID string, start, end time.Time) ([]models.Record, error) {
+func getRecordsByClientAndTimeFromSeries(ctx context.Context, s *metric.Store, clientUUID string, start, end time.Time, metricNames []string) ([]models.Record, error) {
 	now := time.Now().UTC()
 	interval := recordSeriesInterval(s, start, end, now)
 	recordMap := make(map[recordSeriesKey]*models.Record)
 
-	for _, metricName := range loadRecordMetricNames {
+	for _, metricName := range metricNames {
 		points, err := s.Series(ctx, metric.AggregateQuery{
 			Query: metric.Query{
 				MetricName: metricName,
@@ -1004,7 +1196,7 @@ func DeleteAllRecords(ctx context.Context) error {
 
 	for _, metricName := range recordMetricNames {
 		if _, err := s.DeleteBefore(ctx, metricName, farFuture()); err != nil {
-			log.Printf("Failed to delete metric %s: %v", metricName, err)
+			logger.Errorf("metricstore", "Failed to delete metric %s: %v", metricName, err)
 		}
 	}
 	clearReportTrafficStates()
@@ -1028,7 +1220,13 @@ func DeleteAllPingRecords(ctx context.Context) error {
 
 // DeletePingRecordsByTask 删除指定任务（task_id）的全部 ping 记录。
 func DeletePingRecordsByTask(ctx context.Context, taskIDs []uint) error {
-	s := GetStore()
+	if err := storeOperations.Acquire(ctx); err != nil {
+		return fmt.Errorf("wait for metric store operations before deleting ping tasks: %w", err)
+	}
+	defer storeOperations.Release()
+	storeMu.RLock()
+	defer storeMu.RUnlock()
+	s := store
 	if s == nil {
 		return fmt.Errorf("metric store not enabled")
 	}
@@ -1047,7 +1245,13 @@ func DeletePingRecordsByTask(ctx context.Context, taskIDs []uint) error {
 
 // DeleteEntity 删除指定 agent 在所有指标下的历史数据。
 func DeleteEntity(ctx context.Context, entityID string) error {
-	s := GetStore()
+	if err := storeOperations.Acquire(ctx); err != nil {
+		return fmt.Errorf("wait for metric store operations before deleting entity: %w", err)
+	}
+	defer storeOperations.Release()
+	storeMu.RLock()
+	defer storeMu.RUnlock()
+	s := store
 	if s == nil {
 		return fmt.Errorf("metric store not enabled")
 	}
@@ -1063,7 +1267,7 @@ func DeleteEntity(ctx context.Context, entityID string) error {
 func DeleteEntityAsync(entityID string) {
 	go func() {
 		if err := DeleteEntity(context.Background(), entityID); err != nil {
-			log.Printf("Failed to delete metric records for entity %s: %v", entityID, err)
+			logger.Errorf("metricstore", "Failed to delete metric records for entity %s: %v", entityID, err)
 		}
 	}()
 }
@@ -1074,11 +1278,11 @@ func DeleteMetricDataAsync(metricName string) {
 	go func() {
 		s := GetStore()
 		if s == nil {
-			log.Printf("Failed to delete disabled metric %s: metric store not enabled", metricName)
+			logger.Errorf("metricstore", "Failed to delete disabled metric %s: metric store not enabled", metricName)
 			return
 		}
 		if _, err := s.DeleteMetricDataIfDisabled(context.Background(), metricName); err != nil {
-			log.Printf("Failed to delete disabled metric %s: %v", metricName, err)
+			logger.Errorf("metricstore", "Failed to delete disabled metric %s: %v", metricName, err)
 		}
 	}()
 }

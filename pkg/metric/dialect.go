@@ -82,7 +82,10 @@ type tables struct {
 	// values in narrow tables. Other backends leave these names unused.
 	series       string
 	pointValues  string
+	pointBlocks  string
 	rollupValues string
+	rollupBlocks string
+	rollupAxes   string
 }
 
 // newDialect returns the SQL dialect implementation for a backend.

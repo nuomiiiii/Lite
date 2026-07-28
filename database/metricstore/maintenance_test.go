@@ -27,6 +27,9 @@ func TestInspectAndReclaimStorage(t *testing.T) {
 	if info.Size != 0 {
 		t.Fatalf("in-memory storage size = %d, want 0", info.Size)
 	}
+	if info.Files == nil || info.Files.Total() != 0 {
+		t.Fatalf("in-memory SQLite file breakdown = %#v, want zero-valued details", info.Files)
+	}
 
 	result, err := ReclaimSpace(ctx)
 	if err != nil {
@@ -47,10 +50,10 @@ func TestReclaimSpaceReportsBusyStore(t *testing.T) {
 	}
 	installTestStore(t, s)
 
-	if !storeOperations.TryAcquire() {
-		t.Fatal("acquire store operation gate")
+	if err := storeOperations.AcquireShared(context.Background()); err != nil {
+		t.Fatalf("acquire shared store operation gate: %v", err)
 	}
-	defer storeOperations.Release()
+	defer storeOperations.ReleaseShared()
 
 	result, err := ReclaimSpace(context.Background())
 	if !errors.Is(err, ErrStoreBusy) {
@@ -62,10 +65,10 @@ func TestReclaimSpaceReportsBusyStore(t *testing.T) {
 	if !errors.Is(result.BeforeSizeError, ErrStoreBusy) || !errors.Is(result.AfterSizeError, ErrStoreBusy) {
 		t.Fatalf("busy result should mark both measurements unavailable: %#v", result)
 	}
-	compactCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, err := Compact(compactCtx, time.Now()); !errors.Is(err, context.Canceled) {
-		t.Fatalf("compact error = %v, want %v", err, context.Canceled)
+	compactCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := Compact(compactCtx, time.Now()); err != nil {
+		t.Fatalf("compact should not wait for report writes: %v", err)
 	}
 	if !compactOperations.TryAcquire() {
 		t.Fatal("acquire compact operation gate")
@@ -73,6 +76,9 @@ func TestReclaimSpaceReportsBusyStore(t *testing.T) {
 	defer compactOperations.Release()
 	if _, err := Compact(context.Background(), time.Now()); !errors.Is(err, ErrCompactInProgress) {
 		t.Fatalf("overlapping compact error = %v, want %v", err, ErrCompactInProgress)
+	}
+	if _, _, err := CompactStep(context.Background(), time.Now()); !errors.Is(err, ErrCompactInProgress) {
+		t.Fatalf("overlapping compact step error = %v, want %v", err, ErrCompactInProgress)
 	}
 }
 

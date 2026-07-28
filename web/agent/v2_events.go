@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/komari-monitor/komari/database/metricstore"
 	v2 "github.com/komari-monitor/komari/protocol/v2"
 )
 
@@ -75,10 +76,15 @@ func IsAgentOnline(uuid string) bool {
 }
 
 func EnqueueV2Event(uuid, method string, params any) v2.Event {
+	if metricstore.EntityWritesBlocked(uuid) {
+		return v2.Event{}
+	}
 	now := time.Now().UTC()
 	ttl := v2EventTTL
 	if method == v2.MethodAgentPing {
 		ttl = v2PingEventTTL
+	} else if method == v2.MethodAgentRoute {
+		ttl = 2 * time.Minute
 	}
 	event := v2.Event{
 		ID:        newV2EventID(),
@@ -126,8 +132,15 @@ func coalesceV2EventLocked(q *v2EventQueue, event v2.Event) {
 }
 
 func v2EventCoalesceKey(event v2.Event) string {
-	if event.Method != v2.MethodAgentPing {
+	if event.Method != v2.MethodAgentPing && event.Method != v2.MethodAgentRoute {
 		return ""
+	}
+	if event.Method == v2.MethodAgentRoute {
+		var params v2.RouteParams
+		if err := bindV2EventParams(event.Params, &params); err != nil || params.TaskID == 0 {
+			return ""
+		}
+		return fmt.Sprintf("%s:%d", event.Method, params.TaskID)
 	}
 	var params v2.PingParams
 	if err := bindV2EventParams(event.Params, &params); err != nil || params.TaskID == 0 {
@@ -183,7 +196,10 @@ func TakeV2Events(uuid string, ackIDs []string, limit int) []v2.Event {
 	v2EventMu.Lock()
 	defer v2EventMu.Unlock()
 
-	q := getV2EventQueueLocked(uuid)
+	q := v2EventQueues[uuid]
+	if q == nil {
+		return nil
+	}
 	ackV2EventsLocked(q, ackIDs)
 	pruneExpiredV2EventsLocked(q)
 	return takeV2EventsLocked(q, limit)
@@ -203,6 +219,39 @@ func AckV2Events(uuid string, ackIDs []string) {
 	ackV2EventsLocked(q, ackIDs)
 }
 
+func RemoveV2EventsByMethods(uuid string, methods ...string) {
+	if len(methods) == 0 {
+		return
+	}
+	blocked := make(map[string]struct{}, len(methods))
+	for _, method := range methods {
+		blocked[method] = struct{}{}
+	}
+	v2EventMu.Lock()
+	defer v2EventMu.Unlock()
+	q := v2EventQueues[uuid]
+	if q == nil {
+		return
+	}
+	filtered := q.events[:0]
+	for _, event := range q.events {
+		if _, remove := blocked[event.Method]; !remove {
+			filtered = append(filtered, event)
+		}
+	}
+	q.events = filtered
+}
+
+func RemoveV2EventQueue(uuid string) {
+	v2EventMu.Lock()
+	q := v2EventQueues[uuid]
+	delete(v2EventQueues, uuid)
+	if q != nil {
+		close(q.signal)
+	}
+	v2EventMu.Unlock()
+}
+
 func takeV2EventsLocked(q *v2EventQueue, limit int) []v2.Event {
 	if limit <= 0 || limit > len(q.events) {
 		limit = len(q.events)
@@ -213,6 +262,9 @@ func takeV2EventsLocked(q *v2EventQueue, limit int) []v2.Event {
 }
 
 func WaitV2Events(uuid string, ackIDs []string, timeout time.Duration) []v2.Event {
+	if metricstore.EntityWritesBlocked(uuid) {
+		return nil
+	}
 	v2EventMu.Lock()
 	q := getV2EventQueueLocked(uuid)
 	ackV2EventsLocked(q, ackIDs)

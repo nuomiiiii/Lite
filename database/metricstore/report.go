@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"runtime"
 	"sort"
 	"strconv"
@@ -168,6 +168,9 @@ func WriteReport(ctx context.Context, report v1.Report) (v1.Report, error) {
 	if report.UpdatedAt.IsZero() {
 		return v1.Report{}, fmt.Errorf("report receive time is required")
 	}
+	if EntityWritesBlocked(report.UUID) {
+		return v1.Report{}, ErrMetricWriteBlocked
+	}
 	report.UpdatedAt = report.UpdatedAt.UTC()
 	if GetStore() == nil {
 		return v1.Report{}, fmt.Errorf("metric store not enabled")
@@ -190,6 +193,9 @@ func WriteReport(ctx context.Context, report v1.Report) (v1.Report, error) {
 	saved, err := writeReportBatch(ctx, []v1.Report{report})
 	if err != nil {
 		return v1.Report{}, err
+	}
+	if len(saved) == 0 {
+		return v1.Report{}, ErrMetricWriteBlocked
 	}
 	return saved[0], nil
 }
@@ -224,7 +230,7 @@ func (w *reportBatchWorker) run() {
 			err := writePendingReports(request.ctx, &pending, LowResourceModeEnabled())
 			if request.stop {
 				if err != nil {
-					log.Printf("failed to flush metric report batch during shutdown: %v", err)
+					logger.Errorf("metricstore", "failed to flush metric report batch during shutdown: %v", err)
 				}
 				close(w.done)
 				request.done <- err
@@ -241,11 +247,11 @@ func (w *reportBatchWorker) run() {
 			}
 			pending = append(pending, drainReportQueue(w.queue, reportBatchQueueSize)...)
 			if err := writePendingReports(context.Background(), &pending, lowResource); err != nil {
-				log.Printf("failed to flush metric report batch: %v", err)
+				logger.Errorf("metricstore", "failed to flush metric report batch: %v", err)
 			} else {
 				lastFlush = time.Now()
 				if dropped := droppedReports.Swap(0); dropped > 0 {
-					log.Printf("low resource metric batching dropped %d reports after the queue filled", dropped)
+					logger.Warnf("metricstore", "low resource metric batching dropped %d reports after the queue filled", dropped)
 				}
 			}
 		}
@@ -403,10 +409,30 @@ func writeReportBatch(ctx context.Context, reports []v1.Report) ([]v1.Report, er
 	if len(reports) == 0 {
 		return nil, nil
 	}
-	if err := storeOperations.Acquire(ctx); err != nil {
+	filtered := reports[:0]
+	for _, report := range reports {
+		if !EntityWritesBlocked(report.UUID) {
+			filtered = append(filtered, report)
+		}
+	}
+	reports = filtered
+	if len(reports) == 0 {
+		return nil, nil
+	}
+	if err := storeOperations.AcquireShared(ctx); err != nil {
 		return nil, fmt.Errorf("wait for metric store operation before writing reports: %w", err)
 	}
-	defer storeOperations.Release()
+	defer storeOperations.ReleaseShared()
+	filtered = reports[:0]
+	for _, report := range reports {
+		if !EntityWritesBlocked(report.UUID) {
+			filtered = append(filtered, report)
+		}
+	}
+	reports = filtered
+	if len(reports) == 0 {
+		return nil, nil
+	}
 
 	s := GetStore()
 	if s == nil {
@@ -432,14 +458,14 @@ func writeReportBatch(ctx context.Context, reports []v1.Report) ([]v1.Report, er
 				values.totalUp = totalUp
 				values.hasUp = hasUp
 			} else if ctx.Err() == nil {
-				log.Printf("failed to restore previous upload counter for %s: %v", report.UUID, err)
+				logger.Errorf("metricstore", "failed to restore previous upload counter for %s: %v", report.UUID, err)
 			}
 			totalDown, hasDown, err := latestReportCounter(ctx, s, MetricNetTotalDown, report.UUID, report.UpdatedAt)
 			if err == nil {
 				values.totalDown = totalDown
 				values.hasDown = hasDown
 			} else if ctx.Err() == nil {
-				log.Printf("failed to restore previous download counter for %s: %v", report.UUID, err)
+				logger.Errorf("metricstore", "failed to restore previous download counter for %s: %v", report.UUID, err)
 			}
 			if err := ctx.Err(); err != nil {
 				return nil, err

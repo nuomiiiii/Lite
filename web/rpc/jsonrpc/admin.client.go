@@ -2,14 +2,19 @@ package jsonrpc
 
 import (
 	"context"
+	"time"
 
 	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/metricstore"
+	d_notification "github.com/komari-monitor/komari/database/notification"
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/pkg/rpc"
 	v2 "github.com/komari-monitor/komari/protocol/v2"
+	"github.com/komari-monitor/komari/utils/notifier"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
+	remote_api "github.com/komari-monitor/komari/web/api/remote"
+	terminal_api "github.com/komari-monitor/komari/web/api/terminal"
 )
 
 // admin.client.go
@@ -61,6 +66,14 @@ func init() {
 			{Name: "uuid", Type: "string", Required: true, Description: "Client UUID"},
 		},
 		Returns: "{ token: string }",
+	})
+	RegisterWithGroupAndMeta("rotateClientToken", rpc.RoleAdmin, adminRotateClientToken, &rpc.MethodMeta{
+		Name:    "admin:rotateClientToken",
+		Summary: "Rotate a client token with a transition period",
+		Params: []rpc.ParamMeta{
+			{Name: "uuid", Type: "string", Required: true, Description: "Client UUID"},
+		},
+		Returns: "{ token: string, previous_token_expires_at: string }",
 	})
 	RegisterWithGroupAndMeta("clearRecords", rpc.RoleAdmin, adminClearRecords, &rpc.MethodMeta{
 		Name:    "admin:clearRecords",
@@ -122,6 +135,11 @@ func adminEditClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.Js
 			})
 		}
 	}
+	if protected, changed := update["remote_control_protected"].(bool); changed && protected {
+		remote_api.CloseClientSessions(uuid)
+		terminal_api.CloseClientSessions(uuid)
+		agent_runtime.RemoveV2EventsByMethods(uuid, v2.MethodAgentExec, v2.MethodAgentTerminal, v2.MethodAgentRemote)
+	}
 	actor, ip := auditActor(ctx)
 	auditlog.Log(ip, actor, "edit client:"+uuid, "info")
 	return nil, nil
@@ -135,14 +153,23 @@ func adminRemoveClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 	if params.UUID == "" {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid or missing UUID", nil)
 	}
+	metricstore.BlockEntityWrites(params.UUID)
+	remote_api.CloseClientSessions(params.UUID)
+	terminal_api.CloseClientSessions(params.UUID)
+	agent_runtime.DeleteConnectedClients(params.UUID)
+	notifier.ForgetClient(params.UUID)
 	if err := clients.DeleteClient(params.UUID); err != nil {
-		return nil, rpc.MakeError(rpc.InternalError, "Failed to delete client"+err.Error(), nil)
+		return nil, rpc.MakeError(rpc.InternalError, "Failed to delete client: "+err.Error(), nil)
 	}
-	metricstore.DeleteEntityAsync(params.UUID)
+	remote_api.CloseClientSessions(params.UUID)
+	terminal_api.CloseClientSessions(params.UUID)
+	agent_runtime.DeleteConnectedClients(params.UUID)
+	if err := d_notification.ReloadLoadNotificationSchedule(); err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, "Client deleted but failed to reload load notification schedule: "+err.Error(), nil)
+	}
+	notifier.ForgetClient(params.UUID)
 	actor, ip := auditActor(ctx)
 	auditlog.Log(ip, actor, "delete client:"+params.UUID, "warn")
-	agent_runtime.DeleteConnectedClients(params.UUID)
-	agent_runtime.DeleteLatestReport(params.UUID)
 	return nil, nil
 }
 
@@ -182,6 +209,23 @@ func adminGetClientToken(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
 	return map[string]any{"token": token}, nil
+}
+
+func adminRotateClientToken(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		UUID string `json:"uuid"`
+	}
+	req.BindParams(&params)
+	if params.UUID == "" {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid or missing UUID", nil)
+	}
+	token, expiresAt, err := clients.RotateClientToken(params.UUID, 24*time.Hour)
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	actor, ip := auditActor(ctx)
+	auditlog.Log(ip, actor, "rotate client token:"+params.UUID, "warn")
+	return map[string]any{"token": token, "previous_token_expires_at": expiresAt}, nil
 }
 
 func adminClearRecords(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {

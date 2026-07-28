@@ -1,13 +1,16 @@
 package clients
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/utils"
@@ -17,22 +20,73 @@ import (
 )
 
 func DeleteClient(clientUuid string) error {
+	metricstore.BlockEntityWrites(clientUuid)
+	deleted := false
+	defer func() {
+		if !deleted {
+			metricstore.UnblockEntityWrites(clientUuid)
+		}
+	}()
+
+	if err := metricstore.DeleteEntity(context.Background(), clientUuid); err != nil {
+		return err
+	}
 	db := dbcore.GetDBInstance()
 	pingTasksChanged, err := deleteClient(db, clientUuid)
 	if err != nil {
 		return err
 	}
+	deleted = true
 	if pingTasksChanged {
-		return tasks.ReloadPingSchedule()
+		if err := tasks.ReloadPingSchedule(); err != nil {
+			return err
+		}
 	}
-	return nil
+	return tasks.ReloadReturnRouteSchedule()
 }
 
 func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
 	pingTasksChanged := false
 	err := db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("client = ?", clientUuid).Delete(&models.PingLossNotification{}).Error; err != nil {
-			return fmt.Errorf("delete client ping loss notifications: %w", err)
+		var clientCount int64
+		if err := tx.Model(&models.Client{}).Where("uuid = ?", clientUuid).Count(&clientCount).Error; err != nil {
+			return fmt.Errorf("find client: %w", err)
+		}
+		if clientCount == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if tx.Migrator().HasTable("return_route_tasks") {
+			var routeTaskIDs []uint
+			if err := tx.Model(&models.ReturnRouteTask{}).Where("client = ?", clientUuid).Pluck("id", &routeTaskIDs).Error; err != nil {
+				return fmt.Errorf("find client return route tasks: %w", err)
+			}
+			if len(routeTaskIDs) > 0 {
+				if err := tx.Where("task_id IN ?", routeTaskIDs).Delete(&models.ReturnRouteEvent{}).Error; err != nil {
+					return fmt.Errorf("delete client return route events: %w", err)
+				}
+				if err := tx.Where("task_id IN ?", routeTaskIDs).Delete(&models.ReturnRouteStatus{}).Error; err != nil {
+					return fmt.Errorf("delete client return route states: %w", err)
+				}
+				if err := tx.Where("id IN ?", routeTaskIDs).Delete(&models.ReturnRouteTask{}).Error; err != nil {
+					return fmt.Errorf("delete client return route tasks: %w", err)
+				}
+			}
+		}
+
+		for label, model := range map[string]any{
+			"offline notifications":        &models.OfflineNotification{},
+			"traffic report notifications": &models.TrafficReportNotification{},
+			"traffic daily ledger":         &models.TrafficDailyLedger{},
+			"ping loss notifications":      &models.PingLossNotification{},
+			"task results":                 &models.TaskResult{},
+		} {
+			if err := tx.Where("client = ?", clientUuid).Delete(model).Error; err != nil {
+				return fmt.Errorf("delete client %s: %w", label, err)
+			}
+		}
+
+		if err := deleteLegacyClientRows(tx, clientUuid); err != nil {
+			return err
 		}
 
 		var pingTasks []models.PingTask
@@ -58,12 +112,80 @@ func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
 			pingTasksChanged = true
 		}
 
+		var loadNotifications []models.LoadNotification
+		if err := tx.Select("id", "clients").Find(&loadNotifications).Error; err != nil {
+			return fmt.Errorf("find client load notifications: %w", err)
+		}
+		for _, notification := range loadNotifications {
+			remaining, changed := removeClientUUID(notification.Clients, clientUuid)
+			if !changed {
+				continue
+			}
+			if len(remaining) == 0 {
+				if err := tx.Delete(&models.LoadNotification{}, notification.Id).Error; err != nil {
+					return fmt.Errorf("delete empty load notification %d: %w", notification.Id, err)
+				}
+				continue
+			}
+			if err := tx.Model(&models.LoadNotification{}).Where("id = ?", notification.Id).Update("clients", remaining).Error; err != nil {
+				return fmt.Errorf("remove client from load notification %d: %w", notification.Id, err)
+			}
+		}
+
+		var commandTasks []models.Task
+		if err := tx.Select("task_id", "clients").Find(&commandTasks).Error; err != nil {
+			return fmt.Errorf("find client command tasks: %w", err)
+		}
+		for _, task := range commandTasks {
+			remaining, changed := removeClientUUID(task.Clients, clientUuid)
+			if !changed {
+				continue
+			}
+			if len(remaining) == 0 {
+				if err := tx.Where("task_id = ?", task.TaskId).Delete(&models.TaskResult{}).Error; err != nil {
+					return fmt.Errorf("delete command task %s results: %w", task.TaskId, err)
+				}
+				if err := tx.Where("task_id = ?", task.TaskId).Delete(&models.Task{}).Error; err != nil {
+					return fmt.Errorf("delete empty command task %s: %w", task.TaskId, err)
+				}
+				continue
+			}
+			if err := tx.Model(&models.Task{}).Where("task_id = ?", task.TaskId).Update("clients", remaining).Error; err != nil {
+				return fmt.Errorf("remove client from command task %s: %w", task.TaskId, err)
+			}
+		}
+
 		if err := tx.Delete(&models.Client{}, "uuid = ?", clientUuid).Error; err != nil {
 			return fmt.Errorf("delete client: %w", err)
 		}
 		return nil
 	})
 	return pingTasksChanged, err
+}
+
+func removeClientUUID(clients models.StringArray, clientUUID string) (models.StringArray, bool) {
+	remaining := make(models.StringArray, 0, len(clients))
+	changed := false
+	for _, assignedClient := range clients {
+		if assignedClient == clientUUID {
+			changed = true
+			continue
+		}
+		remaining = append(remaining, assignedClient)
+	}
+	return remaining, changed
+}
+
+func deleteLegacyClientRows(tx *gorm.DB, clientUUID string) error {
+	for _, table := range []string{"records", "records_long_term", "gpu_records", "ping_records"} {
+		if !tx.Migrator().HasTable(table) {
+			continue
+		}
+		if err := tx.Exec("DELETE FROM "+table+" WHERE client = ?", clientUUID).Error; err != nil {
+			return fmt.Errorf("delete client rows from legacy table %s: %w", table, err)
+		}
+	}
+	return nil
 }
 
 func SaveClientInfo(update map[string]interface{}) error {
@@ -182,7 +304,7 @@ func CreateClient() (clientUUID, token string, err error) {
 		return "", "", err
 	}
 	if err := tasks.AddDefaultOnClientUUID(clientUUID); err != nil {
-		log.Println("Failed to apply default-on ping tasks to new client:", err)
+		logger.ErrorArgs("clients", "Failed to apply default-on ping tasks to new client:", err)
 	}
 	return clientUUID, token, nil
 }
@@ -207,7 +329,7 @@ func CreateClientWithName(name string) (clientUUID, token string, err error) {
 		return "", "", err
 	}
 	if err := tasks.AddDefaultOnClientUUID(clientUUID); err != nil {
-		log.Println("Failed to apply default-on ping tasks to new client:", err)
+		logger.ErrorArgs("clients", "Failed to apply default-on ping tasks to new client:", err)
 	}
 	return clientUUID, token, nil
 }
@@ -243,9 +365,48 @@ func GetClientTokenByUUID(uuid string) (token string, err error) {
 	return client.Token, nil
 }
 
+func RotateClientToken(uuid string, gracePeriod time.Duration) (token string, previousExpiresAt time.Time, err error) {
+	return rotateClientToken(dbcore.GetDBInstance(), uuid, gracePeriod)
+}
+
+func rotateClientToken(db *gorm.DB, uuid string, gracePeriod time.Duration) (token string, previousExpiresAt time.Time, err error) {
+	if gracePeriod <= 0 {
+		return "", time.Time{}, fmt.Errorf("token grace period must be positive")
+	}
+	err = db.Transaction(func(tx *gorm.DB) error {
+		var client models.Client
+		if err := tx.Where("uuid = ?", uuid).First(&client).Error; err != nil {
+			return err
+		}
+		now := time.Now().UTC()
+		if client.PreviousToken != "" && client.PreviousTokenExpiresAt != nil && client.PreviousTokenExpiresAt.After(now) {
+			return fmt.Errorf("Token 重置仍在过渡期内，请先使用新 Token 重新部署 Agent；新 Token 首次成功连接后才能再次重置")
+		}
+		token = utils.GenerateToken()
+		previousExpiresAt = now.Add(gracePeriod)
+		return tx.Model(&models.Client{}).Where("uuid = ?", uuid).Updates(map[string]interface{}{
+			"token":                     token,
+			"previous_token":            client.Token,
+			"previous_token_expires_at": previousExpiresAt,
+			"updated_at":                now,
+		}).Error
+	})
+	return token, previousExpiresAt, err
+}
+
 func GetAllClientBasicInfo() (clients []models.Client, err error) {
-	db := dbcore.GetDBInstance()
-	err = db.Find(&clients).Error
+	return getClientBasicInfo(dbcore.GetDBInstance())
+}
+
+func GetClientBasicInfoByUUIDs(uuids []string) (clients []models.Client, err error) {
+	if len(uuids) == 0 {
+		return []models.Client{}, nil
+	}
+	return getClientBasicInfo(dbcore.GetDBInstance().Where("uuid IN ?", uuids))
+}
+
+func getClientBasicInfo(query *gorm.DB) (clients []models.Client, err error) {
+	err = query.Order("weight ASC").Order("created_at ASC").Order("uuid ASC").Find(&clients).Error
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +414,10 @@ func GetAllClientBasicInfo() (clients []models.Client, err error) {
 }
 
 func SaveClient(updates map[string]interface{}) error {
-	db := dbcore.GetDBInstance()
+	return saveClient(dbcore.GetDBInstance(), updates)
+}
+
+func saveClient(db *gorm.DB, updates map[string]interface{}) error {
 	clientUUID, ok := updates["uuid"].(string)
 	if !ok || clientUUID == "" {
 		return fmt.Errorf("invalid client UUID")
@@ -277,6 +441,17 @@ func SaveClient(updates map[string]interface{}) error {
 			return err
 		}
 		updates["traffic_reset_day"] = normalized
+	}
+	if value, exists := updates["currency"]; exists {
+		currency, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("currency must be a string")
+		}
+		currency = strings.TrimSpace(currency)
+		if strings.EqualFold(currency, "CAD") || strings.EqualFold(currency, "CA$") || strings.EqualFold(currency, "C$") {
+			currency = "CAD"
+		}
+		updates["currency"] = currency
 	}
 	if value, exists := updates["expired_at"]; exists {
 		switch typed := value.(type) {

@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/tasks"
 	v2 "github.com/komari-monitor/komari/protocol/v2"
 	"github.com/komari-monitor/komari/utils/notifier"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
@@ -86,6 +87,15 @@ func handleV2RPC(uuid string, req v2.Request, allowWait bool) v2.Response {
 			return v2.Error(req.ID, -32000, "failed to save ping result", err.Error())
 		}
 		return v2.Success(req.ID, gin.H{"status": "success"})
+	case v2.MethodAgentRouteResult:
+		var params v2.RouteResultParams
+		if err := bindV2Params(req.Params, &params); err != nil {
+			return v2.Error(req.ID, -32602, "invalid route result params", err.Error())
+		}
+		if err := tasks.SaveReturnRouteResult(uuid, params); err != nil {
+			return v2.Error(req.ID, -32000, "failed to save route result", err.Error())
+		}
+		return v2.Success(req.ID, gin.H{"status": "success"})
 	case v2.MethodAgentPull:
 		var params v2.PullParams
 		if err := bindV2Params(req.Params, &params); err != nil {
@@ -134,7 +144,7 @@ func WebSocketV2RPC(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Require WebSocket upgrade"})
 		return
 	}
-	unsafeConn, err := api.UpgradeWebSocket(c, api.EnableWebSocketCompression)
+	unsafeConn, err := api.UpgradeWebSocket(c, api.EnableWebSocketCompression, api.AllowAgentWebSocket)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "Failed to upgrade to WebSocket." + err.Error()})
 		return
@@ -166,7 +176,7 @@ func WebSocketV2RPC(c *gin.Context) {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("Client %s v2 connection error: %v", uuid, err)
+				logger.Errorf("client-api", "Client %s v2 connection error: %v", uuid, err)
 			}
 			return
 		}
@@ -179,7 +189,7 @@ func WebSocketV2RPC(c *gin.Context) {
 		resp := handleV2RPC(uuid, req, false)
 		if req.ID != nil {
 			if err := conn.WriteJSON(resp); err != nil {
-				log.Printf("failed to write v2 rpc response: %v", err)
+				logger.Errorf("client-api", "failed to write v2 rpc response: %v", err)
 				return
 			}
 		}
@@ -196,7 +206,7 @@ func pushQueuedV2Events(conn *connection.SafeConn, uuid string) bool {
 		payload := v2.Request{JSONRPC: v2.Version, Method: event.Method, Params: event.Params}
 		if err := conn.WriteJSON(payload); err != nil {
 			agent_runtime.AckV2Events(uuid, ackIDs)
-			log.Printf("failed to push queued v2 event %s to client %s: %v", event.ID, uuid, err)
+			logger.Errorf("client-api", "failed to push queued v2 event %s to client %s: %v", event.ID, uuid, err)
 			return false
 		}
 		ackIDs = append(ackIDs, event.ID)

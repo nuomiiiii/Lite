@@ -1,6 +1,7 @@
 package metric
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -12,7 +13,7 @@ import (
 	"time"
 )
 
-func TestSQLiteStorageV3MigratesLegacyDataAndPreservesQueries(t *testing.T) {
+func TestSQLiteStorageV4MigratesUpstreamLegacyDataAndPreservesQueries(t *testing.T) {
 	ctx := context.Background()
 	dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
 	base := time.Date(2026, 7, 19, 8, 0, 0, 0, time.UTC)
@@ -70,8 +71,8 @@ func TestSQLiteStorageV3MigratesLegacyDataAndPreservesQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open and migrate legacy SQLite database: %v", err)
 	}
-	if store.readDB == nil || !store.sqliteStorageV3 {
-		t.Fatal("SQLite V3/read pool was not enabled after migration")
+	if store.readDB == nil || !store.sqliteStorageV3 || !store.sqliteStorageV4 {
+		t.Fatal("SQLite V3 compatibility, V4 storage, or read pool was not enabled after upstream migration")
 	}
 	assertSQLiteV3Schema(t, ctx, store.db)
 	assertSQLiteQueryPlanUses(t, sqliteQueryPlan(t, ctx, store.db,
@@ -109,12 +110,24 @@ func TestSQLiteStorageV3MigratesLegacyDataAndPreservesQueries(t *testing.T) {
 		t.Fatalf("migrated percentile rollup changed: %#v", series)
 	}
 
-	var migratedDigest []byte
-	if err := store.db.QueryRowContext(ctx, `SELECT digest FROM metric_rollup_values LIMIT 1`).Scan(&migratedDigest); err != nil {
-		t.Fatalf("read migrated digest: %v", err)
+	matchedSeries, err := store.sqliteV4MatchingSeries(ctx, store.db, "latency", "node-a", tags)
+	if err != nil || len(matchedSeries) != 1 {
+		t.Fatalf("find migrated rollup series: count=%d err=%v", len(matchedSeries), err)
 	}
-	if len(migratedDigest) >= len(legacyDigest) || migratedDigest[1] != tdigestCompressedMagic1 {
-		t.Fatalf("legacy digest was not compressed: old=%d new=%d", len(legacyDigest), len(migratedDigest))
+	rollupRecords, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, matchedSeries[0].id, time.Minute.Nanoseconds())
+	if err != nil || len(rollupRecords) != 1 {
+		t.Fatalf("read migrated rollup block: count=%d err=%v", len(rollupRecords), err)
+	}
+	migratedDigest := rollupRecords[0].digest
+	if !bytes.Equal(migratedDigest, legacyDigest) {
+		t.Fatal("legacy digest centroid bits changed during migration")
+	}
+	var storedDigestBytes int
+	if err := store.db.QueryRowContext(ctx, `SELECT length(digest_payload) FROM metric_rollup_blocks`).Scan(&storedDigestBytes); err != nil {
+		t.Fatalf("read split digest payload size: %v", err)
+	}
+	if storedDigestBytes >= len(legacyDigest) {
+		t.Fatalf("split digest section was not compressed: raw=%d stored=%d", len(legacyDigest), storedDigestBytes)
 	}
 
 	rootPage := sqliteRootPage(t, ctx, store.db, "metric_series")
@@ -336,7 +349,7 @@ func TestSQLiteStorageV3IncrementalVacuumReclaimsDeletedPages(t *testing.T) {
 	}
 	afterPages := sqlitePragmaInt(t, ctx, store.db, "page_count")
 	afterFree := sqlitePragmaInt(t, ctx, store.db, "freelist_count")
-	if afterPages > beforePages || afterFree >= beforeFree {
+	if afterPages > beforePages || afterFree != 0 {
 		t.Fatalf("incremental vacuum did not reclaim pages: pages %d->%d free %d->%d", beforePages, afterPages, beforeFree, afterFree)
 	}
 }

@@ -1,8 +1,10 @@
 package public
 
 import (
+	"crypto/sha256"
 	"embed"
 	"io/fs"
+	"log"
 	"mime"
 	"net/http"
 	"os"
@@ -14,6 +16,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/pkg/config"
 )
+
+var legacyDefaultFaviconSHA256 = [32]byte{
+	0xbd, 0x28, 0xc1, 0xec, 0x58, 0x09, 0x26, 0xbc,
+	0x3f, 0x5e, 0x9c, 0xb2, 0x72, 0x19, 0x76, 0xd9,
+	0xeb, 0xad, 0xee, 0xfe, 0x22, 0x1b, 0xae, 0x77,
+	0x29, 0x4b, 0xf3, 0x38, 0x85, 0xc7, 0x1a, 0x69,
+}
 
 //go:embed defaultTheme
 var PublicFS embed.FS
@@ -33,6 +42,30 @@ const (
 
 func init() {
 	_ = os.MkdirAll("./data/theme", 0755)
+	if _, err := removeFaviconIfHashMatches(
+		filepath.Join(DataDir, FaviconFile),
+		legacyDefaultFaviconSHA256,
+	); err != nil {
+		log.Printf("Failed to migrate legacy default favicon: %v", err)
+	}
+}
+
+func removeFaviconIfHashMatches(filePath string, expectedHash [32]byte) (bool, error) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	if sha256.Sum256(data) != expectedHash {
+		return false, nil
+	}
+	if err := os.Remove(filePath); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func normalizeHTMLLanguage(language string) string {
@@ -220,6 +253,10 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 
 	// 1. Favicon 优先策略
 	r.GET("/favicon.ico", func(c *gin.Context) {
+		c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
+
 		// 优先：./data/favicon.ico
 		localFavicon := filepath.Join(DataDir, FaviconFile)
 		if _, err := os.Stat(localFavicon); err == nil {

@@ -65,6 +65,11 @@ type Config struct {
 	// RollupPolicy 配置降采样层级和分层保留时间；定义层级后，
 	// Store.Compact 会生成 rollup 并执行保留策略。零值表示禁用 rollup。
 	RollupPolicy RollupPolicy
+
+	// MigrationProgress receives best-effort progress snapshots while an
+	// automatic schema migration is running. Callbacks must return quickly and
+	// must not call back into the Store being opened.
+	MigrationProgress MigrationProgressFunc
 }
 
 // SQLiteOptions contains SQLite-specific performance and read-concurrency settings.
@@ -99,6 +104,10 @@ type SQLiteOptions struct {
 	//
 	// WALAutoCheckpoint 设置 SQLite WAL 自动 checkpoint 页数。
 	WALAutoCheckpoint int
+	// JournalSizeLimitBytes caps the WAL file retained after checkpoints.
+	//
+	// JournalSizeLimitBytes 限制 checkpoint 后保留的 SQLite WAL 文件大小。
+	JournalSizeLimitBytes int64
 	// ReadPoolSize, when > 0, opens a second read-only connection pool with
 	// this many connections for SELECT-style calls. SQLite serializes writes,
 	// but WAL lets readers run concurrently, so a read pool lifts read
@@ -156,12 +165,13 @@ func DefaultConfig(driver Driver, dsn string) Config {
 		ConnMaxLifetime: time.Hour,
 		ConnectTimeout:  10 * time.Second,
 		SQLite: SQLiteOptions{
-			PerformanceProfile: SQLiteProfileBalanced,
-			BusyTimeout:        5 * time.Second,
-			CacheSizeKB:        64 * 1024,
-			TempStoreMemory:    true,
-			MMapSizeBytes:      256 * 1024 * 1024,
-			WALAutoCheckpoint:  1000,
+			PerformanceProfile:    SQLiteProfileBalanced,
+			BusyTimeout:           5 * time.Second,
+			CacheSizeKB:           64 * 1024,
+			TempStoreMemory:       true,
+			MMapSizeBytes:         256 * 1024 * 1024,
+			WALAutoCheckpoint:     256,
+			JournalSizeLimitBytes: 1024 * 1024,
 		},
 	}
 }
@@ -272,6 +282,13 @@ func WithAutoMigrate(enabled bool) Option {
 	}
 }
 
+// WithMigrationProgress observes automatic schema migration progress.
+func WithMigrationProgress(progress MigrationProgressFunc) Option {
+	return func(c *Config) {
+		c.MigrationProgress = progress
+	}
+}
+
 // WithMaxOpenConns sets the maximum number of open database connections.
 //
 // WithMaxOpenConns 设置底层数据库连接池的最大打开连接数。
@@ -371,6 +388,13 @@ func WithSQLiteWALAutoCheckpoint(pages int) Option {
 	}
 }
 
+// WithSQLiteJournalSizeLimit sets the WAL size retained after checkpoints.
+func WithSQLiteJournalSizeLimit(bytes int64) Option {
+	return func(c *Config) {
+		c.SQLite.JournalSizeLimitBytes = bytes
+	}
+}
+
 // WithSQLiteReadPool enables a dedicated read-only connection pool of n
 // connections for SQLite. Writes stay on the single primary connection
 // (SQLite serializes them); reads fan out across the pool, which WAL mode
@@ -454,7 +478,11 @@ func (c Config) driverName() string {
 //
 // sqliteFileDSN 将文件路径转换为 SQLite file: DSN。
 func sqliteFileDSN(path string) string {
-	return "file:" + filepath.ToSlash(path) + "?cache=shared&mode=rwc"
+	// WAL already lets independent connection caches read concurrently with the
+	// single writer. SQLite shared-cache mode adds table-level locks for which
+	// busy_timeout is ineffective, causing avoidable SQLITE_LOCKED errors while
+	// V4 blocks are sealed.
+	return "file:" + filepath.ToSlash(path) + "?mode=rwc&_txlock=immediate"
 }
 
 // appendSQLiteDSNParam appends a query parameter to a SQLite DSN.
@@ -465,4 +493,17 @@ func appendSQLiteDSNParam(dsn, key, value string) string {
 		return dsn + "&" + url.QueryEscape(key) + "=" + url.QueryEscape(value)
 	}
 	return dsn + "?" + url.QueryEscape(key) + "=" + url.QueryEscape(value)
+}
+
+func setSQLiteDSNParam(dsn, key, value string) string {
+	base, rawQuery, found := strings.Cut(dsn, "?")
+	if !found {
+		return base + "?" + url.QueryEscape(key) + "=" + url.QueryEscape(value)
+	}
+	query, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		return appendSQLiteDSNParam(dsn, key, value)
+	}
+	query.Set(key, value)
+	return base + "?" + query.Encode()
 }

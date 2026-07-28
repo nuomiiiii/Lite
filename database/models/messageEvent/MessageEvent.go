@@ -1,15 +1,16 @@
 package messageevent
 
 const (
-	Offline  = "Offline"
-	Online   = "Online"
-	Expire   = "Expire"
-	Renew    = "Renew"
-	Login    = "Login"
-	Alert    = "Alert"
-	Traffic  = "Traffic"
-	DReport  = "DReport" // 日报
-	WReport  = "WReport" // 周报
-	MReport  = "MReport" // 月报
-	PingLoss = "延迟监测告警"
+	Offline     = "Offline"
+	Online      = "Online"
+	Expire      = "Expire"
+	Renew       = "Renew"
+	Login       = "Login"
+	Alert       = "Alert"
+	Traffic     = "Traffic"
+	DReport     = "DReport" // 日报
+	WReport     = "WReport" // 周报
+	MReport     = "MReport" // 月报
+	PingLoss    = "延迟监测告警"
+	ReturnRoute = "回程线路告警"
 )

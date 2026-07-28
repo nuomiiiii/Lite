@@ -19,8 +19,11 @@ import (
 )
 
 const (
-	updateRootName = ".komari-update"
-	lastResultName = "last-result.json"
+	updateRootName           = ".komari-update"
+	lastResultName           = "last-result.json"
+	defaultHealthTimeout     = 15 * time.Minute
+	defaultStableWindow      = 15 * time.Second
+	activeTransactionTimeout = defaultHealthTimeout + 5*time.Minute
 )
 
 type HelperConfig struct {
@@ -75,7 +78,7 @@ func PrepareAndLaunch(ctx context.Context, version, versionHash string) (*Update
 	if err != nil {
 		return nil, err
 	}
-	if previous, err := ReadLastResult(filepath.Dir(executable)); err == nil && previous != nil && isUpdateInProgress(previous.Status) && time.Since(previous.UpdatedAt) < 15*time.Minute {
+	if previous, err := ReadLastResult(filepath.Dir(executable)); err == nil && previous != nil && isUpdateInProgress(previous.Status) && time.Since(previous.UpdatedAt) < activeTransactionTimeout {
 		return nil, errors.New("another self-update transaction is already running")
 	}
 	healthURL, err := localHealthURL()
@@ -130,8 +133,8 @@ func PrepareAndLaunch(ctx context.Context, version, versionHash string) (*Update
 		UpdateRoot:          updateRoot,
 		BackupRoot:          backupRoot,
 		StartDelay:          3 * time.Second,
-		HealthTimeout:       90 * time.Second,
-		StableWindow:        15 * time.Second,
+		HealthTimeout:       defaultHealthTimeout,
+		StableWindow:        defaultStableWindow,
 	}
 	configPath := filepath.Join(jobRoot, "helper.json")
 	if err := atomicWriteJSON(configPath, config, 0600); err != nil {
@@ -149,14 +152,8 @@ func PrepareAndLaunch(ctx context.Context, version, versionHash string) (*Update
 		return nil, err
 	}
 
-	command := exec.CommandContext(ctx, "systemd-run",
-		"--unit=komari-self-update-"+jobID,
-		"--no-block",
-		"--property=Restart=on-failure",
-		"--property=RestartSec=3s",
-		candidate, "_self-update-helper", configPath,
-	)
-	if output, err := command.CombinedOutput(); err != nil {
+	output, err := scheduleUpdateHelper(ctx, jobID, candidate, configPath, runCombinedOutput)
+	if err != nil {
 		result.Status = "failed"
 		result.Message = strings.TrimSpace(string(output))
 		result.UpdatedAt = time.Now().UTC()
@@ -165,6 +162,78 @@ func PrepareAndLaunch(ctx context.Context, version, versionHash string) (*Update
 	}
 	launched = true
 	return result, nil
+}
+
+type commandRunner func(context.Context, string, ...string) ([]byte, error)
+
+func runCombinedOutput(ctx context.Context, name string, arguments ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, arguments...).CombinedOutput()
+}
+
+func scheduleUpdateHelper(ctx context.Context, jobID, candidate, configPath string, run commandRunner) ([]byte, error) {
+	arguments := []string{
+		"--unit=komari-self-update-" + jobID,
+		"--no-block",
+		"--property=Restart=on-failure",
+		"--property=RestartSec=3s",
+		candidate, "_self-update-helper", configPath,
+	}
+	noBlockEnabled := true
+	restartPropertiesEnabled := true
+	for {
+		output, err := run(ctx, "systemd-run", arguments...)
+		if err == nil {
+			return output, nil
+		}
+
+		switch {
+		case noBlockEnabled && noBlockUnsupported(output):
+			noBlockEnabled = false
+			arguments = removeSystemdRunArguments(arguments, func(argument string) bool {
+				return argument == "--no-block"
+			})
+		case restartPropertiesEnabled && restartPropertiesUnsupported(output):
+			restartPropertiesEnabled = false
+			arguments = removeSystemdRunArguments(arguments, func(argument string) bool {
+				return strings.HasPrefix(argument, "--property=Restart")
+			})
+		default:
+			return output, err
+		}
+	}
+}
+
+func noBlockUnsupported(output []byte) bool {
+	message := strings.ToLower(string(output))
+	if !strings.Contains(message, "--no-block") {
+		return false
+	}
+	return strings.Contains(message, "unrecognized option") ||
+		strings.Contains(message, "unknown option") ||
+		strings.Contains(message, "invalid option")
+}
+
+func restartPropertiesUnsupported(output []byte) bool {
+	message := strings.ToLower(string(output))
+	if !strings.Contains(message, "restart=on-failure") && !strings.Contains(message, "restartsec=3s") {
+		return false
+	}
+	return strings.Contains(message, "unknown assignment") ||
+		strings.Contains(message, "unsupported assignment") ||
+		strings.Contains(message, "invalid assignment") ||
+		strings.Contains(message, "unknown property") ||
+		strings.Contains(message, "unsupported property") ||
+		strings.Contains(message, "invalid property")
+}
+
+func removeSystemdRunArguments(arguments []string, remove func(string) bool) []string {
+	compatible := make([]string, 0, len(arguments))
+	for _, argument := range arguments {
+		if !remove(argument) {
+			compatible = append(compatible, argument)
+		}
+	}
+	return compatible
 }
 
 func isUpdateInProgress(status string) bool {

@@ -3,18 +3,36 @@ package clients
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	v1 "github.com/komari-monitor/komari/protocol/v1"
+	"gorm.io/gorm"
 )
 
 func GetClientUUIDByToken(token string) (clientUUID string, err error) {
-	db := dbcore.GetDBInstance()
+	return getClientUUIDByToken(dbcore.GetDBInstance(), token, time.Now().UTC())
+}
+
+func getClientUUIDByToken(db *gorm.DB, token string, now time.Time) (clientUUID string, err error) {
+	if token == "" {
+		return "", gorm.ErrRecordNotFound
+	}
 	var client models.Client
-	err = db.Where("token = ?", token).First(&client).Error
+	err = db.Where(
+		"token = ? OR (previous_token = ? AND previous_token_expires_at > ?)",
+		token, token, now,
+	).First(&client).Error
 	if err != nil {
 		return "", err
+	}
+	if client.Token == token && client.PreviousToken != "" {
+		if err := db.Model(&models.Client{}).
+			Where("uuid = ? AND token = ?", client.UUID, token).
+			Updates(map[string]interface{}{"previous_token": "", "previous_token_expires_at": nil}).Error; err != nil {
+			return "", err
+		}
 	}
 	return client.UUID, nil
 }
