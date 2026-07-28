@@ -26,6 +26,47 @@ type ReturnRouteOverview struct {
 	Events   []models.ReturnRouteEvent  `json:"events"`
 }
 
+type ReturnRouteTaskQuery struct {
+	Page     int    `json:"page"`
+	PageSize int    `json:"page_size"`
+	Keyword  string `json:"keyword"`
+	Carrier  string `json:"carrier"`
+	State    string `json:"state"`
+}
+
+type ReturnRouteTaskPage struct {
+	Tasks    []models.ReturnRouteTask   `json:"tasks"`
+	Statuses []models.ReturnRouteStatus `json:"statuses"`
+	Total    int64                      `json:"total"`
+	Page     int                        `json:"page"`
+	PageSize int                        `json:"page_size"`
+}
+
+type ReturnRouteEventQuery struct {
+	Page         int        `json:"page"`
+	PageSize     int        `json:"page_size"`
+	Keyword      string     `json:"keyword"`
+	Kind         string     `json:"kind"`
+	Carrier      string     `json:"carrier"`
+	Region       string     `json:"region"`
+	ExpectedLine string     `json:"expected_line"`
+	ActualLine   string     `json:"actual_line"`
+	Start        *time.Time `json:"start"`
+	End          *time.Time `json:"end"`
+}
+
+type ReturnRouteEventItem struct {
+	models.ReturnRouteEvent
+	NodeName string `json:"node_name"`
+}
+
+type ReturnRouteEventPage struct {
+	Events   []ReturnRouteEventItem `json:"events"`
+	Total    int64                  `json:"total"`
+	Page     int                    `json:"page"`
+	PageSize int                    `json:"page_size"`
+}
+
 func normalizeReturnRouteTask(task *models.ReturnRouteTask) error {
 	task.Name = strings.TrimSpace(task.Name)
 	task.Client = strings.TrimSpace(task.Client)
@@ -163,6 +204,202 @@ func GetReturnRouteOverview() (ReturnRouteOverview, error) {
 	return result, nil
 }
 
+func QueryReturnRouteTasks(params ReturnRouteTaskQuery) (ReturnRouteTaskPage, error) {
+	return queryReturnRouteTasks(dbcore.GetDBInstance(), params)
+}
+
+func queryReturnRouteTasks(db *gorm.DB, params ReturnRouteTaskQuery) (ReturnRouteTaskPage, error) {
+	page, pageSize := normalizeReturnRoutePagination(params.Page, params.PageSize)
+	query, err := filterReturnRouteTasks(db.Model(&models.ReturnRouteTask{}), params, db)
+	result := ReturnRouteTaskPage{Tasks: []models.ReturnRouteTask{}, Statuses: []models.ReturnRouteStatus{}, Page: page, PageSize: pageSize}
+	if err != nil {
+		return result, err
+	}
+	if err := query.Count(&result.Total).Error; err != nil {
+		return result, err
+	}
+	if err := query.Preload("ClientInfo").Order("id ASC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&result.Tasks).Error; err != nil {
+		return result, err
+	}
+	ids := make([]uint, 0, len(result.Tasks))
+	for _, task := range result.Tasks {
+		ids = append(ids, task.Id)
+	}
+	if len(ids) > 0 {
+		if err := db.Where("task_id IN ?", ids).Find(&result.Statuses).Error; err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+func filterReturnRouteTasks(query *gorm.DB, params ReturnRouteTaskQuery, db *gorm.DB) (*gorm.DB, error) {
+	if keyword := strings.ToLower(strings.TrimSpace(params.Keyword)); keyword != "" {
+		pattern := "%" + keyword + "%"
+		clients := db.Model(&models.Client{}).Select("uuid").Where("LOWER(name) LIKE ?", pattern)
+		query = query.Where("LOWER(name) LIKE ? OR LOWER(target) LIKE ? OR LOWER(region) LIKE ? OR LOWER(client) LIKE ? OR client IN (?)",
+			pattern, pattern, pattern, pattern, clients)
+	}
+	if carrier := strings.ToLower(strings.TrimSpace(params.Carrier)); carrier != "" {
+		if carrier != "mobile" && carrier != "telecom" && carrier != "unicom" {
+			return query, fmt.Errorf("unsupported carrier %q", carrier)
+		}
+		query = query.Where("carrier = ?", carrier)
+	}
+	switch state := strings.ToLower(strings.TrimSpace(params.State)); state {
+	case "":
+	case "disabled":
+		query = query.Where("enabled = ?", false)
+	case "pending":
+		allStatuses := db.Model(&models.ReturnRouteStatus{}).Select("task_id")
+		pendingStatuses := db.Model(&models.ReturnRouteStatus{}).Select("task_id").Where("state = ?", "pending")
+		query = query.Where("enabled = ?", true).Where("(id NOT IN (?) OR id IN (?))", allStatuses, pendingStatuses)
+	case "observing", "healthy", "switched", "unknown":
+		statuses := db.Model(&models.ReturnRouteStatus{}).Select("task_id").Where("state = ?", state)
+		query = query.Where("id IN (?)", statuses)
+	default:
+		return query, fmt.Errorf("unsupported state %q", state)
+	}
+	return query, nil
+}
+
+func QueryReturnRouteEvents(params ReturnRouteEventQuery) (ReturnRouteEventPage, error) {
+	return queryReturnRouteEvents(dbcore.GetDBInstance(), params)
+}
+
+func queryReturnRouteEvents(db *gorm.DB, params ReturnRouteEventQuery) (ReturnRouteEventPage, error) {
+	page, pageSize := normalizeReturnRoutePagination(params.Page, params.PageSize)
+	result := ReturnRouteEventPage{Events: []ReturnRouteEventItem{}, Page: page, PageSize: pageSize}
+	query, err := filterReturnRouteEvents(db.Model(&models.ReturnRouteEvent{}), params, db)
+	if err != nil {
+		return result, err
+	}
+	if err := query.Count(&result.Total).Error; err != nil {
+		return result, err
+	}
+	var events []models.ReturnRouteEvent
+	if err := query.Order("occurred_at DESC, id DESC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&events).Error; err != nil {
+		return result, err
+	}
+
+	taskIDs := make([]uint, 0, len(events))
+	seenTasks := map[uint]bool{}
+	for _, event := range events {
+		if !seenTasks[event.TaskId] {
+			taskIDs = append(taskIDs, event.TaskId)
+			seenTasks[event.TaskId] = true
+		}
+	}
+	var tasks []models.ReturnRouteTask
+	if len(taskIDs) > 0 {
+		if err := db.Preload("ClientInfo").Where("id IN ?", taskIDs).Find(&tasks).Error; err != nil {
+			return result, err
+		}
+	}
+	taskByID := make(map[uint]models.ReturnRouteTask, len(tasks))
+	for _, task := range tasks {
+		taskByID[task.Id] = task
+	}
+	for _, event := range events {
+		task := taskByID[event.TaskId]
+		if event.TaskName == "" {
+			event.TaskName = task.Name
+		}
+		if event.Carrier == "" {
+			event.Carrier = task.Carrier
+		}
+		if event.Region == "" {
+			event.Region = task.Region
+		}
+		if event.Target == "" {
+			event.Target = task.Target
+		}
+		if event.IPVersion == 0 {
+			event.IPVersion = task.IPVersion
+		}
+		if event.ExpectedLine == "" {
+			event.ExpectedLine = task.ExpectedLine
+		}
+		result.Events = append(result.Events, ReturnRouteEventItem{ReturnRouteEvent: event, NodeName: task.ClientInfo.Name})
+	}
+	return result, nil
+}
+
+func filterReturnRouteEvents(query *gorm.DB, params ReturnRouteEventQuery, db *gorm.DB) (*gorm.DB, error) {
+	if params.Start != nil {
+		query = query.Where("occurred_at >= ?", params.Start.UTC())
+	}
+	if params.End != nil {
+		query = query.Where("occurred_at < ?", params.End.UTC())
+	}
+	if params.Start != nil && params.End != nil && !params.End.After(*params.Start) {
+		return query, fmt.Errorf("end must be after start")
+	}
+	if kind := strings.ToLower(strings.TrimSpace(params.Kind)); kind != "" {
+		if kind != "switch" && kind != "recovery" {
+			return query, fmt.Errorf("unsupported event kind %q", kind)
+		}
+		query = query.Where("kind = ?", kind)
+	}
+	if line := strings.ToUpper(strings.TrimSpace(params.ActualLine)); line != "" {
+		if !isReturnRouteLine(line) {
+			return query, fmt.Errorf("unsupported actual_line %q", line)
+		}
+		query = query.Where("to_line = ?", line)
+	}
+
+	if keyword := strings.ToLower(strings.TrimSpace(params.Keyword)); keyword != "" {
+		pattern := "%" + keyword + "%"
+		clients := db.Model(&models.Client{}).Select("uuid").Where("LOWER(name) LIKE ?", pattern)
+		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where(
+			"LOWER(name) LIKE ? OR LOWER(target) LIKE ? OR LOWER(client) LIKE ? OR client IN (?)", pattern, pattern, pattern, clients,
+		)
+		query = query.Where("LOWER(task_name) LIKE ? OR LOWER(target) LIKE ? OR LOWER(asn_path) LIKE ? OR LOWER(route_path) LIKE ? OR task_id IN (?)",
+			pattern, pattern, pattern, pattern, tasks)
+	}
+	if carrier := strings.ToLower(strings.TrimSpace(params.Carrier)); carrier != "" {
+		if carrier != "mobile" && carrier != "telecom" && carrier != "unicom" {
+			return query, fmt.Errorf("unsupported carrier %q", carrier)
+		}
+		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("carrier = ?", carrier)
+		query = query.Where("carrier = ? OR (carrier = '' AND task_id IN (?))", carrier, tasks)
+	}
+	if region := strings.TrimSpace(params.Region); region != "" {
+		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("region = ?", region)
+		query = query.Where("region = ? OR (region = '' AND task_id IN (?))", region, tasks)
+	}
+	if line := strings.ToUpper(strings.TrimSpace(params.ExpectedLine)); line != "" {
+		if !isReturnRouteLine(line) {
+			return query, fmt.Errorf("unsupported expected_line %q", line)
+		}
+		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("expected_line = ?", line)
+		query = query.Where("expected_line = ? OR (expected_line = '' AND task_id IN (?))", line, tasks)
+	}
+	return query, nil
+}
+
+func normalizeReturnRoutePagination(page, pageSize int) (int, int) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	return page, pageSize
+}
+
+func isReturnRouteLine(value string) bool {
+	for _, line := range returnRouteLines() {
+		if value == line {
+			return true
+		}
+	}
+	return false
+}
+
 func GetEnabledReturnRouteTasks() ([]models.ReturnRouteTask, error) {
 	var list []models.ReturnRouteTask
 	err := dbcore.GetDBInstance().Where("enabled = ?", true).Find(&list).Error
@@ -296,8 +533,10 @@ func advanceReturnRouteState(status *models.ReturnRouteStatus, task models.Retur
 	status.CandidateLine, status.CandidateCount = "", 0
 	status.LastChangedAt = &now
 	return &models.ReturnRouteEvent{
-		TaskId: task.Id, Client: task.Client, Kind: kind, FromLine: from,
-		ToLine: line, Confidence: status.Confidence, ASNPath: append(models.StringArray{}, status.ASNPath...), OccurredAt: now,
+		TaskId: task.Id, Client: task.Client, TaskName: task.Name, Carrier: task.Carrier,
+		Region: task.Region, Target: task.Target, IPVersion: task.IPVersion, ExpectedLine: expected,
+		Kind: kind, FromLine: from, ToLine: line, Confidence: status.Confidence,
+		ASNPath: append(models.StringArray{}, status.ASNPath...), RoutePath: append(models.StringArray{}, status.RoutePath...), OccurredAt: now,
 	}
 }
 
@@ -318,12 +557,29 @@ func sendReturnRouteNotification(task models.ReturnRouteTask, event models.Retur
 	if client.UUID == "" {
 		client.UUID = task.Client
 	}
-	message := fmt.Sprintf("任务：%s\n运营商/地区：%s / %s\n探测目标：%s\n线路变化：%s -> %s\n识别置信度：%.0f%%\n关键 ASN：%s",
-		task.Name, task.Carrier, task.Region, task.Target, event.FromLine, event.ToLine, event.Confidence*100, strings.Join(event.ASNPath, " -> "))
+	message := formatReturnRouteNotification(task, event)
 	if err := messageSender.SendEvent(models.EventMessage{Event: messageevent.ReturnRoute, Clients: []models.Client{client}, Time: event.OccurredAt, Message: title + "\n" + message}); err == nil {
 		now := time.Now().UTC()
 		_ = db.Model(&models.ReturnRouteStatus{}).Where("task_id = ?", task.Id).Update("last_notified_at", now).Error
 	}
+}
+
+func formatReturnRouteNotification(task models.ReturnRouteTask, event models.ReturnRouteEvent) string {
+	carrierNames := map[string]string{
+		"mobile":  "中国移动",
+		"telecom": "中国电信",
+		"unicom":  "中国联通",
+	}
+	carrier := carrierNames[strings.ToLower(strings.TrimSpace(task.Carrier))]
+	if carrier == "" {
+		carrier = task.Carrier
+	}
+	expectedLine := strings.TrimSpace(event.ExpectedLine)
+	if expectedLine == "" {
+		expectedLine = strings.TrimSpace(task.ExpectedLine)
+	}
+	return fmt.Sprintf("任务：%s\n运营商/地区：%s / %s\n探测目标：%s\n预期线路：%s\n线路变化：%s -> %s\n识别置信度：%.0f%%\n关键 ASN：%s",
+		task.Name, carrier, task.Region, task.Target, expectedLine, event.FromLine, event.ToLine, event.Confidence*100, strings.Join(event.ASNPath, " -> "))
 }
 
 func classifyReturnRoute(path models.StringArray) (string, float64) {

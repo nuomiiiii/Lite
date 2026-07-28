@@ -12,10 +12,36 @@ import (
 
 func init() {
 	RegisterWithGroupAndMeta("getReturnRouteOverview", rpc.RoleAdmin, adminGetReturnRouteOverview, &rpc.MethodMeta{Name: "admin:getReturnRouteOverview", Summary: "List return route tasks, current states and events"})
+	RegisterWithGroupAndMeta("queryReturnRouteTasks", rpc.RoleAdmin, adminQueryReturnRouteTasks, &rpc.MethodMeta{Name: "admin:queryReturnRouteTasks", Summary: "Query return route tasks and current states with filters and pagination"})
+	RegisterWithGroupAndMeta("queryReturnRouteEvents", rpc.RoleAdmin, adminQueryReturnRouteEvents, &rpc.MethodMeta{Name: "admin:queryReturnRouteEvents", Summary: "Query return route events with filters and pagination"})
 	RegisterWithGroupAndMeta("addReturnRouteTask", rpc.RoleAdmin, adminAddReturnRouteTask, &rpc.MethodMeta{Name: "admin:addReturnRouteTask", Summary: "Create a return route task"})
 	RegisterWithGroupAndMeta("editReturnRouteTask", rpc.RoleAdmin, adminEditReturnRouteTask, &rpc.MethodMeta{Name: "admin:editReturnRouteTask", Summary: "Edit a return route task"})
 	RegisterWithGroupAndMeta("deleteReturnRouteTask", rpc.RoleAdmin, adminDeleteReturnRouteTask, &rpc.MethodMeta{Name: "admin:deleteReturnRouteTask", Summary: "Delete return route tasks"})
 	RegisterWithGroupAndMeta("probeReturnRouteNow", rpc.RoleAdmin, adminProbeReturnRouteNow, &rpc.MethodMeta{Name: "admin:probeReturnRouteNow", Summary: "Dispatch a return route probe immediately"})
+}
+
+func adminQueryReturnRouteTasks(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params tasks.ReturnRouteTaskQuery
+	if err := req.BindParams(&params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	result, err := tasks.QueryReturnRouteTasks(params)
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return result, nil
+}
+
+func adminQueryReturnRouteEvents(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params tasks.ReturnRouteEventQuery
+	if err := req.BindParams(&params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	result, err := tasks.QueryReturnRouteEvents(params)
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return result, nil
 }
 
 func adminGetReturnRouteOverview(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {

@@ -44,14 +44,21 @@ type ReturnRouteStatus struct {
 
 // ReturnRouteEvent is written only for confirmed switches and recoveries.
 type ReturnRouteEvent struct {
-	Id         uint            `json:"id" gorm:"primaryKey;autoIncrement"`
-	TaskId     uint            `json:"task_id" gorm:"not null;index"`
-	Task       ReturnRouteTask `json:"-" gorm:"foreignKey:TaskId;references:Id;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
-	Client     string          `json:"client" gorm:"type:varchar(36);not null;index"`
-	Kind       string          `json:"kind" gorm:"type:varchar(16);not null"`
-	FromLine   string          `json:"from_line" gorm:"type:varchar(32)"`
-	ToLine     string          `json:"to_line" gorm:"type:varchar(32);not null"`
-	Confidence float64         `json:"confidence" gorm:"type:decimal(5,4);not null"`
-	ASNPath    StringArray     `json:"asn_path" gorm:"type:longtext"`
-	OccurredAt time.Time       `json:"occurred_at" gorm:"not null;index"`
+	Id           uint            `json:"id" gorm:"primaryKey;autoIncrement"`
+	TaskId       uint            `json:"task_id" gorm:"not null;index"`
+	Task         ReturnRouteTask `json:"-" gorm:"foreignKey:TaskId;references:Id;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
+	Client       string          `json:"client" gorm:"type:varchar(36);not null;index"`
+	TaskName     string          `json:"task_name" gorm:"type:varchar(255)"`
+	Carrier      string          `json:"carrier" gorm:"type:varchar(16);index"`
+	Region       string          `json:"region" gorm:"type:varchar(64);index"`
+	Target       string          `json:"target" gorm:"type:varchar(255)"`
+	IPVersion    int             `json:"ip_version" gorm:"type:int"`
+	ExpectedLine string          `json:"expected_line" gorm:"type:varchar(32);index"`
+	Kind         string          `json:"kind" gorm:"type:varchar(16);not null;index"`
+	FromLine     string          `json:"from_line" gorm:"type:varchar(32)"`
+	ToLine       string          `json:"to_line" gorm:"type:varchar(32);not null;index"`
+	Confidence   float64         `json:"confidence" gorm:"type:decimal(5,4);not null"`
+	ASNPath      StringArray     `json:"asn_path" gorm:"type:longtext"`
+	RoutePath    StringArray     `json:"route_path" gorm:"type:longtext"`
+	OccurredAt   time.Time       `json:"occurred_at" gorm:"not null;index"`
 }
