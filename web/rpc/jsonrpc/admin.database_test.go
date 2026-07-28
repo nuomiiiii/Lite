@@ -1,6 +1,7 @@
 package jsonrpc
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -54,6 +55,24 @@ func TestDatabaseRuntimeStatusHidesCheckpointDetailsForExternalStores(t *testing
 	externalStatus := newDatabaseRuntimeStatus(metric.DriverPostgreSQL, runtime)
 	if externalStatus.CheckpointApplicable || externalStatus.LastCheckpointSuccessAt != nil || externalStatus.NextCheckpointAt != nil {
 		t.Fatalf("external runtime status exposed local checkpoint details: %#v", externalStatus)
+	}
+}
+
+func TestDatabaseRuntimeStatusSerializesEmptyDigestHandoffsAsArray(t *testing.T) {
+	status := newDatabaseRuntimeStatus(metric.DriverSQLite, metricstore.RuntimeStatus{})
+	if status.DigestHandoffDeferred == nil {
+		t.Fatal("empty digest handoff status must use an initialized slice")
+	}
+	payload, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("marshal runtime status: %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatalf("decode runtime status: %v", err)
+	}
+	if got := string(decoded["digest_handoff_deferred"]); got != "[]" {
+		t.Fatalf("empty digest handoff JSON = %s, want []", got)
 	}
 }
 
