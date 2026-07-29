@@ -17,6 +17,7 @@ var transport = func() *http.Transport {
 	return t
 }()
 
+// Keep IPv6 preferred without letting an unreachable IPv6 path block notifications.
 const ipv4FallbackDelay = 300 * time.Millisecond
 
 // NewClient prefers IPv6 for dual-stack endpoints and falls back to IPv4.
