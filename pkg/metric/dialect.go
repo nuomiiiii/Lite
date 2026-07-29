@@ -81,6 +81,8 @@ type tables struct {
 	// SQLite V3 stores repeated series identity once and keeps point/rollup
 	// values in narrow tables. Other backends leave these names unused.
 	series       string
+	labels       string
+	resolutions  string
 	pointValues  string
 	pointBlocks  string
 	rollupValues string

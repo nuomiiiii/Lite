@@ -104,6 +104,8 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 			rollups:      tableName(cfg.TablePrefix, "rollups"),
 			watermarks:   tableName(cfg.TablePrefix, "compaction_watermarks"),
 			series:       tableName(cfg.TablePrefix, "series"),
+			labels:       tableName(cfg.TablePrefix, "labels"),
+			resolutions:  tableName(cfg.TablePrefix, "resolutions"),
 			pointValues:  tableName(cfg.TablePrefix, "point_values"),
 			pointBlocks:  tableName(cfg.TablePrefix, "point_blocks"),
 			rollupValues: tableName(cfg.TablePrefix, "rollup_values"),

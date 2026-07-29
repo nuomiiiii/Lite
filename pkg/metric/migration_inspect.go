@@ -59,9 +59,12 @@ func InspectSQLiteMigration(ctx context.Context, cfg Config) (SQLiteMigrationSum
 	}
 
 	t := tables{
+		definitions:  tableName(cfg.TablePrefix, "definitions"),
 		points:       tableName(cfg.TablePrefix, "points"),
 		rollups:      tableName(cfg.TablePrefix, "rollups"),
 		series:       tableName(cfg.TablePrefix, "series"),
+		labels:       tableName(cfg.TablePrefix, "labels"),
+		resolutions:  tableName(cfg.TablePrefix, "resolutions"),
 		pointValues:  tableName(cfg.TablePrefix, "point_values"),
 		pointBlocks:  tableName(cfg.TablePrefix, "point_blocks"),
 		rollupValues: tableName(cfg.TablePrefix, "rollup_values"),
@@ -78,6 +81,19 @@ func InspectSQLiteMigration(ctx context.Context, cfg Config) (SQLiteMigrationSum
 	}
 	if pointKind == "" && rollupKind == "" {
 		return SQLiteMigrationSummary{Layout: "empty"}, nil
+	}
+	if pointKind == "" && rollupKind == "table" {
+		upstream131, inspectErr := inspectSQLiteUpstream131Schema(ctx, db, t)
+		if inspectErr != nil {
+			return SQLiteMigrationSummary{}, inspectErr
+		}
+		if upstream131 {
+			rows, countErr := sumSQLiteRows(ctx, db, t.rollups)
+			if countErr != nil {
+				return SQLiteMigrationSummary{}, countErr
+			}
+			return SQLiteMigrationSummary{Required: true, Layout: "upstream-1.3.1", SourceRows: rows}, nil
+		}
 	}
 	if pointKind != rollupKind || (pointKind != "table" && pointKind != "view") {
 		return SQLiteMigrationSummary{}, fmt.Errorf("metric: inconsistent SQLite storage objects: %s=%q %s=%q", t.points, pointKind, t.rollups, rollupKind)

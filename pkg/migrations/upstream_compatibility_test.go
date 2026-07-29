@@ -35,6 +35,7 @@ func TestUpstreamMainDatabaseUpgradeCompatibility(t *testing.T) {
 		{name: "1.2.8", withTraffic: true},
 		{name: "1.2.8-fix", withTraffic: true},
 		{name: "1.3.0", withTraffic: true},
+		{name: "1.3.1", withTraffic: true},
 	}
 
 	for _, version := range versions {
