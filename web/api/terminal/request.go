@@ -16,18 +16,11 @@ import (
 func RequestTerminal(c *gin.Context) {
 	uuid := c.Param("uuid")
 	user_uuid, _ := c.Get("uuid")
-	client, err := clients.GetClientByUUID(uuid)
+	_, err := clients.GetClientByUUID(uuid)
 	if err != nil {
 		c.JSON(400, gin.H{
 			"status":  "error",
 			"message": "Client not found",
-		})
-		return
-	}
-	if client.RemoteControlProtected {
-		c.JSON(http.StatusForbidden, gin.H{
-			"status":  "error",
-			"message": "Remote control is disabled for the Komari Server node",
 		})
 		return
 	}

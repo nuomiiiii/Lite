@@ -135,11 +135,6 @@ func adminEditClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.Js
 			})
 		}
 	}
-	if protected, changed := update["remote_control_protected"].(bool); changed && protected {
-		remote_api.CloseClientSessions(uuid)
-		terminal_api.CloseClientSessions(uuid)
-		agent_runtime.RemoveV2EventsByMethods(uuid, v2.MethodAgentExec, v2.MethodAgentTerminal, v2.MethodAgentRemote)
-	}
 	actor, ip := auditActor(ctx)
 	auditlog.Log(ip, actor, "edit client:"+uuid, "info")
 	return nil, nil

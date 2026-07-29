@@ -42,13 +42,9 @@ func CreateSession(c *gin.Context) {
 		c.Set("2fa_code", request.TwoFACode)
 	}
 	uuid := request.UUID
-	client, err := clients.GetClientByUUID(uuid)
+	_, err := clients.GetClientByUUID(uuid)
 	if err != nil {
 		api.RespondError(c, http.StatusNotFound, "Client not found")
-		return
-	}
-	if client.RemoteControlProtected {
-		api.RespondError(c, http.StatusForbidden, "Remote control is disabled for the Komari Server node")
 		return
 	}
 	if !agent_runtime.IsAgentOnline(uuid) {

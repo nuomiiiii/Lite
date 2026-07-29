@@ -98,7 +98,7 @@ chmod +x komari-linux-amd64
 
 Agent 项目与安装说明见 [nuomiiiii/komari-agent](https://github.com/nuomiiiii/komari-agent)。`2.1.x` 服务端建议搭配当前兼容版本 Agent 使用；远程终端、文件管理和任务执行只有在 Agent 支持并由管理员主动发起时才可用。
 
-远程入口受管理员登录、双因素认证和短时会话限制。Komari 会阻止对自动识别出的 Komari Server 节点执行 Web 终端、文件和 Docker 管理，避免通过 Agent 绕过面板自身的保护；这不会修改系统 SSH、防火墙或其他远程连接配置。
+远程入口受管理员登录、双因素认证和短时会话限制。包括 Komari Server 所在节点在内，已授权并正常在线的 Agent 均可使用 Web 终端、文件和 Docker 管理；这不会修改系统 SSH、防火墙或其他远程连接配置。
 
 ## Linux 一键更新与回退
 
