@@ -1,4 +1,4 @@
-name: Test Komari 2.1.9 Migrations
+name: Test Komari Regression and Migrations
 
 on:
   push:
