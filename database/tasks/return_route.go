@@ -17,6 +17,11 @@ import (
 
 const returnRouteEventRetention = 90 * 24 * time.Hour
 
+const (
+	returnRouteLineCUGVIP       = "CUG VIP"
+	returnRouteLineCUGOptimized = "CUG 优化"
+)
+
 type ReturnRouteOverview struct {
 	Tasks    []models.ReturnRouteTask   `json:"tasks"`
 	Statuses []models.ReturnRouteStatus `json:"statuses"`
@@ -44,7 +49,7 @@ type ReturnRouteTaskPage struct {
 	ProbingTaskIDs []uint                     `json:"probing_task_ids"`
 	Total          int64                      `json:"total"`
 	Page           int                        `json:"page"`
-	PageSize        int                        `json:"page_size"`
+	PageSize       int                        `json:"page_size"`
 }
 
 type ReturnRouteEventQuery struct {
@@ -78,7 +83,7 @@ func normalizeReturnRouteTask(task *models.ReturnRouteTask) error {
 	task.Carrier = strings.ToLower(strings.TrimSpace(task.Carrier))
 	task.Region = strings.TrimSpace(task.Region)
 	task.Target = strings.TrimSpace(task.Target)
-	task.ExpectedLine = strings.ToUpper(strings.TrimSpace(task.ExpectedLine))
+	task.ExpectedLine = normalizeReturnRouteLine(task.ExpectedLine)
 	task.Protocol = strings.ToLower(strings.TrimSpace(task.Protocol))
 	if task.Name == "" || task.Client == "" || task.Target == "" || task.ExpectedLine == "" {
 		return fmt.Errorf("任务名称、客户端、探测目标和预期线路为必填项")
@@ -125,7 +130,15 @@ func normalizeReturnRouteTask(task *models.ReturnRouteTask) error {
 }
 
 func returnRouteLines() []string {
-	return []string{"CMIN2", "CMI", "CMNET", "CN2 GIA", "CN2 GT", "163", "10099", "9929", "4837"}
+	return []string{"CMIN2", "CMI", "CMNET", "CN2 GIA", "CN2 GT", "163", returnRouteLineCUGVIP, returnRouteLineCUGOptimized, "9929", "4837"}
+}
+
+func normalizeReturnRouteLine(value string) string {
+	line := strings.ToUpper(strings.TrimSpace(value))
+	if line == "10099" {
+		return returnRouteLineCUGVIP
+	}
+	return line
 }
 
 func AddReturnRouteTask(task *models.ReturnRouteTask) (uint, bool, error) {
@@ -391,7 +404,7 @@ func filterReturnRouteEvents(query *gorm.DB, params ReturnRouteEventQuery, db *g
 		}
 		query = query.Where("kind = ?", kind)
 	}
-	if line := strings.ToUpper(strings.TrimSpace(params.ActualLine)); line != "" {
+	if line := normalizeReturnRouteLine(params.ActualLine); line != "" {
 		if !isReturnRouteLine(line) {
 			return query, fmt.Errorf("unsupported actual_line %q", line)
 		}
@@ -418,7 +431,7 @@ func filterReturnRouteEvents(query *gorm.DB, params ReturnRouteEventQuery, db *g
 		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("region = ?", region)
 		query = query.Where("(region = ? OR ((region = '' OR region IS NULL) AND task_id IN (?)))", region, tasks)
 	}
-	if line := strings.ToUpper(strings.TrimSpace(params.ExpectedLine)); line != "" {
+	if line := normalizeReturnRouteLine(params.ExpectedLine); line != "" {
 		if !isReturnRouteLine(line) {
 			return query, fmt.Errorf("unsupported expected_line %q", line)
 		}
@@ -442,6 +455,7 @@ func normalizeReturnRoutePagination(page, pageSize int) (int, int) {
 }
 
 func isReturnRouteLine(value string) bool {
+	value = normalizeReturnRouteLine(value)
 	for _, line := range returnRouteLines() {
 		if value == line {
 			return true
@@ -577,7 +591,7 @@ func returnRouteRepeatNotificationDue(lastNotifiedAt *time.Time, cooldown int, n
 }
 
 func advanceReturnRouteState(status *models.ReturnRouteStatus, task models.ReturnRouteTask, line string, now time.Time) *models.ReturnRouteEvent {
-	expected := strings.ToUpper(task.ExpectedLine)
+	expected := normalizeReturnRouteLine(task.ExpectedLine)
 	if status.CurrentLine == "" && line == expected {
 		status.CurrentLine, status.State = line, "healthy"
 		status.CandidateLine, status.CandidateCount = "", 0
@@ -633,8 +647,8 @@ func buildReturnRouteRepeatNotification(task models.ReturnRouteTask, status mode
 	return &models.ReturnRouteEvent{
 		TaskId: task.Id, Client: task.Client, TaskName: task.Name, Carrier: task.Carrier,
 		Region: task.Region, Target: task.Target, IPVersion: task.IPVersion,
-		ExpectedLine: strings.ToUpper(strings.TrimSpace(task.ExpectedLine)), Kind: "switch",
-		FromLine: strings.ToUpper(strings.TrimSpace(task.ExpectedLine)), ToLine: status.CurrentLine,
+		ExpectedLine: normalizeReturnRouteLine(task.ExpectedLine), Kind: "switch",
+		FromLine: normalizeReturnRouteLine(task.ExpectedLine), ToLine: status.CurrentLine,
 		Confidence: status.Confidence, ASNPath: append(models.StringArray{}, status.ASNPath...),
 		RoutePath: append(models.StringArray{}, status.RoutePath...), OccurredAt: now,
 	}
@@ -726,17 +740,39 @@ func classifyReturnRouteSignatures(hops []returnRouteSignature) (string, float64
 }
 
 func classifyReturnRouteSignaturesWithRules(hops []returnRouteSignature, rules *compiledReturnRouteRules) (string, float64) {
+	hasCUGAccess := hasUnicomReturnRouteGroup(hops, rules, "unicom_10099")
+	has9929 := hasUnicomReturnRouteGroup(hops, rules, "unicom_9929")
+	has4837 := hasUnicomReturnRouteGroup(hops, rules, "unicom_4837")
 
 	// Prefer the first premium ingress visible in the ordered path. The target
 	// carrier's ordinary backbone usually appears later and must not mask an
 	// injected route through another carrier.
 	for index, hop := range hops {
-		// Locally maintained backbone prefixes take precedence over a conflicting
-		// external ASN response. This covers known cases such as 210.14.0.0/16.
-		if rules.hasPrefix("unicom_10099", hop.ip) {
-			return "10099", rules.document.Confidence["unicom_10099"]
-		}
-		if rules.hasPrefix("unicom_9929", hop.ip) {
+		switch unicomReturnRouteGroup(hop, rules) {
+		case "unicom_10099":
+			switch {
+			case has9929:
+				return returnRouteLineCUGVIP, lowerReturnRouteConfidence(
+					rules.document.Confidence["unicom_10099"],
+					rules.document.Confidence["unicom_9929"],
+				)
+			case has4837:
+				return returnRouteLineCUGOptimized, lowerReturnRouteConfidence(
+					rules.document.Confidence["unicom_10099"],
+					rules.document.Confidence["unicom_4837"],
+				)
+			default:
+				// Some traceroutes stop at the CUG access network. Keep the former
+				// AS10099 behavior compatible by treating that incomplete path as VIP.
+				return returnRouteLineCUGVIP, rules.document.Confidence["unicom_10099"]
+			}
+		case "unicom_9929":
+			if hasCUGAccess {
+				return returnRouteLineCUGVIP, lowerReturnRouteConfidence(
+					rules.document.Confidence["unicom_10099"],
+					rules.document.Confidence["unicom_9929"],
+				)
+			}
 			return "9929", rules.document.Confidence["unicom_9929"]
 		}
 		switch {
@@ -748,10 +784,6 @@ func classifyReturnRouteSignaturesWithRules(hops []returnRouteSignature, rules *
 			if hasCN2BackboneAfter(hops, index, rules) {
 				return "CN2 GIA", rules.document.Confidence["cn2_gia"]
 			}
-		case rules.hasSignature("unicom_10099", hop):
-			return "10099", rules.document.Confidence["unicom_10099"]
-		case rules.hasSignature("unicom_9929", hop):
-			return "9929", rules.document.Confidence["unicom_9929"]
 		case rules.hasASN("cn2_backbone", hop.asn):
 			if hasASNGroupBefore(hops, index, rules, "cn2_global") {
 				return "CN2 GIA", rules.document.Confidence["cn2_gia"]
@@ -773,7 +805,7 @@ func classifyReturnRouteSignaturesWithRules(hops []returnRouteSignature, rules *
 		switch {
 		case rules.hasSignature("telecom_163", hop):
 			return "163", rules.document.Confidence["telecom_163"]
-		case rules.hasSignature("unicom_4837", hop):
+		case unicomReturnRouteGroup(hop, rules) == "unicom_4837":
 			return "4837", rules.document.Confidence["unicom_4837"]
 		case rules.hasSignature("cmnet", hop):
 			return "CMNET", rules.document.Confidence["cmnet"]
@@ -783,6 +815,38 @@ func classifyReturnRouteSignaturesWithRules(hops []returnRouteSignature, rules *
 		}
 	}
 	return "UNKNOWN", 0
+}
+
+func hasUnicomReturnRouteGroup(hops []returnRouteSignature, rules *compiledReturnRouteRules, group string) bool {
+	for _, hop := range hops {
+		if unicomReturnRouteGroup(hop, rules) == group {
+			return true
+		}
+	}
+	return false
+}
+
+func unicomReturnRouteGroup(hop returnRouteSignature, rules *compiledReturnRouteRules) string {
+	groups := [...]string{"unicom_10099", "unicom_9929", "unicom_4837"}
+	// A maintained CIDR is more reliable than a conflicting external ASN answer.
+	for _, group := range groups {
+		if rules.hasPrefix(group, hop.ip) {
+			return group
+		}
+	}
+	for _, group := range groups {
+		if rules.hasASN(group, hop.asn) {
+			return group
+		}
+	}
+	return ""
+}
+
+func lowerReturnRouteConfidence(left, right float64) float64 {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func hasASNGroupBefore(hops []returnRouteSignature, index int, rules *compiledReturnRouteRules, group string) bool {

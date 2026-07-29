@@ -463,6 +463,9 @@ func doInitialize() error {
 			return fmt.Errorf("failed to migrate return route notification settings: %w", err)
 		}
 	}
+	if err := migrateLegacyReturnRouteLines(instance); err != nil {
+		return fmt.Errorf("failed to migrate return route line names: %w", err)
+	}
 	if err := migrations.MigrateTrafficResetDayFromTags(instance); err != nil {
 		return fmt.Errorf("failed to migrate traffic reset days: %w", err)
 	}

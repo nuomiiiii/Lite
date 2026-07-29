@@ -20,14 +20,18 @@ import (
 
 func TestClassifyReturnRoute(t *testing.T) {
 	tests := []struct {
-		path    models.StringArray
-		want    string
+		path models.StringArray
+		want string
 	}{
 		{models.StringArray{"AS3356", "AS58807", "AS9808", "AS56041"}, "CMIN2"},
 		{models.StringArray{"AS58453", "AS9808"}, "CMI"},
 		{models.StringArray{"AS23764", "AS4809"}, "CN2 GIA"},
 		{models.StringArray{"AS4809", "AS4134"}, "CN2 GT"},
-		{models.StringArray{"AS10099", "AS4837"}, "10099"},
+		{models.StringArray{"AS10099", "AS9929"}, returnRouteLineCUGVIP},
+		{models.StringArray{"AS9929", "AS10099"}, returnRouteLineCUGVIP},
+		{models.StringArray{"AS10099", "AS4837"}, returnRouteLineCUGOptimized},
+		{models.StringArray{"AS4837", "AS10099"}, returnRouteLineCUGOptimized},
+		{models.StringArray{"AS10099"}, returnRouteLineCUGVIP},
 		{models.StringArray{"AS9929", "AS4134"}, "9929"},
 		{models.StringArray{"AS4134"}, "163"},
 		{models.StringArray{"AS4837"}, "4837"},
@@ -45,7 +49,7 @@ func TestReturnRouteLinesAllowCrossCarrierExpectations(t *testing.T) {
 	want := map[string]bool{
 		"CMIN2": true, "CMI": true, "CMNET": true,
 		"CN2 GIA": true, "CN2 GT": true, "163": true,
-		"10099": true, "9929": true, "4837": true,
+		returnRouteLineCUGVIP: true, returnRouteLineCUGOptimized: true, "9929": true, "4837": true,
 	}
 	for _, line := range returnRouteLines() {
 		delete(want, line)
@@ -54,8 +58,19 @@ func TestReturnRouteLinesAllowCrossCarrierExpectations(t *testing.T) {
 		t.Fatalf("return route options are missing cross-carrier lines: %v", want)
 	}
 	lines := returnRouteLines()
-	if indexOfReturnRouteLine(lines, "10099") >= indexOfReturnRouteLine(lines, "9929") {
-		t.Fatalf("10099 must be listed before 9929: %v", lines)
+	if indexOfReturnRouteLine(lines, returnRouteLineCUGVIP) >= indexOfReturnRouteLine(lines, returnRouteLineCUGOptimized) ||
+		indexOfReturnRouteLine(lines, returnRouteLineCUGOptimized) >= indexOfReturnRouteLine(lines, "9929") ||
+		indexOfReturnRouteLine(lines, "9929") >= indexOfReturnRouteLine(lines, "4837") {
+		t.Fatalf("Unicom lines are not in CUG VIP, CUG 优化, 9929, 4837 order: %v", lines)
+	}
+	if indexOfReturnRouteLine(lines, "10099") != len(lines) {
+		t.Fatalf("legacy 10099 must not be exposed as a selectable line: %v", lines)
+	}
+}
+
+func TestNormalizeLegacy10099ExpectedLine(t *testing.T) {
+	if got := normalizeReturnRouteLine(" 10099 "); got != returnRouteLineCUGVIP {
+		t.Fatalf("normalizeReturnRouteLine(10099) = %q; want %q", got, returnRouteLineCUGVIP)
 	}
 }
 
@@ -144,6 +159,20 @@ func TestReturnRouteCrossCarrierInjectionCountsAsSwitch(t *testing.T) {
 	}
 }
 
+func TestCUGBackboneChangeCountsAsSwitch(t *testing.T) {
+	task := models.ReturnRouteTask{
+		Id: 1, Client: "node", Carrier: "unicom", ExpectedLine: returnRouteLineCUGVIP,
+		SwitchConfirm: 1, RecoveryConfirm: 1,
+	}
+	status := models.ReturnRouteStatus{TaskId: 1, CurrentLine: returnRouteLineCUGVIP, State: "healthy"}
+	now := time.Now().UTC()
+
+	event := advanceReturnRouteState(&status, task, returnRouteLineCUGOptimized, now)
+	if event == nil || event.Kind != "switch" || event.FromLine != returnRouteLineCUGVIP || event.ToLine != returnRouteLineCUGOptimized {
+		t.Fatalf("CUG backbone change did not create a switch event: event=%#v status=%#v", event, status)
+	}
+}
+
 func TestFormatReturnRouteNotificationUsesChineseCarrierAndExpectedLine(t *testing.T) {
 	task := models.ReturnRouteTask{
 		Name: "VMISS_LAX_CM", Carrier: "telecom", Region: "华东",
@@ -217,11 +246,11 @@ func TestBuildReturnRouteRepeatNotificationOnlyWhileSwitched(t *testing.T) {
 
 func TestReturnRouteNotificationSwitchesAreIndependent(t *testing.T) {
 	tests := []struct {
-		name             string
-		notifySwitch     bool
-		notifyRecovery   bool
-		wantSwitch       bool
-		wantRecovery     bool
+		name           string
+		notifySwitch   bool
+		notifyRecovery bool
+		wantSwitch     bool
+		wantRecovery   bool
 	}{
 		{name: "both enabled", notifySwitch: true, notifyRecovery: true, wantSwitch: true, wantRecovery: true},
 		{name: "switch only", notifySwitch: true, notifyRecovery: false, wantSwitch: true, wantRecovery: false},

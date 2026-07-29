@@ -45,6 +45,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Run full regression suite
+        run: go test ./...
+
       - name: Install Zig
         uses: ./.github/actions/setup-zig
 
@@ -55,7 +58,7 @@ jobs:
           GIN_MODE: release
           VERSION: ${{ github.event.inputs.version }}
         run: |
-          VERSION_HASH="${{ github.sha }}"
+          VERSION_HASH="$(git rev-parse --short=7 "${GITHUB_SHA}")"
           LDFLAGS="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}"
 
           echo "Building for linux/amd64..."
@@ -118,3 +121,23 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           no-cache: true
           provenance: false
+
+      - name: Verify image platforms and embedded version
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${IMAGE_NAME}:${VERSION}"
+          expected_hash="$(git rev-parse --short=7 "${GITHUB_SHA}")"
+          manifest="$(docker buildx imagetools inspect "${image}")"
+          echo "${manifest}"
+          grep -F 'Platform:  linux/amd64' <<<"${manifest}"
+          grep -F 'Platform:  linux/arm64' <<<"${manifest}"
+          for platform in linux/amd64 linux/arm64; do
+            docker pull --platform "${platform}" "${image}"
+            output="$(docker run --rm --platform "${platform}" "${image}" /app/komari version --json)"
+            echo "${output}"
+            grep -F "\"version\":\"${VERSION}\"" <<<"${output}"
+            grep -F "\"hash\":\"${expected_hash}\"" <<<"${output}"
+          done

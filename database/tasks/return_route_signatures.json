@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "rule_version": "2026.07.29.1",
+  "rule_version": "2026.07.29.2",
   "asn_groups": {
     "cmin2": [58807],
     "cmi": [58453],
