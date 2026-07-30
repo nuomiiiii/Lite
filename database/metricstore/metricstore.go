@@ -38,40 +38,40 @@ const (
 	metricWALCheckpointLimit    = 64 * 1024 * 1024
 )
 
-// MetricStoreConfig ?? metric store ???
+// MetricStoreConfig 保存 metric store 配置。
 //
-// ???metric store ????????? metric_store_enabled ???????
-// ?????????? SQLite?./data/metrics.db??
+// 注意：metric store 现在始终启用（旧的 metric_store_enabled 开关已废弃）。
+// 未显式配置时默认使用 SQLite（./data/metrics.db）。
 type MetricStoreConfig struct {
-	Driver              string `json:"metric_db_driver" default:"sqlite"`          // ?????: sqlite, mysql, postgresql
-	DSN                 string `json:"metric_db_dsn" default:"./data/metrics.db"`  // ??????
-	DownsamplingEnabled bool   `json:"metric_downsampling_enabled" default:"true"` // ?????????
-	LowResourceMode     bool   `json:"low_resource_mode"`                          // ???????????????????
-	TablePrefix         string `json:"metric_table_prefix" default:"metric_"`      // ????
-	MaxOpenConns        int    `json:"metric_max_open_conns" default:"25"`         // ?????
-	MaxIdleConns        int    `json:"metric_max_idle_conns" default:"5"`          // ???????
+	Driver              string `json:"metric_db_driver" default:"sqlite"`          // 数据库类型: sqlite, mysql, postgresql
+	DSN                 string `json:"metric_db_dsn" default:"./data/metrics.db"`  // 数据库连接串
+	DownsamplingEnabled bool   `json:"metric_downsampling_enabled" default:"true"` // 是否启用分层降采样
+	LowResourceMode     bool   `json:"low_resource_mode"`                          // 低资源模式默认关闭，可由管理员手动启用
+	TablePrefix         string `json:"metric_table_prefix" default:"metric_"`      // 表名前缀
+	MaxOpenConns        int    `json:"metric_max_open_conns" default:"25"`         // 最大连接数
+	MaxIdleConns        int    `json:"metric_max_idle_conns" default:"5"`          // 最大空闲连接数
 }
 
-// MetricStoreConfigKeys ???
+// MetricStoreConfigKeys 配置键
 //
-// MetricStoreEnabledKey ????metric store ??????????????????
+// MetricStoreEnabledKey 已废弃：metric store 始终启用，保留常量仅用于清理旧配置。
 const (
-	MetricStoreEnabledKey        = "metric_store_enabled" // Deprecated: metric store ????
+	MetricStoreEnabledKey        = "metric_store_enabled" // Deprecated: metric store 始终启用
 	MetricDBDriverKey            = "metric_db_driver"
 	MetricDBDSNKey               = "metric_db_dsn"
 	MetricDownsamplingEnabledKey = "metric_downsampling_enabled"
 	MetricTablePrefixKey         = "metric_table_prefix"
 	MetricMaxOpenConnsKey        = "metric_max_open_conns"
 	MetricMaxIdleConnsKey        = "metric_max_idle_conns"
-	// MigrationTargetKey ???????????????????driver+dsn??
-	// ??????????? SQLite ??? MySQL/PostgreSQL????????
-	// ?????????????????????? metrics ??
+	// MigrationTargetKey 记录上一次成功完成启动迁移的目标指纹（driver+dsn）。
+	// 当目标发生变化（例如从 SQLite 切换到 MySQL/PostgreSQL）时，启动迁移会
+	// 重新执行，把上一个目标库的数据搬运到新的目标 metrics 库。
 	MigrationTargetKey = "metric_migration_target"
 )
 
-// buildMetricConfig ?? MetricStoreConfig ???? metric.Config?
-// autoMigrate ????? Open ???????????/????? true?
-// ???????? false???? schema??????????????
+// buildMetricConfig 根据 MetricStoreConfig 构造底层 metric.Config。
+// autoMigrate 控制是否在 Open 时自动建表：正式初始化/热加载时为 true，
+// 仅做连接测试时为 false（不写入 schema，避免对目标库产生副作用）。
 func buildMetricConfig(cfg *MetricStoreConfig, autoMigrate bool) (metric.Config, error) {
 	driver := ResolveDriverFromConfig(cfg.Driver, cfg.DSN)
 
@@ -91,20 +91,20 @@ func buildMetricConfig(cfg *MetricStoreConfig, autoMigrate bool) (metric.Config,
 	case metric.DriverSQLite:
 		dsn := cfg.DSN
 		if dsn == "" || dsn == "./data/metrics.db" {
-			// ???????? cache=shared?SQLite ????????????
-			// ?????????????????????????
-			// SQLITE_LOCKED?"database table is locked"??? busy_timeout
-			// ?????????????????????/????????????
-			// _txlock=immediate ????????????????????
+			// 注意：刻意不使用 cache=shared。SQLite 共享缓存模式使用表级锁，
+			// 当一个连接持有读锁、另一个连接尝试写入时会立即返回
+			// SQLITE_LOCKED（"database table is locked"），且 busy_timeout
+			// 对共享缓存的表级锁无效，迁移期间与前台查询/实时写入并发时必然报错。
+			// _txlock=immediate 让写事务开始即获取写锁，避免锁升级死锁。
 			dsn = "file:./data/metrics.db?mode=rwc&_txlock=immediate"
 		} else {
-			// ????? DSN ???? cache=shared???????????
+			// 用户自定义 DSN 时，剥离 cache=shared，避免上述表级锁问题。
 			dsn = stripSharedCache(dsn)
 		}
-		// SQLite ??????????????? "database is locked" ???
-		// ??????? WAL ???????????????????????
-		// ?????? cfg.MaxOpenConns/MaxIdleConns ?? ? SQLite ??????
-		// ??????????????
+		// SQLite 串行化写入：固定单写连接以避免 "database is locked" 竞争，
+		// 同时启用独立的 WAL 只读连接池提升前台查询并发（写仍走单主连接）。
+		// 这里刻意忽略 cfg.MaxOpenConns/MaxIdleConns —— 对 SQLite 而言多写连接
+		// 只会引入锁竞争而非提升吞吐。
 		opts = append(opts, metric.WithMaxOpenConns(1), metric.WithMaxIdleConns(1))
 		if cfg.LowResourceMode {
 			opts = append(opts,
@@ -146,8 +146,8 @@ func defaultRollupPolicy() metric.RollupPolicy {
 	}
 }
 
-// ResolveDriverFromConfig ?? DSN ???? metrics ??????? DSN ????
-// ??????????? driver???????????? DSN?
+// ResolveDriverFromConfig 根据 DSN 自动推断 metrics 数据库类型；当 DSN 不能可靠
+// 识别时回退到旧配置中的 driver，以兼容已有配置和非常规 DSN。
 func ResolveDriverFromConfig(configuredDriver, dsn string) metric.Driver {
 	if driver, ok := InferDriverFromDSN(dsn); ok {
 		return driver
@@ -161,8 +161,8 @@ func ResolveDriverFromConfig(configuredDriver, dsn string) metric.Driver {
 	}
 }
 
-// InferDriverFromDSN ?????? DSN ??????????
-// ?? ok=false ????????????????????????
+// InferDriverFromDSN 尽量根据常见 DSN 格式推断数据库类型。
+// 返回 ok=false 表示格式不够明确，调用方应使用已有配置作为兜底。
 func InferDriverFromDSN(dsn string) (metric.Driver, bool) {
 	raw := strings.TrimSpace(dsn)
 	if raw == "" {
@@ -170,33 +170,33 @@ func InferDriverFromDSN(dsn string) (metric.Driver, bool) {
 	}
 	lower := strings.ToLower(raw)
 
-	// PostgreSQL URL DSN: postgres://... ? postgresql://...
+	// PostgreSQL URL DSN: postgres://... 或 postgresql://...
 	if strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://") {
 		return metric.DriverPostgreSQL, true
 	}
 
-	// SQLite ????/?? DSN?
+	// SQLite 常见文件/内存 DSN。
 	if raw == ":memory:" || strings.HasPrefix(lower, "file:") || strings.HasPrefix(lower, "sqlite://") || strings.HasPrefix(lower, "sqlite3://") {
 		return metric.DriverSQLite, true
 	}
 
-	// MySQL URL??? go-sql-driver/mysql ?? DSN ???? URL????????
-	// ????????????? DSN ??????????
+	// MySQL URL（虽然 go-sql-driver/mysql 原生 DSN 通常不是 URL，但这里用于给出
+	// 类型推断；连接测试仍会校验 DSN 是否可被驱动接受）。
 	if strings.HasPrefix(lower, "mysql://") {
 		return metric.DriverMySQL, true
 	}
 
-	// PostgreSQL ???/? DSN: host=... user=... dbname=...
+	// PostgreSQL 关键字/值 DSN: host=... user=... dbname=...
 	if looksLikePostgreSQLKeyValueDSN(lower) {
 		return metric.DriverPostgreSQL, true
 	}
 
-	// go-sql-driver/mysql DSN: user:pass@tcp(host:3306)/db?user@unix(...)/db?user:pass@/db ??
+	// go-sql-driver/mysql DSN: user:pass@tcp(host:3306)/db、user@unix(...)/db、user:pass@/db 等。
 	if looksLikeMySQLDSN(lower) {
 		return metric.DriverMySQL, true
 	}
 
-	// SQLite ???./data/metrics.db?/var/lib/metrics.sqlite3?metrics.sqlite ??
+	// SQLite 路径：./data/metrics.db、/var/lib/metrics.sqlite3、metrics.sqlite 等。
 	if looksLikeSQLitePath(lower) {
 		return metric.DriverSQLite, true
 	}
@@ -215,7 +215,7 @@ func looksLikePostgreSQLKeyValueDSN(lower string) bool {
 			matched++
 		}
 	}
-	// dbname= ??? PostgreSQL libpq DSN ?????????????????
+	// dbname= 基本是 PostgreSQL libpq DSN 的强特征；否则至少匹配两个常见键。
 	return strings.Contains(lower, "dbname=") || matched >= 2
 }
 
@@ -226,7 +226,7 @@ func looksLikeMySQLDSN(lower string) bool {
 	if strings.Contains(lower, "@tcp(") || strings.Contains(lower, "@unix(") || strings.Contains(lower, "@/") {
 		return true
 	}
-	// user:pass@host/db?user@host/db ???????????????? MySQL?
+	// user:pass@host/db、user@host/db 这类虽然不是推荐格式，但也明显偏 MySQL。
 	return strings.Contains(lower, "@") && strings.Contains(lower, "/")
 }
 
@@ -238,8 +238,8 @@ func looksLikeSQLitePath(lower string) bool {
 	return strings.HasSuffix(path, ".db") || strings.HasSuffix(path, ".sqlite") || strings.HasSuffix(path, ".sqlite3")
 }
 
-// stripSharedCache ? SQLite DSN ??? cache=shared ?????????????
-// ????SQLITE_LOCKED "database table is locked"???????????
+// stripSharedCache 从 SQLite DSN 中移除 cache=shared 参数，避免共享缓存模式下的
+// 表级锁（SQLITE_LOCKED "database table is locked"）。其它参数保持不变。
 func stripSharedCache(dsn string) string {
 	if !strings.Contains(dsn, "cache=shared") {
 		return dsn
@@ -264,7 +264,7 @@ func stripSharedCache(dsn string) string {
 	return base + "?" + strings.Join(kept, "&")
 }
 
-// openStore ????? metric store ????????
+// openStore 按配置打开 metric store 并创建指标定义。
 func openStore(ctx context.Context, cfg *MetricStoreConfig) (*metric.Store, error) {
 	return openStoreWithDefaultRetention(ctx, cfg, defaultBuiltinMetricRetentionDays)
 }
@@ -340,8 +340,8 @@ func OpenConfiguredStoreForMigration(ctx context.Context, progress metric.Migrat
 	return openStoreWithDefaultRetentionAndProgress(ctx, cfg, defaultBuiltinMetricRetentionDays, progress)
 }
 
-// TestConnection ?????????? metrics ???????????? store??
-// ?????? Ping?????????????????????????????
+// TestConnection 使用给定配置尝试连接 metrics 数据库（不影响当前运行的 store）。
+// 仅打开连接并 Ping，不执行自动建表，连接成功后立即关闭。失败时返回可读错误。
 func TestConnection(ctx context.Context, cfg *MetricStoreConfig) error {
 	metricCfg, err := buildMetricConfig(cfg, false)
 	if err != nil {
@@ -357,7 +357,7 @@ func TestConnection(ctx context.Context, cfg *MetricStoreConfig) error {
 	return s.Ping(ctx)
 }
 
-// InitializeStore ??? metric store???????????????????
+// InitializeStore 初始化 metric store（启动时调用，可在失败或关闭后重试）。
 func InitializeStore() error {
 	storeInitMu.Lock()
 	defer storeInitMu.Unlock()
@@ -403,13 +403,13 @@ func startupStoreContext(cfg *MetricStoreConfig) (context.Context, context.Cance
 	return context.WithTimeout(context.Background(), externalStoreInitTimeout)
 }
 
-// Reload ????????? metric store????????
-// metric store ?????????????????? Ping ??????
-// ?????????? store?????????????????? store ???
+// Reload 根据最新配置热重载 metric store，无需重启进程。
+// metric store 始终启用：用新配置打开并建表（内部已 Ping 校验连接），
+// 成功后再替换运行中的 store，最后关闭旧实例。任何失败都会保留旧 store 不变。
 //
-// ???Reload ?????????????????? SQLite???????
-// ???????? MySQL/PostgreSQL?????????????
-// ?RunStartupMigration?????????????????
+// 注意：Reload 只切换运行中的连接，不会把旧目标（如 SQLite）中的历史数据
+// 搬运到新目标（如 MySQL/PostgreSQL）。跨库数据迁移由启动迁移
+// （RunStartupMigration）在下次启动时按目标指纹自动完成。
 func Reload(ctx context.Context) error {
 	if err := storeOperations.Acquire(ctx); err != nil {
 		return fmt.Errorf("wait for metric store operations before reload: %w", err)
@@ -424,7 +424,7 @@ func Reload(ctx context.Context) error {
 		return fmt.Errorf("failed to load metric store config: %w", err)
 	}
 
-	// ????????????? Ping ??????
+	// 用新配置打开并建表（内部已 Ping 校验连接）。
 	s, err := openStore(ctx, cfg)
 	if err != nil {
 		return err
@@ -448,7 +448,7 @@ func Reload(ctx context.Context) error {
 	return nil
 }
 
-// GetStore ?? metric store ?????????? nil?
+// GetStore 获取 metric store 实例（如果未启用返回 nil）
 func GetStore() *metric.Store {
 	storeMu.RLock()
 	defer storeMu.RUnlock()
@@ -556,7 +556,7 @@ func Compact(ctx context.Context, now time.Time) (int, error) {
 func handleDigestHandoffDeferred(metricName string, err error, at time.Time) {
 	reason := digestHandoffDeferredReason(err)
 	recordDigestHandoffDeferred(metricName, reason, at)
-	logger.Infof("metricstore", "??????????????????????????: metric=%q; reason=%s; detail=%v", metricName, reason, err)
+	logger.Infof("metricstore", "摘要接力暂缓，原数据已保留，将在后续压缩周期自动重试: metric=%q; reason=%s; detail=%v", metricName, reason, err)
 }
 
 func digestHandoffDeferredReason(err error) string {
@@ -571,14 +571,14 @@ func digestHandoffDeferredReason(err error) string {
 		coordinate = coordinate[:index]
 	}
 
-	reason := "???????????????"
+	reason := "细粒度与粗粒度摘要校验暂未通过"
 	if strings.Contains(detail, "finer digest missing") {
-		reason = "?????????"
+		reason = "细粒度摘要尚未完整"
 	}
 	if coordinate != "" {
-		reason += "?" + coordinate + "?"
+		reason += "（" + coordinate + "）"
 	}
-	return reason + "????????????????????"
+	return reason + "，原数据已保留，将在后续压缩周期自动重试"
 }
 
 // CompactStep compacts one metric and advances the rotating cursor. Cleanup
@@ -789,7 +789,7 @@ func createMetricDefinitionsWithDefaultRetention(ctx context.Context, s *metric.
 		{Name: MetricGPUDeviceUsage, Type: metric.TypeGauge, Unit: "%", Description: "Per-device GPU utilization", RetentionDays: defaultRetentionDays},
 		{Name: MetricGPUMem, Type: metric.TypeGauge, Unit: "bytes", Description: "GPU memory used", RetentionDays: defaultRetentionDays},
 		{Name: MetricGPUMemTotal, Type: metric.TypeGauge, Unit: "bytes", Description: "GPU memory total", RetentionDays: defaultRetentionDays},
-		{Name: MetricGPUTemp, Type: metric.TypeGauge, Unit: "?C", Description: "GPU temperature", RetentionDays: defaultRetentionDays},
+		{Name: MetricGPUTemp, Type: metric.TypeGauge, Unit: "°C", Description: "GPU temperature", RetentionDays: defaultRetentionDays},
 		{Name: MetricRAM, Type: metric.TypeGauge, Unit: "bytes", Description: "RAM used", RetentionDays: defaultRetentionDays},
 		{Name: MetricSwap, Type: metric.TypeGauge, Unit: "bytes", Description: "Swap used", RetentionDays: defaultRetentionDays},
 		{Name: MetricLoad, Type: metric.TypeGauge, Unit: "", Description: "System load average", RetentionDays: defaultRetentionDays},
@@ -834,7 +834,7 @@ func createMetricDefinitionsWithDefaultRetention(ctx context.Context, s *metric.
 	return nil
 }
 
-// WritePingRecord ? ping ???? metric store
+// WritePingRecord 将 ping 记录写入 metric store
 func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
 	if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) {
 		return ErrMetricWriteBlocked
@@ -881,7 +881,7 @@ func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
 	return s.WriteBatch(ctx, points)
 }
 
-// GetRecordsByClientAndTime ? metric store ???????? models.Record
+// GetRecordsByClientAndTime 从 metric store 查询记录并重构为 models.Record
 func GetRecordsByClientAndTime(ctx context.Context, clientUUID string, start, end time.Time) ([]models.Record, error) {
 	s := GetStore()
 	if s == nil {
@@ -908,7 +908,7 @@ func GetTrafficRecordsByClientAndTime(ctx context.Context, clientUUID string, st
 	})
 }
 
-// GetRecordsByTime ? metric store ????????????????
+// GetRecordsByTime 从 metric store 查询所有客户端在时间范围内的记录
 func GetRecordsByTime(ctx context.Context, start, end time.Time) ([]models.Record, error) {
 	s := GetStore()
 	if s == nil {
@@ -1079,17 +1079,17 @@ func sortRecords(records []models.Record) {
 	})
 }
 
-// GetGPURecordsByClientAndTime ? metric store ?? GPU ??
+// GetGPURecordsByClientAndTime 从 metric store 查询 GPU 记录
 func GetGPURecordsByClientAndTime(ctx context.Context, clientUUID string, start, end time.Time) ([]models.GPURecord, error) {
 	s := GetStore()
 	if s == nil {
 		return nil, fmt.Errorf("metric store not enabled")
 	}
 
-	// ?? GPU ????????????????? gpu.device.usage?
+	// 查询 GPU 相关指标（每设备利用率使用独立指标 gpu.device.usage）
 	gpuMetrics := []string{MetricGPUDeviceUsage, MetricGPUMem, MetricGPUMemTotal, MetricGPUTemp}
 
-	// ????????????
+	// 按设备索引和时间组织数据
 	type gpuKey struct {
 		entityID    string
 		deviceIndex int
@@ -1114,7 +1114,7 @@ func GetGPURecordsByClientAndTime(ctx context.Context, clientUUID string, start,
 			PreserveSeries: true,
 		}, now)
 		if err != nil {
-			continue // GPU ???????
+			continue // GPU 数据可能不存在
 		}
 
 		for _, p := range points {
@@ -1158,7 +1158,7 @@ func GetGPURecordsByClientAndTime(ctx context.Context, clientUUID string, start,
 		}
 	}
 
-	// ?????
+	// 转换为切片
 	records := make([]models.GPURecord, 0, len(recordMap))
 	for _, rec := range recordMap {
 		records = append(records, *rec)
@@ -1176,11 +1176,11 @@ func GetGPURecordsByClientAndTime(ctx context.Context, clientUUID string, start,
 	return records, nil
 }
 
-// GetPingRecords ? metric store ???????? ping ???
+// GetPingRecords 从 metric store 查询兼容旧接口的 ping 记录。
 //
-// ????????? ping_records ??????? metric rollup ????
-// ? raw ????? rollup ?????????? Series ?? queryMetrics
-// ??? raw/rollup ?????????? task_id ???
+// 旧接口过去直接读取 ping_records 的原始点。启用 metric rollup 后，较旧
+// 的 raw 点会被压入 rollup 并删除，因此这里使用 Series 走与 queryMetrics
+// 相同的 raw/rollup 混合读取路径，并保留 task_id 标签。
 func GetPingRecords(ctx context.Context, clientUUID string, taskID int, start, end time.Time) ([]models.PingRecord, error) {
 	s := GetStore()
 	if s == nil {
@@ -1251,12 +1251,12 @@ func pingQueryInterval(rangeDuration time.Duration, maxPoints int) time.Duration
 	return metric.FloorStandardInterval(interval)
 }
 
-// farFuture ???????????????? DeleteBefore ?????????????
+// farFuture 返回一个足够远的未来时间，用于以 DeleteBefore 语义清空某指标的全部数据。
 func farFuture() time.Time {
 	return time.Now().UTC().Add(24 * 365 * time.Hour)
 }
 
-// DeleteAllRecords ??????/??????????????? ping??
+// DeleteAllRecords 删除所有负载/系统类记录（保留指标定义，不含 ping）。
 func DeleteAllRecords(ctx context.Context) error {
 	s := GetStore()
 	if s == nil {
@@ -1273,7 +1273,7 @@ func DeleteAllRecords(ctx context.Context) error {
 	return nil
 }
 
-// DeleteAllPingRecords ???? ping ???????????
+// DeleteAllPingRecords 删除全部 ping 记录（保留指标定义）。
 func DeleteAllPingRecords(ctx context.Context) error {
 	s := GetStore()
 	if s == nil {
@@ -1287,7 +1287,7 @@ func DeleteAllPingRecords(ctx context.Context) error {
 	return nil
 }
 
-// DeletePingRecordsByTask ???????task_id???? ping ???
+// DeletePingRecordsByTask 删除指定任务（task_id）的全部 ping 记录。
 func DeletePingRecordsByTask(ctx context.Context, taskIDs []uint) error {
 	if err := storeOperations.Acquire(ctx); err != nil {
 		return fmt.Errorf("wait for metric store operations before deleting ping tasks: %w", err)
@@ -1312,7 +1312,7 @@ func DeletePingRecordsByTask(ctx context.Context, taskIDs []uint) error {
 	return nil
 }
 
-// DeleteEntity ???? agent ????????????
+// DeleteEntity 删除指定 agent 在所有指标下的历史数据。
 func DeleteEntity(ctx context.Context, entityID string) error {
 	if err := storeOperations.Acquire(ctx); err != nil {
 		return fmt.Errorf("wait for metric store operations before deleting entity: %w", err)

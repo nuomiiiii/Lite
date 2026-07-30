@@ -73,6 +73,33 @@ func TestRuntimeStatusKeepsPendingRetryEstimateWithoutCountingCycleFailure(t *te
 	}
 }
 
+func TestRuntimeStatusRebasesCheckpointEstimateAfterSlowPartialStep(t *testing.T) {
+	previous := GetRuntimeStatus()
+	resetRuntimeStatus(metric.DriverSQLite)
+	t.Cleanup(func() {
+		runtimeStatusMu.Lock()
+		runtimeStatus = previous
+		runtimeStatusMu.Unlock()
+	})
+
+	started := time.Date(2026, 7, 30, 9, 40, 45, 0, time.UTC)
+	beginCompactStep(metric.DriverSQLite, "traffic.up", 19, 21, started)
+	status := GetRuntimeStatus()
+	if want := started.Add(2 * CompactStepInterval); !status.NextCheckpointAt.Equal(want) {
+		t.Fatalf("running estimate = %s, want %s", status.NextCheckpointAt, want)
+	}
+
+	finished := started.Add(13 * time.Second)
+	finishCompactStep(24, false, nil, finished)
+	status = GetRuntimeStatus()
+	if want := finished.Add(CompactStepInterval); !status.NextCheckpointAt.Equal(want) {
+		t.Fatalf("rebased estimate = %s, want %s", status.NextCheckpointAt, want)
+	}
+	if status.Progress != 20 || status.Total != 21 || status.Compacting {
+		t.Fatalf("partial step status = %#v", status)
+	}
+}
+
 func TestCheckpointRetryStateSeparatesQuickAndFullRetries(t *testing.T) {
 	previous := GetRuntimeStatus()
 	resetRuntimeStatus(metric.DriverSQLite)
@@ -105,9 +132,9 @@ func TestRuntimeStatusTracksDigestHandoffDeferredWithoutFailure(t *testing.T) {
 	})
 
 	at := time.Now().UTC()
-	recordDigestHandoffDeferred("cpu.usage", "????????", at)
-	recordDigestHandoffDeferred("load.average", "?????????", at.Add(time.Second))
-	recordDigestHandoffDeferred("cpu.usage", "?????????????", at.Add(2*time.Second))
+	recordDigestHandoffDeferred("cpu.usage", "摘要校验暂未通过", at)
+	recordDigestHandoffDeferred("load.average", "细粒度摘要尚未完整", at.Add(time.Second))
+	recordDigestHandoffDeferred("cpu.usage", "摘要校验暂未通过（已重试）", at.Add(2*time.Second))
 
 	status := GetRuntimeStatus()
 	if len(status.DigestHandoffDeferred) != 2 {

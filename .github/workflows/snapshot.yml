@@ -71,6 +71,7 @@ jobs:
         uses: ./.github/actions/build-frontend
         with:
           artifact-name: komari-frontend
+          ref: snapshot-2.1.11-fix
 
   test-backend:
     needs: [validate-ref, build-frontend]

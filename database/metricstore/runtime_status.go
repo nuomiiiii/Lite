@@ -85,7 +85,10 @@ func beginCompactStep(driver metric.Driver, metricName string, index, total int,
 	runtimeStatus.Progress = index + 1
 	runtimeStatus.Total = total
 	runtimeStatus.LastStepAt = at
-	remaining := total - index - 1
+	// Include the step that just started. A checkpoint cannot finish before the
+	// current metric has completed, even when the following scheduler tick is
+	// exactly CompactStepInterval away.
+	remaining := total - index
 	if remaining < 0 {
 		remaining = 0
 	}
@@ -106,6 +109,17 @@ func finishCompactStep(written int, cycleCompleted bool, err error, at time.Time
 		runtimeStatus.cycleError = err.Error()
 	}
 	if !cycleCompleted {
+		// Scheduled runs that overlap a slow metric are intentionally skipped.
+		// Rebase the estimate on the actual finish time so the UI never keeps the
+		// optimistic timestamp calculated before that slow step ran.
+		remaining := runtimeStatus.Total - runtimeStatus.Progress
+		if remaining < 0 {
+			remaining = 0
+		}
+		runtimeStatus.NextCheckpointAt = at.Add(time.Duration(remaining) * CompactStepInterval)
+		if runtimeStatus.CheckpointPending && !runtimeStatus.checkpointQuickRetryAt.IsZero() && runtimeStatus.checkpointQuickRetryAt.Before(runtimeStatus.NextCheckpointAt) {
+			runtimeStatus.NextCheckpointAt = runtimeStatus.checkpointQuickRetryAt
+		}
 		return
 	}
 
