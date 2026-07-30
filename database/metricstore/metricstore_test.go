@@ -792,6 +792,39 @@ func TestRetryMetricWALCheckpointClearsPendingWAL(t *testing.T) {
 	}
 }
 
+func TestCheckpointMetricWALAboveLimit(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "compact-step-large-wal.db")
+	s, err := metric.Open(ctx, metric.SQLite(dsn,
+		metric.WithMaxOpenConns(1),
+		metric.WithSQLiteWALAutoCheckpoint(1_000_000),
+	))
+	if err != nil {
+		t.Fatalf("open metric store: %v", err)
+	}
+	defer s.Close()
+	if err := s.UpsertMetric(ctx, metric.Definition{Name: "a.metric", Type: metric.TypeGauge, RetentionDays: 1}); err != nil {
+		t.Fatalf("upsert metric: %v", err)
+	}
+	if err := s.Write(ctx, metric.Point{MetricName: "a.metric", EntityID: "node", Timestamp: time.Now().UTC(), Value: 1}); err != nil {
+		t.Fatalf("write metric: %v", err)
+	}
+	if size := fileSize(t, dsn+"-wal"); size == 0 {
+		t.Fatal("expected WAL content before threshold checkpoint")
+	}
+
+	checkpointed, err := checkpointMetricWALAbove(ctx, s, 1)
+	if err != nil {
+		t.Fatalf("checkpoint oversized WAL: %v", err)
+	}
+	if !checkpointed {
+		t.Fatal("oversized WAL was not checkpointed")
+	}
+	if size := fileSize(t, dsn+"-wal"); size != 0 {
+		t.Fatalf("WAL size after threshold checkpoint = %d, want 0", size)
+	}
+}
+
 func TestCompactStepAdvancesAfterMetricFailure(t *testing.T) {
 	ctx := context.Background()
 	dsn := filepath.Join(t.TempDir(), "compact-step-failure.db")
