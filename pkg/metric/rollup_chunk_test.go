@@ -67,7 +67,7 @@ func TestCompactionChunksCommitResumeAndPreserveRollups(t *testing.T) {
 	if written == 0 || completed {
 		t.Fatalf("first chunk wrote=%d completed=%v, want committed partial progress", written, completed)
 	}
-	firstBoundary := time.Date(2026, 7, 27, 1, 0, 0, 0, time.UTC)
+	firstBoundary := time.Date(2026, 7, 27, 0, 15, 0, 0, time.UTC)
 	watermark, ok, err := chunked.compactionWatermark(ctx, metricName)
 	if err != nil || !ok || !watermark.Equal(firstBoundary) {
 		t.Fatalf("first watermark=%v ok=%v err=%v, want %v", watermark, ok, err, firstBoundary)
@@ -106,7 +106,7 @@ func TestCompactionChunksCommitResumeAndPreserveRollups(t *testing.T) {
 		t.Helper()
 		for _, aggregation := range []Aggregation{AggCount, AggSum, AggAvg, AggMin, AggMax, AggFirst, AggLast, AggStdDev, AggP50, AggP95, AggP99} {
 			query := AggregateQuery{
-				Query: Query{MetricName: metricName, EntityID: "node-a", Start: base.Truncate(time.Hour), End: rawCutoff.Add(-time.Nanosecond)},
+				Query:       Query{MetricName: metricName, EntityID: "node-a", Start: base.Truncate(time.Hour), End: rawCutoff.Add(-time.Nanosecond)},
 				Aggregation: aggregation,
 				Interval:    time.Hour,
 			}

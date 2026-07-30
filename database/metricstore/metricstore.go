@@ -34,7 +34,7 @@ const (
 	DefaultRollupFinestTier   = time.Minute
 	externalStoreInitTimeout  = 30 * time.Second
 	checkpointRetryTimeout    = 250 * time.Millisecond
-	checkpointTimeout         = 15 * time.Second
+	backgroundCheckpointTimeout = 5 * time.Second
 	metricWALCheckpointLimit  = 64 * 1024 * 1024
 )
 
@@ -664,7 +664,7 @@ func checkpointMetricWALAbove(ctx context.Context, activeStore *metric.Store, li
 	if err != nil || files.WAL < limit {
 		return false, err
 	}
-	checkpointCtx, cancel := context.WithTimeout(ctx, checkpointTimeout)
+	checkpointCtx, cancel := context.WithTimeout(ctx, backgroundCheckpointTimeout)
 	defer cancel()
 	return true, activeStore.CheckpointWAL(checkpointCtx)
 }
@@ -675,7 +675,7 @@ func finishCompactCycle(ctx context.Context, activeStore *metric.Store, now time
 		compactErrors = append(compactErrors, fmt.Errorf("clean up expired raw metrics: %w", err))
 	}
 	if activeStore.Driver() == metric.DriverSQLite {
-		checkpointCtx, cancel := context.WithTimeout(ctx, checkpointTimeout)
+		checkpointCtx, cancel := context.WithTimeout(ctx, backgroundCheckpointTimeout)
 		checkpointErr := activeStore.CheckpointWAL(checkpointCtx)
 		recordCheckpointResult(activeStore.Driver(), checkpointErr, time.Now().UTC())
 		if checkpointErr != nil {

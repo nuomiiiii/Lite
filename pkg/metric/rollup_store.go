@@ -127,28 +127,52 @@ func (s *Store) CompactMetric(ctx context.Context, metricName string, now time.T
 	return 0, fmt.Errorf("compact metric %q: exhausted retries after serialization failures: %w", metricName, lastErr)
 }
 
-// Keep backlog transactions small enough to make forward progress on slower
-// ARM hosts. One hour remains aligned with every built-in rollup tier, so
-// committing a chunk does not split a persisted aggregate bucket.
-const metricCompactionChunkWindow = time.Hour
+// Bound each SQLite write transaction to a small time slice so live report
+// writes can acquire the writer between backlog chunks. The rollup merge path
+// consumes every raw sample exactly once, including when a one-hour bucket is
+// assembled from several committed chunks.
+const (
+	metricCompactionChunkWindow = 15 * time.Minute
+	metricCompactionVacuumEvery = 16
+	metricCompactionWriterYield = time.Millisecond
+)
 
 // compactMetricIncrementalInChunks commits old upgrade data in bounded ranges.
 // A timeout only rolls back the active range; earlier ranges and their persisted
 // watermarks remain available for the next scheduled compaction attempt.
 func (s *Store) compactMetricIncrementalInChunks(ctx context.Context, metricName string, now time.Time, policy RollupPolicy, obsoleteIntervals []time.Duration) (int, error) {
 	total := 0
+	chunksSinceVacuum := 0
 	for {
 		written, completed, err := s.compactMetricIncrementalChunk(ctx, metricName, now, policy, obsoleteIntervals)
 		if err != nil {
 			return total, err
 		}
 		total += written
-		if err := s.incrementalSQLiteVacuum(ctx, 256); err != nil {
-			log.Printf("metric: incremental SQLite vacuum skipped: %v", err)
+		chunksSinceVacuum++
+		if completed || chunksSinceVacuum >= metricCompactionVacuumEvery {
+			if err := s.incrementalSQLiteVacuum(ctx, 256); err != nil {
+				log.Printf("metric: incremental SQLite vacuum skipped: %v", err)
+			}
+			chunksSinceVacuum = 0
 		}
 		if completed {
 			return total, nil
 		}
+		if err := yieldCompactionWriter(ctx); err != nil {
+			return total, err
+		}
+	}
+}
+
+func yieldCompactionWriter(ctx context.Context) error {
+	timer := time.NewTimer(metricCompactionWriterYield)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
