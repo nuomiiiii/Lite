@@ -499,6 +499,14 @@ func sqliteV4SeriesIDClause(series []sqliteV4Series) (string, []any) {
 }
 
 func (s *Store) sealSQLiteV4PointsTx(ctx context.Context, tx *sql.Tx, metricName string, beforeNano, migrationTotal, preservedBase int64) (int64, error) {
+	seriesIDs, err := s.sqliteV4PointSeriesIDsBefore(ctx, tx, metricName, beforeNano)
+	if err != nil {
+		return 0, err
+	}
+	return s.sealSQLiteV4PointSeriesTx(ctx, tx, seriesIDs, beforeNano, migrationTotal, preservedBase)
+}
+
+func (s *Store) sqliteV4PointSeriesIDsBefore(ctx context.Context, q querier, metricName string, beforeNano int64) ([]int64, error) {
 	comparison := "<"
 	if beforeNano == math.MaxInt64 {
 		comparison = "<="
@@ -509,31 +517,38 @@ func (s *Store) sealSQLiteV4PointsTx(ctx context.Context, tx *sql.Tx, metricName
 		args = append(args, metricName)
 		metricFilter = " AND s.metric_name = ?"
 	}
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(
+	rows, err := q.QueryContext(ctx, fmt.Sprintf(
 		`SELECT DISTINCT p.series_id FROM %s p JOIN %s s ON s.id = p.series_id
 		 WHERE p.ts_nano %s ?%s ORDER BY p.series_id`,
 		s.tables.pointValues, s.tables.series, comparison, metricFilter,
 	), args...)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	var seriesIDs []int64
 	for rows.Next() {
 		var seriesID int64
 		if err := rows.Scan(&seriesID); err != nil {
 			_ = rows.Close()
-			return 0, err
+			return nil, err
 		}
 		seriesIDs = append(seriesIDs, seriesID)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return 0, err
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
-		return 0, err
+		return nil, err
 	}
+	return seriesIDs, nil
+}
 
+func (s *Store) sealSQLiteV4PointSeriesTx(ctx context.Context, tx *sql.Tx, seriesIDs []int64, beforeNano, migrationTotal, preservedBase int64) (int64, error) {
+	comparison := "<"
+	if beforeNano == math.MaxInt64 {
+		comparison = "<="
+	}
 	var total int64
 	for _, seriesID := range seriesIDs {
 		points, err := s.loadAllSQLiteV4BlockPoints(ctx, tx, seriesID)

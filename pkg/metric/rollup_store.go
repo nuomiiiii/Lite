@@ -132,9 +132,11 @@ func (s *Store) CompactMetric(ctx context.Context, metricName string, now time.T
 // consumes every raw sample exactly once, including when a one-hour bucket is
 // assembled from several committed chunks.
 const (
-	metricCompactionChunkWindow = 15 * time.Minute
-	metricCompactionVacuumEvery = 16
-	metricCompactionWriterYield = time.Millisecond
+	metricCompactionChunkWindow   = 5 * time.Minute
+	metricCompactionSeriesBatch   = 64
+	metricCompactionChunksPerStep = 16
+	metricCompactionVacuumEvery   = 16
+	metricCompactionWriterYield   = time.Millisecond
 )
 
 // compactMetricIncrementalInChunks commits old upgrade data in bounded ranges.
@@ -150,13 +152,19 @@ func (s *Store) compactMetricIncrementalInChunks(ctx context.Context, metricName
 		}
 		total += written
 		chunksSinceVacuum++
+		stepLimitReached := s.sqliteStorageV4 && chunksSinceVacuum >= metricCompactionChunksPerStep
+		if (completed || stepLimitReached) && s.sqliteStorageV4 {
+			if err := s.sealSQLiteV4MetricInBatches(ctx, metricName, now.Add(-sqliteV4HotWindow).UnixNano()); err != nil {
+				return total, err
+			}
+		}
 		if completed || chunksSinceVacuum >= metricCompactionVacuumEvery {
 			if err := s.incrementalSQLiteVacuum(ctx, 256); err != nil {
 				log.Printf("metric: incremental SQLite vacuum skipped: %v", err)
 			}
 			chunksSinceVacuum = 0
 		}
-		if completed {
+		if completed || stepLimitReached {
 			return total, nil
 		}
 		if err := yieldCompactionWriter(ctx); err != nil {
@@ -232,12 +240,6 @@ func (s *Store) compactMetricIncrementalChunkOnce(ctx context.Context, metricNam
 	}
 
 	if completed {
-		if s.sqliteStorageV4 {
-			sealBefore := now.Add(-sqliteV4HotWindow).UnixNano()
-			if _, err := s.sealSQLiteV4PointsTx(ctx, tx, metricName, sealBefore, 0, 0); err != nil {
-				return 0, false, err
-			}
-		}
 		if err := s.deleteRollupsForIntervalsTx(ctx, metricName, obsoleteIntervals, tx); err != nil {
 			return 0, false, err
 		}
@@ -253,11 +255,6 @@ func (s *Store) compactMetricIncrementalChunkOnce(ctx context.Context, metricNam
 	if err := s.persistCompactionWatermarkTx(ctx, metricName, chunkEnd, tx); err != nil {
 		return 0, false, err
 	}
-	if completed && s.sqliteStorageV4 {
-		if err := s.sealSQLiteV4RollupHotTx(ctx, tx, metricName, now.Add(-sqliteV4HotWindow).UnixNano()); err != nil {
-			return 0, false, err
-		}
-	}
 	if completed {
 		if err := s.pruneUnusedSQLiteSeries(ctx, tx); err != nil {
 			return 0, false, err
@@ -267,6 +264,66 @@ func (s *Store) compactMetricIncrementalChunkOnce(ctx context.Context, metricNam
 		return 0, false, err
 	}
 	return written, completed, nil
+}
+
+// sealSQLiteV4MetricInBatches drains existing hot point and rollup backlogs in
+// bounded transactions. Each committed batch is independently durable, while
+// a failed batch leaves its hot rows intact for the next compaction cycle.
+func (s *Store) sealSQLiteV4MetricInBatches(ctx context.Context, metricName string, beforeNano int64) error {
+	pointSeries, err := s.sqliteV4PointSeriesIDsBefore(ctx, s.db, metricName, beforeNano)
+	if err != nil {
+		return err
+	}
+	for start := 0; start < len(pointSeries); start += metricCompactionSeriesBatch {
+		end := start + metricCompactionSeriesBatch
+		if end > len(pointSeries) {
+			end = len(pointSeries)
+		}
+		tx, err := s.db.BeginTx(ctx, s.dialect.compactTxOptions())
+		if err != nil {
+			return err
+		}
+		if _, err := s.sealSQLiteV4PointSeriesTx(ctx, tx, pointSeries[start:end], beforeNano, 0, 0); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		if end < len(pointSeries) {
+			if err := yieldCompactionWriter(ctx); err != nil {
+				return err
+			}
+		}
+	}
+
+	rollupSeries, err := s.sqliteV4MatchingSeries(ctx, s.db, metricName, "", nil)
+	if err != nil {
+		return err
+	}
+	for start := 0; start < len(rollupSeries); start += metricCompactionSeriesBatch {
+		end := start + metricCompactionSeriesBatch
+		if end > len(rollupSeries) {
+			end = len(rollupSeries)
+		}
+		tx, err := s.db.BeginTx(ctx, s.dialect.compactTxOptions())
+		if err != nil {
+			return err
+		}
+		if err := s.sealSQLiteV4RollupSeriesTx(ctx, tx, rollupSeries[start:end], beforeNano); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		if end < len(rollupSeries) {
+			if err := yieldCompactionWriter(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Store) oldestRawTimestampBeforeTx(ctx context.Context, tx *sql.Tx, metricName string, before time.Time) (time.Time, bool, error) {

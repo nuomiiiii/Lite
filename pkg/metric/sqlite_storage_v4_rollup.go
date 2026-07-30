@@ -1430,6 +1430,10 @@ func (s *Store) sealSQLiteV4RollupHotTx(ctx context.Context, tx *sql.Tx, metricN
 	if err != nil {
 		return err
 	}
+	return s.sealSQLiteV4RollupSeriesTx(ctx, tx, series, beforeNano)
+}
+
+func (s *Store) sealSQLiteV4RollupSeriesTx(ctx context.Context, tx *sql.Tx, series []sqliteV4Series, beforeNano int64) error {
 	for _, item := range series {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
 			`SELECT DISTINCT resolution_nano FROM %s WHERE series_id = ? AND bucket_nano < ?`,
