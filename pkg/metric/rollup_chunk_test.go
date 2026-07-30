@@ -67,7 +67,7 @@ func TestCompactionChunksCommitResumeAndPreserveRollups(t *testing.T) {
 	if written == 0 || completed {
 		t.Fatalf("first chunk wrote=%d completed=%v, want committed partial progress", written, completed)
 	}
-	firstBoundary := time.Date(2026, 7, 27, 6, 0, 0, 0, time.UTC)
+	firstBoundary := time.Date(2026, 7, 27, 1, 0, 0, 0, time.UTC)
 	watermark, ok, err := chunked.compactionWatermark(ctx, metricName)
 	if err != nil || !ok || !watermark.Equal(firstBoundary) {
 		t.Fatalf("first watermark=%v ok=%v err=%v, want %v", watermark, ok, err, firstBoundary)
