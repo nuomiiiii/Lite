@@ -68,21 +68,12 @@ func InspectStorage(ctx context.Context) (StorageInfo, error) {
 }
 
 // ReclaimSpace performs the driver-specific physical maintenance operation.
-// It takes the exclusive operation lock, so a table/file rewrite cannot run
-// concurrently with report writes or compaction.
+// It queues for the exclusive operation lock so a user-triggered reclaim waits
+// for the active write or compaction step and prevents later shared work from
+// starving the maintenance request.
 func ReclaimSpace(ctx context.Context) (MaintenanceResult, error) {
-	if !storeOperations.TryAcquire() {
-		storeMu.RLock()
-		defer storeMu.RUnlock()
-		if store == nil {
-			return MaintenanceResult{}, ErrStoreNotInitialized
-		}
-		return MaintenanceResult{
-			Driver:          store.Driver(),
-			Action:          store.MaintenanceAction(),
-			BeforeSizeError: ErrStoreBusy,
-			AfterSizeError:  ErrStoreBusy,
-		}, ErrStoreBusy
+	if err := storeOperations.Acquire(ctx); err != nil {
+		return MaintenanceResult{}, fmt.Errorf("wait for metric store operations before maintenance: %w", err)
 	}
 	defer storeOperations.Release()
 
