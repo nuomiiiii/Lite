@@ -29,7 +29,7 @@ func TestRuntimeStatusTracksCheckpointFailuresAndRecovery(t *testing.T) {
 		if status.LastError != checkpointErr.Error() {
 			t.Fatalf("checkpoint attempt %d error = %q", attempt, status.LastError)
 		}
-		if !status.NextCheckpointAt.Equal(at.Add(CompactStepInterval)) {
+		if !status.NextCheckpointAt.Equal(at.Add(checkpointQuickRetryInterval)) {
 			t.Fatalf("checkpoint attempt %d next retry = %s", attempt, status.NextCheckpointAt)
 		}
 	}
@@ -42,6 +42,9 @@ func TestRuntimeStatusTracksCheckpointFailuresAndRecovery(t *testing.T) {
 	}
 	if !status.LastCheckpointSuccessAt.Equal(recoveredAt) || status.LastError != "" {
 		t.Fatalf("checkpoint recovery was not recorded: %#v", status)
+	}
+	if !runtimeStatus.checkpointQuickRetryAt.IsZero() || !runtimeStatus.checkpointFullRetryAt.IsZero() {
+		t.Fatalf("checkpoint retry deadlines were not cleared after recovery: %#v", runtimeStatus)
 	}
 }
 
@@ -61,13 +64,37 @@ func TestRuntimeStatusKeepsPendingRetryEstimateWithoutCountingCycleFailure(t *te
 	finishCompactStep(12, true, nil, finished)
 
 	status := GetRuntimeStatus()
-	if !status.CheckpointPending || !status.NextCheckpointAt.Equal(finished.Add(CompactStepInterval)) {
-		t.Fatalf("pending cycle should retry on the next step: %#v", status)
+	wantRetryAt := started.Add(time.Second).Add(checkpointQuickRetryInterval)
+	if !status.CheckpointPending || !status.NextCheckpointAt.Equal(wantRetryAt) {
+		t.Fatalf("pending cycle should keep the bounded retry schedule: %#v", status)
 	}
 	if status.ConsecutiveCycleFailures != 0 || status.CycleWritten != 12 {
 		t.Fatalf("checkpoint failure should not count as a compaction cycle failure: %#v", status)
 	}
 }
+
+func TestCheckpointRetryStateSeparatesQuickAndFullRetries(t *testing.T) {
+	previous := GetRuntimeStatus()
+	resetRuntimeStatus(metric.DriverSQLite)
+	t.Cleanup(func() {
+		runtimeStatusMu.Lock()
+		runtimeStatus = previous
+		runtimeStatusMu.Unlock()
+	})
+
+	failedAt := time.Now().UTC()
+	recordCheckpointResult(metric.DriverSQLite, errors.New("checkpoint timeout"), failedAt)
+	if pending, quickDue, fullDue := checkpointRetryState(failedAt.Add(10 * time.Second)); !pending || quickDue || fullDue {
+		t.Fatalf("retry state before deadlines = pending %v, quick %v, full %v", pending, quickDue, fullDue)
+	}
+	if pending, quickDue, fullDue := checkpointRetryState(failedAt.Add(checkpointQuickRetryInterval)); !pending || !quickDue || fullDue {
+		t.Fatalf("retry state at quick deadline = pending %v, quick %v, full %v", pending, quickDue, fullDue)
+	}
+	if pending, quickDue, fullDue := checkpointRetryState(failedAt.Add(checkpointFullRetryInterval)); !pending || !quickDue || !fullDue {
+		t.Fatalf("retry state at full deadline = pending %v, quick %v, full %v", pending, quickDue, fullDue)
+	}
+}
+
 func TestRuntimeStatusTracksDigestHandoffDeferredWithoutFailure(t *testing.T) {
 	previous := GetRuntimeStatus()
 	resetRuntimeStatus(metric.DriverSQLite)
@@ -78,9 +105,9 @@ func TestRuntimeStatusTracksDigestHandoffDeferredWithoutFailure(t *testing.T) {
 	})
 
 	at := time.Now().UTC()
-	recordDigestHandoffDeferred("cpu.usage", "摘要校验暂未通过", at)
-	recordDigestHandoffDeferred("load.average", "细粒度摘要尚未完整", at.Add(time.Second))
-	recordDigestHandoffDeferred("cpu.usage", "摘要校验暂未通过（已重试）", at.Add(2*time.Second))
+	recordDigestHandoffDeferred("cpu.usage", "????????", at)
+	recordDigestHandoffDeferred("load.average", "?????????", at.Add(time.Second))
+	recordDigestHandoffDeferred("cpu.usage", "?????????????", at.Add(2*time.Second))
 
 	status := GetRuntimeStatus()
 	if len(status.DigestHandoffDeferred) != 2 {

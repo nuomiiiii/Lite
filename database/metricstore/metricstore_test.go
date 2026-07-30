@@ -756,6 +756,13 @@ func TestCompactStepDefersCleanupAndCheckpointUntilCycleEnd(t *testing.T) {
 
 func TestRetryMetricWALCheckpointClearsPendingWAL(t *testing.T) {
 	ctx := context.Background()
+	previousStatus := GetRuntimeStatus()
+	resetRuntimeStatus(metric.DriverSQLite)
+	defer func() {
+		runtimeStatusMu.Lock()
+		runtimeStatus = previousStatus
+		runtimeStatusMu.Unlock()
+	}()
 	dsn := filepath.Join(t.TempDir(), "compact-step-checkpoint-retry.db")
 	s, err := metric.Open(ctx, metric.SQLite(dsn,
 		metric.WithMaxOpenConns(1),
@@ -779,7 +786,9 @@ func TestRetryMetricWALCheckpointClearsPendingWAL(t *testing.T) {
 	if size := fileSize(t, dsn+"-wal"); size == 0 {
 		t.Fatal("expected WAL content before retry")
 	}
-	retryMetricWALCheckpoint(ctx, s)
+	if !retryMetricWALCheckpoint(ctx, s, now) {
+		t.Fatal("pending WAL checkpoint was not retried")
+	}
 	if GetRuntimeStatus().CheckpointPending {
 		t.Fatal("successful deferred WAL checkpoint remained pending")
 	}
@@ -789,6 +798,72 @@ func TestRetryMetricWALCheckpointClearsPendingWAL(t *testing.T) {
 	}
 	if size := fileSize(t, dsn+"-wal"); size != 0 {
 		t.Fatalf("SQLite WAL size after deferred retry = %d, want 0", size)
+	}
+	if retryMetricWALCheckpoint(ctx, s, now.Add(checkpointQuickRetryInterval)) {
+		t.Fatal("successful WAL checkpoint was retried without a new failure")
+	}
+}
+
+func TestFinishCompactCycleDoesNotRepeatLongCheckpointWhilePending(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "compact-step-pending-checkpoint.db")
+	s, err := metric.Open(ctx, metric.SQLite(dsn,
+		metric.WithMaxOpenConns(1),
+		metric.WithSQLiteWALAutoCheckpoint(1_000_000),
+	))
+	if err != nil {
+		t.Fatalf("open metric store: %v", err)
+	}
+	defer s.Close()
+	if err := s.UpsertMetric(ctx, metric.Definition{Name: "a.metric", Type: metric.TypeGauge, RetentionDays: 1}); err != nil {
+		t.Fatalf("upsert metric: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := s.Write(ctx, metric.Point{MetricName: "a.metric", EntityID: "node", Timestamp: now, Value: 7}); err != nil {
+		t.Fatalf("write metric: %v", err)
+	}
+	before := fileSize(t, dsn+"-wal")
+	if before == 0 {
+		t.Fatal("expected WAL content before pending checkpoint")
+	}
+
+	previousStatus := GetRuntimeStatus()
+	runtimeStatusMu.Lock()
+	runtimeStatus.CheckpointPending = true
+	runtimeStatus.ConsecutiveCheckpointFailures = 1
+	runtimeStatusMu.Unlock()
+	defer func() {
+		runtimeStatusMu.Lock()
+		runtimeStatus = previousStatus
+		runtimeStatusMu.Unlock()
+	}()
+
+	if err := finishCompactCycle(ctx, s, now, true); err != nil {
+		t.Fatalf("finish compact cycle while checkpoint pending: %v", err)
+	}
+	if size := fileSize(t, dsn+"-wal"); size < before {
+		t.Fatalf("pending WAL was unexpectedly truncated: before=%d after=%d", before, size)
+	}
+	points, err := s.Query(ctx, metric.Query{
+		MetricName: "a.metric",
+		EntityID:   "node",
+		Start:      now.Add(-time.Second),
+		End:        now.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("query metric after deferred checkpoint: %v", err)
+	}
+	if len(points) != 1 || points[0].Value != 7 {
+		t.Fatalf("metric data changed while checkpoint was deferred: %#v", points)
+	}
+}
+
+func TestMetricWALCheckpointTimeoutUsesLongWaitOnlyAboveLimit(t *testing.T) {
+	if got := metricWALCheckpointTimeout(metricWALCheckpointLimit - 1); got != checkpointRetryTimeout {
+		t.Fatalf("checkpoint timeout below WAL limit = %v, want %v", got, checkpointRetryTimeout)
+	}
+	if got := metricWALCheckpointTimeout(metricWALCheckpointLimit); got != backgroundCheckpointTimeout {
+		t.Fatalf("checkpoint timeout at WAL limit = %v, want %v", got, backgroundCheckpointTimeout)
 	}
 }
 

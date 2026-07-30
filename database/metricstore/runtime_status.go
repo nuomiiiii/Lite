@@ -11,6 +11,10 @@ import (
 // compactor. It is also used to estimate the next end-of-cycle checkpoint.
 const CompactStepInterval = 10 * time.Second
 
+const (
+	checkpointQuickRetryInterval = 30 * time.Second
+	checkpointFullRetryInterval  = 5 * time.Minute
+)
 
 // DigestHandoffStatus describes a safe-to-retry percentile digest handoff.
 type DigestHandoffStatus struct {
@@ -41,7 +45,9 @@ type RuntimeStatus struct {
 	DigestHandoffDeferred         []DigestHandoffStatus
 	LastDigestHandoffDeferredAt   time.Time
 
-	cycleError string
+	cycleError             string
+	checkpointQuickRetryAt time.Time
+	checkpointFullRetryAt  time.Time
 }
 
 var (
@@ -84,6 +90,9 @@ func beginCompactStep(driver metric.Driver, metricName string, index, total int,
 		remaining = 0
 	}
 	runtimeStatus.NextCheckpointAt = at.Add(time.Duration(remaining) * CompactStepInterval)
+	if runtimeStatus.CheckpointPending && !runtimeStatus.checkpointQuickRetryAt.IsZero() && runtimeStatus.checkpointQuickRetryAt.Before(runtimeStatus.NextCheckpointAt) {
+		runtimeStatus.NextCheckpointAt = runtimeStatus.checkpointQuickRetryAt
+	}
 }
 
 func finishCompactStep(written int, cycleCompleted bool, err error, at time.Time) {
@@ -102,7 +111,7 @@ func finishCompactStep(written int, cycleCompleted bool, err error, at time.Time
 
 	runtimeStatus.LastCycleCompletedAt = at
 	if runtimeStatus.CheckpointPending {
-		runtimeStatus.NextCheckpointAt = at.Add(CompactStepInterval)
+		runtimeStatus.NextCheckpointAt = runtimeStatus.checkpointQuickRetryAt
 	} else {
 		runtimeStatus.NextCheckpointAt = at.Add(time.Duration(runtimeStatus.Total) * CompactStepInterval)
 	}
@@ -130,7 +139,11 @@ func finishEmptyCompactCycle(driver metric.Driver, err error, at time.Time) {
 	runtimeStatus.CycleStartedAt = at
 	runtimeStatus.LastStepAt = at
 	runtimeStatus.LastCycleCompletedAt = at
-	runtimeStatus.NextCheckpointAt = at.Add(CompactStepInterval)
+	if runtimeStatus.CheckpointPending {
+		runtimeStatus.NextCheckpointAt = runtimeStatus.checkpointQuickRetryAt
+	} else {
+		runtimeStatus.NextCheckpointAt = at.Add(CompactStepInterval)
+	}
 	if err != nil {
 		runtimeStatus.ConsecutiveCycleFailures++
 		runtimeStatus.LastError = err.Error()
@@ -184,12 +197,33 @@ func checkpointIsPending() bool {
 	return runtimeStatus.CheckpointPending
 }
 
+func checkpointRetryState(at time.Time) (pending, quickDue, fullDue bool) {
+	runtimeStatusMu.RLock()
+	defer runtimeStatusMu.RUnlock()
+	if !runtimeStatus.CheckpointPending {
+		return false, false, false
+	}
+	quickDue = runtimeStatus.checkpointQuickRetryAt.IsZero() || !at.Before(runtimeStatus.checkpointQuickRetryAt)
+	fullDue = runtimeStatus.checkpointFullRetryAt.IsZero() || !at.Before(runtimeStatus.checkpointFullRetryAt)
+	return true, quickDue, fullDue
+}
+
+func deferFullCheckpointRetry(at time.Time) {
+	runtimeStatusMu.Lock()
+	defer runtimeStatusMu.Unlock()
+	if runtimeStatus.CheckpointPending {
+		runtimeStatus.checkpointFullRetryAt = at.Add(checkpointFullRetryInterval)
+	}
+}
+
 func clearCheckpointForExternal(driver metric.Driver) {
 	runtimeStatusMu.Lock()
 	defer runtimeStatusMu.Unlock()
 	runtimeStatus.Driver = driver
 	runtimeStatus.CheckpointPending = false
 	runtimeStatus.ConsecutiveCheckpointFailures = 0
+	runtimeStatus.checkpointQuickRetryAt = time.Time{}
+	runtimeStatus.checkpointFullRetryAt = time.Time{}
 }
 
 func recordCheckpointResult(driver metric.Driver, err error, at time.Time) {
@@ -202,11 +236,17 @@ func recordCheckpointResult(driver metric.Driver, err error, at time.Time) {
 		runtimeStatus.CheckpointPending = true
 		runtimeStatus.ConsecutiveCheckpointFailures++
 		runtimeStatus.LastError = err.Error()
-		runtimeStatus.NextCheckpointAt = at.Add(CompactStepInterval)
+		runtimeStatus.checkpointQuickRetryAt = at.Add(checkpointQuickRetryInterval)
+		if runtimeStatus.checkpointFullRetryAt.IsZero() {
+			runtimeStatus.checkpointFullRetryAt = at.Add(checkpointFullRetryInterval)
+		}
+		runtimeStatus.NextCheckpointAt = runtimeStatus.checkpointQuickRetryAt
 		return
 	}
 	runtimeStatus.CheckpointPending = false
 	runtimeStatus.ConsecutiveCheckpointFailures = 0
+	runtimeStatus.checkpointQuickRetryAt = time.Time{}
+	runtimeStatus.checkpointFullRetryAt = time.Time{}
 	runtimeStatus.LastCheckpointSuccessAt = at
 	if runtimeStatus.ConsecutiveCycleFailures == 0 {
 		runtimeStatus.LastError = ""
