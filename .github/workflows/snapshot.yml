@@ -1,4 +1,4 @@
-name: Publish 2.1.11 Storage Snapshot Docker
+name: Publish Storage Snapshot Docker
 
 on:
   workflow_dispatch:
@@ -13,7 +13,6 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  VERSION: 2.1.11-snapshot
 
 concurrency:
   group: snapshot-${{ github.ref }}
@@ -43,6 +42,21 @@ jobs:
             echo "A newer storage snapshot commit exists; this run will not publish." >&2
             exit 1
           fi
+
+  prepare:
+    needs: validate-ref
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Generate snapshot version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="Snapshot-$(date -u -d '+8 hours' +%y%m%d%H%M)"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "Snapshot version: ${version}"
 
   build-frontend:
     needs: validate-ref
@@ -76,7 +90,7 @@ jobs:
         run: go test ./...
 
   build-linux:
-    needs: build-frontend
+    needs: [prepare, build-frontend]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -103,6 +117,7 @@ jobs:
 
       - name: Build Linux binary
         env:
+          VERSION: ${{ needs.prepare.outputs.version }}
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
@@ -123,8 +138,11 @@ jobs:
           path: komari-linux-${{ matrix.goarch }}
 
   publish-docker:
-    needs: [test-backend, build-linux]
+    needs: [prepare, test-backend, build-linux]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -171,6 +189,8 @@ jobs:
           provenance: false
 
       - name: Verify platforms and embedded version
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -184,6 +204,45 @@ jobs:
             docker pull --platform "${platform}" "${image}"
             output="$(docker run --rm --platform "${platform}" "${image}" /app/komari version --json)"
             echo "${output}"
-            grep -F '"version":"2.1.11-snapshot"' <<<"${output}"
+            grep -F "\"version\":\"${VERSION}\"" <<<"${output}"
             grep -F "\"hash\":\"${expected_hash}\"" <<<"${output}"
           done
+
+      - name: Publish snapshot release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          RELEASE_NOTES: |
+            ## 本次更新
+
+            - 升级监控数据库存储结构，进一步减少重复时间轴和块结构带来的空间占用。
+            - 延迟与丢包数据改用共享存储，原有查询接口、图表显示和数据精度保持不变。
+            - 历史数据改为真正的分层接力，避免不同精度的数据长期重复保存。
+            - 升级时提供数据库迁移页面，可查看当前阶段和异常信息；迁移失败会完整回滚，不删除原数据。
+            - 兼容上游旧版本、上游 1.3.1，以及 Komari 2.1.7 至 2.1.11 的数据库升级，并保留用户原有的数据保留天数。
+            - 数据降采样统一启用并移除低资源模式，旧配置会在升级时自动完成兼容处理。
+
+            ## Docker 快照
+
+            ```bash
+            docker pull ghcr.io/nuomiiiii/komari:snapshot
+            ```
+
+            支持 `linux/amd64` 和 `linux/arm64`。快照版本仅用于测试，请先备份数据。
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "${VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "${VERSION}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${VERSION}" \
+              --notes "${RELEASE_NOTES}" \
+              --prerelease
+          else
+            gh release create "${VERSION}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --target "${GITHUB_SHA}" \
+              --title "${VERSION}" \
+              --notes "${RELEASE_NOTES}" \
+              --prerelease
+          fi
