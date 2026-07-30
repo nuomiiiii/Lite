@@ -43,7 +43,7 @@ func TestInspectAndReclaimStorage(t *testing.T) {
 	}
 }
 
-func TestReclaimSpaceReportsBusyStore(t *testing.T) {
+func TestReclaimSpaceWaitsForActiveStoreWork(t *testing.T) {
 	s, err := metric.Open(context.Background(), metric.SQLite(":memory:"))
 	if err != nil {
 		t.Fatalf("open metric store: %v", err)
@@ -53,18 +53,34 @@ func TestReclaimSpaceReportsBusyStore(t *testing.T) {
 	if err := storeOperations.AcquireShared(context.Background()); err != nil {
 		t.Fatalf("acquire shared store operation gate: %v", err)
 	}
-	defer storeOperations.ReleaseShared()
+	type reclaimResult struct {
+		result MaintenanceResult
+		err    error
+	}
+	done := make(chan reclaimResult, 1)
+	go func() {
+		result, err := ReclaimSpace(context.Background())
+		done <- reclaimResult{result: result, err: err}
+	}()
+	select {
+	case outcome := <-done:
+		storeOperations.ReleaseShared()
+		t.Fatalf("reclaim returned before active work finished: result=%#v err=%v", outcome.result, outcome.err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	storeOperations.ReleaseShared()
+	select {
+	case outcome := <-done:
+		if outcome.err != nil {
+			t.Fatalf("queued reclaim failed: %v", outcome.err)
+		}
+		if outcome.result.Driver != metric.DriverSQLite || outcome.result.Action != metric.MaintenanceVacuum {
+			t.Fatalf("unexpected queued reclaim result: %#v", outcome.result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued reclaim did not run after active work finished")
+	}
 
-	result, err := ReclaimSpace(context.Background())
-	if !errors.Is(err, ErrStoreBusy) {
-		t.Fatalf("reclaim error = %v, want %v", err, ErrStoreBusy)
-	}
-	if result.Driver != metric.DriverSQLite || result.Action != metric.MaintenanceVacuum {
-		t.Fatalf("busy result lost store metadata: %#v", result)
-	}
-	if !errors.Is(result.BeforeSizeError, ErrStoreBusy) || !errors.Is(result.AfterSizeError, ErrStoreBusy) {
-		t.Fatalf("busy result should mark both measurements unavailable: %#v", result)
-	}
 	compactCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if _, err := Compact(compactCtx, time.Now()); err != nil {
@@ -79,6 +95,25 @@ func TestReclaimSpaceReportsBusyStore(t *testing.T) {
 	}
 	if _, _, err := CompactStep(context.Background(), time.Now()); !errors.Is(err, ErrCompactInProgress) {
 		t.Fatalf("overlapping compact step error = %v, want %v", err, ErrCompactInProgress)
+	}
+}
+
+func TestReclaimSpaceWaitRespectsContext(t *testing.T) {
+	s, err := metric.Open(context.Background(), metric.SQLite(":memory:"))
+	if err != nil {
+		t.Fatalf("open metric store: %v", err)
+	}
+	installTestStore(t, s)
+
+	if err := storeOperations.AcquireShared(context.Background()); err != nil {
+		t.Fatalf("acquire shared store operation gate: %v", err)
+	}
+	defer storeOperations.ReleaseShared()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := ReclaimSpace(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("reclaim wait error = %v, want %v", err, context.DeadlineExceeded)
 	}
 }
 
