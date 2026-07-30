@@ -352,8 +352,12 @@ func TestCompactDoesNotOverwriteCoarseRollupWithPartialFineRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rollup before: %v", err)
 	}
-	if len(before) != 1 || before[0].Count != 300 {
-		t.Fatalf("expected initial complete coarse bucket, got %#v", before)
+	if len(before) != 0 {
+		t.Fatalf("coarse tier was materialized before the fine tier expired: %#v", before)
+	}
+	visible, err := s.Series(ctx, query, base.Add(15*time.Minute))
+	if err != nil || len(visible) != 1 || visible[0].Count != 300 {
+		t.Fatalf("fine tier was not visible before handoff: %#v err=%v", visible, err)
 	}
 	if _, err := s.Compact(ctx, base.Add(18*time.Minute)); err != nil {
 		t.Fatalf("compact after fine retention moves: %v", err)
@@ -972,8 +976,8 @@ func TestCompactWithRawRetentionOnlyWritesChangedBuckets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compact first: %v", err)
 	}
-	if first != 2 {
-		t.Fatalf("first compact wrote %d buckets, want 2", first)
+	if first != 1 {
+		t.Fatalf("first compact wrote %d buckets, want only the finest tier", first)
 	}
 	second, err := s.Compact(ctx, now.Add(time.Minute))
 	if err != nil {
@@ -990,14 +994,14 @@ func TestCompactWithRawRetentionOnlyWritesChangedBuckets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compact late: %v", err)
 	}
-	if late != 2 {
-		t.Fatalf("late compact wrote %d buckets, want 2", late)
+	if late != 1 {
+		t.Fatalf("late compact wrote %d buckets, want only the finest tier", late)
 	}
-	got, err := s.AggregateRollup(ctx, AggregateQuery{
+	got, err := s.Series(ctx, AggregateQuery{
 		Query:       Query{MetricName: "incremental", EntityID: "n1", Start: base, End: base.Add(5*time.Minute - time.Nanosecond)},
 		Aggregation: AggSum,
 		Interval:    5 * time.Minute,
-	}, 5*time.Minute)
+	}, now.Add(2*time.Minute))
 	if err != nil {
 		t.Fatalf("rollup: %v", err)
 	}

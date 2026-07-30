@@ -85,6 +85,7 @@ type tables struct {
 	resolutions  string
 	pointValues  string
 	pointBlocks  string
+	pointAxes    string
 	rollupValues string
 	rollupBlocks string
 	rollupAxes   string

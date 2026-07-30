@@ -4,7 +4,42 @@ import (
 	"errors"
 	"sync"
 	"testing"
+
+	"github.com/komari-monitor/komari/database/metricstore"
+	"github.com/komari-monitor/komari/pkg/config"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
+
+func TestNormalizeMetricStorageSettingsOverridesLegacyValues(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:normalize-metric-settings?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open config database: %v", err)
+	}
+	config.SetDb(db)
+	if err := config.SetMany(map[string]any{
+		config.LowResourceModeKey:                true,
+		metricstore.MetricDownsamplingEnabledKey: false,
+		"metric_retention_days":                  37,
+	}); err != nil {
+		t.Fatalf("seed legacy settings: %v", err)
+	}
+	if err := normalizeMetricStorageSettings(); err != nil {
+		t.Fatalf("normalize storage settings: %v", err)
+	}
+	lowResource, err := config.GetAs[bool](config.LowResourceModeKey)
+	if err != nil || lowResource {
+		t.Fatalf("low resource mode = %t, err %v; want false", lowResource, err)
+	}
+	downsampling, err := config.GetAs[bool](metricstore.MetricDownsamplingEnabledKey)
+	if err != nil || !downsampling {
+		t.Fatalf("downsampling = %t, err %v; want true", downsampling, err)
+	}
+	retention, err := config.GetAs[int]("metric_retention_days")
+	if err != nil || retention != 37 {
+		t.Fatalf("retention = %d, err %v; want preserved value 37", retention, err)
+	}
+}
 
 func TestMetricCompactCycleStateConcurrentAddAndReset(t *testing.T) {
 	const workers = 64

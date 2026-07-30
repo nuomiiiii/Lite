@@ -35,6 +35,9 @@ func (s *Store) Compact(ctx context.Context, now time.Time) (int, error) {
 	}
 	total := 0
 	for _, def := range defs {
+		if s.sqlitePingMerged && def.Name == sqliteVirtualPingLossMetric {
+			continue
+		}
 		n, err := s.CompactMetric(ctx, def.Name, now)
 		if err != nil {
 			return total, fmt.Errorf("compact metric %q: %w", def.Name, err)
@@ -82,6 +85,9 @@ func (s *Store) CompactMetric(ctx context.Context, metricName string, now time.T
 	}
 	s.retentionMu.RLock()
 	defer s.retentionMu.RUnlock()
+	if s.sqlitePingMerged && metricName == sqliteVirtualPingLossMetric {
+		metricName = sqliteMergedPingLatencyMetric
+	}
 	policy := s.cfg.RollupPolicy
 	def, err := s.GetMetric(ctx, metricName)
 	if errors.Is(err, ErrNotFound) {
@@ -243,14 +249,11 @@ func (s *Store) compactMetricIncrementalChunkOnce(ctx context.Context, metricNam
 		if err := s.deleteRollupsForIntervalsTx(ctx, metricName, obsoleteIntervals, tx); err != nil {
 			return 0, false, err
 		}
-		if s.sqliteStorageV4 {
-			if _, _, err := s.syncSQLiteV4RedundantRollupDigestsTx(ctx, tx, metricName, now, policy, false); err != nil {
-				return 0, false, err
-			}
-		}
-		if err := s.enforceRetentionWithinTx(ctx, metricName, now, policy, tx); err != nil {
+		n, err := s.handoffExpiredRollupTiersTx(ctx, metricName, now, policy, tx)
+		if err != nil {
 			return 0, false, err
 		}
+		written += n
 	}
 	if err := s.persistCompactionWatermarkTx(ctx, metricName, chunkEnd, tx); err != nil {
 		return 0, false, err
@@ -480,10 +483,9 @@ func (s *Store) compactMetricWithinTx(ctx context.Context, metricName string, no
 	return s.compactMetricFullWithinTx(ctx, metricName, now, policy, tx)
 }
 
-// compactMetricIncrementalWithinTx rolls only raw points crossing the hot-data
-// cutoff and propagates that delta through every coarser tier. Because those raw
-// points are deleted in the same transaction, each sample is merged exactly
-// once, including late samples for buckets that already exist.
+// compactMetricIncrementalWithinTx rolls raw points crossing the hot-data
+// cutoff into the finest tier, then hands expired fine buckets to the next tier.
+// Source buckets are deleted only after the destination write succeeds.
 func (s *Store) compactMetricIncrementalWithinTx(ctx context.Context, metricName string, now time.Time, policy RollupPolicy, tx *sql.Tx) (int, error) {
 	comp := policy.compression()
 	rawCutoff := policy.rawCutoff(now)
@@ -492,27 +494,15 @@ func (s *Store) compactMetricIncrementalWithinTx(ctx context.Context, metricName
 		return 0, err
 	}
 
-	written := 0
-	for tierIdx, tier := range policy.Tiers {
-		if tierIdx > 0 {
-			delta = buildCoarserBucketsFromDelta(delta, tier.Interval, comp)
-		}
-		n, err := s.mergeRollupBucketsTx(ctx, metricName, tier.Interval, delta, tx)
-		if err != nil {
-			return written, err
-		}
-		written += n
+	written, err := s.mergeRollupBucketsTx(ctx, metricName, policy.Tiers[0].Interval, delta, tx)
+	if err != nil {
+		return 0, err
 	}
-
-	if s.sqliteStorageV4 {
-		if _, _, err := s.syncSQLiteV4RedundantRollupDigestsTx(ctx, tx, metricName, now, policy, false); err != nil {
-			return written, err
-		}
-	}
-	if err := s.enforceRetentionWithinTx(ctx, metricName, now, policy, tx); err != nil {
+	handedOff, err := s.handoffExpiredRollupTiersTx(ctx, metricName, now, policy, tx)
+	if err != nil {
 		return written, err
 	}
-	return written, nil
+	return written + handedOff, nil
 }
 
 func (s *Store) compactMetricIncrementalRangeWithinTx(ctx context.Context, metricName string, start, before time.Time, policy RollupPolicy, tx *sql.Tx) (int, error) {
@@ -522,18 +512,15 @@ func (s *Store) compactMetricIncrementalRangeWithinTx(ctx context.Context, metri
 		return 0, err
 	}
 
-	written := 0
-	for tierIdx, tier := range policy.Tiers {
-		if tierIdx > 0 {
-			delta = buildCoarserBucketsFromDelta(delta, tier.Interval, comp)
-		}
-		n, err := s.mergeRollupBucketsTx(ctx, metricName, tier.Interval, delta, tx)
-		if err != nil {
-			return written, err
-		}
-		written += n
+	written, err := s.mergeRollupBucketsTx(ctx, metricName, policy.Tiers[0].Interval, delta, tx)
+	if err != nil {
+		return 0, err
 	}
-	return written, nil
+	handedOff, err := s.handoffExpiredRollupTiersTx(ctx, metricName, before, policy, tx)
+	if err != nil {
+		return written, err
+	}
+	return written + handedOff, nil
 }
 
 // compactMetricFullWithinTx retains the rebuild behavior required when raw
@@ -734,7 +721,7 @@ func (s *Store) buildFinestTierRange(ctx context.Context, q querier, metricName 
 				stored.tagsJSON = canonical
 				out[key] = stored
 			}
-			stored.addPoint(point.Value, ts)
+			stored.addMetricPoint(metricName, point.Value, ts)
 		}
 		return out, nil
 	}
@@ -783,7 +770,7 @@ func (s *Store) buildFinestTierRange(ctx context.Context, q querier, metricName 
 			b.tagsJSON = canonical
 			out[k] = b
 		}
-		b.addPoint(value, ts)
+		b.addMetricPoint(metricName, value, ts)
 	}
 	return out, rows.Err()
 }
@@ -911,7 +898,10 @@ func (s *Store) mergeRollupBucketsTx(ctx context.Context, metricName string, int
 		return keys[i].bucket < keys[j].bucket
 	})
 
-	stmt := s.rollupUpsertSQL()
+	stmt := ""
+	if !s.sqliteStorageV4 {
+		stmt = s.rollupUpsertSQL()
+	}
 	resolution := interval.Nanoseconds()
 	createdAt := time.Now().UTC().UnixNano()
 	for _, key := range keys {
@@ -928,12 +918,17 @@ func (s *Store) mergeRollupBucketsTx(ctx context.Context, metricName string, int
 		if tagsJSON == "" {
 			tagsJSON = "{}"
 		}
-		if _, err := tx.ExecContext(ctx, stmt,
-			metricName, key.entityID, key.tagsHash, tagsJSON, resolution, key.bucket,
-			bucket.count, bucket.sum, bucket.sumSq, bucket.min, bucket.max,
-			bucket.firstVal, bucket.firstTS, bucket.lastVal, bucket.lastTS,
-			bucket.digest.Encode(), createdAt,
-		); err != nil {
+		if s.sqliteStorageV4 {
+			err = s.upsertSQLiteV8RollupValueTx(ctx, tx, metricName, key, tagsJSON, resolution, bucket, createdAt)
+		} else {
+			_, err = tx.ExecContext(ctx, stmt,
+				metricName, key.entityID, key.tagsHash, tagsJSON, resolution, key.bucket,
+				bucket.count, bucket.sum, bucket.sumSq, bucket.min, bucket.max,
+				bucket.firstVal, bucket.firstTS, bucket.lastVal, bucket.lastTS,
+				bucket.digest.Encode(), createdAt,
+			)
+		}
+		if err != nil {
 			return 0, err
 		}
 	}
@@ -968,7 +963,10 @@ func (s *Store) writeRollupBucketsWithMergePointTx(ctx context.Context, metricNa
 		return keys[i].bucket < keys[j].bucket
 	})
 
-	stmt := s.rollupUpsertSQL()
+	stmt := ""
+	if !s.sqliteStorageV4 {
+		stmt = s.rollupUpsertSQL()
+	}
 	resNano := interval.Nanoseconds()
 	now := time.Now().UTC().UnixNano()
 	mergeCutoffNano := mergeCutoff.UnixNano()
@@ -1015,12 +1013,17 @@ func (s *Store) writeRollupBucketsWithMergePointTx(ctx context.Context, metricNa
 		}
 
 		// Column order must match rollupColumns in dialect_rollup.go
-		_, err := tx.ExecContext(ctx, stmt,
-			metricName, k.entityID, k.tagsHash, tagsJSON, resNano, k.bucket,
-			b.count, b.sum, b.sumSq, b.min, b.max,
-			b.firstVal, b.firstTS, b.lastVal, b.lastTS,
-			b.digest.Encode(), now,
-		)
+		var err error
+		if s.sqliteStorageV4 {
+			err = s.upsertSQLiteV8RollupValueTx(ctx, tx, metricName, k, tagsJSON, resNano, b, now)
+		} else {
+			_, err = tx.ExecContext(ctx, stmt,
+				metricName, k.entityID, k.tagsHash, tagsJSON, resNano, k.bucket,
+				b.count, b.sum, b.sumSq, b.min, b.max,
+				b.firstVal, b.firstTS, b.lastVal, b.lastTS,
+				b.digest.Encode(), now,
+			)
+		}
 		if err != nil {
 			return 0, err
 		}

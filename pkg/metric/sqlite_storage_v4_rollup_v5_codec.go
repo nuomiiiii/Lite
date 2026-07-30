@@ -13,8 +13,10 @@ import (
 const (
 	sqliteV4SharedRollupBlockCodec        = 3
 	sqliteV4StructuredRollupDigestCodec   = 4
-	sqliteV4RollupAxisCodec               = 1
-	sqliteV4RollupAxisMagic               = "KMA5"
+	sqliteV4LegacyRollupAxisCodec         = 1
+	sqliteV4LegacyRollupAxisMagic         = "KMA5"
+	sqliteV4RollupAxisCodec               = 2
+	sqliteV4RollupAxisMagic               = "KMA8"
 	sqliteV4RollupValueMagic              = "KMV5"
 	sqliteV4RollupStructuredDigestMagic   = "KMZ5"
 	sqliteV4ValueRaw                      = byte(0)
@@ -86,6 +88,12 @@ func encodeSQLiteV4RollupAxis(records []sqliteV4RollupRecord) ([]byte, error) {
 		appendUvarintTo(&raw, uint64(record.count))
 	}
 	for _, record := range records {
+		if record.lossCount < 0 || record.lossCount > record.count {
+			return nil, fmt.Errorf("metric: invalid SQLite V8 rollup loss count")
+		}
+		appendUvarintTo(&raw, uint64(record.lossCount))
+	}
+	for _, record := range records {
 		firstOffset, ok := checkedSubInt64(record.firstTS, record.bucketNano)
 		if !ok {
 			return nil, fmt.Errorf("metric: SQLite V4 first timestamp offset overflow")
@@ -101,7 +109,7 @@ func encodeSQLiteV4RollupAxis(records []sqliteV4RollupRecord) ([]byte, error) {
 }
 
 func decodeSQLiteV4RollupAxis(codec, expectedCount int, expectedChecksum uint32, payload []byte) ([]sqliteV4RollupRecord, error) {
-	if codec != sqliteV4RollupAxisCodec || len(payload) < 2 || crc32.ChecksumIEEE(payload) != expectedChecksum {
+	if (codec != sqliteV4RollupAxisCodec && codec != sqliteV4LegacyRollupAxisCodec) || len(payload) < 2 || crc32.ChecksumIEEE(payload) != expectedChecksum {
 		return nil, fmt.Errorf("metric: invalid SQLite V4 shared rollup axis")
 	}
 	raw, err := inflateSQLiteV4Payload(payload)
@@ -109,8 +117,12 @@ func decodeSQLiteV4RollupAxis(codec, expectedCount int, expectedChecksum uint32,
 		return nil, err
 	}
 	reader := bytes.NewReader(raw)
-	magic := make([]byte, len(sqliteV4RollupAxisMagic))
-	if _, err := io.ReadFull(reader, magic); err != nil || string(magic) != sqliteV4RollupAxisMagic {
+	wantMagic := sqliteV4RollupAxisMagic
+	if codec == sqliteV4LegacyRollupAxisCodec {
+		wantMagic = sqliteV4LegacyRollupAxisMagic
+	}
+	magic := make([]byte, len(wantMagic))
+	if _, err := io.ReadFull(reader, magic); err != nil || string(magic) != wantMagic {
 		return nil, fmt.Errorf("metric: invalid SQLite V4 rollup axis header")
 	}
 	count64, err := binary.ReadUvarint(reader)
@@ -131,6 +143,15 @@ func decodeSQLiteV4RollupAxis(codec, expectedCount int, expectedChecksum uint32,
 			return nil, fmt.Errorf("metric: invalid SQLite V4 rollup axis sample count")
 		}
 		records[i].count = int64(value)
+	}
+	if codec == sqliteV4RollupAxisCodec {
+		for i := range records {
+			value, err := binary.ReadUvarint(reader)
+			if err != nil || value > uint64(records[i].count) {
+				return nil, fmt.Errorf("metric: invalid SQLite V8 rollup loss count")
+			}
+			records[i].lossCount = int64(value)
+		}
 	}
 	for i := range records {
 		firstOffset, err := binary.ReadVarint(reader)
@@ -369,8 +390,9 @@ func encodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord) ([]by
 		item.minBits = binary.LittleEndian.Uint64(raw[11:19])
 		item.maxBits = binary.LittleEndian.Uint64(raw[19:27])
 		item.countBits = binary.LittleEndian.Uint64(raw[27:35])
+		validCount := record.count - record.lossCount
 		item.metadataFromSummary = item.minBits == record.minBits && item.maxBits == record.maxBits &&
-			record.count >= 0 && item.countBits == math.Float64bits(float64(record.count))
+			validCount >= 0 && item.countBits == math.Float64bits(float64(validCount))
 		item.means = make([]uint64, n)
 		item.weights = make([]uint64, n)
 		item.weightBits = make([]uint64, n)
@@ -585,7 +607,7 @@ func decodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord, codec
 			}
 		}
 		minBits, maxBits := records[index].minBits, records[index].maxBits
-		countBits := math.Float64bits(float64(records[index].count))
+		countBits := math.Float64bits(float64(records[index].count - records[index].lossCount))
 		if flags&sqliteV4StructuredDigestMetadata == 0 {
 			for _, target := range []*uint64{&minBits, &maxBits, &countBits} {
 				if err := binary.Read(reader, binary.LittleEndian, target); err != nil {
@@ -733,7 +755,7 @@ func decodeSQLiteV4EncodedRollupBlock(encoded sqliteV4EncodedRollupBlock, needDi
 }
 
 func sqliteV4RollupRecordDataEqual(left, right sqliteV4RollupRecord) bool {
-	return left.bucketNano == right.bucketNano && left.count == right.count &&
+	return left.bucketNano == right.bucketNano && left.count == right.count && left.lossCount == right.lossCount &&
 		left.sumBits == right.sumBits && left.sumSqBits == right.sumSqBits &&
 		left.minBits == right.minBits && left.maxBits == right.maxBits &&
 		left.firstBits == right.firstBits && left.firstTS == right.firstTS &&

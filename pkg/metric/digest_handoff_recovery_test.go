@@ -248,9 +248,15 @@ func TestSQLiteStorageV4DeferredHandoffClearsWatermarkAndProtectsFineData(t *tes
 	if err != nil || len(fineBefore) != 5 {
 		t.Fatalf("load fine rollups before retry: count=%d err=%v", len(fineBefore), err)
 	}
-	if _, err := store.CompactMetric(ctx, "cpu.usage", now); !IsDigestHandoffDeferred(err) {
-		t.Fatalf("runtime compaction did not retry deferred handoff: %v", err)
+	tx, err = store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if _, err := store.migrateSQLiteV7MetricTiersTx(ctx, tx, "cpu.usage", now, policy); err == nil {
+		_ = tx.Rollback()
+		t.Fatal("tier migration accepted a mismatched coarse summary")
+	}
+	_ = tx.Rollback()
 	fineAfter, err := store.loadAllSQLiteV4RollupBlockRecords(ctx, store.db, series[0].id, time.Minute.Nanoseconds())
 	if err != nil || !sqliteV4RollupRecordDataSlicesEqual(fineBefore, fineAfter) {
 		t.Fatalf("deferred retry deleted or changed fine rollups: before=%d after=%d err=%v", len(fineBefore), len(fineAfter), err)

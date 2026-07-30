@@ -41,10 +41,9 @@ func TestDefaultRollupPolicy(t *testing.T) {
 
 func TestBuildMetricConfigEnablesDefaultRollupPolicy(t *testing.T) {
 	cfg, err := buildMetricConfig(&MetricStoreConfig{
-		Driver:              "sqlite",
-		DSN:                 ":memory:",
-		DownsamplingEnabled: true,
-		TablePrefix:         "metric_",
+		Driver:      "sqlite",
+		DSN:         ":memory:",
+		TablePrefix: "metric_",
 	}, false)
 	if err != nil {
 		t.Fatalf("build metric config: %v", err)
@@ -59,9 +58,8 @@ func TestBuildMetricConfigEnablesDefaultRollupPolicy(t *testing.T) {
 
 func TestBuildMetricConfigLeavesFinalRetentionToMetricDefinition(t *testing.T) {
 	cfg, err := buildMetricConfig(&MetricStoreConfig{
-		Driver:              "sqlite",
-		DSN:                 ":memory:",
-		DownsamplingEnabled: true,
+		Driver: "sqlite",
+		DSN:    ":memory:",
 	}, false)
 	if err != nil {
 		t.Fatalf("build metric config: %v", err)
@@ -73,60 +71,16 @@ func TestBuildMetricConfigLeavesFinalRetentionToMetricDefinition(t *testing.T) {
 	}
 }
 
-func TestBuildMetricConfigCanDisableDownsampling(t *testing.T) {
+func TestBuildMetricConfigAlwaysEnablesDownsampling(t *testing.T) {
 	cfg, err := buildMetricConfig(&MetricStoreConfig{
-		Driver:              "sqlite",
-		DSN:                 ":memory:",
-		DownsamplingEnabled: false,
+		Driver: "sqlite",
+		DSN:    ":memory:",
 	}, false)
 	if err != nil {
 		t.Fatalf("build metric config: %v", err)
 	}
-	if cfg.RollupPolicy.Enabled() {
-		t.Fatal("expected rollup policy to be disabled")
-	}
-}
-
-func TestBuildMetricConfigKeepsDownsamplingIndependentFromResourceMode(t *testing.T) {
-	for _, lowResourceMode := range []bool{false, true} {
-		cfg, err := buildMetricConfig(&MetricStoreConfig{
-			Driver:              "sqlite",
-			DSN:                 ":memory:",
-			DownsamplingEnabled: false,
-			LowResourceMode:     lowResourceMode,
-		}, false)
-		if err != nil {
-			t.Fatalf("build metric config (low_resource_mode=%t): %v", lowResourceMode, err)
-		}
-		if cfg.RollupPolicy.Enabled() {
-			t.Fatalf("low_resource_mode=%t unexpectedly enabled downsampling", lowResourceMode)
-		}
-	}
-}
-
-func TestBuildMetricConfigUsesSmallSQLiteProfileInLowResourceMode(t *testing.T) {
-	cfg, err := buildMetricConfig(&MetricStoreConfig{
-		Driver:          "sqlite",
-		DSN:             "./data/metrics.db",
-		LowResourceMode: true,
-	}, false)
-	if err != nil {
-		t.Fatalf("build metric config: %v", err)
-	}
-	if cfg.SQLite.CacheSizeKB != 8*1024 {
-		t.Fatalf("cache size = %dKiB, want 8192KiB", cfg.SQLite.CacheSizeKB)
-	}
-	if cfg.SQLite.MMapSizeBytes != 0 {
-		t.Fatalf("mmap size = %d, want 0", cfg.SQLite.MMapSizeBytes)
-	}
-	if cfg.SQLite.TempStoreMemory {
-		t.Fatal("temp store should use FILE in low resource mode")
-	}
-	if cfg.SQLite.ReadPoolSize != 0 {
-		t.Fatalf("read pool size = %d, want 0", cfg.SQLite.ReadPoolSize)
-	}
-	if cfg.SQLite.PerformanceProfile != metric.SQLiteProfileBalanced {
-		t.Fatalf("SQLite profile = %q, want balanced", cfg.SQLite.PerformanceProfile)
+	if !cfg.RollupPolicy.Enabled() {
+		t.Fatal("expected rollup policy to remain enabled")
 	}
 }
 

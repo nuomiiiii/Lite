@@ -863,6 +863,8 @@ func TestSQLiteStorageV4SkipsExpiredDigestHandoffAcrossSupportedSources(t *testi
 		"fork-2.1.8",
 		"fork-2.1.8-fix",
 		"fork-2.1.9",
+		"fork-2.1.10",
+		"fork-2.1.11",
 	}
 	for _, version := range versions {
 		t.Run(version, func(t *testing.T) {

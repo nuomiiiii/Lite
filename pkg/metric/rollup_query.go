@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -354,7 +355,7 @@ func foldRawPoints(groups map[rollupKey]*rollupBucket, points []Point, interval 
 			b.tagsJSON = tagsJSON
 			groups[key] = b
 		}
-		b.addPoint(p.Value, ts)
+		b.addMetricPoint(p.MetricName, p.Value, ts)
 	}
 	return groups, nil
 }
@@ -574,6 +575,25 @@ func (s *Store) Series(ctx context.Context, query AggregateQuery, now time.Time)
 	if err := query.Validate(); err != nil {
 		return nil, err
 	}
+	if !s.sqlitePingMerged || query.MetricName != sqliteVirtualPingLossMetric {
+		return s.seriesPhysical(ctx, query, now)
+	}
+	query.MetricName = sqliteMergedPingLatencyMetric
+	query.Aggregation = pingLossPhysicalAggregation(query.Aggregation)
+	points, err := s.seriesPhysical(ctx, query, now)
+	if err != nil {
+		return nil, err
+	}
+	return restoreVirtualPingLossAggregates(points), nil
+}
+
+func (s *Store) seriesPhysical(ctx context.Context, query AggregateQuery, now time.Time) ([]AggregatePoint, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	if err := query.Validate(); err != nil {
+		return nil, err
+	}
 	policy := s.cfg.RollupPolicy
 	if !policy.Enabled() {
 		return s.Aggregate(ctx, query)
@@ -593,12 +613,18 @@ func (s *Store) Series(ctx context.Context, query AggregateQuery, now time.Time)
 	}
 	// Rate is raw-only; the caller asked for something rollups can't provide, so
 	// answer from raw regardless of age.
-	if query.Aggregation == AggRate {
+	if query.Aggregation == AggRate || query.Aggregation == aggPingLossRate {
 		return s.Aggregate(ctx, query)
 	}
 
-	servicingTier := bestRollupTier(policy, query.Interval, q.Start, now)
-	if servicingTier == nil {
+	hasCompatibleTier := false
+	for _, tier := range policy.Tiers {
+		if query.Interval >= tier.Interval && query.Interval%tier.Interval == 0 {
+			hasCompatibleTier = true
+			break
+		}
+	}
+	if !hasCompatibleTier {
 		return s.Aggregate(ctx, query)
 	}
 	if hasWatermark {
@@ -609,17 +635,111 @@ func (s *Store) Series(ctx context.Context, query AggregateQuery, now time.Time)
 		if !q.Start.Before(boundary) {
 			return s.Aggregate(ctx, query)
 		}
-		if !q.End.Before(boundary) {
-			return s.seriesHybrid(ctx, query, boundary, servicingTier)
-		}
-		return s.AggregateRollup(ctx, query, servicingTier.Interval)
+		return s.seriesAcrossHandoffTiers(ctx, query, now, policy, boundary, true)
 	}
 
 	// Upgraded stores can have rollups but no watermark until their first V4
 	// compaction. Legacy layouts may also retain raw points already represented
 	// by those rollups, so the fallback must merge per-series without counting
 	// that overlap twice.
-	return s.seriesWithoutWatermark(ctx, query, servicingTier)
+	return s.seriesAcrossHandoffTiers(ctx, query, now, policy, rawCutoff, false)
+}
+
+type rollupCoverage struct {
+	start int64
+	end   int64
+}
+
+// seriesAcrossHandoffTiers reads each non-overlapping retention span from its
+// owning resolution and folds every contribution into the same output buckets.
+// Without a watermark, raw points are also scanned and only those already
+// covered by a stored rollup bucket are removed, preserving legacy upgrades.
+func (s *Store) seriesAcrossHandoffTiers(ctx context.Context, query AggregateQuery, now time.Time, policy RollupPolicy, rawBoundary time.Time, hasWatermark bool) ([]AggregatePoint, error) {
+	q := query.Query.normalized()
+	comp := policy.compression()
+	needDigest := isPercentile(query.Aggregation)
+	groups := make(map[rollupKey]*rollupBucket)
+	covered := make(map[string][]rollupCoverage)
+	youngBoundary := rawBoundary.UTC().UnixNano()
+
+	for index, tier := range policy.Tiers {
+		lower := alignRollupRetentionCutoff(now.Add(-tier.Retention), tier.Interval).UnixNano()
+		if index+1 < len(policy.Tiers) {
+			lower = alignRollupRetentionCutoff(now.Add(-tier.Retention), policy.Tiers[index+1].Interval).UnixNano()
+		}
+		if query.Interval < tier.Interval || query.Interval%tier.Interval != 0 {
+			youngBoundary = lower
+			continue
+		}
+		resNano := tier.Interval.Nanoseconds()
+		scanLower := q.Start.UnixNano()
+		if lower > scanLower {
+			scanLower = lower
+		}
+		scanUpper := q.End.UnixNano() - resNano + 1
+		if youngBoundary != math.MinInt64 && youngBoundary-1 < scanUpper {
+			scanUpper = youngBoundary - 1
+		}
+		if scanUpper >= scanLower {
+			rows, err := s.scanRollupRowsBetween(ctx, q.MetricName, q.EntityID, q.Tags, resNano, scanLower, scanUpper, needDigest)
+			if err != nil {
+				return nil, err
+			}
+			foldRollupRows(groups, rows, query.Interval, comp, query.PreserveSeries, needDigest)
+			if !hasWatermark {
+				for _, row := range rows {
+					identity := row.entityID + "\x00" + row.bucketData.tagsHash
+					covered[identity] = append(covered[identity], rollupCoverage{start: row.bucket, end: row.bucket + resNano})
+				}
+			}
+		}
+		youngBoundary = lower
+	}
+
+	rawStart := rawBoundary.UTC().UnixNano()
+	if !hasWatermark || rawStart < q.Start.UnixNano() {
+		rawStart = q.Start.UnixNano()
+	}
+	if rawStart <= q.End.UnixNano() {
+		rawQuery := q
+		rawQuery.Start = time.Unix(0, rawStart).UTC()
+		rawQuery.Limit = 0
+		rawQuery.Offset = 0
+		points, err := s.Query(ctx, rawQuery)
+		if err != nil {
+			return nil, err
+		}
+		if !hasWatermark && len(covered) > 0 {
+			remaining := points[:0]
+			for _, point := range points {
+				tagsHash, _, err := tagsFingerprint(point.Tags)
+				if err != nil {
+					return nil, err
+				}
+				identity := point.EntityID + "\x00" + tagsHash
+				timestamp := point.Timestamp.UnixNano()
+				isCovered := false
+				for _, span := range covered[identity] {
+					if timestamp >= span.start && timestamp < span.end {
+						isCovered = true
+						break
+					}
+				}
+				if !isCovered {
+					remaining = append(remaining, point)
+				}
+			}
+			points = remaining
+		}
+		if _, err := foldRawPoints(groups, points, query.Interval, comp, query.PreserveSeries, needDigest); err != nil {
+			return nil, err
+		}
+	}
+	out, err := rollupGroupsToPoints(groups, query)
+	if err != nil {
+		return nil, err
+	}
+	return pageBuckets(out, query.BucketLimit, query.BucketOffset), nil
 }
 
 func (s *Store) seriesWithoutWatermark(ctx context.Context, query AggregateQuery, tier *RollupTier) ([]AggregatePoint, error) {

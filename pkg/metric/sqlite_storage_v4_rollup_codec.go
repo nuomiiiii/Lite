@@ -23,6 +23,7 @@ const (
 type sqliteV4RollupRecord struct {
 	bucketNano int64
 	count      int64
+	lossCount  int64
 	sumBits    uint64
 	sumSqBits  uint64
 	minBits    uint64

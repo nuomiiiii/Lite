@@ -19,6 +19,7 @@ type SQLiteMigrationSummary struct {
 	LegacyBlocks          int64  `json:"legacy_blocks"`
 	LegacyDigestBlocks    int64  `json:"legacy_digest_blocks"`
 	LegacyAxisBlocks      int64  `json:"legacy_axis_blocks"`
+	LegacyPointAxisBlocks int64  `json:"legacy_point_axis_blocks"`
 	DigestHandoffRequired bool   `json:"digest_handoff_required"`
 }
 
@@ -67,6 +68,7 @@ func InspectSQLiteMigration(ctx context.Context, cfg Config) (SQLiteMigrationSum
 		resolutions:  tableName(cfg.TablePrefix, "resolutions"),
 		pointValues:  tableName(cfg.TablePrefix, "point_values"),
 		pointBlocks:  tableName(cfg.TablePrefix, "point_blocks"),
+		pointAxes:    tableName(cfg.TablePrefix, "point_axes"),
 		rollupValues: tableName(cfg.TablePrefix, "rollup_values"),
 		rollupBlocks: tableName(cfg.TablePrefix, "rollup_blocks"),
 		rollupAxes:   tableName(cfg.TablePrefix, "rollup_axes"),
@@ -153,6 +155,20 @@ func InspectSQLiteMigration(ctx context.Context, cfg Config) (SQLiteMigrationSum
 	if axisKind != "table" {
 		return summary, nil
 	}
+	pointColumns, err := sqliteColumns(ctx, db, t.pointBlocks)
+	if err != nil {
+		return SQLiteMigrationSummary{}, err
+	}
+	pointAxisKind, err := sqliteObjectTypeDB(ctx, db, t.pointAxes)
+	if err != nil {
+		return SQLiteMigrationSummary{}, err
+	}
+	if !pointColumns["axis_id"] || pointAxisKind != "table" {
+		return summary, nil
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+t.pointBlocks+` WHERE axis_id IS NULL OR codec != ?`, sqliteV6SharedPointBlockCodec).Scan(&summary.LegacyPointAxisBlocks); err != nil {
+		return SQLiteMigrationSummary{}, fmt.Errorf("metric: count legacy SQLite point-axis blocks: %w", err)
+	}
 	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+t.rollupBlocks+` WHERE codec = ?`, sqliteV4LegacyRollupBlockCodec).Scan(&summary.LegacyBlocks); err != nil {
 		return SQLiteMigrationSummary{}, fmt.Errorf("metric: count legacy SQLite V4 blocks: %w", err)
 	}
@@ -170,8 +186,8 @@ func InspectSQLiteMigration(ctx context.Context, cfg Config) (SQLiteMigrationSum
 	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		return SQLiteMigrationSummary{}, fmt.Errorf("metric: inspect SQLite migration version: %w", err)
 	}
-	summary.DigestHandoffRequired = userVersion < sqliteStorageVersionV4DigestHandoff
-	summary.Required = summary.LegacyBlocks > 0 || summary.LegacyDigestBlocks > 0 || summary.LegacyAxisBlocks > 0 || summary.DigestHandoffRequired || autoVacuum != 2
+	summary.DigestHandoffRequired = userVersion < sqliteStorageVersionCurrent
+	summary.Required = summary.LegacyBlocks > 0 || summary.LegacyDigestBlocks > 0 || summary.LegacyAxisBlocks > 0 || summary.LegacyPointAxisBlocks > 0 || summary.DigestHandoffRequired || autoVacuum != 2
 	if !summary.Required {
 		summary.Layout = "current"
 	}
@@ -202,7 +218,7 @@ func sumSQLiteRows(ctx context.Context, db *sql.DB, names ...string) (int64, err
 	return total, nil
 }
 
-func sqliteColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
+func sqliteColumns(ctx context.Context, db querier, table string) (map[string]bool, error) {
 	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
 	if err != nil {
 		return nil, err

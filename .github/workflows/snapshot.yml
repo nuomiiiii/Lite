@@ -1,4 +1,4 @@
-name: Publish Snapshot
+name: Publish 2.1.11 Storage Snapshot Docker
 
 on:
   workflow_dispatch:
@@ -7,12 +7,13 @@ on:
       - snapshot-2.1.11-fix
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  VERSION: 2.1.11-snapshot
 
 concurrency:
   group: snapshot-${{ github.ref }}
@@ -27,42 +28,25 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Ensure snapshot target is the metric ARM fix branch
+      - name: Ensure this is the current storage snapshot commit
+        shell: bash
         run: |
-          SNAPSHOT_BRANCH="snapshot-2.1.11-fix"
-          if [ "${GITHUB_REF}" != "refs/heads/${SNAPSHOT_BRANCH}" ]; then
-            echo "This snapshot must run from refs/heads/${SNAPSHOT_BRANCH}. Current ref: ${GITHUB_REF}"
+          set -euo pipefail
+          snapshot_branch="snapshot-2.1.11-fix"
+          if [ "${GITHUB_REF}" != "refs/heads/${snapshot_branch}" ]; then
+            echo "This workflow only publishes refs/heads/${snapshot_branch}. Current ref: ${GITHUB_REF}" >&2
             exit 1
           fi
-
-          git fetch --no-tags --depth=1 origin "${SNAPSHOT_BRANCH}"
-          MAIN_SHA="$(git rev-parse FETCH_HEAD)"
-
-          if [ "${GITHUB_SHA}" != "${MAIN_SHA}" ]; then
-            echo "Snapshot builds must use the current fix-branch commit."
-            echo "Workflow SHA: ${GITHUB_SHA}"
-            echo "Current main: ${MAIN_SHA}"
+          git fetch --no-tags --depth=1 origin "${snapshot_branch}"
+          branch_sha="$(git rev-parse FETCH_HEAD)"
+          if [ "${GITHUB_SHA}" != "${branch_sha}" ]; then
+            echo "A newer storage snapshot commit exists; this run will not publish." >&2
             exit 1
           fi
-
-  prepare:
-    needs: validate-ref
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-    steps:
-      - name: Generate snapshot version
-        id: version
-        run: |
-          # Snapshot 版本号格式: Snapshot-yymmddhhMM (UTC+8)
-          VERSION="Snapshot-$(date -u -d '+8 hours' +%y%m%d%H%M)"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "Snapshot version: ${VERSION}"
 
   build-frontend:
     needs: validate-ref
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -74,9 +58,8 @@ jobs:
           ref: snapshot-2.1.11-fix
 
   test-backend:
-    needs: [validate-ref, build-frontend]
+    needs: build-frontend
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -92,56 +75,17 @@ jobs:
       - name: Run backend regression suite
         run: go test ./...
 
-  build-and-attach-binaries:
-    needs: [prepare, build-frontend]
+  build-linux:
+    needs: build-frontend
     runs-on: ubuntu-latest
-
     strategy:
       fail-fast: false
       matrix:
-        goos: [windows, linux]
-        goarch: [amd64, arm64, 386, riscv64]
         include:
-          # Windows
-          - goos: windows
-            goarch: amd64
-            zig_target_triple: x86_64-windows-gnu
-            binary_extension: .exe
-          - goos: windows
-            goarch: arm64
-            zig_target_triple: aarch64-windows-gnu
-            binary_extension: .exe
-          - goos: windows
-            goarch: 386
-            zig_target_triple: x86-windows-gnu
-            binary_extension: .exe
-
-          # Linux
-          - goos: linux
-            goarch: amd64
-            zig_target_triple: x86_64-linux-musl
-            binary_extension: ""
-          - goos: linux
-            goarch: arm64
-            zig_target_triple: aarch64-linux-musl
-            binary_extension: ""
-          - goos: linux
-            goarch: 386
-            zig_target_triple: x86-linux-musl
-            binary_extension: ""
-          - goos: linux
-            goarch: riscv64
-            zig_target_triple: riscv64-linux-musl
-            binary_extension: ""
-          - goos: linux
-            goarch: loong64
-            zig_target_triple: loongarch64-linux-musl
-            binary_extension: ""
-
-        exclude:
-          - goos: windows
-            goarch: riscv64
-
+          - goarch: amd64
+            zig_target: x86_64-linux-musl
+          - goarch: arm64
+            zig_target: aarch64-linux-musl
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -157,120 +101,42 @@ jobs:
       - name: Install Zig cross-compiler toolchain
         uses: ./.github/actions/setup-zig
 
-      - name: Build binary
+      - name: Build Linux binary
         env:
-          GOOS: ${{ matrix.goos }}
+          GOOS: linux
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
-          CC: zig cc -target ${{ matrix.zig_target_triple }}
+          CC: zig cc -target ${{ matrix.zig_target }}
           GIN_MODE: release
+        shell: bash
         run: |
-          BINARY_NAME=komari-${{ matrix.goos }}-${{ matrix.goarch }}
-          if [ "${{ matrix.binary_extension }}" != "" ]; then
-            BINARY_NAME=${BINARY_NAME}${{ matrix.binary_extension }}
-          fi
-          VERSION="${{ needs.prepare.outputs.version }}"
-          VERSION_HASH="${{ github.sha }}" # Use commit SHA for hash
-          go build -trimpath -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}" -o $BINARY_NAME
+          set -euo pipefail
+          version_hash="${GITHUB_SHA::7}"
+          go build -trimpath \
+            -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${version_hash}" \
+            -o "komari-linux-${GOARCH}"
 
-      - name: Upload binary as artifact
+      - name: Upload Docker binary
         uses: actions/upload-artifact@v4
         with:
-          name: komari-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: komari-${{ matrix.goos }}-${{ matrix.goarch }}*
+          name: komari-linux-${{ matrix.goarch }}
+          path: komari-linux-${{ matrix.goarch }}
 
-  publish-snapshot-release:
-    needs: [prepare, test-backend, build-and-attach-binaries]
+  publish-docker:
+    needs: [test-backend, build-linux]
     runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Ensure commit is still current fix branch
-        run: |
-          git fetch --no-tags --depth=1 origin "${GITHUB_REF_NAME}"
-          MAIN_SHA="$(git rev-parse FETCH_HEAD)"
-
-          if [ "${GITHUB_SHA}" != "${MAIN_SHA}" ]; then
-            echo "Snapshot publish skipped because a newer fix-branch commit exists."
-            echo "Workflow SHA: ${GITHUB_SHA}"
-            echo "Current main: ${MAIN_SHA}"
-            exit 1
-          fi
-
-      - name: Download all binaries
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Create snapshot prerelease and upload binaries
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          set -euxo pipefail
-          echo "Snapshot version: ${VERSION}"
-          ls -alR artifacts
-
-          # 如果同名 release/tag 已存在（例如重跑），先删除避免创建冲突
-          if gh release view "${VERSION}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release ${VERSION} 已存在，正在删除以重新创建..."
-            gh release delete "${VERSION}" --repo "${{ github.repository }}" --cleanup-tag --yes
-          fi
-
-          # 创建预发布并上传所有二进制文件
-          gh release create "${VERSION}" \
-            --repo "${{ github.repository }}" \
-            --target "${{ github.sha }}" \
-            --title "${VERSION}" \
-            --notes "Automated snapshot build (${VERSION}) from commit ${{ github.sha }}." \
-            --prerelease \
-            artifacts/komari-*
-
-          gh workflow run generate-release-notes.yml \
-            --repo "${{ github.repository }}" \
-            --ref main \
-            -f tag="${VERSION}"
-
-          gh release list \
-            --repo "${{ github.repository }}" \
-            --limit 1000 \
-            --json tagName,isPrerelease \
-            --jq '.[] | select(.isPrerelease and (.tagName | startswith("Snapshot-"))) | .tagName' |
-          while IFS= read -r tag; do
-            if [ -z "${tag}" ] || [ "${tag}" = "${VERSION}" ]; then
-              continue
-            fi
-
-            echo "Deleting old snapshot release ${tag}..."
-            gh release delete "${tag}" --repo "${{ github.repository }}" --cleanup-tag --yes
-          done
+      - name: Ensure commit is still current
         shell: bash
-
-  build-and-push-docker:
-    needs: [prepare, build-and-attach-binaries, publish-snapshot-release]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Ensure commit is still current fix branch
         run: |
+          set -euo pipefail
           git fetch --no-tags --depth=1 origin "${GITHUB_REF_NAME}"
-          MAIN_SHA="$(git rev-parse FETCH_HEAD)"
-
-          if [ "${GITHUB_SHA}" != "${MAIN_SHA}" ]; then
-            echo "Snapshot Docker publish skipped because a newer fix-branch commit exists."
-            echo "Workflow SHA: ${GITHUB_SHA}"
-            echo "Current main: ${MAIN_SHA}"
+          branch_sha="$(git rev-parse FETCH_HEAD)"
+          if [ "${GITHUB_SHA}" != "${branch_sha}" ]; then
+            echo "A newer storage snapshot commit exists; Docker publish was skipped." >&2
             exit 1
           fi
 
@@ -287,28 +153,37 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to the Container registry
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=snapshot
-
-      - name: Build and push Docker image
+      - name: Build and push multi-architecture image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:snapshot
           no-cache: true
           provenance: false
+
+      - name: Verify platforms and embedded version
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${REGISTRY}/${IMAGE_NAME}:snapshot"
+          expected_hash="${GITHUB_SHA::7}"
+          manifest="$(docker buildx imagetools inspect "${image}")"
+          echo "${manifest}"
+          grep -F 'Platform:  linux/amd64' <<<"${manifest}"
+          grep -F 'Platform:  linux/arm64' <<<"${manifest}"
+          for platform in linux/amd64 linux/arm64; do
+            docker pull --platform "${platform}" "${image}"
+            output="$(docker run --rm --platform "${platform}" "${image}" /app/komari version --json)"
+            echo "${output}"
+            grep -F '\"version\":\"2.1.11-snapshot\"' <<<"${output}"
+            grep -F "\"hash\":\"${expected_hash}\"" <<<"${output}"
+          done

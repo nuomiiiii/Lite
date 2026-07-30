@@ -72,6 +72,9 @@ type Store struct {
 	// sqliteStorageV4 reports that sealed raw points are stored in lossless
 	// compressed blocks in addition to the V3-compatible hot table.
 	sqliteStorageV4 bool
+	// sqlitePingMerged reports that ping.loss is a virtual projection over the
+	// single physical ping.latency_ms series introduced by SQLite format V8.
+	sqlitePingMerged bool
 }
 
 // Open initializes a Store from a Config.
@@ -108,6 +111,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 			resolutions:  tableName(cfg.TablePrefix, "resolutions"),
 			pointValues:  tableName(cfg.TablePrefix, "point_values"),
 			pointBlocks:  tableName(cfg.TablePrefix, "point_blocks"),
+			pointAxes:    tableName(cfg.TablePrefix, "point_axes"),
 			rollupValues: tableName(cfg.TablePrefix, "rollup_values"),
 			rollupBlocks: tableName(cfg.TablePrefix, "rollup_blocks"),
 			rollupAxes:   tableName(cfg.TablePrefix, "rollup_axes"),
@@ -184,6 +188,18 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 				return nil, fmt.Errorf("metric: incomplete SQLite V4 schema requires automatic migration")
 			}
 			s.sqliteStorageV4 = blockType == "table" && rollupBlockType == "table"
+			if s.sqliteStorageV4 {
+				var userVersion int
+				if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&userVersion); err != nil {
+					s.closeDBs()
+					return nil, fmt.Errorf("metric: inspect SQLite storage version: %w", err)
+				}
+				if userVersion < sqliteStorageVersionPingMerge {
+					s.closeDBs()
+					return nil, fmt.Errorf("metric: SQLite storage V%d requires automatic migration", userVersion)
+				}
+				s.sqlitePingMerged = true
+			}
 		}
 	}
 
@@ -896,6 +912,9 @@ func (s *Store) DeleteSeries(ctx context.Context, filter Query) (int64, error) {
 	if strings.TrimSpace(filter.MetricName) == "" {
 		return 0, fmt.Errorf("%w: metric name is required", ErrInvalidArgument)
 	}
+	if s.sqlitePingMerged && filter.MetricName == sqliteVirtualPingLossMetric {
+		filter.MetricName = sqliteMergedPingLatencyMetric
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -969,6 +988,18 @@ func (s *Store) WriteBatch(ctx context.Context, points []Point) error {
 	}
 	if len(points) == 0 {
 		return nil
+	}
+	if s.sqlitePingMerged {
+		physical := make([]Point, 0, len(points))
+		for _, point := range points {
+			if point.MetricName != sqliteVirtualPingLossMetric {
+				physical = append(physical, point)
+			}
+		}
+		points = physical
+		if len(points) == 0 {
+			return nil
+		}
 	}
 	s.retentionMu.RLock()
 	defer s.retentionMu.RUnlock()
@@ -1154,8 +1185,16 @@ func (s *Store) Query(ctx context.Context, query Query) ([]Point, error) {
 		return nil, err
 	}
 	query = query.normalized()
+	virtualLoss := s.sqlitePingMerged && query.MetricName == sqliteVirtualPingLossMetric
+	if virtualLoss {
+		query.MetricName = sqliteMergedPingLatencyMetric
+	}
 	if s.sqliteStorageV4 {
-		return s.querySQLiteV4Snapshot(ctx, query)
+		points, err := s.querySQLiteV4Snapshot(ctx, query)
+		if err != nil || !virtualLoss {
+			return points, err
+		}
+		return restoreVirtualPingLossPoints(points), nil
 	}
 	where, args := s.buildWhere(query)
 	order := "ASC"
@@ -1203,6 +1242,9 @@ func (s *Store) Query(ctx context.Context, query Query) ([]Point, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if virtualLoss {
+		return restoreVirtualPingLossPoints(out), nil
+	}
 	return out, nil
 }
 
@@ -1217,6 +1259,9 @@ func (s *Store) EntityIDs(ctx context.Context, query Query) ([]string, error) {
 		return nil, err
 	}
 	query = query.normalized()
+	if s.sqlitePingMerged && query.MetricName == sqliteVirtualPingLossMetric {
+		query.MetricName = sqliteMergedPingLatencyMetric
+	}
 	if s.sqliteStorageV4 {
 		return s.sqliteV4EntityIDs(ctx, query)
 	}
@@ -1376,8 +1421,12 @@ func (s *Store) Latest(ctx context.Context, metricName, entityID string, limit i
 	if limit <= 0 {
 		limit = 1
 	}
+	virtualLoss := s.sqlitePingMerged && metricName == sqliteVirtualPingLossMetric
+	if virtualLoss {
+		metricName = sqliteMergedPingLatencyMetric
+	}
 	if s.sqliteStorageV4 {
-		return s.querySQLiteV4Snapshot(ctx, Query{
+		points, err := s.querySQLiteV4Snapshot(ctx, Query{
 			MetricName: metricName,
 			EntityID:   entityID,
 			Start:      time.Unix(0, math.MinInt64).UTC(),
@@ -1385,6 +1434,10 @@ func (s *Store) Latest(ctx context.Context, metricName, entityID string, limit i
 			Order:      OrderDesc,
 			Limit:      limit,
 		})
+		if err != nil || !virtualLoss {
+			return points, err
+		}
+		return restoreVirtualPingLossPoints(points), nil
 	}
 	// Dedicated query rather than a full-range Query: no synthetic time bounds,
 	// and the index on (metric_name, entity_id, ts_nano) serves the ORDER BY.
@@ -1417,7 +1470,13 @@ func (s *Store) Latest(ctx context.Context, metricName, entityID string, limit i
 		}
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if virtualLoss {
+		return restoreVirtualPingLossPoints(out), nil
+	}
+	return out, nil
 }
 
 // LatestBefore returns the newest retained point before an exclusive boundary.
@@ -1435,6 +1494,10 @@ func (s *Store) LatestBefore(ctx context.Context, metricName, entityID string, b
 	}
 	if before.IsZero() {
 		return Point{}, false, fmt.Errorf("%w: before time is required", ErrInvalidArgument)
+	}
+	virtualLoss := s.sqlitePingMerged && metricName == sqliteVirtualPingLossMetric
+	if virtualLoss {
+		metricName = sqliteMergedPingLatencyMetric
 	}
 
 	beforeNano := before.UTC().UnixNano()
@@ -1488,6 +1551,9 @@ func (s *Store) LatestBefore(ctx context.Context, metricName, entityID string, b
 	if found {
 		rawCutoff := s.cfg.RollupPolicy.rawCutoff(before)
 		if rawCutoff.IsZero() || !latest.Timestamp.Before(rawCutoff) {
+			if virtualLoss {
+				latest = virtualPingLossPoint(latest)
+			}
 			return latest, true, nil
 		}
 	}
@@ -1539,6 +1605,9 @@ func (s *Store) LatestBefore(ctx context.Context, metricName, entityID string, b
 		}
 		found = true
 	}
+	if found && virtualLoss {
+		latest = virtualPingLossPoint(latest)
+	}
 	return latest, found, nil
 }
 
@@ -1551,6 +1620,11 @@ func (s *Store) Aggregate(ctx context.Context, query AggregateQuery) ([]Aggregat
 	}
 	if err := query.Validate(); err != nil {
 		return nil, err
+	}
+	virtualLoss := s.sqlitePingMerged && query.MetricName == sqliteVirtualPingLossMetric
+	if virtualLoss {
+		query.MetricName = sqliteMergedPingLatencyMetric
+		query.Aggregation = pingLossPhysicalAggregation(query.Aggregation)
 	}
 	// Push simple reductions (avg/min/max/sum/count) down to SQL via GROUP BY on
 	// a time bucket so large ranges don't pull every raw point into memory.
@@ -1573,7 +1647,11 @@ func (s *Store) Aggregate(ctx context.Context, query AggregateQuery) ([]Aggregat
 	if err != nil {
 		return nil, err
 	}
-	return pageBuckets(buckets, query.BucketLimit, query.BucketOffset), nil
+	buckets = pageBuckets(buckets, query.BucketLimit, query.BucketOffset)
+	if virtualLoss {
+		return restoreVirtualPingLossAggregates(buckets), nil
+	}
+	return buckets, nil
 }
 
 // pageBuckets applies bucket-level paging to an ordered slice of aggregate
@@ -1670,7 +1748,12 @@ func (s *Store) Stats(ctx context.Context, query Query) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	stats, err := CalculateStats(points)
+	var stats Stats
+	if s.sqlitePingMerged && query.MetricName == sqliteMergedPingLatencyMetric {
+		stats, err = calculateMergedPingLatencyStats(points)
+	} else {
+		stats, err = CalculateStats(points)
+	}
 	if errors.Is(err, ErrNoData) {
 		// No samples in range. Disambiguate from a non-existent metric so the
 		// caller can tell "empty window" apart from "unknown metric".
@@ -1692,6 +1775,9 @@ func (s *Store) DeleteBefore(ctx context.Context, metricName string, before time
 	}
 	if before.IsZero() {
 		return 0, fmt.Errorf("%w: before time is required", ErrInvalidArgument)
+	}
+	if s.sqlitePingMerged && metricName == sqliteVirtualPingLossMetric {
+		metricName = sqliteMergedPingLatencyMetric
 	}
 	if s.sqliteStorageV4 {
 		tx, err := s.db.BeginTx(ctx, nil)
@@ -1738,6 +1824,9 @@ func (s *Store) CleanupExpired(ctx context.Context, now time.Time) (int64, error
 	}
 	var total int64
 	for _, def := range defs {
+		if s.sqlitePingMerged && def.Name == sqliteVirtualPingLossMetric {
+			continue
+		}
 		if def.RetentionDays == 0 {
 			deleted, err := s.DeleteSeries(ctx, Query{MetricName: def.Name})
 			if err != nil {

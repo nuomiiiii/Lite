@@ -47,22 +47,22 @@ type databaseDigestHandoffStatus struct {
 }
 
 type databaseRuntimeStatus struct {
-	Compacting                    bool       `json:"compacting"`
-	CurrentMetric                 string     `json:"current_metric"`
-	Progress                      int        `json:"progress"`
-	Total                         int        `json:"total"`
-	CycleWritten                  int        `json:"cycle_written"`
-	CycleStartedAt                *time.Time `json:"cycle_started_at"`
-	LastStepAt                    *time.Time `json:"last_step_at"`
-	LastCycleCompletedAt          *time.Time `json:"last_cycle_completed_at"`
-	CheckpointApplicable          bool       `json:"checkpoint_applicable"`
-	LastCheckpointAttemptAt       *time.Time `json:"last_checkpoint_attempt_at"`
-	LastCheckpointSuccessAt       *time.Time `json:"last_checkpoint_success_at"`
-	NextCheckpointAt              *time.Time `json:"next_checkpoint_at"`
-	CheckpointPending             bool       `json:"checkpoint_pending"`
-	ConsecutiveCheckpointFailures int        `json:"consecutive_checkpoint_failures"`
-	ConsecutiveCycleFailures      int        `json:"consecutive_cycle_failures"`
-	LastError                     string                         `json:"last_error,omitempty"`
+	Compacting                    bool                          `json:"compacting"`
+	CurrentMetric                 string                        `json:"current_metric"`
+	Progress                      int                           `json:"progress"`
+	Total                         int                           `json:"total"`
+	CycleWritten                  int                           `json:"cycle_written"`
+	CycleStartedAt                *time.Time                    `json:"cycle_started_at"`
+	LastStepAt                    *time.Time                    `json:"last_step_at"`
+	LastCycleCompletedAt          *time.Time                    `json:"last_cycle_completed_at"`
+	CheckpointApplicable          bool                          `json:"checkpoint_applicable"`
+	LastCheckpointAttemptAt       *time.Time                    `json:"last_checkpoint_attempt_at"`
+	LastCheckpointSuccessAt       *time.Time                    `json:"last_checkpoint_success_at"`
+	NextCheckpointAt              *time.Time                    `json:"next_checkpoint_at"`
+	CheckpointPending             bool                          `json:"checkpoint_pending"`
+	ConsecutiveCheckpointFailures int                           `json:"consecutive_checkpoint_failures"`
+	ConsecutiveCycleFailures      int                           `json:"consecutive_cycle_failures"`
+	LastError                     string                        `json:"last_error,omitempty"`
 	DigestHandoffDeferred         []databaseDigestHandoffStatus `json:"digest_handoff_deferred"`
 }
 

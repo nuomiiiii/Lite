@@ -113,12 +113,8 @@ func (a *App) Bootstrap() error {
 
 	gin.SetMode(gin.ReleaseMode)
 
-	lowResourceMode, err := ensureLowResourceModeDefault()
-	if err != nil {
-		return fmt.Errorf("failed to initialize low resource mode: %w", err)
-	}
-	if err := dbcore.ConfigureLowResourceMode(lowResourceMode); err != nil {
-		return err
+	if err := normalizeMetricStorageSettings(); err != nil {
+		return fmt.Errorf("failed to normalize metric storage settings: %w", err)
 	}
 
 	conf, err := config.GetManyAs[config.Settings]()
@@ -129,22 +125,14 @@ func (a *App) Bootstrap() error {
 	return nil
 }
 
-func ensureLowResourceModeDefault() (bool, error) {
-	values, err := config.GetMany(map[string]any{config.LowResourceModeKey: nil})
-	if err != nil {
-		return false, err
-	}
-	if saved, ok := values[config.LowResourceModeKey]; ok {
-		if enabled, ok := saved.(bool); ok {
-			return enabled, nil
-		}
-		return false, fmt.Errorf("%s must be a boolean", config.LowResourceModeKey)
-	}
-	if err := config.Set(config.LowResourceModeKey, false); err != nil {
-		return false, err
-	}
-	logger.Infof("server", "Low resource mode defaulted to disabled")
-	return false, nil
+// normalizeMetricStorageSettings makes the active storage policy independent
+// of settings saved by older upstream, stable, fix, or snapshot releases.
+// Per-metric retention values are deliberately left untouched.
+func normalizeMetricStorageSettings() error {
+	return config.SetMany(map[string]any{
+		config.LowResourceModeKey:                false,
+		metricstore.MetricDownsamplingEnabledKey: true,
+	})
 }
 
 // InitStores 初始化独立存储组件（metric store）并执行 metrics 迁移。

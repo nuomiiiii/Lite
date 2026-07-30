@@ -28,12 +28,15 @@ type sqliteV4BlockPoint struct {
 }
 
 type sqliteV4EncodedBlock struct {
-	startNano int64
-	endNano   int64
-	count     int
-	codec     int
-	checksum  uint32
-	payload   []byte
+	startNano    int64
+	endNano      int64
+	count        int
+	codec        int
+	checksum     uint32
+	payload      []byte
+	axisCodec    int
+	axisChecksum uint32
+	axisPayload  []byte
 }
 
 func encodeSQLiteV4Block(points []sqliteV4BlockPoint) (sqliteV4EncodedBlock, error) {

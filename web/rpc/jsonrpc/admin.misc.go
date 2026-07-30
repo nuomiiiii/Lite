@@ -106,6 +106,8 @@ func adminGetSettings(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonR
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to get settings: "+err.Error(), nil)
 	}
 	delete(cst, config.CloudflareTunnelTokenKey)
+	delete(cst, config.LowResourceModeKey)
+	delete(cst, metricstore.MetricDownsamplingEnabledKey)
 	return cst, nil
 }
 
@@ -113,13 +115,11 @@ func adminGetSettings(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonR
 //
 // 注意：metric_store_enabled 已废弃（metric store 始终启用），不再纳入此集合。
 var metricStoreConfigKeys = map[string]struct{}{
-	metricstore.MetricDBDriverKey:            {},
-	metricstore.MetricDBDSNKey:               {},
-	metricstore.MetricDownsamplingEnabledKey: {},
-	config.LowResourceModeKey:                {},
-	metricstore.MetricTablePrefixKey:         {},
-	metricstore.MetricMaxOpenConnsKey:        {},
-	metricstore.MetricMaxIdleConnsKey:        {},
+	metricstore.MetricDBDriverKey:     {},
+	metricstore.MetricDBDSNKey:        {},
+	metricstore.MetricTablePrefixKey:  {},
+	metricstore.MetricMaxOpenConnsKey: {},
+	metricstore.MetricMaxIdleConnsKey: {},
 }
 
 // metricKeysTouched 判断本次设置变更是否涉及 metrics 数据库相关键。
@@ -148,6 +148,10 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 		}
 		cfg[config.TrafficReportTimeKey] = normalized
 	}
+	// Ignore retired controls submitted by an older cached frontend. The
+	// startup normalizer keeps their persisted compatibility values fixed.
+	delete(cfg, config.LowResourceModeKey)
+	delete(cfg, metricstore.MetricDownsamplingEnabledKey)
 
 	// 若本次修改涉及 metrics 数据库配置，则在落库前先用「当前配置 + 本次改动」
 	// 合并出的目标配置做一次连接测试。metric store 始终启用，只要触及 metrics
@@ -182,12 +186,6 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 	if err := config.SetMany(cfg); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to update settings: "+err.Error(), nil)
 	}
-	if v, ok := cfg[config.LowResourceModeKey]; ok {
-		if err := dbcore.ConfigureLowResourceMode(toBool(v, false)); err != nil {
-			return nil, rpc.MakeError(rpc.InternalError, "Failed to apply low resource mode: "+err.Error(), nil)
-		}
-	}
-
 	// 配置已落库，热重载 metric store（无需重启）。连接已在上面验证过，
 	// 这里再次失败属异常情况，回报给用户。
 	if touchedMetric {
@@ -230,12 +228,6 @@ func mergedMetricConfig(cfg map[string]interface{}) (*metricstore.MetricStoreCon
 		if s, ok := v.(string); ok {
 			merged.DSN = s
 		}
-	}
-	if v, ok := cfg[metricstore.MetricDownsamplingEnabledKey]; ok {
-		merged.DownsamplingEnabled = toBool(v, merged.DownsamplingEnabled)
-	}
-	if v, ok := cfg[config.LowResourceModeKey]; ok {
-		merged.LowResourceMode = toBool(v, merged.LowResourceMode)
 	}
 	if v, ok := cfg[metricstore.MetricTablePrefixKey]; ok {
 		if s, ok := v.(string); ok {

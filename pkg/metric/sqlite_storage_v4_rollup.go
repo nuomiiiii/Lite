@@ -436,7 +436,7 @@ func (s *Store) sealAllSQLiteV4RollupsTx(ctx context.Context, tx *sql.Tx, migrat
 			byBucket[record.bucketNano] = record
 		}
 		hotRows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			`SELECT bucket_nano, count, sum, sum_sq, min_val, max_val, first_val, first_ts,
+			`SELECT bucket_nano, count, loss_count, sum, sum_sq, min_val, max_val, first_val, first_ts,
 			        last_val, last_ts, digest, created_at
 			 FROM %s WHERE series_id = ? AND resolution_nano = ? ORDER BY bucket_nano`,
 			s.tables.rollupValues,
@@ -485,7 +485,7 @@ func scanSQLiteV4RollupRecord(scanner interface{ Scan(dest ...any) error }) (sql
 	var record sqliteV4RollupRecord
 	var sum, sumSq, minValue, maxValue, firstValue, lastValue float64
 	if err := scanner.Scan(
-		&record.bucketNano, &record.count, &sum, &sumSq, &minValue, &maxValue,
+		&record.bucketNano, &record.count, &record.lossCount, &sum, &sumSq, &minValue, &maxValue,
 		&firstValue, &record.firstTS, &lastValue, &record.lastTS, &record.digest, &record.createdAt,
 	); err != nil {
 		return sqliteV4RollupRecord{}, err
@@ -640,7 +640,7 @@ func (s *Store) appendSQLiteV4RollupTailTx(ctx context.Context, tx *sql.Tx, seri
 		}
 
 		hotRows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			`SELECT bucket_nano, count, sum, sum_sq, min_val, max_val, first_val, first_ts,
+			`SELECT bucket_nano, count, loss_count, sum, sum_sq, min_val, max_val, first_val, first_ts,
 			        last_val, last_ts, digest, created_at FROM %s
 			 WHERE series_id = ? AND resolution_nano = ? AND bucket_nano > ? AND bucket_nano < ?
 			 ORDER BY bucket_nano LIMIT ?`, s.tables.rollupValues,
@@ -750,7 +750,7 @@ func sqliteV4RollupSummariesEqual(left, right *rollupBucket) bool {
 	if left == nil || right == nil {
 		return left == nil && right == nil
 	}
-	return left.count == right.count &&
+	return left.count == right.count && left.lossCount == right.lossCount &&
 		sqliteV4RollupAccumulationsEqual(left.sum, right.sum) &&
 		sqliteV4RollupAccumulationsEqual(left.sumSq, right.sumSq) &&
 		math.Float64bits(left.min) == math.Float64bits(right.min) &&
@@ -1037,7 +1037,7 @@ func (s *Store) querySQLiteV4Rollups(ctx context.Context, q querier, metricName,
 			return nil, err
 		}
 		hotRows, err := q.QueryContext(ctx, fmt.Sprintf(
-			`SELECT bucket_nano, count, sum, sum_sq, min_val, max_val, first_val, first_ts,
+			`SELECT bucket_nano, count, loss_count, sum, sum_sq, min_val, max_val, first_val, first_ts,
 			        last_val, last_ts, digest, created_at
 			 FROM %s WHERE series_id = ? AND resolution_nano = ? AND bucket_nano >= ? AND bucket_nano <= ?`,
 			s.tables.rollupValues,
@@ -1100,8 +1100,8 @@ func sqliteV4RollupBucketFromRecord(record sqliteV4RollupRecord, series sqliteV4
 		}
 	}
 	return &rollupBucket{
-		count: record.count,
-		sum:   math.Float64frombits(record.sumBits), sumSq: math.Float64frombits(record.sumSqBits),
+		count: record.count, lossCount: record.lossCount,
+		sum: math.Float64frombits(record.sumBits), sumSq: math.Float64frombits(record.sumSqBits),
 		min: math.Float64frombits(record.minBits), max: math.Float64frombits(record.maxBits),
 		firstVal: math.Float64frombits(record.firstBits), firstTS: record.firstTS,
 		lastVal: math.Float64frombits(record.lastBits), lastTS: record.lastTS,
@@ -1119,7 +1119,7 @@ func (s *Store) readSQLiteV4RollupBucketTx(ctx context.Context, tx *sql.Tx, metr
 			continue
 		}
 		hotRecord, err := scanSQLiteV4RollupRecord(tx.QueryRowContext(ctx, fmt.Sprintf(
-			`SELECT bucket_nano, count, sum, sum_sq, min_val, max_val, first_val, first_ts,
+			`SELECT bucket_nano, count, loss_count, sum, sum_sq, min_val, max_val, first_val, first_ts,
 			        last_val, last_ts, digest, created_at FROM %s
 			 WHERE series_id = ? AND resolution_nano = ? AND bucket_nano = ?`, s.tables.rollupValues,
 		), item.id, resolution, bucketNano))
@@ -1507,7 +1507,7 @@ func (s *Store) sealSQLiteV4RollupSeriesTx(ctx context.Context, tx *sql.Tx, seri
 // left to the full-group fallback because inserting it may change block splits.
 func (s *Store) rewriteSQLiteV4LateRollupBlocksTx(ctx context.Context, tx *sql.Tx, seriesID, resolution, maxEnd, throughNano int64) (bool, error) {
 	hotRows, err := tx.QueryContext(ctx, fmt.Sprintf(
-		`SELECT bucket_nano, count, sum, sum_sq, min_val, max_val, first_val, first_ts,
+		`SELECT bucket_nano, count, loss_count, sum, sum_sq, min_val, max_val, first_val, first_ts,
 		        last_val, last_ts, digest, created_at FROM %s
 		 WHERE series_id = ? AND resolution_nano = ? AND bucket_nano <= ? AND bucket_nano <= ?
 		 ORDER BY bucket_nano`, s.tables.rollupValues,
@@ -1622,7 +1622,7 @@ func (s *Store) rewriteSQLiteV4RollupGroupTx(ctx context.Context, tx *sql.Tx, se
 		byBucket[record.bucketNano] = record
 	}
 	rows, err := tx.QueryContext(ctx, fmt.Sprintf(
-		`SELECT bucket_nano, count, sum, sum_sq, min_val, max_val, first_val, first_ts,
+		`SELECT bucket_nano, count, loss_count, sum, sum_sq, min_val, max_val, first_val, first_ts,
 		        last_val, last_ts, digest, created_at FROM %s
 		 WHERE series_id = ? AND resolution_nano = ? AND bucket_nano <= ? ORDER BY bucket_nano`,
 		s.tables.rollupValues,

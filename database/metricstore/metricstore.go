@@ -43,22 +43,22 @@ const (
 // 注意：metric store 现在始终启用（旧的 metric_store_enabled 开关已废弃）。
 // 未显式配置时默认使用 SQLite（./data/metrics.db）。
 type MetricStoreConfig struct {
-	Driver              string `json:"metric_db_driver" default:"sqlite"`          // 数据库类型: sqlite, mysql, postgresql
-	DSN                 string `json:"metric_db_dsn" default:"./data/metrics.db"`  // 数据库连接串
-	DownsamplingEnabled bool   `json:"metric_downsampling_enabled" default:"true"` // 是否启用分层降采样
-	LowResourceMode     bool   `json:"low_resource_mode"`                          // 低资源模式默认关闭，可由管理员手动启用
-	TablePrefix         string `json:"metric_table_prefix" default:"metric_"`      // 表名前缀
-	MaxOpenConns        int    `json:"metric_max_open_conns" default:"25"`         // 最大连接数
-	MaxIdleConns        int    `json:"metric_max_idle_conns" default:"5"`          // 最大空闲连接数
+	Driver       string `json:"metric_db_driver" default:"sqlite"`         // 数据库类型: sqlite, mysql, postgresql
+	DSN          string `json:"metric_db_dsn" default:"./data/metrics.db"` // 数据库连接串
+	TablePrefix  string `json:"metric_table_prefix" default:"metric_"`     // 表名前缀
+	MaxOpenConns int    `json:"metric_max_open_conns" default:"25"`        // 最大连接数
+	MaxIdleConns int    `json:"metric_max_idle_conns" default:"5"`         // 最大空闲连接数
 }
 
 // MetricStoreConfigKeys 配置键
 //
 // MetricStoreEnabledKey 已废弃：metric store 始终启用，保留常量仅用于清理旧配置。
 const (
-	MetricStoreEnabledKey        = "metric_store_enabled" // Deprecated: metric store 始终启用
-	MetricDBDriverKey            = "metric_db_driver"
-	MetricDBDSNKey               = "metric_db_dsn"
+	MetricStoreEnabledKey = "metric_store_enabled" // Deprecated: metric store 始终启用
+	MetricDBDriverKey     = "metric_db_driver"
+	MetricDBDSNKey        = "metric_db_dsn"
+	// MetricDownsamplingEnabledKey is retained only to normalize databases
+	// created by releases that allowed downsampling to be disabled.
 	MetricDownsamplingEnabledKey = "metric_downsampling_enabled"
 	MetricTablePrefixKey         = "metric_table_prefix"
 	MetricMaxOpenConnsKey        = "metric_max_open_conns"
@@ -83,9 +83,7 @@ func buildMetricConfig(cfg *MetricStoreConfig, autoMigrate bool) (metric.Config,
 		metric.WithTablePrefix(tablePrefix),
 		metric.WithAutoMigrate(autoMigrate),
 	}
-	if cfg.DownsamplingEnabled {
-		opts = append(opts, metric.WithRollupPolicy(defaultRollupPolicy()))
-	}
+	opts = append(opts, metric.WithRollupPolicy(defaultRollupPolicy()))
 
 	switch driver {
 	case metric.DriverSQLite:
@@ -106,17 +104,7 @@ func buildMetricConfig(cfg *MetricStoreConfig, autoMigrate bool) (metric.Config,
 		// 这里刻意忽略 cfg.MaxOpenConns/MaxIdleConns —— 对 SQLite 而言多写连接
 		// 只会引入锁竞争而非提升吞吐。
 		opts = append(opts, metric.WithMaxOpenConns(1), metric.WithMaxIdleConns(1))
-		if cfg.LowResourceMode {
-			opts = append(opts,
-				metric.WithSQLiteProfile(metric.SQLiteProfileBalanced),
-				metric.WithSQLiteCacheSizeKB(8*1024),
-				metric.WithSQLiteMMapSize(0),
-				metric.WithSQLiteTempStoreMemory(false),
-				metric.WithSQLiteReadPool(0),
-			)
-		} else {
-			opts = append(opts, metric.WithSQLiteReadPool(4))
-		}
+		opts = append(opts, metric.WithSQLiteReadPool(4))
 		return metric.SQLite(dsn, opts...), nil
 	case metric.DriverMySQL:
 		opts = append(opts,
@@ -389,7 +377,6 @@ func InitializeStore() error {
 	storeFingerprint = targetFingerprint(cfg)
 	storeMu.Unlock()
 	resetRuntimeStatus(s.Driver())
-	setLowResourceMode(cfg.LowResourceMode)
 	clearStoreClosing()
 
 	logger.Infof("metricstore", "Metric store initialized successfully (driver=%s)", ResolveDriverFromConfig(cfg.Driver, cfg.DSN))
@@ -436,7 +423,6 @@ func Reload(ctx context.Context) error {
 	storeFingerprint = targetFingerprint(cfg)
 	storeMu.Unlock()
 	resetRuntimeStatus(s.Driver())
-	setLowResourceMode(cfg.LowResourceMode)
 
 	if old != nil {
 		if cerr := old.Close(); cerr != nil {
@@ -857,10 +843,6 @@ func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
 		"task_id": fmt.Sprintf("%d", rec.TaskId),
 	}
 
-	loss := 0.0
-	if rec.Value < 0 {
-		loss = 1
-	}
 	points := []metric.Point{
 		{
 			MetricName: MetricPingLatency,
@@ -869,13 +851,19 @@ func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
 			Value:      float64(rec.Value),
 			Tags:       tags,
 		},
-		{
+	}
+	if s.Driver() != metric.DriverSQLite {
+		loss := 0.0
+		if rec.Value < 0 {
+			loss = 1
+		}
+		points = append(points, metric.Point{
 			MetricName: MetricPingLoss,
 			EntityID:   entityID,
 			Timestamp:  ts,
 			Value:      loss,
 			Tags:       tags,
-		},
+		})
 	}
 
 	return s.WriteBatch(ctx, points)
