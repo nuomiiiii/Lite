@@ -127,7 +127,10 @@ func (s *Store) CompactMetric(ctx context.Context, metricName string, now time.T
 	return 0, fmt.Errorf("compact metric %q: exhausted retries after serialization failures: %w", metricName, lastErr)
 }
 
-const metricCompactionChunkWindow = 6 * time.Hour
+// Keep backlog transactions small enough to make forward progress on slower
+// ARM hosts. One hour remains aligned with every built-in rollup tier, so
+// committing a chunk does not split a persisted aggregate bucket.
+const metricCompactionChunkWindow = time.Hour
 
 // compactMetricIncrementalInChunks commits old upgrade data in bounded ranges.
 // A timeout only rolls back the active range; earlier ranges and their persisted
