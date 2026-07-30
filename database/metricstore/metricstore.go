@@ -34,6 +34,8 @@ const (
 	DefaultRollupFinestTier   = time.Minute
 	externalStoreInitTimeout  = 30 * time.Second
 	checkpointRetryTimeout    = 250 * time.Millisecond
+	checkpointTimeout         = 15 * time.Second
+	metricWALCheckpointLimit  = 64 * 1024 * 1024
 )
 
 // MetricStoreConfig 保存 metric store 配置。
@@ -630,6 +632,7 @@ func CompactStep(ctx context.Context, now time.Time) (written int, cycleComplete
 		compactErr = fmt.Errorf("compact metric %q: %w", metricName, compactErr)
 	}
 	if !cycleCompleted {
+		checkpointLargeMetricWAL(ctx, activeStore)
 		finishCompactStep(written, false, compactErr, time.Now().UTC())
 		return written, false, compactErr
 	}
@@ -638,13 +641,41 @@ func CompactStep(ctx context.Context, now time.Time) (written int, cycleComplete
 	return written, true, cycleErr
 }
 
+func checkpointLargeMetricWAL(ctx context.Context, activeStore *metric.Store) {
+	checkpointed, err := checkpointMetricWALAbove(ctx, activeStore, metricWALCheckpointLimit)
+	if err != nil && !checkpointed {
+		logger.Warnf("metricstore", "Failed to inspect metric WAL before threshold checkpoint: %v", err)
+		return
+	}
+	if !checkpointed {
+		return
+	}
+	recordCheckpointResult(activeStore.Driver(), err, time.Now().UTC())
+	if err != nil {
+		logger.Warnf("metricstore", "Failed to truncate oversized metric WAL: %v", err)
+	}
+}
+
+func checkpointMetricWALAbove(ctx context.Context, activeStore *metric.Store, limit int64) (bool, error) {
+	if activeStore.Driver() != metric.DriverSQLite || limit <= 0 {
+		return false, nil
+	}
+	files, err := activeStore.SQLiteFiles(ctx)
+	if err != nil || files.WAL < limit {
+		return false, err
+	}
+	checkpointCtx, cancel := context.WithTimeout(ctx, checkpointTimeout)
+	defer cancel()
+	return true, activeStore.CheckpointWAL(checkpointCtx)
+}
+
 func finishCompactCycle(ctx context.Context, activeStore *metric.Store, now time.Time) error {
 	var compactErrors []error
 	if _, err := activeStore.CleanupExpired(ctx, now); err != nil {
 		compactErrors = append(compactErrors, fmt.Errorf("clean up expired raw metrics: %w", err))
 	}
 	if activeStore.Driver() == metric.DriverSQLite {
-		checkpointCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		checkpointCtx, cancel := context.WithTimeout(ctx, checkpointTimeout)
 		checkpointErr := activeStore.CheckpointWAL(checkpointCtx)
 		recordCheckpointResult(activeStore.Driver(), checkpointErr, time.Now().UTC())
 		if checkpointErr != nil {
