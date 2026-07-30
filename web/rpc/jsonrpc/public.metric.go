@@ -681,65 +681,31 @@ type publicPingMetricAggregateGroups struct {
 }
 
 func loadPublicPingMetricAggregateGroups(ctx context.Context, store *metric.Store, entityID string, start, end time.Time, interval time.Duration, now time.Time) (publicPingMetricAggregateGroups, error) {
-	query := func(metricName string, aggregation metric.Aggregation) (map[string][]metric.AggregatePoint, error) {
-		points, err := store.Series(ctx, metric.AggregateQuery{
-			Query: metric.Query{
-				MetricName: metricName,
-				EntityID:   entityID,
-				Start:      start,
-				End:        end,
-				Order:      metric.OrderAsc,
-			},
-			Aggregation:    aggregation,
-			Interval:       interval,
-			PreserveSeries: true,
-		}, now)
-		if err != nil {
-			return nil, err
-		}
-		return groupPingMetricAggregatePointsByTask(points), nil
-	}
-
-	avg, err := query(metricstore.MetricPingLatency, metric.AggAvg)
+	summary, err := store.PingSeriesSummary(ctx, metric.AggregateQuery{
+		Query: metric.Query{
+			MetricName: metricstore.MetricPingLatency,
+			EntityID:   entityID,
+			Start:      start,
+			End:        end,
+			Order:      metric.OrderAsc,
+		},
+		Interval:       interval,
+		PreserveSeries: true,
+	}, now)
 	if err != nil {
 		return publicPingMetricAggregateGroups{}, err
 	}
-	minimum, err := query(metricstore.MetricPingLatency, metric.AggMin)
-	if err != nil {
-		return publicPingMetricAggregateGroups{}, err
-	}
-	maximum, err := query(metricstore.MetricPingLatency, metric.AggMax)
-	if err != nil {
-		return publicPingMetricAggregateGroups{}, err
-	}
-	last, err := query(metricstore.MetricPingLatency, metric.AggLast)
-	if err != nil {
-		return publicPingMetricAggregateGroups{}, err
-	}
-	p50, err := query(metricstore.MetricPingLatency, metric.AggP50)
-	if err != nil {
-		return publicPingMetricAggregateGroups{}, err
-	}
-	p99, err := query(metricstore.MetricPingLatency, metric.AggP99)
-	if err != nil {
-		return publicPingMetricAggregateGroups{}, err
-	}
-	stddev, err := query(metricstore.MetricPingLatency, metric.AggStdDev)
-	if err != nil {
-		return publicPingMetricAggregateGroups{}, err
-	}
-
-	loss, lossErr := query(metricstore.MetricPingLoss, metric.AggAvg)
+	loss := groupPingMetricAggregatePointsByTask(summary.Loss)
 	return publicPingMetricAggregateGroups{
-		Avg:           avg,
-		Min:           minimum,
-		Max:           maximum,
-		Last:          last,
-		P50:           p50,
-		P99:           p99,
-		StdDev:        stddev,
+		Avg:           groupPingMetricAggregatePointsByTask(summary.Avg),
+		Min:           groupPingMetricAggregatePointsByTask(summary.Min),
+		Max:           groupPingMetricAggregatePointsByTask(summary.Max),
+		Last:          groupPingMetricAggregatePointsByTask(summary.Last),
+		P50:           groupPingMetricAggregatePointsByTask(summary.P50),
+		P99:           groupPingMetricAggregatePointsByTask(summary.P99),
+		StdDev:        groupPingMetricAggregatePointsByTask(summary.StdDev),
 		Loss:          loss,
-		LossAvailable: lossErr == nil && pingMetricGroupsHaveData(loss),
+		LossAvailable: pingMetricGroupsHaveData(loss),
 	}, nil
 }
 

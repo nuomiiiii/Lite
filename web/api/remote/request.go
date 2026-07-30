@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -68,13 +69,18 @@ func CreateSession(c *gin.Context) {
 		AgentTicket:   utils.GenerateRandomString(32),
 		CreatedAt:     now,
 		ExpiresAt:     now.Add(pendingSessionTTL),
+		LastActivity:  now,
 	}
 	if session.ID == "" || session.BrowserTicket == "" || session.AgentTicket == "" {
 		api.RespondError(c, http.StatusInternalServerError, "Failed to create secure remote session")
 		return
 	}
 	if err := putSession(session); err != nil {
-		api.RespondError(c, http.StatusTooManyRequests, err.Error())
+		if errors.Is(err, errRemoteSessionLimit) {
+			api.RespondError(c, http.StatusTooManyRequests, "远程会话数量已满，请关闭不用的终端后重试")
+		} else {
+			api.RespondError(c, http.StatusConflict, err.Error())
+		}
 		return
 	}
 	auditlog.Log(session.RequesterIP, session.UserUUID, "request remote session, client:"+uuid, "terminal")

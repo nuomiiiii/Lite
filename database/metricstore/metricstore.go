@@ -87,6 +87,7 @@ func buildMetricConfig(cfg *MetricStoreConfig, autoMigrate bool) (metric.Config,
 
 	switch driver {
 	case metric.DriverSQLite:
+		resources := detectSQLiteResourceProfile()
 		dsn := cfg.DSN
 		if dsn == "" || dsn == "./data/metrics.db" {
 			// 注意：刻意不使用 cache=shared。SQLite 共享缓存模式使用表级锁，
@@ -103,8 +104,16 @@ func buildMetricConfig(cfg *MetricStoreConfig, autoMigrate bool) (metric.Config,
 		// 同时启用独立的 WAL 只读连接池提升前台查询并发（写仍走单主连接）。
 		// 这里刻意忽略 cfg.MaxOpenConns/MaxIdleConns —— 对 SQLite 而言多写连接
 		// 只会引入锁竞争而非提升吞吐。
-		opts = append(opts, metric.WithMaxOpenConns(1), metric.WithMaxIdleConns(1))
-		opts = append(opts, metric.WithSQLiteReadPool(4))
+		opts = append(opts,
+			metric.WithMaxOpenConns(1),
+			metric.WithMaxIdleConns(1),
+			metric.WithConnMaxLifetime(0),
+			metric.WithSQLiteCacheSizeKB(resources.WriterCacheKB),
+			metric.WithSQLiteReadCacheSizeKB(resources.ReaderCacheKB),
+			metric.WithSQLiteMMapSize(resources.MMapBytes),
+			metric.WithSQLiteReadPool(resources.ReadPoolSize),
+			metric.WithSQLiteHeavyReadConcurrency(resources.HeavyReadConcurrent),
+		)
 		return metric.SQLite(dsn, opts...), nil
 	case metric.DriverMySQL:
 		opts = append(opts,
@@ -871,12 +880,19 @@ func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
 
 // GetRecordsByClientAndTime 从 metric store 查询记录并重构为 models.Record
 func GetRecordsByClientAndTime(ctx context.Context, clientUUID string, start, end time.Time) ([]models.Record, error) {
+	return GetRecordsByClientAndTimeForLoadType(ctx, clientUUID, start, end, "all")
+}
+
+// GetRecordsByClientAndTimeForLoadType reads only the metric families needed
+// by a projected legacy record response. Fields outside that family remain at
+// their zero value, preserving the existing response shape.
+func GetRecordsByClientAndTimeForLoadType(ctx context.Context, clientUUID string, start, end time.Time, loadType string) ([]models.Record, error) {
 	s := GetStore()
 	if s == nil {
 		return nil, fmt.Errorf("metric store not enabled")
 	}
 
-	return getRecordsByClientAndTimeFromSeries(ctx, s, clientUUID, start, end, loadRecordMetricNames)
+	return getRecordsByClientAndTimeFromSeries(ctx, s, clientUUID, start, end, recordMetricNamesForLoadType(loadType))
 }
 
 // GetTrafficRecordsByClientAndTime reconstructs only the four traffic series
@@ -898,19 +914,26 @@ func GetTrafficRecordsByClientAndTime(ctx context.Context, clientUUID string, st
 
 // GetRecordsByTime 从 metric store 查询所有客户端在时间范围内的记录
 func GetRecordsByTime(ctx context.Context, start, end time.Time) ([]models.Record, error) {
+	return GetRecordsByTimeForLoadType(ctx, start, end, "all")
+}
+
+// GetRecordsByTimeForLoadType is the all-client counterpart of
+// GetRecordsByClientAndTimeForLoadType.
+func GetRecordsByTimeForLoadType(ctx context.Context, start, end time.Time, loadType string) ([]models.Record, error) {
 	s := GetStore()
 	if s == nil {
 		return nil, fmt.Errorf("metric store not enabled")
 	}
+	metricNames := recordMetricNamesForLoadType(loadType)
 
 	interval := recordSeriesInterval(s, start, end, time.Now().UTC())
-	entityIDs, err := listRecordEntityIDs(ctx, s, start, end, interval)
+	entityIDs, err := listRecordEntityIDs(ctx, s, start, end, interval, metricNames)
 	if err != nil {
 		return nil, err
 	}
 	var records []models.Record
 	for _, entityID := range entityIDs {
-		items, err := getRecordsByClientAndTimeFromSeries(ctx, s, entityID, start, end, loadRecordMetricNames)
+		items, err := getRecordsByClientAndTimeFromSeries(ctx, s, entityID, start, end, metricNames)
 		if err != nil {
 			return nil, err
 		}
@@ -918,6 +941,35 @@ func GetRecordsByTime(ctx context.Context, start, end time.Time) ([]models.Recor
 	}
 	sortRecords(records)
 	return records, nil
+}
+
+func recordMetricNamesForLoadType(loadType string) []string {
+	switch strings.ToLower(strings.TrimSpace(loadType)) {
+	case "cpu":
+		return []string{MetricCPU}
+	case "gpu":
+		return []string{MetricGPU}
+	case "ram":
+		return []string{MetricRAM}
+	case "swap":
+		return []string{MetricSwap}
+	case "load":
+		return []string{MetricLoad}
+	case "temp":
+		// Temperature was never persisted as an entity-level metric. Retain the
+		// old response cadence while avoiding a full 15-series scan.
+		return []string{MetricCPU}
+	case "disk":
+		return []string{MetricDisk}
+	case "network":
+		return []string{MetricNetIn, MetricNetOut, MetricNetTotalUp, MetricNetTotalDown}
+	case "process":
+		return []string{MetricProcess}
+	case "connections":
+		return []string{MetricConnections, MetricConnectionsUDP}
+	default:
+		return loadRecordMetricNames
+	}
 }
 
 type recordSeriesKey struct {
@@ -929,9 +981,9 @@ func getRecordsByClientAndTimeFromSeries(ctx context.Context, s *metric.Store, c
 	now := time.Now().UTC()
 	interval := recordSeriesInterval(s, start, end, now)
 	recordMap := make(map[recordSeriesKey]*models.Record)
-
+	queries := make([]metric.AggregateQuery, 0, len(metricNames))
 	for _, metricName := range metricNames {
-		points, err := s.Series(ctx, metric.AggregateQuery{
+		queries = append(queries, metric.AggregateQuery{
 			Query: metric.Query{
 				MetricName: metricName,
 				EntityID:   clientUUID,
@@ -941,10 +993,14 @@ func getRecordsByClientAndTimeFromSeries(ctx context.Context, s *metric.Store, c
 			},
 			Aggregation: recordMetricAggregation(metricName),
 			Interval:    interval,
-		}, now)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query metric %s: %w", metricName, err)
-		}
+		})
+	}
+	series, err := s.SeriesBatch(ctx, queries, now)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query record metric batch: %w", err)
+	}
+	for index, points := range series {
+		metricName := metricNames[index]
 		for _, point := range points {
 			entityID := point.EntityID
 			if entityID == "" {
@@ -1000,9 +1056,9 @@ func recordDownsampleInterval(rangeDuration time.Duration, maxPoints int) time.D
 	return metric.FloorStandardInterval(interval)
 }
 
-func listRecordEntityIDs(ctx context.Context, s *metric.Store, start, end time.Time, interval time.Duration) ([]string, error) {
+func listRecordEntityIDs(ctx context.Context, s *metric.Store, start, end time.Time, interval time.Duration, metricNames []string) ([]string, error) {
 	seen := make(map[string]struct{})
-	for _, metricName := range loadRecordMetricNames {
+	for _, metricName := range metricNames {
 		ids, err := s.EntityIDs(ctx, metric.Query{
 			MetricName: metricName,
 			Start:      start.Add(-interval),

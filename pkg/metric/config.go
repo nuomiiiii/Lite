@@ -88,6 +88,9 @@ type SQLiteOptions struct {
 	//
 	// CacheSizeKB 设置 SQLite 页缓存大小，单位为 KB。
 	CacheSizeKB int
+	// ReadCacheSizeKB sets the page-cache budget for each dedicated read
+	// connection. Zero reuses CacheSizeKB for backward compatibility.
+	ReadCacheSizeKB int
 	// PageSize sets SQLite page_size when positive.
 	//
 	// PageSize 为正数时设置 SQLite page_size。
@@ -120,6 +123,9 @@ type SQLiteOptions struct {
 	// 单主连接的同时提升读取吞吐。0（默认值）表示所有调用共享单个主连接池，
 	// 保留之前的单连接行为。
 	ReadPoolSize int
+	// HeavyReadConcurrency bounds decode-heavy historical Series calls. Zero
+	// derives the limit from ReadPoolSize and one disables parallel heavy reads.
+	HeavyReadConcurrency int
 }
 
 // SQLitePerformanceProfile names SQLite durability and performance presets.
@@ -352,6 +358,13 @@ func WithSQLiteCacheSizeKB(kb int) Option {
 	}
 }
 
+// WithSQLiteReadCacheSizeKB sets the per-connection cache for the read pool.
+func WithSQLiteReadCacheSizeKB(kb int) Option {
+	return func(c *Config) {
+		c.SQLite.ReadCacheSizeKB = kb
+	}
+}
+
 // WithSQLiteMMapSize sets SQLite mmap_size.
 //
 // WithSQLiteMMapSize 设置 SQLite mmap_size。
@@ -406,6 +419,13 @@ func WithSQLiteJournalSizeLimit(bytes int64) Option {
 func WithSQLiteReadPool(n int) Option {
 	return func(c *Config) {
 		c.SQLite.ReadPoolSize = n
+	}
+}
+
+// WithSQLiteHeavyReadConcurrency limits simultaneous historical decodes.
+func WithSQLiteHeavyReadConcurrency(n int) Option {
+	return func(c *Config) {
+		c.SQLite.HeavyReadConcurrency = n
 	}
 }
 

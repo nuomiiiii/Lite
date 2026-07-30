@@ -15,7 +15,8 @@ import (
 const (
 	sqliteStorageVersionV4              = 4
 	sqliteStorageVersionV4DigestHandoff = 5
-	sqliteStorageVersionCurrent         = sqliteStorageVersionPingMerge
+	sqliteStorageVersionDigestV9        = 9
+	sqliteStorageVersionCurrent         = sqliteStorageVersionDigestV9
 	sqliteV4HotWindow                   = 5 * time.Minute
 	sqliteV4RollupFlushWindow           = 30 * time.Minute
 )
@@ -357,7 +358,7 @@ func (s *Store) querySQLiteV4(ctx context.Context, q querier, query Query) ([]Po
 	blockArgs := append(append([]any{}, seriesArgs...), startNano, endNano)
 	blockRows, err := q.QueryContext(ctx, fmt.Sprintf(
 		`SELECT b.series_id, b.start_nano, b.end_nano, b.point_count, b.codec, b.checksum, b.payload,
-		        a.codec, a.checksum, a.payload
+		        b.axis_id, a.codec, a.checksum, a.payload
 		 FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id
 		 WHERE b.series_id IN (%s) AND b.end_nano >= ? AND b.start_nano <= ?`,
 		s.tables.pointBlocks, s.tables.pointAxes, seriesWhere,
@@ -370,13 +371,13 @@ func (s *Store) querySQLiteV4(ctx context.Context, q querier, query Query) ([]Po
 		var count, codec int
 		var checksum int64
 		var payload []byte
-		var axisCodec, axisChecksum sql.NullInt64
+		var axisID, axisCodec, axisChecksum sql.NullInt64
 		var axisPayload []byte
-		if err := blockRows.Scan(&seriesID, &blockStart, &blockEnd, &count, &codec, &checksum, &payload, &axisCodec, &axisChecksum, &axisPayload); err != nil {
+		if err := blockRows.Scan(&seriesID, &blockStart, &blockEnd, &count, &codec, &checksum, &payload, &axisID, &axisCodec, &axisChecksum, &axisPayload); err != nil {
 			_ = blockRows.Close()
 			return nil, err
 		}
-		points, err := decodeSQLiteStoredPointBlock(codec, count, uint32(checksum), payload, int(axisCodec.Int64), uint32(axisChecksum.Int64), axisPayload)
+		points, err := s.decodeSQLitePointBlockCached(codec, count, uint32(checksum), payload, axisID, axisCodec, axisChecksum, axisPayload)
 		if err != nil {
 			_ = blockRows.Close()
 			return nil, fmt.Errorf("metric: decode SQLite V4 block series=%d start=%d: %w", seriesID, blockStart, err)

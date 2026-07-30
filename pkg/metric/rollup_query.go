@@ -575,6 +575,14 @@ func (s *Store) Series(ctx context.Context, query AggregateQuery, now time.Time)
 	if err := query.Validate(); err != nil {
 		return nil, err
 	}
+	if s.cfg.Driver == DriverSQLite {
+		select {
+		case s.heavyReadGate <- struct{}{}:
+			defer func() { <-s.heavyReadGate }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if !s.sqlitePingMerged || query.MetricName != sqliteVirtualPingLossMetric {
 		return s.seriesPhysical(ctx, query, now)
 	}
@@ -585,6 +593,286 @@ func (s *Store) Series(ctx context.Context, query AggregateQuery, now time.Time)
 		return nil, err
 	}
 	return restoreVirtualPingLossAggregates(points), nil
+}
+
+// SeriesBatch evaluates related series under one bounded historical-read slot.
+// It preserves query order and the exact Series behavior for every item while
+// avoiding one admission cycle per metric on multi-series dashboard reads.
+func (s *Store) SeriesBatch(ctx context.Context, queries []AggregateQuery, now time.Time) ([][]AggregatePoint, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	for _, query := range queries {
+		if err := query.Validate(); err != nil {
+			return nil, err
+		}
+	}
+	if s.cfg.Driver == DriverSQLite {
+		select {
+		case s.heavyReadGate <- struct{}{}:
+			defer func() { <-s.heavyReadGate }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+
+	result := make([][]AggregatePoint, len(queries))
+	for index, query := range queries {
+		virtualLoss := s.sqlitePingMerged && query.MetricName == sqliteVirtualPingLossMetric
+		if virtualLoss {
+			query.MetricName = sqliteMergedPingLatencyMetric
+			query.Aggregation = pingLossPhysicalAggregation(query.Aggregation)
+		}
+		points, err := s.seriesPhysical(ctx, query, now)
+		if err != nil {
+			return nil, err
+		}
+		if virtualLoss {
+			points = restoreVirtualPingLossAggregates(points)
+		}
+		result[index] = points
+	}
+	return result, nil
+}
+
+// SeriesSummary contains the aggregate views used by the ping statistics API.
+// All views are derived from one physical scan when ping latency and loss share
+// the SQLite V8 series, so percentile decoding and block IO are not repeated.
+type SeriesSummary struct {
+	Avg    []AggregatePoint
+	Min    []AggregatePoint
+	Max    []AggregatePoint
+	Last   []AggregatePoint
+	P50    []AggregatePoint
+	P99    []AggregatePoint
+	StdDev []AggregatePoint
+	Loss   []AggregatePoint
+}
+
+// PingSeriesSummary returns latency and loss aggregates without changing the
+// existing Series API. Older/non-SQLite layouts keep the compatibility path;
+// migrated SQLite stores scan the merged physical series exactly once.
+func (s *Store) PingSeriesSummary(ctx context.Context, query AggregateQuery, now time.Time) (SeriesSummary, error) {
+	query.Aggregation = AggAvg
+	if err := s.ensureOpen(); err != nil {
+		return SeriesSummary{}, err
+	}
+	if err := query.Validate(); err != nil {
+		return SeriesSummary{}, err
+	}
+	if !s.sqlitePingMerged || query.MetricName != sqliteMergedPingLatencyMetric {
+		return s.pingSeriesSummaryCompatibility(ctx, query, now)
+	}
+
+	select {
+	case s.heavyReadGate <- struct{}{}:
+		defer func() { <-s.heavyReadGate }()
+	case <-ctx.Done():
+		return SeriesSummary{}, ctx.Err()
+	}
+
+	rawOnly, err := s.seriesPhysicalUsesOnlyRaw(ctx, query, now)
+	if err != nil {
+		return SeriesSummary{}, err
+	}
+	if rawOnly {
+		return s.pingSeriesSummaryFromRaw(ctx, query)
+	}
+
+	groups, err := s.collectSeriesPhysicalGroups(ctx, query, now, true)
+	if err != nil {
+		return SeriesSummary{}, err
+	}
+	build := func(metricName string, aggregation Aggregation) ([]AggregatePoint, error) {
+		view := query
+		view.MetricName = metricName
+		view.Aggregation = aggregation
+		points, err := rollupGroupsToPoints(groups, view)
+		if err != nil {
+			return nil, err
+		}
+		return pageBuckets(points, view.BucketLimit, view.BucketOffset), nil
+	}
+
+	var summary SeriesSummary
+	views := []struct {
+		aggregation Aggregation
+		target      *[]AggregatePoint
+	}{
+		{AggAvg, &summary.Avg},
+		{AggMin, &summary.Min},
+		{AggMax, &summary.Max},
+		{AggLast, &summary.Last},
+		{AggP50, &summary.P50},
+		{AggP99, &summary.P99},
+		{AggStdDev, &summary.StdDev},
+	}
+	for _, view := range views {
+		points, err := build(sqliteMergedPingLatencyMetric, view.aggregation)
+		if err != nil {
+			return SeriesSummary{}, err
+		}
+		*view.target = points
+	}
+	summary.Loss, err = build(sqliteVirtualPingLossMetric, aggPingLossAvg)
+	return summary, err
+}
+
+func (s *Store) pingSeriesSummaryFromRaw(ctx context.Context, query AggregateQuery) (SeriesSummary, error) {
+	rawQuery := query.Query.normalized()
+	rawQuery.Limit = 0
+	rawQuery.Offset = 0
+	points, err := s.Query(ctx, rawQuery)
+	if err != nil {
+		return SeriesSummary{}, err
+	}
+	build := func(aggregation Aggregation) ([]AggregatePoint, error) {
+		view := query
+		view.Aggregation = aggregation
+		result, err := AggregatePoints(points, view)
+		if err != nil {
+			return nil, err
+		}
+		return pageBuckets(result, view.BucketLimit, view.BucketOffset), nil
+	}
+	var summary SeriesSummary
+	views := []struct {
+		aggregation Aggregation
+		target      *[]AggregatePoint
+	}{
+		{AggAvg, &summary.Avg}, {AggMin, &summary.Min}, {AggMax, &summary.Max},
+		{AggLast, &summary.Last}, {AggP50, &summary.P50}, {AggP99, &summary.P99},
+		{AggStdDev, &summary.StdDev},
+	}
+	for _, view := range views {
+		result, err := build(view.aggregation)
+		if err != nil {
+			return SeriesSummary{}, err
+		}
+		*view.target = result
+	}
+	summary.Loss, err = build(aggPingLossAvg)
+	if err == nil {
+		summary.Loss = restoreVirtualPingLossAggregates(summary.Loss)
+	}
+	return summary, err
+}
+
+func (s *Store) seriesPhysicalUsesOnlyRaw(ctx context.Context, query AggregateQuery, now time.Time) (bool, error) {
+	policy := s.cfg.RollupPolicy
+	if !policy.Enabled() {
+		return true, nil
+	}
+	q := query.Query.normalized()
+	now = now.UTC()
+	rawCutoff := policy.rawCutoff(now)
+	if rawCutoff.IsZero() || !q.Start.Before(rawCutoff) {
+		return true, nil
+	}
+	hasCompatibleTier := false
+	for _, tier := range policy.Tiers {
+		if query.Interval >= tier.Interval && query.Interval%tier.Interval == 0 {
+			hasCompatibleTier = true
+			break
+		}
+	}
+	if !hasCompatibleTier {
+		return true, nil
+	}
+	watermark, hasWatermark, err := s.compactionWatermark(ctx, q.MetricName)
+	if err != nil {
+		return false, err
+	}
+	if !hasWatermark {
+		return false, nil
+	}
+	boundary := rawCutoff
+	if watermark.Before(boundary) {
+		boundary = watermark
+	}
+	return !q.Start.Before(boundary), nil
+}
+
+func (s *Store) pingSeriesSummaryCompatibility(ctx context.Context, query AggregateQuery, now time.Time) (SeriesSummary, error) {
+	load := func(metricName string, aggregation Aggregation) ([]AggregatePoint, error) {
+		view := query
+		view.MetricName = metricName
+		view.Aggregation = aggregation
+		return s.Series(ctx, view, now)
+	}
+	var summary SeriesSummary
+	var err error
+	if summary.Avg, err = load(query.MetricName, AggAvg); err != nil {
+		return SeriesSummary{}, err
+	}
+	if summary.Min, err = load(query.MetricName, AggMin); err != nil {
+		return SeriesSummary{}, err
+	}
+	if summary.Max, err = load(query.MetricName, AggMax); err != nil {
+		return SeriesSummary{}, err
+	}
+	if summary.Last, err = load(query.MetricName, AggLast); err != nil {
+		return SeriesSummary{}, err
+	}
+	if summary.P50, err = load(query.MetricName, AggP50); err != nil {
+		return SeriesSummary{}, err
+	}
+	if summary.P99, err = load(query.MetricName, AggP99); err != nil {
+		return SeriesSummary{}, err
+	}
+	if summary.StdDev, err = load(query.MetricName, AggStdDev); err != nil {
+		return SeriesSummary{}, err
+	}
+	summary.Loss, _ = load(sqliteVirtualPingLossMetric, AggAvg)
+	return summary, nil
+}
+
+func (s *Store) collectSeriesPhysicalGroups(ctx context.Context, query AggregateQuery, now time.Time, needDigest bool) (map[rollupKey]*rollupBucket, error) {
+	policy := s.cfg.RollupPolicy
+	q := query.Query.normalized()
+	now = now.UTC()
+	collectRaw := func(raw Query) (map[rollupKey]*rollupBucket, error) {
+		raw.Limit = 0
+		raw.Offset = 0
+		points, err := s.Query(ctx, raw)
+		if err != nil {
+			return nil, err
+		}
+		return foldRawPoints(nil, points, query.Interval, policy.compression(), query.PreserveSeries, needDigest)
+	}
+	if !policy.Enabled() {
+		return collectRaw(q)
+	}
+
+	rawCutoff := policy.rawCutoff(now)
+	watermark, hasWatermark, err := s.compactionWatermark(ctx, q.MetricName)
+	if err != nil {
+		return nil, err
+	}
+	if rawCutoff.IsZero() || !q.Start.Before(rawCutoff) {
+		return collectRaw(q)
+	}
+	hasCompatibleTier := false
+	for _, tier := range policy.Tiers {
+		if query.Interval >= tier.Interval && query.Interval%tier.Interval == 0 {
+			hasCompatibleTier = true
+			break
+		}
+	}
+	if !hasCompatibleTier {
+		return collectRaw(q)
+	}
+	if hasWatermark {
+		boundary := rawCutoff
+		if watermark.Before(boundary) {
+			boundary = watermark
+		}
+		if !q.Start.Before(boundary) {
+			return collectRaw(q)
+		}
+		return s.collectSeriesAcrossHandoffTiers(ctx, query, now, policy, boundary, true, needDigest)
+	}
+	return s.collectSeriesAcrossHandoffTiers(ctx, query, now, policy, rawCutoff, false, needDigest)
 }
 
 func (s *Store) seriesPhysical(ctx context.Context, query AggregateQuery, now time.Time) ([]AggregatePoint, error) {
@@ -655,9 +943,20 @@ type rollupCoverage struct {
 // Without a watermark, raw points are also scanned and only those already
 // covered by a stored rollup bucket are removed, preserving legacy upgrades.
 func (s *Store) seriesAcrossHandoffTiers(ctx context.Context, query AggregateQuery, now time.Time, policy RollupPolicy, rawBoundary time.Time, hasWatermark bool) ([]AggregatePoint, error) {
+	groups, err := s.collectSeriesAcrossHandoffTiers(ctx, query, now, policy, rawBoundary, hasWatermark, isPercentile(query.Aggregation))
+	if err != nil {
+		return nil, err
+	}
+	out, err := rollupGroupsToPoints(groups, query)
+	if err != nil {
+		return nil, err
+	}
+	return pageBuckets(out, query.BucketLimit, query.BucketOffset), nil
+}
+
+func (s *Store) collectSeriesAcrossHandoffTiers(ctx context.Context, query AggregateQuery, now time.Time, policy RollupPolicy, rawBoundary time.Time, hasWatermark, needDigest bool) (map[rollupKey]*rollupBucket, error) {
 	q := query.Query.normalized()
 	comp := policy.compression()
-	needDigest := isPercentile(query.Aggregation)
 	groups := make(map[rollupKey]*rollupBucket)
 	covered := make(map[string][]rollupCoverage)
 	youngBoundary := rawBoundary.UTC().UnixNano()
@@ -735,11 +1034,7 @@ func (s *Store) seriesAcrossHandoffTiers(ctx context.Context, query AggregateQue
 			return nil, err
 		}
 	}
-	out, err := rollupGroupsToPoints(groups, query)
-	if err != nil {
-		return nil, err
-	}
-	return pageBuckets(out, query.BucketLimit, query.BucketOffset), nil
+	return groups, nil
 }
 
 func (s *Store) seriesWithoutWatermark(ctx context.Context, query AggregateQuery, tier *RollupTier) ([]AggregatePoint, error) {

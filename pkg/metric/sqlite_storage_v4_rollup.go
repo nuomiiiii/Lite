@@ -988,7 +988,7 @@ func (s *Store) querySQLiteV4Rollups(ctx context.Context, q querier, metricName,
 		if needDigest {
 			blockColumns += ", b.digest_codec, b.digest_checksum, b.digest_payload"
 		}
-		blockColumns += ", a.codec, a.checksum, a.payload"
+		blockColumns += ", b.axis_id, a.codec, a.checksum, a.payload"
 		blockRows, err := q.QueryContext(ctx, fmt.Sprintf(
 			`SELECT %s FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id
 			 WHERE b.series_id = ? AND b.resolution_nano = ? AND b.end_nano >= ? AND b.start_nano <= ? ORDER BY b.start_nano`,
@@ -1001,18 +1001,18 @@ func (s *Store) querySQLiteV4Rollups(ctx context.Context, q querier, metricName,
 			var startNano, endNano, checksum, digestChecksum int64
 			var count, codec, digestCodec int
 			var payload, digestPayload, axisPayload []byte
-			var axisCodec, axisChecksum sql.NullInt64
+			var axisID, axisCodec, axisChecksum sql.NullInt64
 			destinations := []any{&startNano, &endNano, &count, &codec, &checksum, &payload}
 			if needDigest {
 				destinations = append(destinations, &digestCodec, &digestChecksum, &digestPayload)
 			}
-			destinations = append(destinations, &axisCodec, &axisChecksum, &axisPayload)
+			destinations = append(destinations, &axisID, &axisCodec, &axisChecksum, &axisPayload)
 			if err := blockRows.Scan(destinations...); err != nil {
 				_ = blockRows.Close()
 				return nil, err
 			}
-			records, err := decodeSQLiteV4RollupBlockWithAxisReference(
-				codec, count, uint32(checksum), payload, axisCodec, axisChecksum, axisPayload,
+			records, err := s.decodeSQLiteRollupBlockCached(
+				codec, count, uint32(checksum), payload, axisID, axisCodec, axisChecksum, axisPayload,
 				digestCodec, uint32(digestChecksum), digestPayload, needDigest,
 			)
 			if err != nil {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -97,8 +98,8 @@ func TestBuildMetricConfigUsesFixedSQLiteConnectionStrategy(t *testing.T) {
 	if cfg.MaxOpenConns != 1 || cfg.MaxIdleConns != 1 {
 		t.Fatalf("SQLite primary pool = open:%d idle:%d, want 1/1", cfg.MaxOpenConns, cfg.MaxIdleConns)
 	}
-	if cfg.SQLite.ReadPoolSize != 4 {
-		t.Fatalf("SQLite read pool size = %d, want 4", cfg.SQLite.ReadPoolSize)
+	if cfg.SQLite.ReadPoolSize < 1 || cfg.SQLite.ReadPoolSize > 3 {
+		t.Fatalf("SQLite read pool size = %d, want adaptive range 1..3", cfg.SQLite.ReadPoolSize)
 	}
 }
 
@@ -1033,5 +1034,23 @@ func TestGetRecordsByClientAndTimeReadsRollupsAfterRawCompaction(t *testing.T) {
 	}
 	if len(all) != 1 || all[0].Client != rec.Client || all[0].Cpu == 0 {
 		t.Fatalf("all-client records were not reconstructed from rollup: %#v", all)
+	}
+}
+
+func TestRecordMetricNamesForLoadType(t *testing.T) {
+	tests := []struct {
+		loadType string
+		want     []string
+	}{
+		{"cpu", []string{MetricCPU}},
+		{"network", []string{MetricNetIn, MetricNetOut, MetricNetTotalUp, MetricNetTotalDown}},
+		{"connections", []string{MetricConnections, MetricConnectionsUDP}},
+		{"all", loadRecordMetricNames},
+	}
+	for _, test := range tests {
+		got := recordMetricNamesForLoadType(test.loadType)
+		if !reflect.DeepEqual(got, test.want) {
+			t.Fatalf("load type %q metrics=%v want=%v", test.loadType, got, test.want)
+		}
 	}
 }

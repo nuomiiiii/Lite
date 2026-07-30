@@ -156,7 +156,7 @@ func TestSQLiteV8MigratesLegacyDualPingPointsAtomically(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM metric_series WHERE metric_name = ?`, sqliteVirtualPingLossMetric).Scan(&physicalLossSeries); err != nil {
 		t.Fatal(err)
 	}
-	if userVersion != sqliteStorageVersionPingMerge || physicalLossSeries != 0 {
+	if userVersion != sqliteStorageVersionCurrent || physicalLossSeries != 0 {
 		t.Fatalf("migrated version=%d loss_series=%d", userVersion, physicalLossSeries)
 	}
 	definition, err := store.GetMetric(ctx, sqliteMergedPingLatencyMetric)

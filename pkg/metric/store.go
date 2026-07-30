@@ -42,6 +42,13 @@ type Store struct {
 	//
 	// ownedReadDB 表示 Store 是否应关闭 readDB。
 	ownedReadDB bool
+	// heavyReadGate keeps historical decode work bounded independently of the
+	// number of connected agents and HTTP requests.
+	heavyReadGate chan struct{}
+	// axisCache keeps only immutable decoded shared time axes. Its fixed budget
+	// prevents dashboard query acceleration from scaling memory with fleet size.
+	axisCacheMu sync.Mutex
+	axisCache   *sqliteAxisCache
 	// dialect renders backend-specific SQL.
 	//
 	// dialect 渲染后端专用 SQL。
@@ -98,6 +105,13 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 		}
 	}
 
+	heavyReadConcurrency := cfg.SQLite.HeavyReadConcurrency
+	if heavyReadConcurrency <= 0 {
+		heavyReadConcurrency = cfg.SQLite.ReadPoolSize
+	}
+	if heavyReadConcurrency <= 0 {
+		heavyReadConcurrency = 1
+	}
 	s := &Store{
 		cfg:     cfg,
 		dialect: newDialect(cfg.Driver),
@@ -116,6 +130,8 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 			rollupBlocks: tableName(cfg.TablePrefix, "rollup_blocks"),
 			rollupAxes:   tableName(cfg.TablePrefix, "rollup_axes"),
 		},
+		heavyReadGate: make(chan struct{}, heavyReadConcurrency),
+		axisCache:     newSQLiteAxisCache(defaultSQLiteAxisCacheBytes),
 	}
 
 	if cfg.DB != nil {
@@ -147,7 +163,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	}
 
 	if cfg.Driver == DriverSQLite {
-		if err := s.configureSQLite(ctx, s.db); err != nil {
+		if err := s.configureSQLitePool(ctx, s.db, 1, cfg.SQLite.CacheSizeKB); err != nil {
 			if s.ownedDB {
 				_ = s.db.Close()
 			}
@@ -194,7 +210,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 					s.closeDBs()
 					return nil, fmt.Errorf("metric: inspect SQLite storage version: %w", err)
 				}
-				if userVersion < sqliteStorageVersionPingMerge {
+				if userVersion < sqliteStorageVersionCurrent {
 					s.closeDBs()
 					return nil, fmt.Errorf("metric: SQLite storage V%d requires automatic migration", userVersion)
 				}
@@ -230,7 +246,11 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 			}
 			return nil, err
 		}
-		if err := s.configureSQLite(ctx, readDB); err != nil {
+		readCacheKB := cfg.SQLite.ReadCacheSizeKB
+		if readCacheKB <= 0 {
+			readCacheKB = cfg.SQLite.CacheSizeKB
+		}
+		if err := s.configureSQLitePool(ctx, readDB, cfg.SQLite.ReadPoolSize, readCacheKB); err != nil {
 			_ = readDB.Close()
 			if s.ownedDB {
 				_ = s.db.Close()
@@ -347,18 +367,56 @@ func isMemoryDSN(dsn string) bool {
 //
 // configureSQLite 对 SQLite 连接执行 WAL、busy_timeout、cache 等 PRAGMA。
 func (s *Store) configureSQLite(ctx context.Context, db *sql.DB) error {
+	return s.configureSQLitePool(ctx, db, 1, s.cfg.SQLite.CacheSizeKB)
+}
+
+// configureSQLitePool eagerly opens every pooled connection while earlier
+// connections remain pinned. SQLite PRAGMAs such as cache_size, mmap_size and
+// temp_store are connection-local, so running them once through *sql.DB is not
+// sufficient for a multi-connection read pool.
+func (s *Store) configureSQLitePool(ctx context.Context, db *sql.DB, size, cacheSizeKB int) error {
+	if size < 1 {
+		size = 1
+	}
+	connections := make([]*sql.Conn, 0, size)
+	defer func() {
+		for _, connection := range connections {
+			_ = connection.Close()
+		}
+	}()
+	for i := 0; i < size; i++ {
+		connection, err := db.Conn(ctx)
+		if err != nil {
+			return err
+		}
+		connections = append(connections, connection)
+		if err := s.configureSQLiteConnection(ctx, connection, cacheSizeKB); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type sqlitePragmaExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+func (s *Store) configureSQLiteConnection(ctx context.Context, db sqlitePragmaExecer, cacheSizeKB int) error {
 	if s.cfg.SQLite.PageSize > 0 {
 		if _, err := db.ExecContext(ctx, fmt.Sprintf("PRAGMA page_size = %d", s.cfg.SQLite.PageSize)); err != nil {
 			return err
 		}
 	}
 
+	if cacheSizeKB <= 0 {
+		cacheSizeKB = s.cfg.SQLite.CacheSizeKB
+	}
 	pragmas := []string{
 		"PRAGMA journal_mode = WAL",
 		"PRAGMA foreign_keys = ON",
 		sqliteSynchronousPragma(s.cfg.SQLite.PerformanceProfile),
 		fmt.Sprintf("PRAGMA busy_timeout = %d", durationMillis(s.cfg.SQLite.BusyTimeout)),
-		fmt.Sprintf("PRAGMA cache_size = -%d", s.cfg.SQLite.CacheSizeKB),
+		fmt.Sprintf("PRAGMA cache_size = -%d", cacheSizeKB),
 		fmt.Sprintf("PRAGMA mmap_size = %d", s.cfg.SQLite.MMapSizeBytes),
 		fmt.Sprintf("PRAGMA wal_autocheckpoint = %d", s.cfg.SQLite.WALAutoCheckpoint),
 		fmt.Sprintf("PRAGMA journal_size_limit = %d", s.cfg.SQLite.JournalSizeLimitBytes),

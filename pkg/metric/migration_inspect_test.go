@@ -14,10 +14,17 @@ func TestSQLiteMigrationCompatibilityMatrix(t *testing.T) {
 		name   string
 		layout string
 	}{
+		{name: "upstream-1.2.5", layout: "normalized"},
+		{name: "upstream-1.2.7", layout: "normalized"},
+		{name: "upstream-1.2.8", layout: "normalized"},
+		{name: "upstream-1.2.8-fix", layout: "normalized"},
+		{name: "upstream-1.3.0", layout: "normalized"},
 		{name: "2.1.7-v3", layout: "normalized"},
 		{name: "2.1.8", layout: "v4"},
 		{name: "2.1.8-fix", layout: "v4"},
 		{name: "2.1.9", layout: "v4"},
+		{name: "2.1.10", layout: "v4"},
+		{name: "2.1.11", layout: "v4"},
 	}
 
 	for _, version := range versions {
@@ -101,8 +108,8 @@ func TestSQLiteMigrationCompatibilityMatrix(t *testing.T) {
 			if err := store.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&userVersion); err != nil {
 				t.Fatalf("read %s migration marker: %v", version.name, err)
 			}
-			if userVersion < sqliteStorageVersionV4DigestHandoff {
-				t.Fatalf("%s migration marker=%d want >=%d", version.name, userVersion, sqliteStorageVersionV4DigestHandoff)
+			if userVersion != sqliteStorageVersionCurrent {
+				t.Fatalf("%s migration marker=%d want %d", version.name, userVersion, sqliteStorageVersionCurrent)
 			}
 			if err := store.Close(); err != nil {
 				t.Fatalf("close upgraded %s store: %v", version.name, err)
@@ -146,7 +153,7 @@ func TestSQLiteMigrationInspectorLeavesEmptyDatabaseOnNormalStartup(t *testing.T
 	if err := db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&userVersion); err != nil {
 		t.Fatal(err)
 	}
-	if userVersion < sqliteStorageVersionV4DigestHandoff {
-		t.Fatalf("new V4 database marker=%d want >=%d", userVersion, sqliteStorageVersionV4DigestHandoff)
+	if userVersion != sqliteStorageVersionCurrent {
+		t.Fatalf("new V4 database marker=%d want %d", userVersion, sqliteStorageVersionCurrent)
 	}
 }

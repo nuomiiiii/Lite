@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -8,6 +9,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
+
+func replaceRemoteSessions(t *testing.T, replacement map[string]*remoteSession) {
+	t.Helper()
+	sessionsMu.Lock()
+	original := sessions
+	sessions = replacement
+	sessionsMu.Unlock()
+	t.Cleanup(func() {
+		sessionsMu.Lock()
+		sessions = original
+		sessionsMu.Unlock()
+	})
+}
 
 func TestBrowserAuthorizationRequiresSessionAndTicket(t *testing.T) {
 	for _, authorization := range []browserAuthorization{
@@ -83,18 +97,10 @@ func TestAgentTicketIsBoundToNodeAndExpiry(t *testing.T) {
 }
 
 func TestCloseClientSessionsOnlyClosesSelectedNode(t *testing.T) {
-	sessionsMu.Lock()
-	original := sessions
-	sessions = map[string]*remoteSession{
+	replaceRemoteSessions(t, map[string]*remoteSession{
 		"a-1": {ID: "a-1", UUID: "node-a"},
 		"a-2": {ID: "a-2", UUID: "node-a"},
 		"b-1": {ID: "b-1", UUID: "node-b"},
-	}
-	sessionsMu.Unlock()
-	t.Cleanup(func() {
-		sessionsMu.Lock()
-		sessions = original
-		sessionsMu.Unlock()
 	})
 
 	CloseClientSessions("node-a")
@@ -103,5 +109,55 @@ func TestCloseClientSessionsOnlyClosesSelectedNode(t *testing.T) {
 	}
 	if getSession("b-1") == nil {
 		t.Fatal("unrelated node session was closed")
+	}
+}
+
+func TestRemoteHeartbeatIsConsumedByServer(t *testing.T) {
+	if !isRemoteHeartbeat(websocket.TextMessage, []byte(`{"type":"heartbeat","timestamp":123}`)) {
+		t.Fatal("valid browser heartbeat was not recognized")
+	}
+	if isRemoteHeartbeat(websocket.BinaryMessage, []byte(`{"type":"heartbeat"}`)) {
+		t.Fatal("binary terminal data was treated as a heartbeat")
+	}
+	if isRemoteHeartbeat(websocket.TextMessage, []byte(`{"type":"resize"}`)) {
+		t.Fatal("terminal control message was treated as a heartbeat")
+	}
+}
+
+func TestPruneStaleRemoteSessionsKeepsLiveSessions(t *testing.T) {
+	now := time.Now()
+	replaceRemoteSessions(t, map[string]*remoteSession{
+		"pending-expired": {
+			ID: "pending-expired", ExpiresAt: now.Add(-time.Second), LastActivity: now.Add(-time.Second),
+		},
+		"connected-stale": {
+			ID: "connected-stale", ExpiresAt: now.Add(time.Minute), StartedAt: now.Add(-time.Minute), LastActivity: now.Add(-remoteIdleTimeout - time.Second),
+		},
+		"connected-live": {
+			ID: "connected-live", ExpiresAt: now.Add(time.Minute), StartedAt: now.Add(-time.Minute), LastActivity: now,
+		},
+	})
+
+	pruneStaleSessions(now)
+	if getSession("pending-expired") != nil || getSession("connected-stale") != nil {
+		t.Fatal("stale remote sessions were not removed")
+	}
+	if getSession("connected-live") == nil {
+		t.Fatal("live remote session was removed")
+	}
+}
+
+func TestPutSessionReturnsTypedLimitError(t *testing.T) {
+	now := time.Now()
+	full := make(map[string]*remoteSession, maxRemoteSessions)
+	for index := 0; index < maxRemoteSessions; index++ {
+		id := string(rune('a' + index))
+		full[id] = &remoteSession{ID: id, ExpiresAt: now.Add(time.Minute), LastActivity: now}
+	}
+	replaceRemoteSessions(t, full)
+
+	err := putSession(&remoteSession{ID: "overflow", ExpiresAt: now.Add(time.Minute), LastActivity: now})
+	if !errors.Is(err, errRemoteSessionLimit) {
+		t.Fatalf("putSession error=%v, want remote session limit", err)
 	}
 }

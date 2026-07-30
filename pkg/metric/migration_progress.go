@@ -25,6 +25,7 @@ const (
 	MigrationPhaseHandoffTiers          = "handoff_tiers"
 	MigrationPhaseMergingPingSeries     = "merging_ping_series"
 	MigrationPhaseUpgradingRollupBlocks = "upgrading_rollup_blocks"
+	MigrationPhaseEncodingDigests       = "encoding_digests"
 	MigrationPhaseValidating            = "validating"
 	MigrationPhaseCommitting            = "committing"
 	MigrationPhaseReclaiming            = "reclaiming"

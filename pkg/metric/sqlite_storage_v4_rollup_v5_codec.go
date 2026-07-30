@@ -12,22 +12,26 @@ import (
 
 const (
 	sqliteV4SharedRollupBlockCodec        = 3
-	sqliteV4StructuredRollupDigestCodec   = 4
+	sqliteV4LegacyStructuredDigestCodec   = 4
+	sqliteV4StructuredRollupDigestCodec   = 5
 	sqliteV4LegacyRollupAxisCodec         = 1
 	sqliteV4LegacyRollupAxisMagic         = "KMA5"
 	sqliteV4RollupAxisCodec               = 2
 	sqliteV4RollupAxisMagic               = "KMA8"
 	sqliteV4RollupValueMagic              = "KMV5"
-	sqliteV4RollupStructuredDigestMagic   = "KMZ5"
+	sqliteV4RollupStructuredDigestMagic   = "KMZ9"
+	sqliteV4LegacyStructuredDigestMagic   = "KMZ5"
 	sqliteV4ValueRaw                      = byte(0)
 	sqliteV4ValueInteger                  = byte(1)
-	sqliteV4StructuredDigestPresent       = byte(1 << 0)
-	sqliteV4StructuredDigestMetadata      = byte(1 << 1)
-	sqliteV4StructuredDigestUnitWeights   = byte(1 << 2)
-	sqliteV4StructuredDigestIntegerWeight = byte(1 << 3)
-	sqliteV4StructuredDigestMeanInteger   = byte(1 << 4)
-	sqliteV4StructuredDigestMeanDecimal   = byte(1 << 5)
-	sqliteV4StructuredDigestMeanXOR       = byte(1 << 6)
+	sqliteV4StructuredDigestPresent       = uint64(1 << 0)
+	sqliteV4StructuredDigestMetadata      = uint64(1 << 1)
+	sqliteV4StructuredDigestUnitWeights   = uint64(1 << 2)
+	sqliteV4StructuredDigestIntegerWeight = uint64(1 << 3)
+	sqliteV4StructuredDigestMeanInteger   = uint64(1 << 4)
+	sqliteV4StructuredDigestMeanDecimal   = uint64(1 << 5)
+	sqliteV4StructuredDigestMeanXOR       = uint64(1 << 6)
+	sqliteV4StructuredDigestMeanRelative  = uint64(1 << 7)
+	sqliteV4StructuredDigestRepeatWeights = uint64(1 << 8)
 	sqliteV4StructuredDigestCommonComp    = byte(1 << 0)
 )
 
@@ -308,6 +312,13 @@ func decodeSQLiteV4SharedRollupBlock(expectedCount int, expectedChecksum uint32,
 	if err != nil {
 		return nil, err
 	}
+	return decodeSQLiteV4SharedRollupValues(expectedCount, expectedChecksum, payload, records)
+}
+
+func decodeSQLiteV4SharedRollupValues(expectedCount int, expectedChecksum uint32, payload []byte, records []sqliteV4RollupRecord) ([]sqliteV4RollupRecord, error) {
+	if len(records) != expectedCount {
+		return nil, fmt.Errorf("metric: SQLite V4 shared rollup axis count mismatch")
+	}
 	if len(payload) < 2 || crc32.ChecksumIEEE(payload) != expectedChecksum {
 		return nil, fmt.Errorf("metric: SQLite V4 shared rollup value checksum mismatch")
 	}
@@ -360,8 +371,32 @@ type sqliteV4StructuredDigestData struct {
 	meanIntegers        []int64
 	meanExponent        int
 	meanXOR             bool
+	meanRelative        bool
+	meanBaseInteger     int64
 	unitWeights         bool
 	integerWeights      bool
+}
+
+func equalUint64Slices(left, right []uint64) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func uvarintEncodedLen(value uint64) int {
+	var encoded [10]byte
+	return binary.PutUvarint(encoded[:], value)
+}
+
+func varintEncodedLen(value int64) int {
+	var encoded [10]byte
+	return binary.PutVarint(encoded[:], value)
 }
 
 func encodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord) ([]byte, error) {
@@ -442,6 +477,30 @@ func encodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord) ([]by
 				}
 			}
 		}
+		if len(item.meanIntegers) > 0 {
+			if base, ok := sqliteV4ExactScaledInt(item.minBits, item.meanExponent); ok {
+				if delta, ok := checkedSubInt64(item.meanIntegers[0], base); ok && varintEncodedLen(delta)+1 < varintEncodedLen(item.meanIntegers[0]) {
+					item.meanRelative = true
+					item.meanBaseInteger = base
+				}
+			}
+		} else if len(item.means) > 0 {
+			first, base := item.means[0], item.minBits
+			var relative uint64
+			if item.meanXOR {
+				relative = first ^ base
+			} else {
+				orderedFirst, orderedBase := sqliteV4OrderedFloatBits(first), sqliteV4OrderedFloatBits(base)
+				if orderedFirst >= orderedBase {
+					relative = orderedFirst - orderedBase
+				} else {
+					relative = ^uint64(0)
+				}
+			}
+			if uvarintEncodedLen(relative)+1 < 8 {
+				item.meanRelative = true
+			}
+		}
 		if !haveCompression {
 			commonCompressionBits = item.compressionBits
 			haveCompression = true
@@ -466,12 +525,14 @@ func encodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord) ([]by
 		binary.LittleEndian.PutUint64(u64[:], commonCompressionBits)
 		raw.Write(u64[:])
 	}
+	var previousWeights []uint64
 	for _, item := range data {
 		if !item.present {
-			raw.WriteByte(0)
+			appendUvarintTo(&raw, 0)
+			previousWeights = nil
 			continue
 		}
-		flags := sqliteV4StructuredDigestPresent
+		flags := uint64(sqliteV4StructuredDigestPresent)
 		if item.metadataFromSummary {
 			flags |= sqliteV4StructuredDigestMetadata
 		}
@@ -489,7 +550,15 @@ func encodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord) ([]by
 		} else if item.meanXOR {
 			flags |= sqliteV4StructuredDigestMeanXOR
 		}
-		raw.WriteByte(flags)
+		if item.meanRelative {
+			flags |= sqliteV4StructuredDigestMeanRelative
+		}
+		repeatWeights := !item.unitWeights && equalUint64Slices(previousWeights, item.weightBits)
+		if repeatWeights {
+			flags &^= sqliteV4StructuredDigestIntegerWeight
+			flags |= sqliteV4StructuredDigestRepeatWeights
+		}
+		appendUvarintTo(&raw, flags)
 		if !commonCompression {
 			binary.LittleEndian.PutUint64(u64[:], item.compressionBits)
 			raw.Write(u64[:])
@@ -506,18 +575,30 @@ func encodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord) ([]by
 		}
 		if len(item.meanIntegers) > 0 {
 			if len(item.meanIntegers) > 0 {
-				appendVarintTo(&raw, item.meanIntegers[0])
+				first := item.meanIntegers[0]
+				if item.meanRelative {
+					first -= item.meanBaseInteger
+				}
+				appendVarintTo(&raw, first)
 				for i := 1; i < len(item.meanIntegers); i++ {
 					appendVarintTo(&raw, item.meanIntegers[i]-item.meanIntegers[i-1])
 				}
 			}
 		} else if len(item.means) > 0 {
 			first := item.means[0]
-			if !item.meanXOR {
-				first = sqliteV4OrderedFloatBits(first)
+			if item.meanRelative {
+				if item.meanXOR {
+					appendUvarintTo(&raw, first^item.minBits)
+				} else {
+					appendUvarintTo(&raw, sqliteV4OrderedFloatBits(first)-sqliteV4OrderedFloatBits(item.minBits))
+				}
+			} else {
+				if !item.meanXOR {
+					first = sqliteV4OrderedFloatBits(first)
+				}
+				binary.LittleEndian.PutUint64(u64[:], first)
+				raw.Write(u64[:])
 			}
-			binary.LittleEndian.PutUint64(u64[:], first)
-			raw.Write(u64[:])
 			previous := item.means[0]
 			for i := 1; i < len(item.means); i++ {
 				if item.meanXOR {
@@ -528,25 +609,28 @@ func encodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord) ([]by
 				previous = item.means[i]
 			}
 		}
-		if item.unitWeights {
+		if item.unitWeights || repeatWeights {
+			previousWeights = append(previousWeights[:0], item.weightBits...)
 			continue
 		}
 		if item.integerWeights {
 			for _, weight := range item.weights {
 				appendUvarintTo(&raw, weight)
 			}
+			previousWeights = append(previousWeights[:0], item.weightBits...)
 			continue
 		}
 		for _, bitsValue := range item.weightBits {
 			binary.LittleEndian.PutUint64(u64[:], bitsValue)
 			raw.Write(u64[:])
 		}
+		previousWeights = append(previousWeights[:0], item.weightBits...)
 	}
 	return compressSQLiteV4RollupSection(raw.Bytes(), sqliteV4RollupDigestLevel)
 }
 
 func decodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord, codec int, expectedChecksum uint32, payload []byte) error {
-	if codec != sqliteV4StructuredRollupDigestCodec || len(payload) < 2 || crc32.ChecksumIEEE(payload) != expectedChecksum {
+	if (codec != sqliteV4StructuredRollupDigestCodec && codec != sqliteV4LegacyStructuredDigestCodec) || len(payload) < 2 || crc32.ChecksumIEEE(payload) != expectedChecksum {
 		return fmt.Errorf("metric: invalid SQLite V4 structured digest payload")
 	}
 	raw, err := inflateSQLiteV4Payload(payload)
@@ -554,8 +638,13 @@ func decodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord, codec
 		return err
 	}
 	reader := bytes.NewReader(raw)
-	magic := make([]byte, len(sqliteV4RollupStructuredDigestMagic))
-	if _, err := io.ReadFull(reader, magic); err != nil || string(magic) != sqliteV4RollupStructuredDigestMagic {
+	version9 := codec == sqliteV4StructuredRollupDigestCodec
+	wantMagic := sqliteV4LegacyStructuredDigestMagic
+	if version9 {
+		wantMagic = sqliteV4RollupStructuredDigestMagic
+	}
+	magic := make([]byte, len(wantMagic))
+	if _, err := io.ReadFull(reader, magic); err != nil || string(magic) != wantMagic {
 		return fmt.Errorf("metric: invalid SQLite V4 structured digest header")
 	}
 	count64, err := binary.ReadUvarint(reader)
@@ -576,14 +665,25 @@ func decodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord, codec
 			return err
 		}
 	}
+	var previousWeights []uint64
 	for index := range records {
-		flags, err := reader.ReadByte()
+		var flags uint64
+		if version9 {
+			flags, err = binary.ReadUvarint(reader)
+		} else {
+			var legacyFlags byte
+			legacyFlags, err = reader.ReadByte()
+			flags = uint64(legacyFlags)
+		}
 		if err != nil {
 			return err
 		}
-		allowed := byte(sqliteV4StructuredDigestPresent | sqliteV4StructuredDigestMetadata |
+		allowed := uint64(sqliteV4StructuredDigestPresent | sqliteV4StructuredDigestMetadata |
 			sqliteV4StructuredDigestUnitWeights | sqliteV4StructuredDigestIntegerWeight |
 			sqliteV4StructuredDigestMeanInteger | sqliteV4StructuredDigestMeanDecimal | sqliteV4StructuredDigestMeanXOR)
+		if version9 {
+			allowed |= sqliteV4StructuredDigestMeanRelative | sqliteV4StructuredDigestRepeatWeights
+		}
 		if flags & ^allowed != 0 {
 			return fmt.Errorf("metric: unsupported SQLite V4 structured digest flags 0x%x", flags)
 		}
@@ -591,10 +691,14 @@ func decodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord, codec
 			if flags != 0 {
 				return fmt.Errorf("metric: invalid empty SQLite V4 structured digest flags 0x%x", flags)
 			}
+			previousWeights = nil
 			continue
 		}
 		if flags&sqliteV4StructuredDigestUnitWeights != 0 && flags&sqliteV4StructuredDigestIntegerWeight != 0 {
 			return fmt.Errorf("metric: conflicting SQLite V4 structured digest weight flags 0x%x", flags)
+		}
+		if flags&sqliteV4StructuredDigestRepeatWeights != 0 && flags&(sqliteV4StructuredDigestUnitWeights|sqliteV4StructuredDigestIntegerWeight) != 0 {
+			return fmt.Errorf("metric: conflicting SQLite V9 repeated digest weight flags 0x%x", flags)
 		}
 		meanFlags := flags & (sqliteV4StructuredDigestMeanInteger | sqliteV4StructuredDigestMeanDecimal | sqliteV4StructuredDigestMeanXOR)
 		if meanFlags != 0 && meanFlags&(meanFlags-1) != 0 {
@@ -636,6 +740,16 @@ func decodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord, codec
 				if err != nil {
 					return err
 				}
+				if flags&sqliteV4StructuredDigestMeanRelative != 0 {
+					base, ok := sqliteV4ExactScaledInt(minBits, exponent)
+					if !ok {
+						return fmt.Errorf("metric: invalid SQLite V9 relative integer digest mean")
+					}
+					current, err = checkedAddInt64(base, current)
+					if err != nil {
+						return err
+					}
+				}
 				scale := math.Pow10(exponent)
 				means[0] = math.Float64bits(float64(current) / scale)
 				for i := 1; i < n; i++ {
@@ -653,11 +767,27 @@ func decodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord, codec
 		default:
 			if n > 0 {
 				var first uint64
-				if err := binary.Read(reader, binary.LittleEndian, &first); err != nil {
-					return err
-				}
-				if flags&sqliteV4StructuredDigestMeanXOR == 0 {
-					first = sqliteV4FloatBitsFromOrdered(first)
+				if flags&sqliteV4StructuredDigestMeanRelative != 0 {
+					relative, err := binary.ReadUvarint(reader)
+					if err != nil {
+						return err
+					}
+					if flags&sqliteV4StructuredDigestMeanXOR != 0 {
+						first = minBits ^ relative
+					} else {
+						orderedBase := sqliteV4OrderedFloatBits(minBits)
+						if orderedBase+relative < orderedBase {
+							return fmt.Errorf("metric: SQLite V9 relative digest mean overflow")
+						}
+						first = sqliteV4FloatBitsFromOrdered(orderedBase + relative)
+					}
+				} else {
+					if err := binary.Read(reader, binary.LittleEndian, &first); err != nil {
+						return err
+					}
+					if flags&sqliteV4StructuredDigestMeanXOR == 0 {
+						first = sqliteV4FloatBitsFromOrdered(first)
+					}
 				}
 				means[0] = first
 				previous := first
@@ -682,6 +812,11 @@ func decodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord, codec
 		}
 		weights := make([]uint64, n)
 		switch {
+		case flags&sqliteV4StructuredDigestRepeatWeights != 0:
+			if len(previousWeights) != n {
+				return fmt.Errorf("metric: invalid SQLite V9 repeated digest weights")
+			}
+			copy(weights, previousWeights)
 		case flags&sqliteV4StructuredDigestUnitWeights != 0:
 			for i := range weights {
 				weights[i] = math.Float64bits(1)
@@ -701,6 +836,7 @@ func decodeSQLiteV4StructuredRollupDigests(records []sqliteV4RollupRecord, codec
 				}
 			}
 		}
+		previousWeights = append(previousWeights[:0], weights...)
 		digestRaw := make([]byte, 39+n*16)
 		digestRaw[0], digestRaw[1], digestRaw[2] = tdigestMagic0, tdigestMagic1, tdigestVersion
 		binary.LittleEndian.PutUint64(digestRaw[3:11], compressionBits)
@@ -734,7 +870,7 @@ func decodeSQLiteV4StoredRollupBlock(codec, expectedCount int, expectedChecksum 
 		return nil, err
 	}
 	if needDigest {
-		if digestCodec == sqliteV4StructuredRollupDigestCodec {
+		if digestCodec == sqliteV4StructuredRollupDigestCodec || digestCodec == sqliteV4LegacyStructuredDigestCodec {
 			err = decodeSQLiteV4StructuredRollupDigests(records, digestCodec, expectedDigestChecksum, digestPayload)
 		} else {
 			err = decodeSQLiteV4RollupDigestSection(records, digestCodec, expectedDigestChecksum, digestPayload)

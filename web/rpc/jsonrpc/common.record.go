@@ -82,7 +82,7 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 	switch params.Type {
 	case "load":
 		// fetch load records
-		recs, err := getLoadRecordsCombined(params.UUID, startTime, endTime)
+		recs, err := getLoadRecordsCombined(params.UUID, startTime, endTime, params.LoadType)
 		if err != nil {
 			return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch records", err.Error())
 		}
@@ -434,13 +434,13 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 
 // getLoadRecordsCombined fetches records for a client or all clients within a time range,
 // combining recent short-term table and long-term table with 15-min grouping for recent part.
-func getLoadRecordsCombined(uuid string, start, end time.Time) ([]models.Record, error) {
+func getLoadRecordsCombined(uuid string, start, end time.Time, loadType string) ([]models.Record, error) {
 	// prefer the existing function when uuid provided
 	if uuid != "" {
-		return recordsdb.GetRecordsByClientAndTime(uuid, start, end)
+		return recordsdb.GetRecordsByClientAndTimeForLoadType(uuid, start, end, loadType)
 	}
 	// 所有客户端：统一通过 records 包查询，启用 metric store 时自动走 metric store
-	return recordsdb.GetRecordsByTime(start, end)
+	return recordsdb.GetRecordsByTimeForLoadType(start, end, loadType)
 }
 
 // ---------- downsampling helpers ----------
