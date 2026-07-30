@@ -184,6 +184,6 @@ jobs:
             docker pull --platform "${platform}" "${image}"
             output="$(docker run --rm --platform "${platform}" "${image}" /app/komari version --json)"
             echo "${output}"
-            grep -F '\"version\":\"2.1.11-snapshot\"' <<<"${output}"
+            grep -F '"version":"2.1.11-snapshot"' <<<"${output}"
             grep -F "\"hash\":\"${expected_hash}\"" <<<"${output}"
           done
