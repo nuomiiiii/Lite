@@ -212,37 +212,42 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
-          RELEASE_NOTES: |
-            ## 本次更新
-
-            - 升级监控数据库存储结构，进一步减少重复时间轴和块结构带来的空间占用。
-            - 延迟与丢包数据改用共享存储，原有查询接口、图表显示和数据精度保持不变。
-            - 历史数据改为真正的分层接力，避免不同精度的数据长期重复保存。
-            - 升级时提供数据库迁移页面，可查看当前阶段和异常信息；迁移失败会完整回滚，不删除原数据。
-            - 兼容上游旧版本、上游 1.3.1，以及 Komari 2.1.7 至 2.1.11 的数据库升级，并保留用户原有的数据保留天数。
-            - 数据降采样统一启用并移除低资源模式，旧配置会在升级时自动完成兼容处理。
-
-            ## Docker 快照
-
-            ```bash
-            docker pull ghcr.io/nuomiiiii/komari:snapshot
-            ```
-
-            支持 `linux/amd64` 和 `linux/arm64`。快照版本仅用于测试，请先备份数据。
         shell: bash
         run: |
           set -euo pipefail
+          release_notes_file=".github/release-notes/snapshot-2.1.11.md"
+          release_time="$(date -u -d '+8 hours' '+%Y-%m-%d %H:%M')"
+          version_hash="${GITHUB_SHA::7}"
+          release_notes="$(<"${release_notes_file}")"
+          release_notes="${release_notes//__RELEASE_TIME__/${release_time}}"
+          release_notes="${release_notes//__VERSION_HASH__/${version_hash}}"
+
           if gh release view "${VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release edit "${VERSION}" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "${VERSION}" \
-              --notes "${RELEASE_NOTES}" \
+              --notes "${release_notes}" \
               --prerelease
           else
             gh release create "${VERSION}" \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
               --title "${VERSION}" \
-              --notes "${RELEASE_NOTES}" \
+              --notes "${release_notes}" \
               --prerelease
           fi
+
+          gh release list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --limit 1000 \
+            --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease and (.tagName | startswith("Snapshot-"))) | .tagName' |
+          while IFS= read -r tag; do
+            if [ -z "${tag}" ] || [ "${tag}" = "${VERSION}" ]; then
+              continue
+            fi
+            gh release delete "${tag}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --cleanup-tag \
+              --yes
+          done
