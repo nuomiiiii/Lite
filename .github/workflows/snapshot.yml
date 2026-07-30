@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main
+      - snapshot-2.1.11-metric-arm-fix
 
 permissions:
   contents: write
@@ -27,18 +27,19 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Ensure snapshot target is main
+      - name: Ensure snapshot target is the metric ARM fix branch
         run: |
-          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
-            echo "Snapshot builds must run from refs/heads/main. Current ref: ${GITHUB_REF}"
+          SNAPSHOT_BRANCH="snapshot-2.1.11-metric-arm-fix"
+          if [ "${GITHUB_REF}" != "refs/heads/${SNAPSHOT_BRANCH}" ]; then
+            echo "This snapshot must run from refs/heads/${SNAPSHOT_BRANCH}. Current ref: ${GITHUB_REF}"
             exit 1
           fi
 
-          git fetch --no-tags --depth=1 origin main
+          git fetch --no-tags --depth=1 origin "${SNAPSHOT_BRANCH}"
           MAIN_SHA="$(git rev-parse FETCH_HEAD)"
 
           if [ "${GITHUB_SHA}" != "${MAIN_SHA}" ]; then
-            echo "Snapshot builds must use the current main commit."
+            echo "Snapshot builds must use the current fix-branch commit."
             echo "Workflow SHA: ${GITHUB_SHA}"
             echo "Current main: ${MAIN_SHA}"
             exit 1
@@ -70,6 +71,22 @@ jobs:
         uses: ./.github/actions/build-frontend
         with:
           artifact-name: komari-frontend
+
+  test-backend:
+    needs: validate-ref
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run backend regression suite
+        run: go test ./...
 
   build-and-attach-binaries:
     needs: [prepare, build-frontend]
@@ -159,7 +176,7 @@ jobs:
           path: komari-${{ matrix.goos }}-${{ matrix.goarch }}*
 
   publish-snapshot-release:
-    needs: [prepare, build-and-attach-binaries]
+    needs: [prepare, test-backend, build-and-attach-binaries]
     runs-on: ubuntu-latest
     permissions:
       actions: write
@@ -168,13 +185,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Ensure commit is still current main
+      - name: Ensure commit is still current fix branch
         run: |
-          git fetch --no-tags --depth=1 origin main
+          git fetch --no-tags --depth=1 origin "${GITHUB_REF_NAME}"
           MAIN_SHA="$(git rev-parse FETCH_HEAD)"
 
           if [ "${GITHUB_SHA}" != "${MAIN_SHA}" ]; then
-            echo "Snapshot publish skipped because a newer main commit exists."
+            echo "Snapshot publish skipped because a newer fix-branch commit exists."
             echo "Workflow SHA: ${GITHUB_SHA}"
             echo "Current main: ${MAIN_SHA}"
             exit 1
@@ -241,13 +258,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Ensure commit is still current main
+      - name: Ensure commit is still current fix branch
         run: |
-          git fetch --no-tags --depth=1 origin main
+          git fetch --no-tags --depth=1 origin "${GITHUB_REF_NAME}"
           MAIN_SHA="$(git rev-parse FETCH_HEAD)"
 
           if [ "${GITHUB_SHA}" != "${MAIN_SHA}" ]; then
-            echo "Snapshot Docker publish skipped because a newer main commit exists."
+            echo "Snapshot Docker publish skipped because a newer fix-branch commit exists."
             echo "Workflow SHA: ${GITHUB_SHA}"
             echo "Current main: ${MAIN_SHA}"
             exit 1
