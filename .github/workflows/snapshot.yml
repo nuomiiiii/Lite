@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - snapshot-2.1.11-metric-arm-fix
+      - snapshot-2.1.11-fix
 
 permissions:
   contents: write
@@ -29,7 +29,7 @@ jobs:
 
       - name: Ensure snapshot target is the metric ARM fix branch
         run: |
-          SNAPSHOT_BRANCH="snapshot-2.1.11-metric-arm-fix"
+          SNAPSHOT_BRANCH="snapshot-2.1.11-fix"
           if [ "${GITHUB_REF}" != "refs/heads/${SNAPSHOT_BRANCH}" ]; then
             echo "This snapshot must run from refs/heads/${SNAPSHOT_BRANCH}. Current ref: ${GITHUB_REF}"
             exit 1
@@ -73,12 +73,15 @@ jobs:
           artifact-name: komari-frontend
 
   test-backend:
-    needs: validate-ref
+    needs: [validate-ref, build-frontend]
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Restore frontend artifact
+        uses: ./.github/actions/restore-frontend
 
       - name: Set up Go
         uses: actions/setup-go@v5
