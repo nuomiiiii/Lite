@@ -507,6 +507,7 @@ func Compact(ctx context.Context, now time.Time) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	defs = compactableMetricDefinitions(activeStore, defs)
 	if len(defs) == 0 {
 		compactAt = 0
 		return 0, nil
@@ -602,6 +603,7 @@ func CompactStep(ctx context.Context, now time.Time) (written int, cycleComplete
 	if err != nil {
 		return 0, false, err
 	}
+	defs = compactableMetricDefinitions(activeStore, defs)
 	if len(defs) == 0 {
 		compactAt = 0
 		cycleErr := finishCompactCycle(ctx, activeStore, now, !checkpointRetried)
@@ -636,6 +638,17 @@ func CompactStep(ctx context.Context, now time.Time) (written int, cycleComplete
 	cycleErr := errors.Join(compactErr, finishCompactCycle(ctx, activeStore, now, !checkpointRetried))
 	finishCompactStep(written, true, cycleErr, time.Now().UTC())
 	return written, true, cycleErr
+}
+
+func compactableMetricDefinitions(activeStore *metric.Store, definitions []metric.Definition) []metric.Definition {
+	filtered := definitions[:0]
+	for _, definition := range definitions {
+		if activeStore.IsVirtualMetric(definition.Name) {
+			continue
+		}
+		filtered = append(filtered, definition)
+	}
+	return filtered
 }
 
 func checkpointLargeMetricWAL(ctx context.Context, activeStore *metric.Store) {

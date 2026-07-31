@@ -873,17 +873,17 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 						continue
 					}
 					bucketNano := floorDivNano(fineRecord.bucketNano, coarse.Interval.Nanoseconds())
-					if len(fineRecord.digest) == 0 {
-						incomplete[bucketNano] = struct{}{}
-						continue
-					}
 					bucketData, err := sqliteV4RollupBucketFromRecord(fineRecord, item, true)
 					if err != nil {
 						return rewrittenBlocks, rewrittenBuckets, err
 					}
+					if len(fineRecord.digest) == 0 && !rollupDigestOptional(item.metricName, bucketData) {
+						incomplete[bucketNano] = struct{}{}
+						continue
+					}
 					bucket := groups[bucketNano]
 					if bucket == nil {
-						bucket = newRollupBucketWithDigest(policy.compression(), true)
+						bucket = newRollupBucketWithDigest(policy.compression(), false)
 						groups[bucketNano] = bucket
 					}
 					bucket.mergeStored(bucketData)
@@ -898,6 +898,12 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 					stored, err := sqliteV4RollupBucketFromRecord(*record, item, true)
 					if err != nil {
 						return rewrittenBlocks, rewrittenBuckets, err
+					}
+					if rebuilt != nil && rollupDigestOptional(item.metricName, rebuilt) &&
+						rollupDigestOptional(item.metricName, stored) {
+						// There are no latency samples to sketch. Keeping the digest
+						// absent is the exact, lossless representation for this bucket.
+						continue
 					}
 					if rebuilt == nil || rebuilt.digest == nil || rebuilt.count != stored.count {
 						// No complete finer source remains. Keep the readable coarse summary,
@@ -919,6 +925,12 @@ func (s *Store) syncSQLiteV4RedundantRollupDigestsTx(ctx context.Context, tx *sq
 					stored, err := sqliteV4RollupBucketFromRecord(*record, item, true)
 					if err != nil {
 						return rewrittenBlocks, rewrittenBuckets, err
+					}
+					if rebuilt != nil && rollupDigestOptional(item.metricName, rebuilt) &&
+						rollupDigestOptional(item.metricName, stored) {
+						record.digest = nil
+						changed = true
+						continue
 					}
 					if rebuilt == nil || rebuilt.digest == nil || !sqliteV4RollupSummariesEqual(rebuilt, stored) {
 						continue

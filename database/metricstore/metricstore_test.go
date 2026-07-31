@@ -40,6 +40,24 @@ func TestDefaultRollupPolicy(t *testing.T) {
 	}
 }
 
+func TestCompactableMetricDefinitionsExcludeVirtualPingLoss(t *testing.T) {
+	ctx := context.Background()
+	store, err := metric.Open(ctx, metric.SQLiteInDir(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	definitions := []metric.Definition{
+		{Name: MetricCPU},
+		{Name: MetricPingLatency},
+		{Name: MetricPingLoss},
+	}
+	got := compactableMetricDefinitions(store, append([]metric.Definition(nil), definitions...))
+	if len(got) != 2 || got[0].Name != MetricCPU || got[1].Name != MetricPingLatency {
+		t.Fatalf("compactable definitions=%#v", got)
+	}
+}
+
 func TestBuildMetricConfigEnablesDefaultRollupPolicy(t *testing.T) {
 	cfg, err := buildMetricConfig(&MetricStoreConfig{
 		Driver:      "sqlite",

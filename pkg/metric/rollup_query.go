@@ -246,7 +246,7 @@ func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, en
 	missing := make([]int, 0)
 	var lower, upper int64
 	for index := range rows {
-		if rows[index].bucketData.digest != nil {
+		if rows[index].bucketData.digest != nil || rollupDigestOptional(metricName, rows[index].bucketData) {
 			continue
 		}
 		missing = append(missing, index)
@@ -282,13 +282,13 @@ func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, en
 	comp := s.cfg.RollupPolicy.compression()
 	groups := make(map[rollupKey]*rollupBucket)
 	for _, row := range fineRows {
-		if row.bucketData.digest == nil {
+		if row.bucketData.digest == nil && !rollupDigestOptional(metricName, row.bucketData) {
 			return nil, fmt.Errorf("metric: finer SQLite V4 rollup digest is unavailable at resolution %d bucket %d", finer, row.bucket)
 		}
 		key := rollupKey{entityID: row.entityID, tagsHash: row.bucketData.tagsHash, bucket: floorDivNano(row.bucket, resolution)}
 		bucket := groups[key]
 		if bucket == nil {
-			bucket = newRollupBucketWithDigest(comp, true)
+			bucket = newRollupBucketWithDigest(comp, false)
 			groups[key] = bucket
 		}
 		bucket.mergeStored(row.bucketData)
@@ -297,6 +297,9 @@ func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, en
 		coarse := rows[index].bucketData
 		key := rollupKey{entityID: rows[index].entityID, tagsHash: coarse.tagsHash, bucket: rows[index].bucket}
 		rebuilt := groups[key]
+		if rollupDigestOptional(metricName, coarse) && rollupDigestOptional(metricName, rebuilt) {
+			continue
+		}
 		if rebuilt == nil || rebuilt.digest == nil || !sqliteV4RollupSummariesEqual(rebuilt, coarse) {
 			return nil, fmt.Errorf("metric: cannot losslessly rebuild SQLite V4 rollup digest at resolution %d bucket %d", resolution, rows[index].bucket)
 		}

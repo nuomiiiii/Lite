@@ -373,7 +373,7 @@ func (s *Store) upsertSQLiteV8RollupValueTx(
 		return err
 	}
 	digest := []byte(nil)
-	if bucket.digest != nil {
+	if bucket.digest != nil && bucket.digest.Count() > 0 {
 		digest = bucket.digest.Encode()
 	}
 	_, err := tx.ExecContext(ctx, fmt.Sprintf(

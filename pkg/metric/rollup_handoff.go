@@ -33,11 +33,11 @@ func (s *Store) handoffExpiredRollupTiersTx(ctx context.Context, metricName stri
 			continue
 		}
 		for _, row := range rows {
-			if row.bucketData.digest == nil {
+			if row.bucketData.digest == nil && !rollupDigestOptional(metricName, row.bucketData) {
 				return written, fmt.Errorf("metric: cannot losslessly hand off %s bucket %d with a missing digest", fine.Interval, row.bucket)
 			}
 		}
-		buckets := coarsenStoredRollups(rows, coarse.Interval, comp)
+		buckets := coarsenStoredRollups(metricName, rows, coarse.Interval, comp)
 		n, err := s.mergeRollupBucketsTx(ctx, metricName, coarse.Interval, buckets, tx)
 		if err != nil {
 			return written, fmt.Errorf("metric: hand off %s tier to %s: %w", fine.Interval, coarse.Interval, err)
@@ -56,7 +56,7 @@ func (s *Store) handoffExpiredRollupTiersTx(ctx context.Context, metricName stri
 	return written, nil
 }
 
-func coarsenStoredRollups(rows []storedRollup, interval time.Duration, comp float64) map[rollupKey]*rollupBucket {
+func coarsenStoredRollups(metricName string, rows []storedRollup, interval time.Duration, comp float64) map[rollupKey]*rollupBucket {
 	out := make(map[rollupKey]*rollupBucket)
 	coarseNano := interval.Nanoseconds()
 	for _, row := range rows {
@@ -67,12 +67,20 @@ func coarsenStoredRollups(rows []storedRollup, interval time.Duration, comp floa
 		}
 		bucket := out[key]
 		if bucket == nil {
-			bucket = newRollupBucket(comp)
+			// Start without a digest and let mergeStored create one only when a
+			// finer bucket has real latency samples. An all-loss Ping group then
+			// remains a legitimate digest-free bucket at the coarser tier.
+			bucket = newRollupBucketWithDigest(comp, false)
 			bucket.tagsHash = row.bucketData.tagsHash
 			bucket.tagsJSON = row.bucketData.tagsJSON
 			out[key] = bucket
 		}
 		bucket.mergeStored(row.bucketData)
+	}
+	for _, bucket := range out {
+		if rollupDigestOptional(metricName, bucket) {
+			bucket.digest = nil
+		}
 	}
 	return out
 }

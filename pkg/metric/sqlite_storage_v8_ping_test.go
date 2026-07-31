@@ -424,6 +424,131 @@ func TestSQLiteV8PingLossCountSurvivesTierHandoff(t *testing.T) {
 	}
 }
 
+func TestSQLiteV8AllLossPingHandoffAcceptsAnySamplingInterval(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		count    int
+		interval time.Duration
+	}{
+		{name: "five-second-probe", count: 12, interval: 5 * time.Second},
+		{name: "one-second-probe", count: 60, interval: time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			policy := RollupPolicy{
+				RawRetention: 10 * time.Minute,
+				Tiers: []RollupTier{
+					{Interval: time.Minute, Retention: 20 * time.Minute},
+					{Interval: 5 * time.Minute, Retention: 2 * time.Hour},
+				},
+			}
+			store, err := Open(ctx, SQLiteInDir(t.TempDir(), WithRollupPolicy(policy)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			for _, definition := range []Definition{
+				{Name: sqliteMergedPingLatencyMetric, Type: TypeGauge, RetentionDays: 1},
+				{Name: sqliteVirtualPingLossMetric, Type: TypeGauge, RetentionDays: 1},
+			} {
+				if err := store.CreateMetric(ctx, definition); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			now := time.Now().UTC().Truncate(time.Minute)
+			base := now.Add(-90 * time.Minute).Truncate(5 * time.Minute).Add(time.Minute)
+			points := make([]Point, 0, test.count*2)
+			for index := 0; index < test.count; index++ {
+				timestamp := base.Add(time.Duration(index) * test.interval)
+				points = append(points,
+					Point{MetricName: sqliteMergedPingLatencyMetric, EntityID: "node-a", Timestamp: timestamp, Value: -1, Tags: map[string]string{"task_id": "task-a"}},
+					Point{MetricName: sqliteVirtualPingLossMetric, EntityID: "node-a", Timestamp: timestamp, Value: 1, Tags: map[string]string{"task_id": "task-a"}},
+				)
+			}
+			if err := store.WriteBatch(ctx, points); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Compact(ctx, now); err != nil {
+				t.Fatalf("all-loss handoff was blocked: %v", err)
+			}
+
+			query := AggregateQuery{
+				Query:       Query{EntityID: "node-a", Start: base.Truncate(5 * time.Minute), End: base.Add(5 * time.Minute), Tags: map[string]string{"task_id": "task-a"}},
+				Aggregation: AggAvg,
+				Interval:    5 * time.Minute,
+			}
+			query.MetricName = sqliteMergedPingLatencyMetric
+			latency, err := store.Series(ctx, query, now)
+			if err != nil || len(latency) != 1 || latency[0].Value != 0 {
+				t.Fatalf("all-loss latency after handoff=%#v err=%v", latency, err)
+			}
+			query.MetricName = sqliteVirtualPingLossMetric
+			loss, err := store.Series(ctx, query, now)
+			if err != nil || len(loss) != 1 || loss[0].Value != 1 {
+				t.Fatalf("all-loss rate after handoff=%#v err=%v", loss, err)
+			}
+			rows, err := store.scanRollupRowsBetween(ctx, sqliteMergedPingLatencyMetric, "node-a", map[string]string{"task_id": "task-a"},
+				(5 * time.Minute).Nanoseconds(), base.Truncate(5*time.Minute).UnixNano(), base.Truncate(5*time.Minute).UnixNano(), true)
+			if err != nil || len(rows) != 1 || rows[0].bucketData.count != int64(test.count) ||
+				rows[0].bucketData.lossCount != int64(test.count) || rows[0].bucketData.digest != nil {
+				t.Fatalf("all-loss coarse bucket changed: rows=%#v err=%v", rows, err)
+			}
+		})
+	}
+}
+
+func TestSQLiteV8MissingDigestWithValidLatencyStillBlocksHandoff(t *testing.T) {
+	ctx := context.Background()
+	policy := RollupPolicy{
+		RawRetention: 10 * time.Minute,
+		Tiers: []RollupTier{
+			{Interval: time.Minute, Retention: 20 * time.Minute},
+			{Interval: 5 * time.Minute, Retention: 2 * time.Hour},
+		},
+	}
+	store, err := Open(ctx, SQLiteInDir(t.TempDir(), WithRollupPolicy(policy)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.CreateMetric(ctx, Definition{Name: sqliteMergedPingLatencyMetric, Type: TypeGauge, RetentionDays: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().UTC().Truncate(time.Minute)
+	bucketTime := now.Add(-90 * time.Minute).Truncate(time.Minute)
+	bucket := newRollupBucketWithDigest(policy.compression(), false)
+	bucket.count = 60
+	bucket.lossCount = 59
+	bucket.sum = 20
+	bucket.sumSq = 400
+	bucket.min = 20
+	bucket.max = 20
+	bucket.firstVal = -1
+	bucket.firstTS = bucketTime.UnixNano()
+	bucket.lastVal = 20
+	bucket.lastTS = bucketTime.Add(59 * time.Second).UnixNano()
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.writeRollupBucketsTx(ctx, sqliteMergedPingLatencyMetric, time.Minute, map[rollupKey]*rollupBucket{
+		{entityID: "node-a", tagsHash: "none", bucket: bucketTime.UnixNano()}: bucket,
+	}, tx); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if _, err := store.handoffExpiredRollupTiersTx(ctx, sqliteMergedPingLatencyMetric, now, policy, tx); err == nil {
+		_ = tx.Rollback()
+		t.Fatal("handoff accepted a missing digest despite a valid latency sample")
+	} else if !strings.Contains(err.Error(), "missing digest") {
+		_ = tx.Rollback()
+		t.Fatalf("unexpected handoff error: %v", err)
+	}
+	_ = tx.Rollback()
+}
+
 func createSQLiteV8LegacyStore(t *testing.T, ctx context.Context, dsn string) *Store {
 	t.Helper()
 	store, err := Open(ctx, SQLite(dsn, WithAutoMigrate(false)))

@@ -75,7 +75,7 @@ func (s *Store) migrateSQLiteV7MetricTiersTx(ctx context.Context, tx *sql.Tx, me
 		for _, row := range coarseRows {
 			existing[rollupKey{entityID: row.entityID, tagsHash: row.bucketData.tagsHash, bucket: row.bucket}] = row.bucketData
 		}
-		groups, missingDigest := coarsenSQLiteV7MigrationRows(fineRows, coarse.Interval, policy.compression())
+		groups, missingDigest := coarsenSQLiteV7MigrationRows(metricName, fineRows, coarse.Interval, policy.compression())
 		toWrite := make(map[rollupKey]*rollupBucket)
 		for key, rebuilt := range groups {
 			stored := existing[key]
@@ -112,7 +112,7 @@ func (s *Store) migrateSQLiteV7MetricTiersTx(ctx context.Context, tx *sql.Tx, me
 	return changed, nil
 }
 
-func coarsenSQLiteV7MigrationRows(rows []storedRollup, interval time.Duration, comp float64) (map[rollupKey]*rollupBucket, map[rollupKey]bool) {
+func coarsenSQLiteV7MigrationRows(metricName string, rows []storedRollup, interval time.Duration, comp float64) (map[rollupKey]*rollupBucket, map[rollupKey]bool) {
 	groups := make(map[rollupKey]*rollupBucket)
 	missingDigest := make(map[rollupKey]bool)
 	coarseNano := interval.Nanoseconds()
@@ -120,15 +120,20 @@ func coarsenSQLiteV7MigrationRows(rows []storedRollup, interval time.Duration, c
 		key := rollupKey{entityID: row.entityID, tagsHash: row.bucketData.tagsHash, bucket: floorDivNano(row.bucket, coarseNano)}
 		bucket := groups[key]
 		if bucket == nil {
-			bucket = newRollupBucket(comp)
+			bucket = newRollupBucketWithDigest(comp, false)
 			bucket.tagsHash = row.bucketData.tagsHash
 			bucket.tagsJSON = row.bucketData.tagsJSON
 			groups[key] = bucket
 		}
-		if row.bucketData.digest == nil {
+		if row.bucketData.digest == nil && !rollupDigestOptional(metricName, row.bucketData) {
 			missingDigest[key] = true
 		}
 		bucket.mergeStored(row.bucketData)
+	}
+	for _, bucket := range groups {
+		if rollupDigestOptional(metricName, bucket) {
+			bucket.digest = nil
+		}
 	}
 	return groups, missingDigest
 }

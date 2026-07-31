@@ -84,6 +84,12 @@ type Store struct {
 	sqlitePingMerged bool
 }
 
+// IsVirtualMetric reports whether a public metric is projected from another
+// physical series and must therefore be omitted from storage maintenance jobs.
+func (s *Store) IsVirtualMetric(metricName string) bool {
+	return s != nil && s.sqlitePingMerged && metricName == sqliteVirtualPingLossMetric
+}
+
 // Open initializes a Store from a Config.
 //
 // Open 根据配置打开 Store，初始化连接池，并在需要时执行自动迁移。

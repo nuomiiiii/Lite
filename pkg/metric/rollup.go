@@ -243,6 +243,16 @@ func newRollupBucketWithDigest(compression float64, includeDigest bool) *rollupB
 	return bucket
 }
 
+// rollupDigestOptional reports the one lossless case where a rollup does not
+// need a percentile digest: a merged ping-latency bucket containing only loss
+// sentinels. The decision is based on the stored sample counts, not on an
+// assumed probe interval, so 1-second, 5-second, and custom schedules behave
+// identically.
+func rollupDigestOptional(metricName string, bucket *rollupBucket) bool {
+	return metricName == sqliteMergedPingLatencyMetric && bucket != nil &&
+		bucket.count > 0 && bucket.lossCount == bucket.count
+}
+
 // addPoint folds a raw observation into the bucket.
 //
 // addPoint 将一个原始观测值合入当前桶。
