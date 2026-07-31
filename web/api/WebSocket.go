@@ -25,7 +25,7 @@ func EnableWebSocketCompression(upgrader *websocket.Upgrader) {
 func RequireSameOriginWebSocket(upgrader *websocket.Upgrader) {
 	upgrader.CheckOrigin = func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")
-		return origin != "" && security.OriginMatchesHost(origin, r.Host)
+		return origin != "" && security.OriginMatchesRequest(origin, r)
 	}
 }
 
@@ -66,7 +66,7 @@ func CheckWebSocketOrigin(r *http.Request) bool {
 	if origin == "" {
 		return false
 	}
-	if security.OriginMatchesHost(origin, r.Host) {
+	if security.OriginMatchesRequest(origin, r) {
 		return true
 	}
 	allowlist, _ := config.GetAs[string](config.WsAllowedOriginsKey, "")

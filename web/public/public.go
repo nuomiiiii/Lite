@@ -207,6 +207,9 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	// 核心逻辑：渲染 Index.html
 	serveIndex := func(c *gin.Context) {
 		reqPath := c.Request.URL.Path
+		if isPrivateApplicationPath(reqPath) {
+			setNoStoreHeaders(c)
+		}
 		cfg := getConfig()
 
 		currentTheme := cfg[config.ThemeKey].(string)
@@ -343,6 +346,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 
 		content, mimeType, exists := getFileContent(currentTheme, distPath)
 		if exists {
+			setStaticCacheHeaders(c, reqPath)
 			c.Data(http.StatusOK, mimeType, content)
 			return
 		}
@@ -358,4 +362,31 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		// 路由 (如 /dashboard, /settings) -> 返回 index.html
 		serveIndex(c)
 	})
+}
+
+func setNoStoreHeaders(c *gin.Context) {
+	c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
+}
+
+func isPrivateApplicationPath(requestPath string) bool {
+	for _, prefix := range []string{"/admin", "/terminal"} {
+		if requestPath == prefix || strings.HasPrefix(requestPath, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func setStaticCacheHeaders(c *gin.Context, requestPath string) {
+	name := strings.ToLower(path.Base(requestPath))
+	switch name {
+	case "index.html", "sw.js", "service-worker.js", "registersw.js", "manifest.webmanifest":
+		setNoStoreHeaders(c)
+		return
+	}
+	if strings.HasPrefix(requestPath, "/assets/") && strings.Contains(strings.TrimSuffix(name, filepath.Ext(name)), "-") {
+		c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	}
 }

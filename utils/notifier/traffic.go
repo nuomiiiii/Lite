@@ -8,6 +8,7 @@ import (
 
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/pkg/config"
 	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/utils/messageSender"
@@ -107,26 +108,7 @@ func CheckTraffic() {
 }
 
 func computeUsedByType(t string, up, down int64) int64 {
-	switch t {
-	case "up":
-		return up
-	case "down":
-		return down
-	case "sum":
-		return up + down
-	case "min":
-		if up < down {
-			return up
-		}
-		return down
-	case "max":
-		fallthrough
-	default:
-		if up > down {
-			return up
-		}
-		return down
-	}
+	return trafficledger.BillableUsage(t, up, down)
 }
 
 func humanBytes(b int64) string {

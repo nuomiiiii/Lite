@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,10 @@ const (
 	DailyLedgerRetentionDays   = 2
 	WeeklyLedgerRetentionDays  = 8
 	MonthlyLedgerRetentionDays = 35
+	// DashboardLedgerRetentionDays keeps a small exact daily ledger for every
+	// client so the dashboard never has to rescan the full metric store.
+	DashboardLedgerRetentionDays = 31
+	DashboardHistoryDays         = 30
 	// MetricSafetyRetentionDays leaves enough metric history to settle a missed
 	// day without retaining an entire report month in the metric store.
 	MetricSafetyRetentionDays = 2
@@ -31,6 +36,11 @@ var (
 type Usage struct {
 	Up   int64
 	Down int64
+}
+
+type HourlyUsage struct {
+	Hour time.Time
+	Usage
 }
 
 type DeltaRecord struct {
@@ -207,17 +217,43 @@ func ledgerRangeComplete(ctx context.Context, db *gorm.DB, clientID string, star
 // Maintain settles recent missing days and removes old ledger rows. Existing
 // rows are never recalculated, so running this hourly has negligible cost.
 func Maintain(ctx context.Context, db *gorm.DB, now time.Time) error {
+	return maintainWithDailyCalculator(ctx, db, now, MetricUsagesByDay)
+}
+
+func maintainWithDailyCalculator(ctx context.Context, db *gorm.DB, now time.Time, calculate dailyUsageCalculator) error {
 	targets, err := enabledReportTargets(ctx, db)
 	if err != nil {
 		return err
 	}
-	today := BeijingDay(now)
-	clientIDs := make([]string, 0, len(targets))
-	for _, target := range targets {
-		clientIDs = append(clientIDs, target.clientID)
+	var allClients []models.Client
+	if err := db.WithContext(ctx).Select("uuid").Order("uuid ASC").Find(&allClients).Error; err != nil {
+		return fmt.Errorf("list dashboard traffic clients: %w", err)
 	}
+
+	targetsByClient := make(map[string]int, len(allClients)+len(targets))
+	for _, client := range allClients {
+		if client.UUID != "" {
+			targetsByClient[client.UUID] = DashboardLedgerRetentionDays
+		}
+	}
+	for _, target := range targets {
+		if target.retentionDays > targetsByClient[target.clientID] {
+			targetsByClient[target.clientID] = target.retentionDays
+		}
+	}
+	targets = targets[:0]
+	clientIDs := make([]string, 0, len(targetsByClient))
+	for clientID, retentionDays := range targetsByClient {
+		clientIDs = append(clientIDs, clientID)
+		targets = append(targets, reportTarget{clientID: clientID, retentionDays: retentionDays})
+	}
+	sort.Strings(clientIDs)
+	sort.Slice(targets, func(i, j int) bool { return targets[i].clientID < targets[j].clientID })
+
+	today := BeijingDay(now)
 	if len(clientIDs) > 0 {
-		if err := EnsureRange(ctx, db, clientIDs, today.AddDate(0, 0, -MetricSafetyRetentionDays), today); err != nil {
+		dashboardStart := today.AddDate(0, 0, -(DashboardHistoryDays - 1))
+		if err := ensureRangeWithDailyCalculator(ctx, db, clientIDs, dashboardStart, today, calculate); err != nil {
 			return err
 		}
 	}
@@ -237,6 +273,31 @@ func Maintain(ctx context.Context, db *gorm.DB, now time.Time) error {
 		return fmt.Errorf("clean disabled traffic ledger rows: %w", err)
 	}
 	return nil
+}
+
+// BillableUsage applies the same traffic accounting rule used by limits and
+// scheduled reports. Unknown values retain the historical "max" default.
+func BillableUsage(kind string, up, down int64) int64 {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "up":
+		return up
+	case "down":
+		return down
+	case "sum":
+		return up + down
+	case "min":
+		if up < down {
+			return up
+		}
+		return down
+	case "max":
+		fallthrough
+	default:
+		if up > down {
+			return up
+		}
+		return down
+	}
 }
 
 // EnsureRange creates any missing per-day rows in [startDay, endDay). The
@@ -393,6 +454,57 @@ func MetricUsage(ctx context.Context, clientID string, start, end time.Time) (Us
 	}
 	up, down := SumTrafficDeltas(records, previous)
 	return Usage{Up: up, Down: down}, nil
+}
+
+// MetricUsageByHour calculates the exact total and hourly increments in one
+// metric-store scan. Hour boundaries use Beijing time to match traffic reports.
+func MetricUsageByHour(ctx context.Context, clientID string, start, end time.Time) (Usage, []HourlyUsage, error) {
+	if end.Before(start) {
+		return Usage{}, nil, fmt.Errorf("traffic metric range end precedes start")
+	}
+	records, previous, err := metricRecordsAndBaseline(ctx, clientID, start, end)
+	if err != nil {
+		return Usage{}, nil, err
+	}
+	return usageByHourFromRecords(records, previous)
+}
+
+func usageByHourFromRecords(records []DeltaRecord, previous *DeltaRecord) (Usage, []HourlyUsage, error) {
+	hasPrevious := previous != nil
+	var previousUp, previousDown int64
+	if previous != nil {
+		previousUp = previous.NetTotalUp
+		previousDown = previous.NetTotalDown
+	}
+	upDeltas := trafficDeltasByRecord(records, hasPrevious, previousUp,
+		func(record DeltaRecord) int64 { return record.NetTotalUp },
+		func(record DeltaRecord) int64 { return record.TrafficUp })
+	downDeltas := trafficDeltasByRecord(records, hasPrevious, previousDown,
+		func(record DeltaRecord) int64 { return record.NetTotalDown },
+		func(record DeltaRecord) int64 { return record.TrafficDown })
+
+	byHour := make(map[time.Time]Usage)
+	total := Usage{}
+	for index, record := range records {
+		hour := record.Time.In(BeijingLocation).Truncate(time.Hour)
+		usage := byHour[hour]
+		usage.Up += upDeltas[index]
+		usage.Down += downDeltas[index]
+		byHour[hour] = usage
+		total.Up += upDeltas[index]
+		total.Down += downDeltas[index]
+	}
+
+	hours := make([]time.Time, 0, len(byHour))
+	for hour := range byHour {
+		hours = append(hours, hour)
+	}
+	sort.Slice(hours, func(i, j int) bool { return hours[i].Before(hours[j]) })
+	result := make([]HourlyUsage, 0, len(hours))
+	for _, hour := range hours {
+		result = append(result, HourlyUsage{Hour: hour, Usage: byHour[hour]})
+	}
+	return total, result, nil
 }
 
 // MetricUsagesByDay scans the full interval once, applies counter recovery as

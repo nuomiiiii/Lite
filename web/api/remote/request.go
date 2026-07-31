@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -18,6 +19,10 @@ type browserAuthorization struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
 	Ticket    string `json:"ticket"`
+}
+
+type cancelSessionRequest struct {
+	SessionID string `json:"session_id" binding:"required"`
 }
 
 func (authorization browserAuthorization) valid() bool {
@@ -68,13 +73,18 @@ func CreateSession(c *gin.Context) {
 		AgentTicket:   utils.GenerateRandomString(32),
 		CreatedAt:     now,
 		ExpiresAt:     now.Add(pendingSessionTTL),
+		LastActivity:  now,
 	}
 	if session.ID == "" || session.BrowserTicket == "" || session.AgentTicket == "" {
 		api.RespondError(c, http.StatusInternalServerError, "Failed to create secure remote session")
 		return
 	}
 	if err := putSession(session); err != nil {
-		api.RespondError(c, http.StatusTooManyRequests, err.Error())
+		if errors.Is(err, errRemoteSessionLimit) {
+			api.RespondError(c, http.StatusTooManyRequests, "远程会话数量已满，请关闭不用的终端后重试")
+		} else {
+			api.RespondError(c, http.StatusConflict, err.Error())
+		}
 		return
 	}
 	auditlog.Log(session.RequesterIP, session.UserUUID, "request remote session, client:"+uuid, "terminal")
@@ -108,6 +118,27 @@ func Authorize(c *gin.Context) {
 		return
 	}
 	api.RespondSuccess(c, gin.H{"authorized": true})
+}
+
+// CancelSession releases a browser-owned remote session immediately. The
+// operation is idempotent so page unload and WebSocket close may race safely.
+func CancelSession(c *gin.Context) {
+	principal := api.GetPrincipal(c)
+	if principal == nil || principal.Type != rpc.PrincipalUser {
+		api.RespondError(c, http.StatusForbidden, "Remote control requires an administrator session")
+		return
+	}
+	var request cancelSessionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "Remote session ID is required")
+		return
+	}
+	loginSession, _ := c.Cookie("session_token")
+	if loginSession == "" || !deleteOwnedSession(request.SessionID, principal.UserUUID, loginSession) {
+		api.RespondError(c, http.StatusNotFound, "Remote session not found")
+		return
+	}
+	api.RespondSuccess(c, gin.H{"released": true})
 }
 
 func verifyRemoteAccess(c *gin.Context, loginSession string) error {

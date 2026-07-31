@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -41,10 +42,9 @@ func TestDefaultRollupPolicy(t *testing.T) {
 
 func TestBuildMetricConfigEnablesDefaultRollupPolicy(t *testing.T) {
 	cfg, err := buildMetricConfig(&MetricStoreConfig{
-		Driver:              "sqlite",
-		DSN:                 ":memory:",
-		DownsamplingEnabled: true,
-		TablePrefix:         "metric_",
+		Driver:      "sqlite",
+		DSN:         ":memory:",
+		TablePrefix: "metric_",
 	}, false)
 	if err != nil {
 		t.Fatalf("build metric config: %v", err)
@@ -59,9 +59,8 @@ func TestBuildMetricConfigEnablesDefaultRollupPolicy(t *testing.T) {
 
 func TestBuildMetricConfigLeavesFinalRetentionToMetricDefinition(t *testing.T) {
 	cfg, err := buildMetricConfig(&MetricStoreConfig{
-		Driver:              "sqlite",
-		DSN:                 ":memory:",
-		DownsamplingEnabled: true,
+		Driver: "sqlite",
+		DSN:    ":memory:",
 	}, false)
 	if err != nil {
 		t.Fatalf("build metric config: %v", err)
@@ -73,60 +72,16 @@ func TestBuildMetricConfigLeavesFinalRetentionToMetricDefinition(t *testing.T) {
 	}
 }
 
-func TestBuildMetricConfigCanDisableDownsampling(t *testing.T) {
+func TestBuildMetricConfigAlwaysEnablesDownsampling(t *testing.T) {
 	cfg, err := buildMetricConfig(&MetricStoreConfig{
-		Driver:              "sqlite",
-		DSN:                 ":memory:",
-		DownsamplingEnabled: false,
+		Driver: "sqlite",
+		DSN:    ":memory:",
 	}, false)
 	if err != nil {
 		t.Fatalf("build metric config: %v", err)
 	}
-	if cfg.RollupPolicy.Enabled() {
-		t.Fatal("expected rollup policy to be disabled")
-	}
-}
-
-func TestBuildMetricConfigKeepsDownsamplingIndependentFromResourceMode(t *testing.T) {
-	for _, lowResourceMode := range []bool{false, true} {
-		cfg, err := buildMetricConfig(&MetricStoreConfig{
-			Driver:              "sqlite",
-			DSN:                 ":memory:",
-			DownsamplingEnabled: false,
-			LowResourceMode:     lowResourceMode,
-		}, false)
-		if err != nil {
-			t.Fatalf("build metric config (low_resource_mode=%t): %v", lowResourceMode, err)
-		}
-		if cfg.RollupPolicy.Enabled() {
-			t.Fatalf("low_resource_mode=%t unexpectedly enabled downsampling", lowResourceMode)
-		}
-	}
-}
-
-func TestBuildMetricConfigUsesSmallSQLiteProfileInLowResourceMode(t *testing.T) {
-	cfg, err := buildMetricConfig(&MetricStoreConfig{
-		Driver:          "sqlite",
-		DSN:             "./data/metrics.db",
-		LowResourceMode: true,
-	}, false)
-	if err != nil {
-		t.Fatalf("build metric config: %v", err)
-	}
-	if cfg.SQLite.CacheSizeKB != 8*1024 {
-		t.Fatalf("cache size = %dKiB, want 8192KiB", cfg.SQLite.CacheSizeKB)
-	}
-	if cfg.SQLite.MMapSizeBytes != 0 {
-		t.Fatalf("mmap size = %d, want 0", cfg.SQLite.MMapSizeBytes)
-	}
-	if cfg.SQLite.TempStoreMemory {
-		t.Fatal("temp store should use FILE in low resource mode")
-	}
-	if cfg.SQLite.ReadPoolSize != 0 {
-		t.Fatalf("read pool size = %d, want 0", cfg.SQLite.ReadPoolSize)
-	}
-	if cfg.SQLite.PerformanceProfile != metric.SQLiteProfileBalanced {
-		t.Fatalf("SQLite profile = %q, want balanced", cfg.SQLite.PerformanceProfile)
+	if !cfg.RollupPolicy.Enabled() {
+		t.Fatal("expected rollup policy to remain enabled")
 	}
 }
 
@@ -143,8 +98,8 @@ func TestBuildMetricConfigUsesFixedSQLiteConnectionStrategy(t *testing.T) {
 	if cfg.MaxOpenConns != 1 || cfg.MaxIdleConns != 1 {
 		t.Fatalf("SQLite primary pool = open:%d idle:%d, want 1/1", cfg.MaxOpenConns, cfg.MaxIdleConns)
 	}
-	if cfg.SQLite.ReadPoolSize != 4 {
-		t.Fatalf("SQLite read pool size = %d, want 4", cfg.SQLite.ReadPoolSize)
+	if cfg.SQLite.ReadPoolSize < 1 || cfg.SQLite.ReadPoolSize > 3 {
+		t.Fatalf("SQLite read pool size = %d, want adaptive range 1..3", cfg.SQLite.ReadPoolSize)
 	}
 }
 
@@ -756,6 +711,13 @@ func TestCompactStepDefersCleanupAndCheckpointUntilCycleEnd(t *testing.T) {
 
 func TestRetryMetricWALCheckpointClearsPendingWAL(t *testing.T) {
 	ctx := context.Background()
+	previousStatus := GetRuntimeStatus()
+	resetRuntimeStatus(metric.DriverSQLite)
+	defer func() {
+		runtimeStatusMu.Lock()
+		runtimeStatus = previousStatus
+		runtimeStatusMu.Unlock()
+	}()
 	dsn := filepath.Join(t.TempDir(), "compact-step-checkpoint-retry.db")
 	s, err := metric.Open(ctx, metric.SQLite(dsn,
 		metric.WithMaxOpenConns(1),
@@ -779,7 +741,9 @@ func TestRetryMetricWALCheckpointClearsPendingWAL(t *testing.T) {
 	if size := fileSize(t, dsn+"-wal"); size == 0 {
 		t.Fatal("expected WAL content before retry")
 	}
-	retryMetricWALCheckpoint(ctx, s)
+	if !retryMetricWALCheckpoint(ctx, s, now) {
+		t.Fatal("pending WAL checkpoint was not retried")
+	}
 	if GetRuntimeStatus().CheckpointPending {
 		t.Fatal("successful deferred WAL checkpoint remained pending")
 	}
@@ -789,6 +753,105 @@ func TestRetryMetricWALCheckpointClearsPendingWAL(t *testing.T) {
 	}
 	if size := fileSize(t, dsn+"-wal"); size != 0 {
 		t.Fatalf("SQLite WAL size after deferred retry = %d, want 0", size)
+	}
+	if retryMetricWALCheckpoint(ctx, s, now.Add(checkpointQuickRetryInterval)) {
+		t.Fatal("successful WAL checkpoint was retried without a new failure")
+	}
+}
+
+func TestFinishCompactCycleDoesNotRepeatLongCheckpointWhilePending(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "compact-step-pending-checkpoint.db")
+	s, err := metric.Open(ctx, metric.SQLite(dsn,
+		metric.WithMaxOpenConns(1),
+		metric.WithSQLiteWALAutoCheckpoint(1_000_000),
+	))
+	if err != nil {
+		t.Fatalf("open metric store: %v", err)
+	}
+	defer s.Close()
+	if err := s.UpsertMetric(ctx, metric.Definition{Name: "a.metric", Type: metric.TypeGauge, RetentionDays: 1}); err != nil {
+		t.Fatalf("upsert metric: %v", err)
+	}
+	now := time.Now().UTC()
+	if err := s.Write(ctx, metric.Point{MetricName: "a.metric", EntityID: "node", Timestamp: now, Value: 7}); err != nil {
+		t.Fatalf("write metric: %v", err)
+	}
+	before := fileSize(t, dsn+"-wal")
+	if before == 0 {
+		t.Fatal("expected WAL content before pending checkpoint")
+	}
+
+	previousStatus := GetRuntimeStatus()
+	runtimeStatusMu.Lock()
+	runtimeStatus.CheckpointPending = true
+	runtimeStatus.ConsecutiveCheckpointFailures = 1
+	runtimeStatusMu.Unlock()
+	defer func() {
+		runtimeStatusMu.Lock()
+		runtimeStatus = previousStatus
+		runtimeStatusMu.Unlock()
+	}()
+
+	if err := finishCompactCycle(ctx, s, now, true); err != nil {
+		t.Fatalf("finish compact cycle while checkpoint pending: %v", err)
+	}
+	if size := fileSize(t, dsn+"-wal"); size < before {
+		t.Fatalf("pending WAL was unexpectedly truncated: before=%d after=%d", before, size)
+	}
+	points, err := s.Query(ctx, metric.Query{
+		MetricName: "a.metric",
+		EntityID:   "node",
+		Start:      now.Add(-time.Second),
+		End:        now.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("query metric after deferred checkpoint: %v", err)
+	}
+	if len(points) != 1 || points[0].Value != 7 {
+		t.Fatalf("metric data changed while checkpoint was deferred: %#v", points)
+	}
+}
+
+func TestMetricWALCheckpointTimeoutUsesLongWaitOnlyAboveLimit(t *testing.T) {
+	if got := metricWALCheckpointTimeout(metricWALCheckpointLimit - 1); got != checkpointRetryTimeout {
+		t.Fatalf("checkpoint timeout below WAL limit = %v, want %v", got, checkpointRetryTimeout)
+	}
+	if got := metricWALCheckpointTimeout(metricWALCheckpointLimit); got != backgroundCheckpointTimeout {
+		t.Fatalf("checkpoint timeout at WAL limit = %v, want %v", got, backgroundCheckpointTimeout)
+	}
+}
+
+func TestCheckpointMetricWALAboveLimit(t *testing.T) {
+	ctx := context.Background()
+	dsn := filepath.Join(t.TempDir(), "compact-step-large-wal.db")
+	s, err := metric.Open(ctx, metric.SQLite(dsn,
+		metric.WithMaxOpenConns(1),
+		metric.WithSQLiteWALAutoCheckpoint(1_000_000),
+	))
+	if err != nil {
+		t.Fatalf("open metric store: %v", err)
+	}
+	defer s.Close()
+	if err := s.UpsertMetric(ctx, metric.Definition{Name: "a.metric", Type: metric.TypeGauge, RetentionDays: 1}); err != nil {
+		t.Fatalf("upsert metric: %v", err)
+	}
+	if err := s.Write(ctx, metric.Point{MetricName: "a.metric", EntityID: "node", Timestamp: time.Now().UTC(), Value: 1}); err != nil {
+		t.Fatalf("write metric: %v", err)
+	}
+	if size := fileSize(t, dsn+"-wal"); size == 0 {
+		t.Fatal("expected WAL content before threshold checkpoint")
+	}
+
+	checkpointed, err := checkpointMetricWALAbove(ctx, s, 1)
+	if err != nil {
+		t.Fatalf("checkpoint oversized WAL: %v", err)
+	}
+	if !checkpointed {
+		t.Fatal("oversized WAL was not checkpointed")
+	}
+	if size := fileSize(t, dsn+"-wal"); size != 0 {
+		t.Fatalf("WAL size after threshold checkpoint = %d, want 0", size)
 	}
 }
 
@@ -971,5 +1034,23 @@ func TestGetRecordsByClientAndTimeReadsRollupsAfterRawCompaction(t *testing.T) {
 	}
 	if len(all) != 1 || all[0].Client != rec.Client || all[0].Cpu == 0 {
 		t.Fatalf("all-client records were not reconstructed from rollup: %#v", all)
+	}
+}
+
+func TestRecordMetricNamesForLoadType(t *testing.T) {
+	tests := []struct {
+		loadType string
+		want     []string
+	}{
+		{"cpu", []string{MetricCPU}},
+		{"network", []string{MetricNetIn, MetricNetOut, MetricNetTotalUp, MetricNetTotalDown}},
+		{"connections", []string{MetricConnections, MetricConnectionsUDP}},
+		{"all", loadRecordMetricNames},
+	}
+	for _, test := range tests {
+		got := recordMetricNamesForLoadType(test.loadType)
+		if !reflect.DeepEqual(got, test.want) {
+			t.Fatalf("load type %q metrics=%v want=%v", test.loadType, got, test.want)
+		}
 	}
 }

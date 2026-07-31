@@ -66,7 +66,7 @@ func AggregatePoints(points []Point, query AggregateQuery) ([]AggregatePoint, er
 	out := make([]AggregatePoint, 0, len(keys))
 	for _, key := range keys {
 		group := groups[key]
-		value, err := aggregateValue(group, query.Aggregation)
+		value, err := aggregateMetricValue(group, query.Aggregation)
 		if err != nil {
 			return nil, err
 		}
@@ -80,6 +80,52 @@ func AggregatePoints(points []Point, query AggregateQuery) ([]AggregatePoint, er
 		})
 	}
 	return out, nil
+}
+
+func aggregateMetricValue(points []Point, aggregation Aggregation) (float64, error) {
+	if len(points) == 0 {
+		return 0, nil
+	}
+	if isInternalPingLossAggregation(aggregation) {
+		lossPoints := make([]Point, len(points))
+		for index, point := range points {
+			lossPoints[index] = virtualPingLossPoint(point)
+		}
+		switch aggregation {
+		case aggPingLossAvg:
+			return aggregateValue(lossPoints, AggAvg)
+		case aggPingLossSum:
+			return aggregateValue(lossPoints, AggSum)
+		case aggPingLossMin:
+			return aggregateValue(lossPoints, AggMin)
+		case aggPingLossMax:
+			return aggregateValue(lossPoints, AggMax)
+		case aggPingLossFirst:
+			return aggregateValue(lossPoints, AggFirst)
+		case aggPingLossLast:
+			return aggregateValue(lossPoints, AggLast)
+		case aggPingLossStdDev:
+			return aggregateValue(lossPoints, AggStdDev)
+		case aggPingLossRate:
+			return aggregateValue(lossPoints, AggRate)
+		default:
+			if fraction, ok := parsePingLossPercentile(aggregation); ok {
+				return aggregateValue(lossPoints, Aggregation(fmt.Sprintf("p%g", fraction*100)))
+			}
+		}
+	}
+
+	if points[0].MetricName != sqliteMergedPingLatencyMetric || aggregation == AggCount ||
+		aggregation == AggFirst || aggregation == AggLast || aggregation == AggRate {
+		return aggregateValue(points, aggregation)
+	}
+	valid := make([]Point, 0, len(points))
+	for _, point := range points {
+		if point.Value >= 0 {
+			valid = append(valid, point)
+		}
+	}
+	return aggregateValue(valid, aggregation)
 }
 
 func sortAggregateGroupKeys(keys []aggregateGroupKey) {
@@ -151,6 +197,43 @@ func CalculateStats(points []Point) (Stats, error) {
 		End:    points[len(points)-1].Timestamp,
 		StdDev: math.Sqrt(variance / float64(len(points))),
 	}, nil
+}
+
+func calculateMergedPingLatencyStats(points []Point) (Stats, error) {
+	if len(points) == 0 {
+		return Stats{}, ErrNoData
+	}
+	points = sortedPoints(points)
+	valid := make([]Point, 0, len(points))
+	for _, point := range points {
+		if point.Value >= 0 {
+			valid = append(valid, point)
+		}
+	}
+	stats := Stats{
+		Count: len(points),
+		First: points[0].Value,
+		Last:  points[len(points)-1].Value,
+		Rate:  counterRate(points),
+		Start: points[0].Timestamp,
+		End:   points[len(points)-1].Timestamp,
+	}
+	if len(valid) == 0 {
+		return stats, nil
+	}
+	validStats, err := CalculateStats(valid)
+	if err != nil {
+		return Stats{}, err
+	}
+	stats.Min = validStats.Min
+	stats.Max = validStats.Max
+	stats.Avg = validStats.Avg
+	stats.Sum = validStats.Sum
+	stats.P50 = validStats.P50
+	stats.P95 = validStats.P95
+	stats.P99 = validStats.P99
+	stats.StdDev = validStats.StdDev
+	return stats, nil
 }
 
 // aggregateValue computes one aggregation over a point group.

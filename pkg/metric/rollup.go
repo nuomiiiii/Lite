@@ -171,6 +171,10 @@ type rollupBucket struct {
 	//
 	// count 是该桶代表的原始点总数。
 	count int64
+	// lossCount is populated only for the merged SQLite ping latency series.
+	// The total sample count remains in count, so packet-loss ratios and latency
+	// statistics can both be reconstructed exactly from one physical series.
+	lossCount int64
 	// sum is the sum of represented values.
 	//
 	// sum 是该桶代表值的总和。
@@ -269,6 +273,43 @@ func (b *rollupBucket) addPoint(value float64, tsNano int64) {
 	}
 }
 
+func (b *rollupBucket) addMetricPoint(metricName string, value float64, tsNano int64) {
+	if metricName != sqliteMergedPingLatencyMetric {
+		b.addPoint(value, tsNano)
+		return
+	}
+
+	validBefore := b.count - b.lossCount
+	if b.count == 0 || tsNano < b.firstTS {
+		b.firstVal, b.firstTS = value, tsNano
+	}
+	if b.count == 0 || tsNano > b.lastTS {
+		b.lastVal, b.lastTS = value, tsNano
+	}
+	b.count++
+	if value < 0 {
+		// Negative ping latency is the long-standing loss sentinel. Keep it in
+		// first/last for API compatibility, but exclude it from latency summaries.
+		b.lossCount++
+		return
+	}
+	if validBefore == 0 {
+		b.min, b.max = value, value
+	} else {
+		if value < b.min {
+			b.min = value
+		}
+		if value > b.max {
+			b.max = value
+		}
+	}
+	b.sum += value
+	b.sumSq += value * value
+	if b.digest != nil {
+		b.digest.Add(value, 1)
+	}
+}
+
 // mergeStored folds a finer rollup row (already-summarized) into this coarser
 // bucket. This is the cascade step: tier i+1 buckets are built by merging the
 // tier i rows they span.
@@ -279,17 +320,22 @@ func (b *rollupBucket) mergeStored(o *rollupBucket) {
 	if o.count == 0 {
 		return
 	}
-	if b.count == 0 {
+	bValid := b.count - b.lossCount
+	oValid := o.count - o.lossCount
+	if bValid == 0 && oValid > 0 {
 		b.min, b.max = o.min, o.max
-		b.firstVal, b.firstTS = o.firstVal, o.firstTS
-		b.lastVal, b.lastTS = o.lastVal, o.lastTS
-	} else {
+	} else if oValid > 0 {
 		if o.min < b.min {
 			b.min = o.min
 		}
 		if o.max > b.max {
 			b.max = o.max
 		}
+	}
+	if b.count == 0 {
+		b.firstVal, b.firstTS = o.firstVal, o.firstTS
+		b.lastVal, b.lastTS = o.lastVal, o.lastTS
+	} else {
 		if o.firstTS < b.firstTS {
 			b.firstVal, b.firstTS = o.firstVal, o.firstTS
 		}
@@ -298,6 +344,7 @@ func (b *rollupBucket) mergeStored(o *rollupBucket) {
 		}
 	}
 	b.count += o.count
+	b.lossCount += o.lossCount
 	b.sum += o.sum
 	b.sumSq += o.sumSq
 	if o.digest != nil {
@@ -315,15 +362,22 @@ func (b *rollupBucket) mergeStored(o *rollupBucket) {
 // value 从桶摘要中计算请求的聚合值；ok=false 表示该聚合无法由 rollup 推导
 // （目前主要是需要有序原始序列的 AggRate）。
 func (b *rollupBucket) value(agg Aggregation) (float64, bool) {
+	validCount := b.count - b.lossCount
 	switch agg {
 	case AggAvg:
-		if b.count == 0 {
+		if validCount == 0 {
 			return 0, true
 		}
-		return b.sum / float64(b.count), true
+		return b.sum / float64(validCount), true
 	case AggMin:
+		if validCount == 0 {
+			return 0, true
+		}
 		return b.min, true
 	case AggMax:
+		if validCount == 0 {
+			return 0, true
+		}
 		return b.max, true
 	case AggSum:
 		return b.sum, true
@@ -334,18 +388,54 @@ func (b *rollupBucket) value(agg Aggregation) (float64, bool) {
 	case AggLast:
 		return b.lastVal, true
 	case AggStdDev:
-		if b.count == 0 {
+		if validCount == 0 {
 			return 0, true
 		}
-		mean := b.sum / float64(b.count)
-		variance := b.sumSq/float64(b.count) - mean*mean
+		mean := b.sum / float64(validCount)
+		variance := b.sumSq/float64(validCount) - mean*mean
 		if variance < 0 {
 			variance = 0 // floating-point guard
 		}
 		return math.Sqrt(variance), true
 	case AggRate:
 		return 0, false // rate needs the ordered raw series; not in a rollup
+	case aggPingLossAvg:
+		if b.count == 0 {
+			return 0, true
+		}
+		return float64(b.lossCount) / float64(b.count), true
+	case aggPingLossSum:
+		return float64(b.lossCount), true
+	case aggPingLossMin:
+		if b.count > 0 && b.lossCount == b.count {
+			return 1, true
+		}
+		return 0, true
+	case aggPingLossMax:
+		if b.lossCount > 0 {
+			return 1, true
+		}
+		return 0, true
+	case aggPingLossFirst:
+		if b.count > 0 && b.firstVal < 0 {
+			return 1, true
+		}
+		return 0, true
+	case aggPingLossLast:
+		if b.count > 0 && b.lastVal < 0 {
+			return 1, true
+		}
+		return 0, true
+	case aggPingLossStdDev:
+		if b.count == 0 {
+			return 0, true
+		}
+		p := float64(b.lossCount) / float64(b.count)
+		return math.Sqrt(p * (1 - p)), true
 	default:
+		if frac, ok := parsePingLossPercentile(agg); ok {
+			return pingLossPercentile(b.count, b.lossCount, frac), true
+		}
 		if frac, ok := parsePercentile(agg); ok {
 			if b.digest == nil || b.digest.Count() == 0 {
 				return 0, true

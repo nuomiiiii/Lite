@@ -28,7 +28,15 @@ func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Reco
 	return metricstore.GetRecordsByClientAndTime(context.Background(), uuid, start, end)
 }
 
+func GetRecordsByClientAndTimeForLoadType(uuid string, start, end time.Time, loadType string) ([]models.Record, error) {
+	return metricstore.GetRecordsByClientAndTimeForLoadType(context.Background(), uuid, start, end, loadType)
+}
+
 // GetRecordsByTime 获取所有客户端在时间范围内的记录。
 func GetRecordsByTime(start, end time.Time) ([]models.Record, error) {
 	return metricstore.GetRecordsByTime(context.Background(), start, end)
+}
+
+func GetRecordsByTimeForLoadType(start, end time.Time, loadType string) ([]models.Record, error) {
+	return metricstore.GetRecordsByTimeForLoadType(context.Background(), start, end, loadType)
 }

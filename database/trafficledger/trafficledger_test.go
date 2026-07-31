@@ -36,6 +36,21 @@ func TestBeijingDayUsesCalendarDateAcrossUTCBoundary(t *testing.T) {
 	assert.True(t, got.Equal(want), "got %s, want %s", got, want)
 }
 
+func TestUsageByHourFromRecordsUsesBeijingBuckets(t *testing.T) {
+	start := time.Date(2026, 7, 31, 16, 0, 0, 0, time.UTC)
+	total, hourly, err := usageByHourFromRecords([]DeltaRecord{
+		{Time: start.Add(10 * time.Minute), NetTotalUp: 130, NetTotalDown: 240, TrafficUp: 30, TrafficDown: 40},
+		{Time: start.Add(70 * time.Minute), NetTotalUp: 180, NetTotalDown: 300, TrafficUp: 50, TrafficDown: 60},
+	}, &DeltaRecord{Time: start.Add(-time.Minute), NetTotalUp: 100, NetTotalDown: 200})
+	require.NoError(t, err)
+	assert.Equal(t, Usage{Up: 80, Down: 100}, total)
+	require.Len(t, hourly, 2)
+	assert.Equal(t, 0, hourly[0].Hour.In(BeijingLocation).Hour())
+	assert.Equal(t, Usage{Up: 30, Down: 40}, hourly[0].Usage)
+	assert.Equal(t, 1, hourly[1].Hour.In(BeijingLocation).Hour())
+	assert.Equal(t, Usage{Up: 50, Down: 60}, hourly[1].Usage)
+}
+
 func TestEnsureRangeAndSumAcrossMonthIsIdempotent(t *testing.T) {
 	db := openLedgerTestDB(t, "traffic-ledger-cross-month")
 	start := time.Date(2026, 7, 30, 0, 0, 0, 0, BeijingLocation)
@@ -162,23 +177,58 @@ func TestMaintainRemovesOnlyExpiredLedgerRows(t *testing.T) {
 		{Client: "client-a", Day: BeijingDay(now).AddDate(0, 0, -1).Format(time.DateOnly)},
 	}).Error)
 
-	require.NoError(t, Maintain(context.Background(), db, now))
+	require.NoError(t, maintainWithDailyCalculator(context.Background(), db, now, zeroDailyUsage))
 	var rows []models.TrafficDailyLedger
 	require.NoError(t, db.Order("day ASC").Find(&rows).Error)
-	require.Len(t, rows, 3)
+	require.Len(t, rows, DashboardHistoryDays)
 	assert.Equal(t, cutoff.Format(time.DateOnly), rows[0].Day)
 }
 
-func TestMaintainDeletesLedgerWhenReportsAreDisabled(t *testing.T) {
+func TestMaintainKeepsDashboardLedgerWhenReportsAreDisabled(t *testing.T) {
 	db := openLedgerTestDB(t, "traffic-ledger-disabled-cleanup")
 	require.NoError(t, db.Create(&models.TrafficDailyLedger{
 		Client: "client-a", Day: "2026-07-24", UpBytes: 10,
 	}).Error)
 
-	require.NoError(t, Maintain(context.Background(), db, time.Date(2026, 7, 25, 12, 0, 0, 0, BeijingLocation)))
+	require.NoError(t, maintainWithDailyCalculator(context.Background(), db, time.Date(2026, 7, 25, 12, 0, 0, 0, BeijingLocation), zeroDailyUsage))
 	var count int64
 	require.NoError(t, db.Model(&models.TrafficDailyLedger{}).Count(&count).Error)
-	assert.Zero(t, count)
+	assert.Equal(t, int64(DashboardHistoryDays-1), count)
+}
+
+func TestMaintainUsesLongestDashboardOrReportRetention(t *testing.T) {
+	db := openLedgerTestDB(t, "traffic-ledger-dashboard-retention")
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, BeijingLocation)
+	require.NoError(t, db.Create(&models.TrafficReportNotification{
+		Client: "client-a", Enable: true, Monthly: true,
+	}).Error)
+	require.NoError(t, db.Create([]models.TrafficDailyLedger{
+		{Client: "client-a", Day: BeijingDay(now).AddDate(0, 0, -MonthlyLedgerRetentionDays-1).Format(time.DateOnly)},
+		{Client: "client-a", Day: BeijingDay(now).AddDate(0, 0, -MonthlyLedgerRetentionDays).Format(time.DateOnly)},
+	}).Error)
+
+	require.NoError(t, maintainWithDailyCalculator(context.Background(), db, now, zeroDailyUsage))
+	var rows []models.TrafficDailyLedger
+	require.NoError(t, db.Where("client = ?", "client-a").Order("day ASC").Find(&rows).Error)
+	assert.Equal(t, BeijingDay(now).AddDate(0, 0, -MonthlyLedgerRetentionDays).Format(time.DateOnly), rows[0].Day)
+}
+
+func TestBillableUsage(t *testing.T) {
+	assert.Equal(t, int64(10), BillableUsage("up", 10, 20))
+	assert.Equal(t, int64(20), BillableUsage("down", 10, 20))
+	assert.Equal(t, int64(30), BillableUsage("sum", 10, 20))
+	assert.Equal(t, int64(10), BillableUsage("min", 10, 20))
+	assert.Equal(t, int64(20), BillableUsage("max", 10, 20))
+	assert.Equal(t, int64(30), BillableUsage(" SUM ", 10, 20))
+	assert.Equal(t, int64(20), BillableUsage("", 10, 20))
+}
+
+func zeroDailyUsage(_ context.Context, _ string, start, end time.Time) (map[string]Usage, error) {
+	result := make(map[string]Usage)
+	for day := BeijingDay(start); day.Before(BeijingDay(end)); day = day.AddDate(0, 0, 1) {
+		result[dayKey(day)] = Usage{}
+	}
+	return result, nil
 }
 
 func TestReportLedgerRetentionFollowsLongestEnabledCadence(t *testing.T) {

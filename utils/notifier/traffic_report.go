@@ -29,6 +29,10 @@ type trafficReportTarget struct {
 	notification models.TrafficReportNotification
 }
 
+func (target trafficReportTarget) hasReportContent() bool {
+	return target.notification.IncludeTraffic || (target.notification.IncludeBilling && target.client.Price > 0)
+}
+
 func trafficReportTargetsInClientOrder(notifications []models.TrafficReportNotification, clientList []models.Client) []trafficReportTarget {
 	notificationsByClient := make(map[string]models.TrafficReportNotification, len(notifications))
 	for _, notification := range notifications {
@@ -177,10 +181,14 @@ func sendTrafficReport(daily, weekly, monthly, currentDaily bool) (TrafficReport
 	if !currentDaily && len(targets) > 0 {
 		targetIDs := make([]string, 0, len(targets))
 		for _, target := range targets {
-			targetIDs = append(targetIDs, target.client.UUID)
+			if target.hasReportContent() {
+				targetIDs = append(targetIDs, target.client.UUID)
+			}
 		}
-		if err := trafficledger.EnsureRange(ctx, db, targetIDs, ledgerStart, ledgerEnd); err != nil {
-			return result, fmt.Errorf("settle %s traffic ledger: %w", label, err)
+		if len(targetIDs) > 0 {
+			if err := trafficledger.EnsureRange(ctx, db, targetIDs, ledgerStart, ledgerEnd); err != nil {
+				return result, fmt.Errorf("settle %s traffic ledger: %w", label, err)
+			}
 		}
 	}
 
@@ -189,6 +197,9 @@ func sendTrafficReport(daily, weekly, monthly, currentDaily bool) (TrafficReport
 	eventClients := make([]models.Client, 0, len(targets))
 	var lastClientError error
 	for _, target := range targets {
+		if !target.hasReportContent() {
+			continue
+		}
 		var usage trafficUsage
 		var err error
 		if currentDaily {
@@ -202,7 +213,11 @@ func sendTrafficReport(daily, weekly, monthly, currentDaily bool) (TrafficReport
 			continue
 		}
 
-		lines = append(lines, formatTrafficReportLine(target.client, suffix, usage, target.notification.IncludeTraffic, target.notification.IncludeBilling))
+		line := formatTrafficReportLine(target.client, suffix, usage, target.notification.IncludeTraffic, target.notification.IncludeBilling)
+		if line == "" {
+			continue
+		}
+		lines = append(lines, line)
 		eventClients = append(eventClients, target.client)
 	}
 
@@ -282,7 +297,7 @@ func formatTrafficReportLine(client models.Client, suffix string, usage trafficU
 	if includeTraffic {
 		parts = append(parts, "上行 "+humanBytes(usage.Up), "下行 "+humanBytes(usage.Down))
 	}
-	if includeBilling {
+	if includeBilling && client.Price > 0 {
 		rule := strings.ToLower(strings.TrimSpace(client.TrafficLimitType))
 		switch rule {
 		case "up", "down", "sum", "min", "max":
@@ -291,6 +306,9 @@ func formatTrafficReportLine(client models.Client, suffix string, usage trafficU
 		}
 		used := computeUsedByType(rule, usage.Up, usage.Down)
 		parts = append(parts, fmt.Sprintf("计费流量 %s（%s）", humanBytes(used), rule))
+	}
+	if len(parts) == 0 {
+		return ""
 	}
 	return fmt.Sprintf("%s %s：%s", name, suffix, strings.Join(parts, "，"))
 }

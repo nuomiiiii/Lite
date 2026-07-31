@@ -138,7 +138,7 @@ func TestCurrentDailyTrafficReportRangeUsesBeijingMidnightThroughNow(t *testing.
 }
 
 func TestFormatTrafficReportLineSupportsBillingAndCombinedContent(t *testing.T) {
-	client := models.Client{Name: "server-a", TrafficLimitType: "sum"}
+	client := models.Client{Name: "server-a", Price: 10, TrafficLimitType: "sum"}
 	usage := trafficUsage{Up: 1024, Down: 2 * 1024}
 
 	assert.Equal(t,
@@ -149,6 +149,36 @@ func TestFormatTrafficReportLineSupportsBillingAndCombinedContent(t *testing.T) 
 		"server-a 昨日流量：上行 1.00 KB，下行 2.00 KB，计费流量 3.00 KB（sum）",
 		formatTrafficReportLine(client, "昨日流量", usage, true, true),
 	)
+}
+
+func TestFormatTrafficReportLineExcludesBillingForFreeClients(t *testing.T) {
+	client := models.Client{Name: "free-server", Price: 0, TrafficLimitType: "sum"}
+	usage := trafficUsage{Up: 1024, Down: 2 * 1024}
+
+	assert.Empty(t, formatTrafficReportLine(client, "昨日流量", usage, false, true))
+	assert.Equal(t,
+		"free-server 昨日流量：上行 1.00 KB，下行 2.00 KB",
+		formatTrafficReportLine(client, "昨日流量", usage, true, true),
+	)
+}
+
+func TestTrafficReportTargetContentRequiresTrafficOrPaidBilling(t *testing.T) {
+	freeBillingOnly := trafficReportTarget{
+		client:       models.Client{Price: 0},
+		notification: models.TrafficReportNotification{IncludeBilling: true},
+	}
+	paidBillingOnly := trafficReportTarget{
+		client:       models.Client{Price: 1},
+		notification: models.TrafficReportNotification{IncludeBilling: true},
+	}
+	freeTraffic := trafficReportTarget{
+		client:       models.Client{Price: 0},
+		notification: models.TrafficReportNotification{IncludeTraffic: true, IncludeBilling: true},
+	}
+
+	assert.False(t, freeBillingOnly.hasReportContent())
+	assert.True(t, paidBillingOnly.hasReportContent())
+	assert.True(t, freeTraffic.hasReportContent())
 }
 
 func TestTrafficReportTargetsFollowConfiguredClientOrder(t *testing.T) {

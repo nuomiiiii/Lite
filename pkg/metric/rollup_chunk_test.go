@@ -3,6 +3,7 @@ package metric
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -67,7 +68,7 @@ func TestCompactionChunksCommitResumeAndPreserveRollups(t *testing.T) {
 	if written == 0 || completed {
 		t.Fatalf("first chunk wrote=%d completed=%v, want committed partial progress", written, completed)
 	}
-	firstBoundary := time.Date(2026, 7, 27, 6, 0, 0, 0, time.UTC)
+	firstBoundary := time.Date(2026, 7, 27, 0, 10, 0, 0, time.UTC)
 	watermark, ok, err := chunked.compactionWatermark(ctx, metricName)
 	if err != nil || !ok || !watermark.Equal(firstBoundary) {
 		t.Fatalf("first watermark=%v ok=%v err=%v, want %v", watermark, ok, err, firstBoundary)
@@ -94,10 +95,15 @@ func TestCompactionChunksCommitResumeAndPreserveRollups(t *testing.T) {
 	if _, err := reference.compactMetricOnce(ctx, metricName, now, effective, obsolete); err != nil {
 		t.Fatalf("reference single transaction: %v", err)
 	}
-	if _, err := chunked.CompactMetric(ctx, metricName, now); err != nil {
-		t.Fatalf("resume chunked compaction: %v", err)
+	for attempt := 0; attempt < 32; attempt++ {
+		if _, err := chunked.CompactMetric(ctx, metricName, now); err != nil {
+			t.Fatalf("resume chunked compaction attempt %d: %v", attempt+1, err)
+		}
+		watermark, ok, err = chunked.compactionWatermark(ctx, metricName)
+		if err == nil && ok && watermark.Equal(rawCutoff) {
+			break
+		}
 	}
-	watermark, ok, err = chunked.compactionWatermark(ctx, metricName)
 	if err != nil || !ok || !watermark.Equal(rawCutoff) {
 		t.Fatalf("final watermark=%v ok=%v err=%v, want %v", watermark, ok, err, rawCutoff)
 	}
@@ -106,7 +112,7 @@ func TestCompactionChunksCommitResumeAndPreserveRollups(t *testing.T) {
 		t.Helper()
 		for _, aggregation := range []Aggregation{AggCount, AggSum, AggAvg, AggMin, AggMax, AggFirst, AggLast, AggStdDev, AggP50, AggP95, AggP99} {
 			query := AggregateQuery{
-				Query: Query{MetricName: metricName, EntityID: "node-a", Start: base.Truncate(time.Hour), End: rawCutoff.Add(-time.Nanosecond)},
+				Query:       Query{MetricName: metricName, EntityID: "node-a", Start: base.Truncate(time.Hour), End: rawCutoff.Add(-time.Nanosecond)},
 				Aggregation: aggregation,
 				Interval:    time.Hour,
 			}
@@ -146,4 +152,58 @@ func TestCompactionChunksCommitResumeAndPreserveRollups(t *testing.T) {
 		t.Fatalf("reference late compaction: %v", err)
 	}
 	compareRollups("late point")
+}
+
+func TestRuntimeSealingDrainsMoreThanOneSeriesBatch(t *testing.T) {
+	ctx := context.Background()
+	policy := RollupPolicy{
+		RawRetention: 15 * time.Minute,
+		Tiers: []RollupTier{
+			{Interval: time.Minute, Retention: 48 * time.Hour},
+			{Interval: 5 * time.Minute, Retention: 14 * 24 * time.Hour},
+		},
+	}
+	store := newRollupStore(t, policy)
+	if !store.sqliteStorageV4 {
+		t.Fatal("batch regression must exercise SQLite V4 sealed blocks")
+	}
+
+	const metricName = "many-series"
+	if err := store.CreateMetric(ctx, Definition{Name: metricName, Type: TypeGauge, RetentionDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Date(2026, 7, 30, 0, 0, 0, 0, time.UTC)
+	now := base.Add(50 * time.Minute)
+	points := make([]Point, 0, (metricCompactionSeriesBatch+5)*40)
+	for series := 0; series < metricCompactionSeriesBatch+5; series++ {
+		for minute := 0; minute < 40; minute++ {
+			points = append(points, Point{
+				MetricName: metricName,
+				EntityID:   fmt.Sprintf("node-%03d", series),
+				Timestamp:  base.Add(time.Duration(minute) * time.Minute),
+				Value:      float64(series*100 + minute),
+			})
+		}
+	}
+	if err := store.WriteBatch(ctx, points); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompactMetric(ctx, metricName, now); err != nil {
+		t.Fatal(err)
+	}
+
+	var sealedSeries int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT series_id) FROM metric_rollup_blocks`).Scan(&sealedSeries); err != nil {
+		t.Fatal(err)
+	}
+	if want := metricCompactionSeriesBatch + 5; sealedSeries != want {
+		t.Fatalf("sealed rollup series = %d, want %d", sealedSeries, want)
+	}
+	var oldHotRows int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM metric_rollup_values WHERE bucket_nano < ?`, now.Add(-sqliteV4HotWindow).UnixNano()).Scan(&oldHotRows); err != nil {
+		t.Fatal(err)
+	}
+	if oldHotRows != 0 {
+		t.Fatalf("eligible hot rollups remained after batched sealing: %d", oldHotRows)
+	}
 }

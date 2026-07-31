@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 )
 
 func (s *Store) migrateSQLiteV4SharedRollupBlocks(ctx context.Context) (int64, int64, int64, error) {
@@ -18,7 +17,7 @@ func (s *Store) migrateSQLiteV4SharedRollupBlocks(ctx context.Context) (int64, i
 	if blockCount == 0 {
 		return 0, 0, 0, nil
 	}
-	s.reportMigrationProgress(MigrationPhaseUpgradingRollupBlocks, 0, blockCount, 0)
+	s.reportMigrationProgress(MigrationPhaseEncodingDigests, 0, blockCount, 0)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("metric: begin SQLite V4 shared rollup migration: %w", err)
@@ -79,18 +78,16 @@ func (s *Store) migrateSQLiteV4SharedRollupBlocks(ctx context.Context) (int64, i
 			digestCodec, uint32(digestChecksum), digestPayload, true,
 		)
 		if decodeErr != nil {
-			skippedBlocks++
-			log.Printf("metric: preserving readable legacy rollup block after conversion failure series=%d resolution=%d start=%d: %v",
-				item.seriesID, item.resolution, item.startNano, decodeErr)
-			s.reportMigrationProgressWithDeferred(MigrationPhaseUpgradingRollupBlocks, int64(index+1), blockCount, migratedBuckets, skippedBlocks)
-			continue
+			return migratedBlocks, migratedBuckets, skippedBlocks, fmt.Errorf(
+				"metric: decode historical digest block series=%d resolution=%d start=%d; source data was preserved: %w",
+				item.seriesID, item.resolution, item.startNano, decodeErr,
+			)
 		}
 		if len(records) == 0 || records[0].bucketNano != item.startNano || records[len(records)-1].bucketNano != endNano {
-			skippedBlocks++
-			log.Printf("metric: preserving legacy rollup block with boundary mismatch series=%d resolution=%d start=%d",
-				item.seriesID, item.resolution, item.startNano)
-			s.reportMigrationProgressWithDeferred(MigrationPhaseUpgradingRollupBlocks, int64(index+1), blockCount, migratedBuckets, skippedBlocks)
-			continue
+			return migratedBlocks, migratedBuckets, skippedBlocks, fmt.Errorf(
+				"metric: historical digest block boundary mismatch series=%d resolution=%d start=%d; source data was preserved",
+				item.seriesID, item.resolution, item.startNano,
+			)
 		}
 		encoded, encodeErr := encodeSQLiteV4RollupBlock(records)
 		if encodeErr != nil {
@@ -133,7 +130,7 @@ func (s *Store) migrateSQLiteV4SharedRollupBlocks(ctx context.Context) (int64, i
 		}
 		migratedBlocks++
 		migratedBuckets += int64(len(records))
-		s.reportMigrationProgressWithDeferred(MigrationPhaseUpgradingRollupBlocks, int64(index+1), blockCount, migratedBuckets, skippedBlocks)
+		s.reportMigrationProgressWithDeferred(MigrationPhaseEncodingDigests, int64(index+1), blockCount, migratedBuckets, skippedBlocks)
 	}
 	if err := s.cleanupSQLiteV4RollupAxesTx(ctx, tx); err != nil {
 		return migratedBlocks, migratedBuckets, skippedBlocks, err

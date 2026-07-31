@@ -11,11 +11,13 @@ import (
 )
 
 const (
-	pendingSessionTTL = 45 * time.Second
-	remoteStepUpTTL   = 10 * time.Minute
-	remoteMaxDuration = 2 * time.Hour
-	remoteReadLimit   = 2 << 20
-	maxRemoteSessions = 16
+	pendingSessionTTL  = 45 * time.Second
+	remoteIdleTimeout  = 45 * time.Second
+	remotePingInterval = 15 * time.Second
+	remoteStepUpTTL    = 10 * time.Minute
+	remoteMaxDuration  = 2 * time.Hour
+	remoteReadLimit    = 2 << 20
+	maxRemoteSessions  = 64
 )
 
 type remoteSession struct {
@@ -33,8 +35,11 @@ type remoteSession struct {
 	CreatedAt     time.Time
 	ExpiresAt     time.Time
 	StartedAt     time.Time
+	LastActivity  time.Time
 	closed        bool
 }
+
+var errRemoteSessionLimit = errors.New("too many active remote sessions")
 
 func (session *remoteSession) attachBrowser(ticket string, connection *websocket.Conn, now time.Time) bool {
 	session.mu.Lock()
@@ -44,6 +49,7 @@ func (session *remoteSession) attachBrowser(ticket string, connection *websocket
 	if valid {
 		session.BrowserTicket = ""
 		session.Browser = connection
+		session.LastActivity = now
 	}
 	return valid
 }
@@ -64,8 +70,33 @@ func (session *remoteSession) attachAgent(clientUUID, ticket string, connection 
 		session.AgentTicket = ""
 		session.Agent = connection
 		session.StartedAt = now
+		session.LastActivity = now
 	}
 	return valid
+}
+
+func (session *remoteSession) touch(now time.Time) {
+	session.mu.Lock()
+	if !session.closed {
+		session.LastActivity = now
+	}
+	session.mu.Unlock()
+}
+
+func (session *remoteSession) stale(now time.Time) bool {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.closed {
+		return true
+	}
+	if session.StartedAt.IsZero() {
+		return !now.Before(session.ExpiresAt)
+	}
+	lastActivity := session.LastActivity
+	if lastActivity.IsZero() {
+		lastActivity = session.StartedAt
+	}
+	return now.Sub(lastActivity) > remoteIdleTimeout || now.Sub(session.StartedAt) > remoteMaxDuration
 }
 
 func (session *remoteSession) pendingAgentTicket() string {
@@ -82,16 +113,31 @@ var (
 )
 
 func putSession(session *remoteSession) error {
+	pruneStaleSessions(time.Now())
 	sessionsMu.Lock()
 	defer sessionsMu.Unlock()
 	if metricstore.EntityWritesBlocked(session.UUID) {
 		return errors.New("client is being deleted")
 	}
 	if len(sessions) >= maxRemoteSessions {
-		return errors.New("too many active remote sessions")
+		return errRemoteSessionLimit
 	}
 	sessions[session.ID] = session
 	return nil
+}
+
+func pruneStaleSessions(now time.Time) {
+	sessionsMu.RLock()
+	ids := make([]string, 0)
+	for id, session := range sessions {
+		if session == nil || session.stale(now) {
+			ids = append(ids, id)
+		}
+	}
+	sessionsMu.RUnlock()
+	for _, id := range ids {
+		deleteSession(id)
+	}
 }
 
 func getSession(id string) *remoteSession {
@@ -123,6 +169,21 @@ func deleteSession(id string) {
 	if agent != nil {
 		_ = agent.Close()
 	}
+}
+
+func deleteOwnedSession(id, userUUID, loginSession string) bool {
+	session := getSession(id)
+	if session == nil {
+		return true
+	}
+	session.mu.Lock()
+	owned := !session.closed && session.UserUUID == userUUID && session.LoginSession == loginSession
+	session.mu.Unlock()
+	if !owned {
+		return false
+	}
+	deleteSession(id)
+	return true
 }
 
 func CloseClientSessions(uuid string) {

@@ -15,6 +15,8 @@ import (
 const (
 	sqliteStorageVersionV4              = 4
 	sqliteStorageVersionV4DigestHandoff = 5
+	sqliteStorageVersionDigestV9        = 9
+	sqliteStorageVersionCurrent         = sqliteStorageVersionDigestV9
 	sqliteV4HotWindow                   = 5 * time.Minute
 	sqliteV4RollupFlushWindow           = 30 * time.Minute
 )
@@ -51,7 +53,7 @@ func (s *Store) migrateSQLiteStorageV4(ctx context.Context) error {
 		if err := s.ensureSQLiteStorageV4(ctx); err != nil {
 			return err
 		}
-		if err := s.markSQLiteStorageV4DigestHandoff(ctx); err != nil {
+		if err := s.markSQLiteStorageCurrent(ctx); err != nil {
 			return err
 		}
 		s.reportMigrationProgress(MigrationPhaseCompleted, 1, 1, 0)
@@ -134,7 +136,14 @@ func (s *Store) migrateSQLiteStorageV4(ctx context.Context) error {
 	}
 	s.reportMigrationProgress(MigrationPhaseCommitting, 1, 1, pointSourceCount+rollupSourceCount)
 	s.sqliteStorageV4 = true
-	_, handoffBuckets, err := s.migrateSQLiteV4RedundantRollupDigests(ctx, time.Now().UTC(), true)
+	if err := s.ensureSQLiteV8PingColumns(ctx); err != nil {
+		return err
+	}
+	tierBuckets, err := s.migrateSQLiteV7TierHandoff(ctx, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	pingBuckets, err := s.migrateSQLiteV8PingSeries(ctx)
 	if err != nil {
 		return err
 	}
@@ -145,17 +154,17 @@ func (s *Store) migrateSQLiteStorageV4(ctx context.Context) error {
 	if skippedBlocks > 0 {
 		log.Printf("metric: deferred %d readable rollup blocks that could not yet be converted to shared-axis storage", skippedBlocks)
 	}
-	s.reportMigrationProgress(MigrationPhaseReclaiming, 0, 1, pointSourceCount+rollupSourceCount+handoffBuckets+sharedBuckets)
+	s.reportMigrationProgress(MigrationPhaseReclaiming, 0, 1, pointSourceCount+rollupSourceCount+tierBuckets+pingBuckets+sharedBuckets)
 	if err := s.fullSQLiteVacuum(ctx); err != nil {
 		// The V4 transaction is already fully validated and committed. A failed
 		// physical rewrite does not invalidate the logical migration.
 		log.Printf("metric: SQLite V4 post-migration vacuum skipped: %v", err)
 	}
-	s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, pointSourceCount+rollupSourceCount+handoffBuckets+sharedBuckets)
-	if err := s.markSQLiteStorageV4DigestHandoff(ctx); err != nil {
+	s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, pointSourceCount+rollupSourceCount+tierBuckets+pingBuckets+sharedBuckets)
+	if err := s.markSQLiteStorageCurrent(ctx); err != nil {
 		return err
 	}
-	s.reportMigrationProgress(MigrationPhaseCompleted, 1, 1, pointSourceCount+rollupSourceCount+handoffBuckets+sharedBuckets)
+	s.reportMigrationProgress(MigrationPhaseCompleted, 1, 1, pointSourceCount+rollupSourceCount+tierBuckets+pingBuckets+sharedBuckets)
 	log.Printf("metric: migrated SQLite metric storage to V%d (%d raw points and %d rollups preserved bit-for-bit)", sqliteStorageVersionV4, pointSourceCount, rollupSourceCount)
 	return nil
 }
@@ -181,6 +190,9 @@ func (s *Store) ensureSQLiteStorageV4(ctx context.Context) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("metric: commit SQLite V4 verification: %w", err)
 	}
+	if err := s.ensureSQLiteV8PingColumns(ctx); err != nil {
+		return err
+	}
 	var pendingSharedBlocks int64
 	if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+s.tables.rollupBlocks+
 		" WHERE axis_id IS NULL OR codec != ? OR digest_codec != ?",
@@ -188,7 +200,11 @@ func (s *Store) ensureSQLiteStorageV4(ctx context.Context) error {
 	).Scan(&pendingSharedBlocks); err != nil {
 		return fmt.Errorf("metric: count pending shared-axis blocks: %w", err)
 	}
-	handoffBlocks, handoffBuckets, err := s.migrateSQLiteV4RedundantRollupDigests(ctx, time.Now().UTC(), pendingSharedBlocks > 0)
+	tierBuckets, err := s.migrateSQLiteV7TierHandoff(ctx, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	pingBuckets, err := s.migrateSQLiteV8PingSeries(ctx)
 	if err != nil {
 		return err
 	}
@@ -199,25 +215,29 @@ func (s *Store) ensureSQLiteStorageV4(ctx context.Context) error {
 	if skippedBlocks > 0 {
 		log.Printf("metric: deferred %d readable rollup blocks that could not yet be converted to shared-axis storage", skippedBlocks)
 	}
+	pointAxisBlocks, pointAxisPoints, err := s.migrateSQLiteV6SharedPointBlocks(ctx)
+	if err != nil {
+		return err
+	}
 	var autoVacuum int
 	if err := s.db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&autoVacuum); err != nil {
 		return fmt.Errorf("metric: inspect SQLite auto-vacuum mode: %w", err)
 	}
-	if handoffBlocks > 0 || sharedBlocks > 0 || autoVacuum != 2 {
-		preserved := handoffBuckets + sharedBuckets
+	if tierBuckets > 0 || pingBuckets > 0 || sharedBlocks > 0 || pointAxisBlocks > 0 || autoVacuum != 2 {
+		preserved := tierBuckets + pingBuckets + sharedBuckets + pointAxisPoints
 		s.reportMigrationProgress(MigrationPhaseReclaiming, 0, 1, preserved)
 		if err := s.fullSQLiteVacuum(ctx); err != nil {
 			return fmt.Errorf("metric: vacuum SQLite V4 rollup storage after codec migration: %w", err)
 		}
 		s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, preserved)
-		log.Printf("metric: migrated %d digest handoff blocks (%d buckets) and %d shared-axis blocks (%d buckets); reclaimed database space", handoffBlocks, handoffBuckets, sharedBlocks, sharedBuckets)
+		log.Printf("metric: migrated %d tier-handoff buckets and %d shared-axis blocks (%d buckets); reclaimed database space", tierBuckets, sharedBlocks, sharedBuckets)
 	}
 	return nil
 }
 
-func (s *Store) markSQLiteStorageV4DigestHandoff(ctx context.Context) error {
-	if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, sqliteStorageVersionV4DigestHandoff)); err != nil {
-		return fmt.Errorf("metric: mark SQLite V4 digest handoff migration: %w", err)
+func (s *Store) markSQLiteStorageCurrent(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf(`PRAGMA user_version = %d`, sqliteStorageVersionCurrent)); err != nil {
+		return fmt.Errorf("metric: mark current SQLite storage migration: %w", err)
 	}
 	return nil
 }
@@ -241,7 +261,7 @@ func (s *Store) validateSQLiteV4PointBlocks(ctx context.Context, tx *sql.Tx) err
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for _, name := range []string{"series_id", "start_nano", "end_nano", "point_count", "codec", "checksum", "payload"} {
+	for _, name := range []string{"series_id", "start_nano", "end_nano", "point_count", "codec", "checksum", "payload", "axis_id"} {
 		if !found[name] {
 			return fmt.Errorf("metric: SQLite V4 point block table is missing column %s", name)
 		}
@@ -250,6 +270,9 @@ func (s *Store) validateSQLiteV4PointBlocks(ctx context.Context, tx *sql.Tx) err
 }
 
 func (s *Store) createSQLiteV4PointBlocks(ctx context.Context, tx *sql.Tx) error {
+	if err := s.createSQLiteV6PointAxes(ctx, tx); err != nil {
+		return err
+	}
 	statements := []string{
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 			series_id INTEGER NOT NULL REFERENCES %s(id) ON DELETE CASCADE,
@@ -259,10 +282,11 @@ func (s *Store) createSQLiteV4PointBlocks(ctx context.Context, tx *sql.Tx) error
 			codec INTEGER NOT NULL,
 			checksum INTEGER NOT NULL,
 			payload BLOB NOT NULL,
+			axis_id INTEGER REFERENCES %s(id),
 			PRIMARY KEY(series_id, start_nano),
 			CHECK(end_nano >= start_nano),
 			CHECK(point_count > 0)
-		) WITHOUT ROWID`, s.tables.pointBlocks, s.tables.series),
+		) WITHOUT ROWID`, s.tables.pointBlocks, s.tables.series, s.tables.pointAxes),
 		fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_point_blocks_time_idx ON %s (start_nano, end_nano)`, s.cfg.TablePrefix, s.tables.pointBlocks),
 	}
 	for _, statement := range statements {
@@ -270,7 +294,16 @@ func (s *Store) createSQLiteV4PointBlocks(ctx context.Context, tx *sql.Tx) error
 			return fmt.Errorf("metric: create SQLite V4 point block table: %w", err)
 		}
 	}
-	return nil
+	columns, err := sqliteColumns(ctx, tx, s.tables.pointBlocks)
+	if err != nil {
+		return fmt.Errorf("metric: inspect SQLite V6 point block columns: %w", err)
+	}
+	if !columns["axis_id"] {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN axis_id INTEGER REFERENCES %s(id)`, s.tables.pointBlocks, s.tables.pointAxes)); err != nil {
+			return fmt.Errorf("metric: add SQLite V6 point axis reference: %w", err)
+		}
+	}
+	return s.createSQLiteV6PointAxisReferences(ctx, tx)
 }
 
 type sqliteV4Series struct {
@@ -324,9 +357,11 @@ func (s *Store) querySQLiteV4(ctx context.Context, q querier, query Query) ([]Po
 	seriesWhere, seriesArgs := sqliteV4SeriesIDClause(series)
 	blockArgs := append(append([]any{}, seriesArgs...), startNano, endNano)
 	blockRows, err := q.QueryContext(ctx, fmt.Sprintf(
-		`SELECT series_id, start_nano, end_nano, point_count, codec, checksum, payload
-		 FROM %s WHERE series_id IN (%s) AND end_nano >= ? AND start_nano <= ?`,
-		s.tables.pointBlocks, seriesWhere,
+		`SELECT b.series_id, b.start_nano, b.end_nano, b.point_count, b.codec, b.checksum, b.payload,
+		        b.axis_id, a.codec, a.checksum, a.payload
+		 FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id
+		 WHERE b.series_id IN (%s) AND b.end_nano >= ? AND b.start_nano <= ?`,
+		s.tables.pointBlocks, s.tables.pointAxes, seriesWhere,
 	), blockArgs...)
 	if err != nil {
 		return nil, err
@@ -336,11 +371,13 @@ func (s *Store) querySQLiteV4(ctx context.Context, q querier, query Query) ([]Po
 		var count, codec int
 		var checksum int64
 		var payload []byte
-		if err := blockRows.Scan(&seriesID, &blockStart, &blockEnd, &count, &codec, &checksum, &payload); err != nil {
+		var axisID, axisCodec, axisChecksum sql.NullInt64
+		var axisPayload []byte
+		if err := blockRows.Scan(&seriesID, &blockStart, &blockEnd, &count, &codec, &checksum, &payload, &axisID, &axisCodec, &axisChecksum, &axisPayload); err != nil {
 			_ = blockRows.Close()
 			return nil, err
 		}
-		points, err := decodeSQLiteV4Block(codec, count, uint32(checksum), payload)
+		points, err := s.decodeSQLitePointBlockCached(codec, count, uint32(checksum), payload, axisID, axisCodec, axisChecksum, axisPayload)
 		if err != nil {
 			_ = blockRows.Close()
 			return nil, fmt.Errorf("metric: decode SQLite V4 block series=%d start=%d: %w", seriesID, blockStart, err)
@@ -499,6 +536,14 @@ func sqliteV4SeriesIDClause(series []sqliteV4Series) (string, []any) {
 }
 
 func (s *Store) sealSQLiteV4PointsTx(ctx context.Context, tx *sql.Tx, metricName string, beforeNano, migrationTotal, preservedBase int64) (int64, error) {
+	seriesIDs, err := s.sqliteV4PointSeriesIDsBefore(ctx, tx, metricName, beforeNano)
+	if err != nil {
+		return 0, err
+	}
+	return s.sealSQLiteV4PointSeriesTx(ctx, tx, seriesIDs, beforeNano, migrationTotal, preservedBase)
+}
+
+func (s *Store) sqliteV4PointSeriesIDsBefore(ctx context.Context, q querier, metricName string, beforeNano int64) ([]int64, error) {
 	comparison := "<"
 	if beforeNano == math.MaxInt64 {
 		comparison = "<="
@@ -509,31 +554,38 @@ func (s *Store) sealSQLiteV4PointsTx(ctx context.Context, tx *sql.Tx, metricName
 		args = append(args, metricName)
 		metricFilter = " AND s.metric_name = ?"
 	}
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(
+	rows, err := q.QueryContext(ctx, fmt.Sprintf(
 		`SELECT DISTINCT p.series_id FROM %s p JOIN %s s ON s.id = p.series_id
 		 WHERE p.ts_nano %s ?%s ORDER BY p.series_id`,
 		s.tables.pointValues, s.tables.series, comparison, metricFilter,
 	), args...)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	var seriesIDs []int64
 	for rows.Next() {
 		var seriesID int64
 		if err := rows.Scan(&seriesID); err != nil {
 			_ = rows.Close()
-			return 0, err
+			return nil, err
 		}
 		seriesIDs = append(seriesIDs, seriesID)
 	}
 	if err := rows.Err(); err != nil {
 		_ = rows.Close()
-		return 0, err
+		return nil, err
 	}
 	if err := rows.Close(); err != nil {
-		return 0, err
+		return nil, err
 	}
+	return seriesIDs, nil
+}
 
+func (s *Store) sealSQLiteV4PointSeriesTx(ctx context.Context, tx *sql.Tx, seriesIDs []int64, beforeNano, migrationTotal, preservedBase int64) (int64, error) {
+	comparison := "<"
+	if beforeNano == math.MaxInt64 {
+		comparison = "<="
+	}
 	var total int64
 	for _, seriesID := range seriesIDs {
 		points, err := s.loadAllSQLiteV4BlockPoints(ctx, tx, seriesID)
@@ -600,8 +652,11 @@ func (s *Store) sealSQLiteV4PointsTx(ctx context.Context, tx *sql.Tx, metricName
 
 func (s *Store) loadAllSQLiteV4BlockPoints(ctx context.Context, q querier, seriesID int64) ([]sqliteV4BlockPoint, error) {
 	rows, err := q.QueryContext(ctx, fmt.Sprintf(
-		`SELECT start_nano, end_nano, point_count, codec, checksum, payload FROM %s WHERE series_id = ? ORDER BY start_nano`,
-		s.tables.pointBlocks,
+		`SELECT b.start_nano, b.end_nano, b.point_count, b.codec, b.checksum, b.payload,
+		        a.codec, a.checksum, a.payload
+		 FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id
+		 WHERE b.series_id = ? ORDER BY b.start_nano`,
+		s.tables.pointBlocks, s.tables.pointAxes,
 	), seriesID)
 	if err != nil {
 		return nil, err
@@ -612,10 +667,12 @@ func (s *Store) loadAllSQLiteV4BlockPoints(ctx context.Context, q querier, serie
 		var startNano, endNano, checksum int64
 		var count, codec int
 		var payload []byte
-		if err := rows.Scan(&startNano, &endNano, &count, &codec, &checksum, &payload); err != nil {
+		var axisCodec, axisChecksum sql.NullInt64
+		var axisPayload []byte
+		if err := rows.Scan(&startNano, &endNano, &count, &codec, &checksum, &payload, &axisCodec, &axisChecksum, &axisPayload); err != nil {
 			return nil, err
 		}
-		points, err := decodeSQLiteV4Block(codec, count, uint32(checksum), payload)
+		points, err := decodeSQLiteStoredPointBlock(codec, count, uint32(checksum), payload, int(axisCodec.Int64), uint32(axisChecksum.Int64), axisPayload)
 		if err != nil {
 			return nil, fmt.Errorf("metric: decode SQLite V4 block series=%d start=%d: %w", seriesID, startNano, err)
 		}
@@ -637,21 +694,25 @@ func (s *Store) writeSQLiteV4BlocksTx(ctx context.Context, tx *sql.Tx, seriesID 
 		if end > len(points) {
 			end = len(points)
 		}
-		encoded, err := encodeSQLiteV4Block(points[start:end])
+		encoded, err := encodeSQLiteV6SharedPointBlock(points[start:end])
 		if err != nil {
 			return err
 		}
-		decoded, err := decodeSQLiteV4Block(encoded.codec, encoded.count, encoded.checksum, encoded.payload)
+		decoded, err := decodeSQLiteStoredPointBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload, encoded.axisCodec, encoded.axisChecksum, encoded.axisPayload)
 		if err != nil || !sqliteV4PointsEqual(points[start:end], decoded) {
 			if err == nil {
 				err = errors.New("round-trip validation changed data")
 			}
 			return fmt.Errorf("metric: validate SQLite V4 point block: %w", err)
 		}
+		axisID, err := s.storeSQLiteV6PointAxisTx(ctx, tx, encoded)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-			`INSERT INTO %s (series_id, start_nano, end_nano, point_count, codec, checksum, payload)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`, s.tables.pointBlocks,
-		), seriesID, encoded.startNano, encoded.endNano, encoded.count, encoded.codec, int64(encoded.checksum), encoded.payload); err != nil {
+			`INSERT INTO %s (series_id, start_nano, end_nano, point_count, codec, checksum, payload, axis_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, s.tables.pointBlocks,
+		), seriesID, encoded.startNano, encoded.endNano, encoded.count, encoded.codec, int64(encoded.checksum), encoded.payload, axisID); err != nil {
 			return err
 		}
 	}
@@ -670,10 +731,11 @@ func (s *Store) deleteSQLiteV4PointsBeforeCompactionTx(ctx context.Context, tx *
 		codec     int
 		checksum  int64
 		payload   []byte
+		axisID    sql.NullInt64
 	}
 	for _, item := range series {
 		rows, err := tx.QueryContext(ctx, fmt.Sprintf(
-			"SELECT start_nano, end_nano, point_count, codec, checksum, payload FROM %s WHERE series_id = ? AND start_nano < ? AND end_nano >= ? ORDER BY start_nano",
+			"SELECT start_nano, end_nano, point_count, codec, checksum, payload, axis_id FROM %s WHERE series_id = ? AND start_nano < ? AND end_nano >= ? ORDER BY start_nano",
 			s.tables.pointBlocks,
 		), item.id, beforeNano, beforeNano)
 		if err != nil {
@@ -682,7 +744,7 @@ func (s *Store) deleteSQLiteV4PointsBeforeCompactionTx(ctx context.Context, tx *
 		var boundaries []boundaryBlock
 		for rows.Next() {
 			var block boundaryBlock
-			if err := rows.Scan(&block.startNano, &block.endNano, &block.count, &block.codec, &block.checksum, &block.payload); err != nil {
+			if err := rows.Scan(&block.startNano, &block.endNano, &block.count, &block.codec, &block.checksum, &block.payload, &block.axisID); err != nil {
 				_ = rows.Close()
 				return err
 			}
@@ -699,7 +761,7 @@ func (s *Store) deleteSQLiteV4PointsBeforeCompactionTx(ctx context.Context, tx *
 			return err
 		}
 		for _, block := range boundaries {
-			points, err := decodeSQLiteV4Block(block.codec, block.count, uint32(block.checksum), block.payload)
+			points, err := s.decodeSQLitePointBlockFromStorage(ctx, tx, block.codec, block.count, uint32(block.checksum), block.payload, block.axisID)
 			if err != nil {
 				return fmt.Errorf("metric: decode SQLite V4 compaction boundary series=%d start=%d: %w", item.id, block.startNano, err)
 			}

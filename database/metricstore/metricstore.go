@@ -30,10 +30,12 @@ var ErrCompactInProgress = errors.New("metric store compact already in progress"
 const (
 	// DefaultRollupRawRetention keeps a short hot raw window; older samples are
 	// served from rollups after compaction.
-	DefaultRollupRawRetention = 15 * time.Minute
-	DefaultRollupFinestTier   = time.Minute
-	externalStoreInitTimeout  = 30 * time.Second
-	checkpointRetryTimeout    = 250 * time.Millisecond
+	DefaultRollupRawRetention   = 15 * time.Minute
+	DefaultRollupFinestTier     = time.Minute
+	externalStoreInitTimeout    = 30 * time.Second
+	checkpointRetryTimeout      = time.Second
+	backgroundCheckpointTimeout = 10 * time.Second
+	metricWALCheckpointLimit    = 64 * 1024 * 1024
 )
 
 // MetricStoreConfig 保存 metric store 配置。
@@ -41,22 +43,22 @@ const (
 // 注意：metric store 现在始终启用（旧的 metric_store_enabled 开关已废弃）。
 // 未显式配置时默认使用 SQLite（./data/metrics.db）。
 type MetricStoreConfig struct {
-	Driver              string `json:"metric_db_driver" default:"sqlite"`          // 数据库类型: sqlite, mysql, postgresql
-	DSN                 string `json:"metric_db_dsn" default:"./data/metrics.db"`  // 数据库连接串
-	DownsamplingEnabled bool   `json:"metric_downsampling_enabled" default:"true"` // 是否启用分层降采样
-	LowResourceMode     bool   `json:"low_resource_mode"`                          // 低资源模式默认关闭，可由管理员手动启用
-	TablePrefix         string `json:"metric_table_prefix" default:"metric_"`      // 表名前缀
-	MaxOpenConns        int    `json:"metric_max_open_conns" default:"25"`         // 最大连接数
-	MaxIdleConns        int    `json:"metric_max_idle_conns" default:"5"`          // 最大空闲连接数
+	Driver       string `json:"metric_db_driver" default:"sqlite"`         // 数据库类型: sqlite, mysql, postgresql
+	DSN          string `json:"metric_db_dsn" default:"./data/metrics.db"` // 数据库连接串
+	TablePrefix  string `json:"metric_table_prefix" default:"metric_"`     // 表名前缀
+	MaxOpenConns int    `json:"metric_max_open_conns" default:"25"`        // 最大连接数
+	MaxIdleConns int    `json:"metric_max_idle_conns" default:"5"`         // 最大空闲连接数
 }
 
 // MetricStoreConfigKeys 配置键
 //
 // MetricStoreEnabledKey 已废弃：metric store 始终启用，保留常量仅用于清理旧配置。
 const (
-	MetricStoreEnabledKey        = "metric_store_enabled" // Deprecated: metric store 始终启用
-	MetricDBDriverKey            = "metric_db_driver"
-	MetricDBDSNKey               = "metric_db_dsn"
+	MetricStoreEnabledKey = "metric_store_enabled" // Deprecated: metric store 始终启用
+	MetricDBDriverKey     = "metric_db_driver"
+	MetricDBDSNKey        = "metric_db_dsn"
+	// MetricDownsamplingEnabledKey is retained only to normalize databases
+	// created by releases that allowed downsampling to be disabled.
 	MetricDownsamplingEnabledKey = "metric_downsampling_enabled"
 	MetricTablePrefixKey         = "metric_table_prefix"
 	MetricMaxOpenConnsKey        = "metric_max_open_conns"
@@ -81,12 +83,11 @@ func buildMetricConfig(cfg *MetricStoreConfig, autoMigrate bool) (metric.Config,
 		metric.WithTablePrefix(tablePrefix),
 		metric.WithAutoMigrate(autoMigrate),
 	}
-	if cfg.DownsamplingEnabled {
-		opts = append(opts, metric.WithRollupPolicy(defaultRollupPolicy()))
-	}
+	opts = append(opts, metric.WithRollupPolicy(defaultRollupPolicy()))
 
 	switch driver {
 	case metric.DriverSQLite:
+		resources := detectSQLiteResourceProfile()
 		dsn := cfg.DSN
 		if dsn == "" || dsn == "./data/metrics.db" {
 			// 注意：刻意不使用 cache=shared。SQLite 共享缓存模式使用表级锁，
@@ -103,18 +104,16 @@ func buildMetricConfig(cfg *MetricStoreConfig, autoMigrate bool) (metric.Config,
 		// 同时启用独立的 WAL 只读连接池提升前台查询并发（写仍走单主连接）。
 		// 这里刻意忽略 cfg.MaxOpenConns/MaxIdleConns —— 对 SQLite 而言多写连接
 		// 只会引入锁竞争而非提升吞吐。
-		opts = append(opts, metric.WithMaxOpenConns(1), metric.WithMaxIdleConns(1))
-		if cfg.LowResourceMode {
-			opts = append(opts,
-				metric.WithSQLiteProfile(metric.SQLiteProfileBalanced),
-				metric.WithSQLiteCacheSizeKB(8*1024),
-				metric.WithSQLiteMMapSize(0),
-				metric.WithSQLiteTempStoreMemory(false),
-				metric.WithSQLiteReadPool(0),
-			)
-		} else {
-			opts = append(opts, metric.WithSQLiteReadPool(4))
-		}
+		opts = append(opts,
+			metric.WithMaxOpenConns(1),
+			metric.WithMaxIdleConns(1),
+			metric.WithConnMaxLifetime(0),
+			metric.WithSQLiteCacheSizeKB(resources.WriterCacheKB),
+			metric.WithSQLiteReadCacheSizeKB(resources.ReaderCacheKB),
+			metric.WithSQLiteMMapSize(resources.MMapBytes),
+			metric.WithSQLiteReadPool(resources.ReadPoolSize),
+			metric.WithSQLiteHeavyReadConcurrency(resources.HeavyReadConcurrent),
+		)
 		return metric.SQLite(dsn, opts...), nil
 	case metric.DriverMySQL:
 		opts = append(opts,
@@ -387,7 +386,6 @@ func InitializeStore() error {
 	storeFingerprint = targetFingerprint(cfg)
 	storeMu.Unlock()
 	resetRuntimeStatus(s.Driver())
-	setLowResourceMode(cfg.LowResourceMode)
 	clearStoreClosing()
 
 	logger.Infof("metricstore", "Metric store initialized successfully (driver=%s)", ResolveDriverFromConfig(cfg.Driver, cfg.DSN))
@@ -434,7 +432,6 @@ func Reload(ctx context.Context) error {
 	storeFingerprint = targetFingerprint(cfg)
 	storeMu.Unlock()
 	resetRuntimeStatus(s.Driver())
-	setLowResourceMode(cfg.LowResourceMode)
 
 	if old != nil {
 		if cerr := old.Close(); cerr != nil {
@@ -540,7 +537,7 @@ func Compact(ctx context.Context, now time.Time) (int, error) {
 		clearDigestHandoffDeferred(metricName)
 		total += n
 	}
-	if err := finishCompactCycle(ctx, activeStore, now); err != nil {
+	if err := finishCompactCycle(ctx, activeStore, now, true); err != nil {
 		compactErrors = append(compactErrors, err)
 	}
 	if failedAt >= 0 {
@@ -599,7 +596,7 @@ func CompactStep(ctx context.Context, now time.Time) (written int, cycleComplete
 	if activeStore == nil {
 		return 0, false, fmt.Errorf("metric store not initialized")
 	}
-	retryMetricWALCheckpoint(ctx, activeStore)
+	checkpointRetried := retryMetricWALCheckpoint(ctx, activeStore, time.Now().UTC())
 
 	defs, err := activeStore.ListMetrics(ctx)
 	if err != nil {
@@ -607,7 +604,7 @@ func CompactStep(ctx context.Context, now time.Time) (written int, cycleComplete
 	}
 	if len(defs) == 0 {
 		compactAt = 0
-		cycleErr := finishCompactCycle(ctx, activeStore, now)
+		cycleErr := finishCompactCycle(ctx, activeStore, now, !checkpointRetried)
 		finishEmptyCompactCycle(activeStore.Driver(), cycleErr, time.Now().UTC())
 		return 0, true, cycleErr
 	}
@@ -630,43 +627,110 @@ func CompactStep(ctx context.Context, now time.Time) (written int, cycleComplete
 		compactErr = fmt.Errorf("compact metric %q: %w", metricName, compactErr)
 	}
 	if !cycleCompleted {
+		if !checkpointRetried {
+			checkpointLargeMetricWAL(ctx, activeStore)
+		}
 		finishCompactStep(written, false, compactErr, time.Now().UTC())
 		return written, false, compactErr
 	}
-	cycleErr := errors.Join(compactErr, finishCompactCycle(ctx, activeStore, now))
+	cycleErr := errors.Join(compactErr, finishCompactCycle(ctx, activeStore, now, !checkpointRetried))
 	finishCompactStep(written, true, cycleErr, time.Now().UTC())
 	return written, true, cycleErr
 }
 
-func finishCompactCycle(ctx context.Context, activeStore *metric.Store, now time.Time) error {
+func checkpointLargeMetricWAL(ctx context.Context, activeStore *metric.Store) {
+	if checkpointIsPending() {
+		return
+	}
+	checkpointed, err := checkpointMetricWALAbove(ctx, activeStore, metricWALCheckpointLimit)
+	if err != nil && !checkpointed {
+		logger.Warnf("metricstore", "Failed to inspect metric WAL before threshold checkpoint: %v", err)
+		return
+	}
+	if !checkpointed {
+		return
+	}
+	recordCheckpointResult(activeStore.Driver(), err, time.Now().UTC())
+	if err != nil {
+		logger.Warnf("metricstore", "Failed to truncate oversized metric WAL: %v", err)
+	}
+}
+
+func checkpointMetricWALAbove(ctx context.Context, activeStore *metric.Store, limit int64) (bool, error) {
+	if activeStore.Driver() != metric.DriverSQLite || limit <= 0 {
+		return false, nil
+	}
+	files, err := activeStore.SQLiteFiles(ctx)
+	if err != nil || files.WAL < limit {
+		return false, err
+	}
+	checkpointCtx, cancel := context.WithTimeout(ctx, backgroundCheckpointTimeout)
+	defer cancel()
+	return true, activeStore.CheckpointWAL(checkpointCtx)
+}
+
+func metricWALCheckpointTimeout(size int64) time.Duration {
+	if size >= metricWALCheckpointLimit {
+		return backgroundCheckpointTimeout
+	}
+	return checkpointRetryTimeout
+}
+
+func finishCompactCycle(ctx context.Context, activeStore *metric.Store, now time.Time, allowCheckpoint bool) error {
 	var compactErrors []error
 	if _, err := activeStore.CleanupExpired(ctx, now); err != nil {
 		compactErrors = append(compactErrors, fmt.Errorf("clean up expired raw metrics: %w", err))
 	}
-	if activeStore.Driver() == metric.DriverSQLite {
-		checkpointCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	if activeStore.Driver() == metric.DriverSQLite && allowCheckpoint && !checkpointIsPending() {
+		files, err := activeStore.SQLiteFiles(ctx)
+		if err != nil {
+			logger.Warnf("metricstore", "Failed to inspect metric WAL after compaction: %v", err)
+			return errors.Join(compactErrors...)
+		}
+		if files.WAL == 0 {
+			return errors.Join(compactErrors...)
+		}
+		checkpointTimeout := metricWALCheckpointTimeout(files.WAL)
+		checkpointCtx, cancel := context.WithTimeout(ctx, checkpointTimeout)
 		checkpointErr := activeStore.CheckpointWAL(checkpointCtx)
+		cancel()
 		recordCheckpointResult(activeStore.Driver(), checkpointErr, time.Now().UTC())
 		if checkpointErr != nil {
-			logger.Warnf("metricstore", "Failed to truncate metric WAL after compaction: %v", checkpointErr)
+			logger.Warnf("metricstore", "Failed to truncate metric WAL after compaction; deferred retry will keep the WAL intact: %v", checkpointErr)
 		}
-		cancel()
 	}
 	return errors.Join(compactErrors...)
 }
 
-func retryMetricWALCheckpoint(ctx context.Context, activeStore *metric.Store) {
-	if !checkpointIsPending() {
-		return
+func retryMetricWALCheckpoint(ctx context.Context, activeStore *metric.Store, at time.Time) bool {
+	pending, quickDue, fullDue := checkpointRetryState(at)
+	if !pending {
+		return false
 	}
 	if activeStore.Driver() != metric.DriverSQLite {
 		clearCheckpointForExternal(activeStore.Driver())
-		return
+		return true
 	}
-	retryCtx, cancel := context.WithTimeout(ctx, checkpointRetryTimeout)
+	if !quickDue {
+		return false
+	}
+
+	retryTimeout := checkpointRetryTimeout
+	fullRetry := false
+	if fullDue {
+		if files, err := activeStore.SQLiteFiles(ctx); err == nil && files.WAL >= metricWALCheckpointLimit {
+			retryTimeout = backgroundCheckpointTimeout
+			fullRetry = true
+		}
+	}
+	retryCtx, cancel := context.WithTimeout(ctx, retryTimeout)
 	err := activeStore.CheckpointWAL(retryCtx)
 	cancel()
-	recordCheckpointResult(activeStore.Driver(), err, time.Now().UTC())
+	recordCheckpointResult(activeStore.Driver(), err, at)
+	if err != nil && fullRetry {
+		deferFullCheckpointRetry(at)
+	}
+	return true
 }
 
 // CloseStoreContext stops the asynchronous store migration before taking the
@@ -788,10 +852,6 @@ func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
 		"task_id": fmt.Sprintf("%d", rec.TaskId),
 	}
 
-	loss := 0.0
-	if rec.Value < 0 {
-		loss = 1
-	}
 	points := []metric.Point{
 		{
 			MetricName: MetricPingLatency,
@@ -800,13 +860,19 @@ func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
 			Value:      float64(rec.Value),
 			Tags:       tags,
 		},
-		{
+	}
+	if s.Driver() != metric.DriverSQLite {
+		loss := 0.0
+		if rec.Value < 0 {
+			loss = 1
+		}
+		points = append(points, metric.Point{
 			MetricName: MetricPingLoss,
 			EntityID:   entityID,
 			Timestamp:  ts,
 			Value:      loss,
 			Tags:       tags,
-		},
+		})
 	}
 
 	return s.WriteBatch(ctx, points)
@@ -814,12 +880,19 @@ func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
 
 // GetRecordsByClientAndTime 从 metric store 查询记录并重构为 models.Record
 func GetRecordsByClientAndTime(ctx context.Context, clientUUID string, start, end time.Time) ([]models.Record, error) {
+	return GetRecordsByClientAndTimeForLoadType(ctx, clientUUID, start, end, "all")
+}
+
+// GetRecordsByClientAndTimeForLoadType reads only the metric families needed
+// by a projected legacy record response. Fields outside that family remain at
+// their zero value, preserving the existing response shape.
+func GetRecordsByClientAndTimeForLoadType(ctx context.Context, clientUUID string, start, end time.Time, loadType string) ([]models.Record, error) {
 	s := GetStore()
 	if s == nil {
 		return nil, fmt.Errorf("metric store not enabled")
 	}
 
-	return getRecordsByClientAndTimeFromSeries(ctx, s, clientUUID, start, end, loadRecordMetricNames)
+	return getRecordsByClientAndTimeFromSeries(ctx, s, clientUUID, start, end, recordMetricNamesForLoadType(loadType))
 }
 
 // GetTrafficRecordsByClientAndTime reconstructs only the four traffic series
@@ -841,19 +914,26 @@ func GetTrafficRecordsByClientAndTime(ctx context.Context, clientUUID string, st
 
 // GetRecordsByTime 从 metric store 查询所有客户端在时间范围内的记录
 func GetRecordsByTime(ctx context.Context, start, end time.Time) ([]models.Record, error) {
+	return GetRecordsByTimeForLoadType(ctx, start, end, "all")
+}
+
+// GetRecordsByTimeForLoadType is the all-client counterpart of
+// GetRecordsByClientAndTimeForLoadType.
+func GetRecordsByTimeForLoadType(ctx context.Context, start, end time.Time, loadType string) ([]models.Record, error) {
 	s := GetStore()
 	if s == nil {
 		return nil, fmt.Errorf("metric store not enabled")
 	}
+	metricNames := recordMetricNamesForLoadType(loadType)
 
 	interval := recordSeriesInterval(s, start, end, time.Now().UTC())
-	entityIDs, err := listRecordEntityIDs(ctx, s, start, end, interval)
+	entityIDs, err := listRecordEntityIDs(ctx, s, start, end, interval, metricNames)
 	if err != nil {
 		return nil, err
 	}
 	var records []models.Record
 	for _, entityID := range entityIDs {
-		items, err := getRecordsByClientAndTimeFromSeries(ctx, s, entityID, start, end, loadRecordMetricNames)
+		items, err := getRecordsByClientAndTimeFromSeries(ctx, s, entityID, start, end, metricNames)
 		if err != nil {
 			return nil, err
 		}
@@ -861,6 +941,35 @@ func GetRecordsByTime(ctx context.Context, start, end time.Time) ([]models.Recor
 	}
 	sortRecords(records)
 	return records, nil
+}
+
+func recordMetricNamesForLoadType(loadType string) []string {
+	switch strings.ToLower(strings.TrimSpace(loadType)) {
+	case "cpu":
+		return []string{MetricCPU}
+	case "gpu":
+		return []string{MetricGPU}
+	case "ram":
+		return []string{MetricRAM}
+	case "swap":
+		return []string{MetricSwap}
+	case "load":
+		return []string{MetricLoad}
+	case "temp":
+		// Temperature was never persisted as an entity-level metric. Retain the
+		// old response cadence while avoiding a full 15-series scan.
+		return []string{MetricCPU}
+	case "disk":
+		return []string{MetricDisk}
+	case "network":
+		return []string{MetricNetIn, MetricNetOut, MetricNetTotalUp, MetricNetTotalDown}
+	case "process":
+		return []string{MetricProcess}
+	case "connections":
+		return []string{MetricConnections, MetricConnectionsUDP}
+	default:
+		return loadRecordMetricNames
+	}
 }
 
 type recordSeriesKey struct {
@@ -872,9 +981,9 @@ func getRecordsByClientAndTimeFromSeries(ctx context.Context, s *metric.Store, c
 	now := time.Now().UTC()
 	interval := recordSeriesInterval(s, start, end, now)
 	recordMap := make(map[recordSeriesKey]*models.Record)
-
+	queries := make([]metric.AggregateQuery, 0, len(metricNames))
 	for _, metricName := range metricNames {
-		points, err := s.Series(ctx, metric.AggregateQuery{
+		queries = append(queries, metric.AggregateQuery{
 			Query: metric.Query{
 				MetricName: metricName,
 				EntityID:   clientUUID,
@@ -884,10 +993,14 @@ func getRecordsByClientAndTimeFromSeries(ctx context.Context, s *metric.Store, c
 			},
 			Aggregation: recordMetricAggregation(metricName),
 			Interval:    interval,
-		}, now)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query metric %s: %w", metricName, err)
-		}
+		})
+	}
+	series, err := s.SeriesBatch(ctx, queries, now)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query record metric batch: %w", err)
+	}
+	for index, points := range series {
+		metricName := metricNames[index]
 		for _, point := range points {
 			entityID := point.EntityID
 			if entityID == "" {
@@ -943,9 +1056,9 @@ func recordDownsampleInterval(rangeDuration time.Duration, maxPoints int) time.D
 	return metric.FloorStandardInterval(interval)
 }
 
-func listRecordEntityIDs(ctx context.Context, s *metric.Store, start, end time.Time, interval time.Duration) ([]string, error) {
+func listRecordEntityIDs(ctx context.Context, s *metric.Store, start, end time.Time, interval time.Duration, metricNames []string) ([]string, error) {
 	seen := make(map[string]struct{})
-	for _, metricName := range loadRecordMetricNames {
+	for _, metricName := range metricNames {
 		ids, err := s.EntityIDs(ctx, metric.Query{
 			MetricName: metricName,
 			Start:      start.Add(-interval),

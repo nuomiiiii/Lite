@@ -156,7 +156,7 @@ func publicGetRecordsByUUID(ctx context.Context, req *rpc.JsonRpcRequest) (any, 
 		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid hours parameter", nil)
 	}
 	validLoadTypes := map[string]bool{
-		"cpu": true, "ram": true, "swap": true,
+		"cpu": true, "gpu": true, "ram": true, "swap": true,
 		"load": true, "temp": true, "disk": true, "network": true,
 		"process": true, "connections": true, "all": true, "": true,
 	}
@@ -164,7 +164,7 @@ func publicGetRecordsByUUID(ctx context.Context, req *rpc.JsonRpcRequest) (any, 
 		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid load_type parameter", nil)
 	}
 	now := time.Now().UTC()
-	clientRecords, err := records.GetRecordsByClientAndTime(params.UUID, now.Add(-time.Duration(hoursInt)*time.Hour), now)
+	clientRecords, err := records.GetRecordsByClientAndTimeForLoadType(params.UUID, now.Add(-time.Duration(hoursInt)*time.Hour), now, params.LoadType)
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch records: "+err.Error(), nil)
 	}

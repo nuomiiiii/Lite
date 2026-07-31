@@ -384,6 +384,9 @@ func (q AggregateQuery) Validate() error {
 	switch q.Aggregation {
 	case AggAvg, AggMin, AggMax, AggSum, AggCount, AggFirst, AggLast, AggRate, AggStdDev:
 	default:
+		if isInternalPingLossAggregation(q.Aggregation) {
+			return nil
+		}
 		// Any percentile (p50, p95, p99, p99.9, ...) is also valid. The fixed
 		// AggP50/AggP95/AggP99 constants fall through to here as well.
 		if !isPercentile(q.Aggregation) {

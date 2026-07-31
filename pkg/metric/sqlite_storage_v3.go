@@ -317,6 +317,7 @@ func (s *Store) createSQLiteV3PhysicalTables(ctx context.Context, tx *sql.Tx) er
 			resolution_nano BIGINT NOT NULL,
 			bucket_nano BIGINT NOT NULL,
 			count BIGINT NOT NULL,
+			loss_count BIGINT NOT NULL DEFAULT 0,
 			sum DOUBLE PRECISION NOT NULL,
 			sum_sq DOUBLE PRECISION NOT NULL,
 			min_val DOUBLE PRECISION NOT NULL,
