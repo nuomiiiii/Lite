@@ -33,11 +33,11 @@ func TestBuildDashboardStorageUsesNewestCompactionTime(t *testing.T) {
 	}
 }
 
-func TestSummarizeDashboardTrafficUsesPerClientBillingRules(t *testing.T) {
+func TestSummarizeDashboardTrafficExcludesFreeClientsFromBilling(t *testing.T) {
 	now := time.Date(2026, 7, 31, 8, 0, 0, 0, time.UTC)
 	clients := []models.Client{
-		{UUID: "a", TrafficLimitType: "sum"},
-		{UUID: "b", TrafficLimitType: "max"},
+		{UUID: "a", Price: 10, TrafficLimitType: "sum"},
+		{UUID: "b", Price: 0, TrafficLimitType: "max"},
 	}
 	rows := make([]models.TrafficDailyLedger, 0, 2*(trafficledger.DashboardHistoryDays-1))
 	today := trafficledger.BeijingDay(now)
@@ -60,11 +60,11 @@ func TestSummarizeDashboardTrafficUsesPerClientBillingRules(t *testing.T) {
 	if !summary.HistoryReady {
 		t.Fatal("complete dashboard history reported as incomplete")
 	}
-	if summary.TodayUp != 120 || summary.TodayDown != 120 || summary.TodayBillable != 220 {
+	if summary.TodayUp != 120 || summary.TodayDown != 120 || summary.TodayBillable != 140 {
 		t.Fatalf("unexpected today totals: %#v", summary)
 	}
-	if got := summary.Daily[0].Billable; got != 60 {
-		t.Fatalf("historical billable = %d, want 60", got)
+	if got := summary.Daily[0].Billable; got != 30 {
+		t.Fatalf("historical billable = %d, want 30", got)
 	}
 	if len(summary.Daily) != trafficledger.DashboardHistoryDays {
 		t.Fatalf("daily points = %d, want %d", len(summary.Daily), trafficledger.DashboardHistoryDays)

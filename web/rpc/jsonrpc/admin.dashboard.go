@@ -248,7 +248,9 @@ func summarizeDashboardTraffic(clientList []models.Client, rows []models.Traffic
 		}
 		day.Up += row.UpBytes
 		day.Down += row.DownBytes
-		day.Billable += trafficledger.BillableUsage(client.TrafficLimitType, row.UpBytes, row.DownBytes)
+		if client.Price > 0 {
+			day.Billable += trafficledger.BillableUsage(client.TrafficLimitType, row.UpBytes, row.DownBytes)
+		}
 		seen[row.Client+"\x00"+row.Day] = struct{}{}
 	}
 
@@ -258,7 +260,10 @@ func summarizeDashboardTraffic(clientList []models.Client, rows []models.Traffic
 		usage := todayUsage[client.UUID]
 		todayDay.Up += usage.Up
 		todayDay.Down += usage.Down
-		billable := trafficledger.BillableUsage(client.TrafficLimitType, usage.Up, usage.Down)
+		billable := int64(0)
+		if client.Price > 0 {
+			billable = trafficledger.BillableUsage(client.TrafficLimitType, usage.Up, usage.Down)
+		}
 		todayDay.Billable += billable
 		summary.TodayUp += usage.Up
 		summary.TodayDown += usage.Down
