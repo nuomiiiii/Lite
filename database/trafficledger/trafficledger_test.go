@@ -36,6 +36,21 @@ func TestBeijingDayUsesCalendarDateAcrossUTCBoundary(t *testing.T) {
 	assert.True(t, got.Equal(want), "got %s, want %s", got, want)
 }
 
+func TestUsageByHourFromRecordsUsesBeijingBuckets(t *testing.T) {
+	start := time.Date(2026, 7, 31, 16, 0, 0, 0, time.UTC)
+	total, hourly, err := usageByHourFromRecords([]DeltaRecord{
+		{Time: start.Add(10 * time.Minute), NetTotalUp: 130, NetTotalDown: 240, TrafficUp: 30, TrafficDown: 40},
+		{Time: start.Add(70 * time.Minute), NetTotalUp: 180, NetTotalDown: 300, TrafficUp: 50, TrafficDown: 60},
+	}, &DeltaRecord{Time: start.Add(-time.Minute), NetTotalUp: 100, NetTotalDown: 200})
+	require.NoError(t, err)
+	assert.Equal(t, Usage{Up: 80, Down: 100}, total)
+	require.Len(t, hourly, 2)
+	assert.Equal(t, 0, hourly[0].Hour.In(BeijingLocation).Hour())
+	assert.Equal(t, Usage{Up: 30, Down: 40}, hourly[0].Usage)
+	assert.Equal(t, 1, hourly[1].Hour.In(BeijingLocation).Hour())
+	assert.Equal(t, Usage{Up: 50, Down: 60}, hourly[1].Usage)
+}
+
 func TestEnsureRangeAndSumAcrossMonthIsIdempotent(t *testing.T) {
 	db := openLedgerTestDB(t, "traffic-ledger-cross-month")
 	start := time.Date(2026, 7, 30, 0, 0, 0, 0, BeijingLocation)

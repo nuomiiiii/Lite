@@ -9,6 +9,7 @@ import (
 
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/pkg/rpc"
@@ -38,18 +39,34 @@ type dashboardTrafficDay struct {
 	Billable int64  `json:"billable"`
 }
 
+type dashboardTrafficHour struct {
+	Hour string `json:"hour"`
+	Up   int64  `json:"up"`
+	Down int64  `json:"down"`
+}
+
 type dashboardTrafficSummary struct {
-	TodayUp       int64                 `json:"today_up"`
-	TodayDown     int64                 `json:"today_down"`
-	TodayBillable int64                 `json:"today_billable"`
-	Daily         []dashboardTrafficDay `json:"daily"`
-	HistoryReady  bool                  `json:"history_ready"`
+	TodayUp       int64                  `json:"today_up"`
+	TodayDown     int64                  `json:"today_down"`
+	TodayBillable int64                  `json:"today_billable"`
+	Hourly        []dashboardTrafficHour `json:"hourly"`
+	Daily         []dashboardTrafficDay  `json:"daily"`
+	HistoryReady  bool                   `json:"history_ready"`
+}
+
+type dashboardStorageSummary struct {
+	DatabaseFiles   int64      `json:"database_files"`
+	WAL             int64      `json:"wal"`
+	SHM             int64      `json:"shm"`
+	RetentionDays   int        `json:"retention_days"`
+	LastCompactedAt *time.Time `json:"last_compacted_at"`
 }
 
 type dashboardResponse struct {
 	Servers     dashboardServerSummary  `json:"servers"`
 	Traffic     dashboardTrafficSummary `json:"traffic"`
 	Database    databaseStatusResponse  `json:"database"`
+	Storage     dashboardStorageSummary `json:"storage"`
 	GeneratedAt time.Time               `json:"generated_at"`
 }
 
@@ -113,8 +130,31 @@ func buildDashboard(ctx context.Context, now time.Time) (dashboardResponse, erro
 			Monitoring: monitoring,
 			LocalTotal: localDatabaseTotal(main, monitoring),
 		},
+		Storage:     buildDashboardStorage(ctx, main, monitoring),
 		GeneratedAt: now,
 	}, nil
+}
+
+func buildDashboardStorage(ctx context.Context, statuses ...databaseStorageStatus) dashboardStorageSummary {
+	summary := dashboardStorageSummary{}
+	for _, status := range statuses {
+		if status.Location != databaseLocationLocal || status.Files == nil {
+			continue
+		}
+		summary.DatabaseFiles += status.Files.Database
+		summary.WAL += status.Files.WAL
+		summary.SHM += status.Files.SHM
+		if status.Runtime != nil && status.Runtime.LastCycleCompletedAt != nil {
+			completed := status.Runtime.LastCycleCompletedAt.UTC()
+			if summary.LastCompactedAt == nil || completed.After(*summary.LastCompactedAt) {
+				summary.LastCompactedAt = &completed
+			}
+		}
+	}
+	if retention, err := metricstore.GetRetentionSummary(ctx); err == nil {
+		summary.RetentionDays = retention.MaxDays
+	}
+	return summary
 }
 
 func buildDashboardServers(clientList []models.Client) dashboardServerSummary {
@@ -165,17 +205,19 @@ func loadDashboardTraffic(ctx context.Context, clientList []models.Client, now t
 	}
 
 	todayUsage := make(map[string]trafficledger.Usage, len(clientList))
+	todayHourly := make(map[string][]trafficledger.HourlyUsage, len(clientList))
 	for _, client := range clientList {
-		usage, err := trafficledger.MetricUsage(ctx, client.UUID, today.UTC(), now.UTC())
+		usage, hourly, err := trafficledger.MetricUsageByHour(ctx, client.UUID, today.UTC(), now.UTC())
 		if err != nil {
 			return dashboardTrafficSummary{}, fmt.Errorf("read today's traffic for client %s: %w", client.UUID, err)
 		}
 		todayUsage[client.UUID] = usage
+		todayHourly[client.UUID] = hourly
 	}
-	return summarizeDashboardTraffic(clientList, rows, todayUsage, now), nil
+	return summarizeDashboardTraffic(clientList, rows, todayUsage, todayHourly, now), nil
 }
 
-func summarizeDashboardTraffic(clientList []models.Client, rows []models.TrafficDailyLedger, todayUsage map[string]trafficledger.Usage, now time.Time) dashboardTrafficSummary {
+func summarizeDashboardTraffic(clientList []models.Client, rows []models.TrafficDailyLedger, todayUsage map[string]trafficledger.Usage, todayHourly map[string][]trafficledger.HourlyUsage, now time.Time) dashboardTrafficSummary {
 	today := trafficledger.BeijingDay(now)
 	start := today.AddDate(0, 0, -(trafficledger.DashboardHistoryDays - 1))
 	clientsByID := make(map[string]models.Client, len(clientList))
@@ -184,7 +226,13 @@ func summarizeDashboardTraffic(clientList []models.Client, rows []models.Traffic
 	}
 
 	daysByKey := make(map[string]*dashboardTrafficDay, trafficledger.DashboardHistoryDays)
-	summary := dashboardTrafficSummary{Daily: make([]dashboardTrafficDay, 0, trafficledger.DashboardHistoryDays)}
+	summary := dashboardTrafficSummary{
+		Daily:  make([]dashboardTrafficDay, 0, trafficledger.DashboardHistoryDays),
+		Hourly: make([]dashboardTrafficHour, now.In(trafficledger.BeijingLocation).Hour()+1),
+	}
+	for hour := range summary.Hourly {
+		summary.Hourly[hour].Hour = fmt.Sprintf("%02d:00", hour)
+	}
 	for day := start; !day.After(today); day = day.AddDate(0, 0, 1) {
 		key := day.Format(time.DateOnly)
 		summary.Daily = append(summary.Daily, dashboardTrafficDay{Day: key})
@@ -215,6 +263,17 @@ func summarizeDashboardTraffic(clientList []models.Client, rows []models.Traffic
 		summary.TodayUp += usage.Up
 		summary.TodayDown += usage.Down
 		summary.TodayBillable += billable
+		for _, hourly := range todayHourly[client.UUID] {
+			hour := hourly.Hour.In(trafficledger.BeijingLocation).Hour()
+			if hour >= 0 && hour < len(summary.Hourly) {
+				summary.Hourly[hour].Up += hourly.Up
+				summary.Hourly[hour].Down += hourly.Down
+			}
+		}
+	}
+	for hour := 1; hour < len(summary.Hourly); hour++ {
+		summary.Hourly[hour].Up += summary.Hourly[hour-1].Up
+		summary.Hourly[hour].Down += summary.Hourly[hour-1].Down
 	}
 
 	expectedRows := len(clientList) * (trafficledger.DashboardHistoryDays - 1)
