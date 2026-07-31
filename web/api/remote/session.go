@@ -17,7 +17,7 @@ const (
 	remoteStepUpTTL    = 10 * time.Minute
 	remoteMaxDuration  = 2 * time.Hour
 	remoteReadLimit    = 2 << 20
-	maxRemoteSessions  = 16
+	maxRemoteSessions  = 64
 )
 
 type remoteSession struct {
@@ -169,6 +169,21 @@ func deleteSession(id string) {
 	if agent != nil {
 		_ = agent.Close()
 	}
+}
+
+func deleteOwnedSession(id, userUUID, loginSession string) bool {
+	session := getSession(id)
+	if session == nil {
+		return true
+	}
+	session.mu.Lock()
+	owned := !session.closed && session.UserUUID == userUUID && session.LoginSession == loginSession
+	session.mu.Unlock()
+	if !owned {
+		return false
+	}
+	deleteSession(id)
+	return true
 }
 
 func CloseClientSessions(uuid string) {

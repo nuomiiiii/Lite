@@ -170,6 +170,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	{
 		clientGroup.POST("/remote/authorize", remote.Authorize)
 		clientGroup.POST("/remote/session", remote.CreateSession)
+		clientGroup.POST("/remote/session/cancel", remote.CancelSession)
 		clientGroup.GET("/remote", remote.ConnectBrowser)
 		clientGroup.POST("/add", jsonRpc.Bind("admin:addClient", jsonRpc.WithFlat()))
 		clientGroup.GET("/list", jsonRpc.Bind("admin:listClients", jsonRpc.WithRaw()))

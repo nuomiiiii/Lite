@@ -2,7 +2,9 @@ package remote
 
 import (
 	"errors"
+	"fmt"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -159,5 +161,111 @@ func TestPutSessionReturnsTypedLimitError(t *testing.T) {
 	err := putSession(&remoteSession{ID: "overflow", ExpiresAt: now.Add(time.Minute), LastActivity: now})
 	if !errors.Is(err, errRemoteSessionLimit) {
 		t.Fatalf("putSession error=%v, want remote session limit", err)
+	}
+}
+
+func TestOwnedRemoteSessionsCanBeReleasedAcrossConsecutiveLaunches(t *testing.T) {
+	replaceRemoteSessions(t, make(map[string]*remoteSession))
+	now := time.Now()
+	for attempt := 1; attempt <= 3; attempt++ {
+		id := string(rune('a' + attempt))
+		session := &remoteSession{
+			ID:           id,
+			UUID:         "node-a",
+			UserUUID:     "user-a",
+			LoginSession: "login-a",
+			ExpiresAt:    now.Add(time.Minute),
+			LastActivity: now,
+		}
+		if err := putSession(session); err != nil {
+			t.Fatalf("launch %d: putSession error = %v", attempt, err)
+		}
+		if !deleteOwnedSession(id, "user-a", "login-a") {
+			t.Fatalf("launch %d: owner could not release session", attempt)
+		}
+		if getSession(id) != nil {
+			t.Fatalf("launch %d: released session remains registered", attempt)
+		}
+	}
+}
+
+func TestConcurrentRemotePagesKeepIndependentSessions(t *testing.T) {
+	replaceRemoteSessions(t, make(map[string]*remoteSession))
+	const pageCount = 32
+	now := time.Now()
+	var waitGroup sync.WaitGroup
+	errorsCh := make(chan error, pageCount)
+
+	for page := 0; page < pageCount; page++ {
+		page := page
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			id := fmt.Sprintf("page-%02d", page)
+			if err := putSession(&remoteSession{
+				ID:           id,
+				UUID:         fmt.Sprintf("node-%02d", page),
+				UserUUID:     "user-a",
+				LoginSession: "login-a",
+				ExpiresAt:    now.Add(time.Minute),
+				LastActivity: now,
+			}); err != nil {
+				errorsCh <- fmt.Errorf("%s: %w", id, err)
+			}
+		}()
+	}
+	waitGroup.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Fatal(err)
+	}
+
+	sessionsMu.RLock()
+	registered := len(sessions)
+	sessionsMu.RUnlock()
+	if registered != pageCount {
+		t.Fatalf("registered session count = %d, want %d", registered, pageCount)
+	}
+
+	if !deleteOwnedSession("page-07", "user-a", "login-a") {
+		t.Fatal("owner could not release one independent page session")
+	}
+	if getSession("page-07") != nil {
+		t.Fatal("released page session remains registered")
+	}
+	for page := 0; page < pageCount; page++ {
+		id := fmt.Sprintf("page-%02d", page)
+		if id != "page-07" && getSession(id) == nil {
+			t.Fatalf("closing page-07 removed independent session %s", id)
+		}
+	}
+
+	if err := putSession(&remoteSession{
+		ID:           "replacement-page",
+		UUID:         "replacement-node",
+		UserUUID:     "user-a",
+		LoginSession: "login-a",
+		ExpiresAt:    now.Add(time.Minute),
+		LastActivity: now,
+	}); err != nil {
+		t.Fatalf("released capacity could not be reused: %v", err)
+	}
+}
+
+func TestRemoteSessionCannotBeReleasedByAnotherLogin(t *testing.T) {
+	replaceRemoteSessions(t, map[string]*remoteSession{
+		"session-a": {
+			ID:           "session-a",
+			UserUUID:     "user-a",
+			LoginSession: "login-a",
+			ExpiresAt:    time.Now().Add(time.Minute),
+		},
+	})
+
+	if deleteOwnedSession("session-a", "user-a", "login-b") {
+		t.Fatal("another login released the remote session")
+	}
+	if getSession("session-a") == nil {
+		t.Fatal("unauthorized release removed the remote session")
 	}
 }

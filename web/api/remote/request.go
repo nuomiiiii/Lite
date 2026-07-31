@@ -21,6 +21,10 @@ type browserAuthorization struct {
 	Ticket    string `json:"ticket"`
 }
 
+type cancelSessionRequest struct {
+	SessionID string `json:"session_id" binding:"required"`
+}
+
 func (authorization browserAuthorization) valid() bool {
 	return authorization.Type == "auth" && authorization.SessionID != "" && authorization.Ticket != ""
 }
@@ -114,6 +118,27 @@ func Authorize(c *gin.Context) {
 		return
 	}
 	api.RespondSuccess(c, gin.H{"authorized": true})
+}
+
+// CancelSession releases a browser-owned remote session immediately. The
+// operation is idempotent so page unload and WebSocket close may race safely.
+func CancelSession(c *gin.Context) {
+	principal := api.GetPrincipal(c)
+	if principal == nil || principal.Type != rpc.PrincipalUser {
+		api.RespondError(c, http.StatusForbidden, "Remote control requires an administrator session")
+		return
+	}
+	var request cancelSessionRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		api.RespondError(c, http.StatusBadRequest, "Remote session ID is required")
+		return
+	}
+	loginSession, _ := c.Cookie("session_token")
+	if loginSession == "" || !deleteOwnedSession(request.SessionID, principal.UserUUID, loginSession) {
+		api.RespondError(c, http.StatusNotFound, "Remote session not found")
+		return
+	}
+	api.RespondSuccess(c, gin.H{"released": true})
 }
 
 func verifyRemoteAccess(c *gin.Context, loginSession string) error {
