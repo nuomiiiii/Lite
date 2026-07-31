@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,10 @@ const (
 	DailyLedgerRetentionDays   = 2
 	WeeklyLedgerRetentionDays  = 8
 	MonthlyLedgerRetentionDays = 35
+	// DashboardLedgerRetentionDays keeps a small exact daily ledger for every
+	// client so the dashboard never has to rescan the full metric store.
+	DashboardLedgerRetentionDays = 15
+	DashboardHistoryDays         = 14
 	// MetricSafetyRetentionDays leaves enough metric history to settle a missed
 	// day without retaining an entire report month in the metric store.
 	MetricSafetyRetentionDays = 2
@@ -207,17 +212,43 @@ func ledgerRangeComplete(ctx context.Context, db *gorm.DB, clientID string, star
 // Maintain settles recent missing days and removes old ledger rows. Existing
 // rows are never recalculated, so running this hourly has negligible cost.
 func Maintain(ctx context.Context, db *gorm.DB, now time.Time) error {
+	return maintainWithDailyCalculator(ctx, db, now, MetricUsagesByDay)
+}
+
+func maintainWithDailyCalculator(ctx context.Context, db *gorm.DB, now time.Time, calculate dailyUsageCalculator) error {
 	targets, err := enabledReportTargets(ctx, db)
 	if err != nil {
 		return err
 	}
-	today := BeijingDay(now)
-	clientIDs := make([]string, 0, len(targets))
-	for _, target := range targets {
-		clientIDs = append(clientIDs, target.clientID)
+	var allClients []models.Client
+	if err := db.WithContext(ctx).Select("uuid").Order("uuid ASC").Find(&allClients).Error; err != nil {
+		return fmt.Errorf("list dashboard traffic clients: %w", err)
 	}
+
+	targetsByClient := make(map[string]int, len(allClients)+len(targets))
+	for _, client := range allClients {
+		if client.UUID != "" {
+			targetsByClient[client.UUID] = DashboardLedgerRetentionDays
+		}
+	}
+	for _, target := range targets {
+		if target.retentionDays > targetsByClient[target.clientID] {
+			targetsByClient[target.clientID] = target.retentionDays
+		}
+	}
+	targets = targets[:0]
+	clientIDs := make([]string, 0, len(targetsByClient))
+	for clientID, retentionDays := range targetsByClient {
+		clientIDs = append(clientIDs, clientID)
+		targets = append(targets, reportTarget{clientID: clientID, retentionDays: retentionDays})
+	}
+	sort.Strings(clientIDs)
+	sort.Slice(targets, func(i, j int) bool { return targets[i].clientID < targets[j].clientID })
+
+	today := BeijingDay(now)
 	if len(clientIDs) > 0 {
-		if err := EnsureRange(ctx, db, clientIDs, today.AddDate(0, 0, -MetricSafetyRetentionDays), today); err != nil {
+		dashboardStart := today.AddDate(0, 0, -(DashboardHistoryDays - 1))
+		if err := ensureRangeWithDailyCalculator(ctx, db, clientIDs, dashboardStart, today, calculate); err != nil {
 			return err
 		}
 	}
@@ -237,6 +268,31 @@ func Maintain(ctx context.Context, db *gorm.DB, now time.Time) error {
 		return fmt.Errorf("clean disabled traffic ledger rows: %w", err)
 	}
 	return nil
+}
+
+// BillableUsage applies the same traffic accounting rule used by limits and
+// scheduled reports. Unknown values retain the historical "max" default.
+func BillableUsage(kind string, up, down int64) int64 {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "up":
+		return up
+	case "down":
+		return down
+	case "sum":
+		return up + down
+	case "min":
+		if up < down {
+			return up
+		}
+		return down
+	case "max":
+		fallthrough
+	default:
+		if up > down {
+			return up
+		}
+		return down
+	}
 }
 
 // EnsureRange creates any missing per-day rows in [startDay, endDay). The

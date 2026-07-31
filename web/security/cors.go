@@ -69,7 +69,7 @@ func (ctrl *CorsController) Middleware() gin.HandlerFunc {
 		origin := c.GetHeader("Origin")
 		allowOrigin := ""
 		if origin != "" && (IsAPIKeyRequest(c.Request) ||
-			OriginMatchesHost(origin, c.Request.Host) ||
+			OriginMatchesRequest(origin, c.Request) ||
 			OriginInAllowlist(origin, corsAllowedOrigins)) {
 			allowOrigin = origin
 		}
