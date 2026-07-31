@@ -11,7 +11,7 @@
 
 Komari 构建编号：`__VERSION_HASH__`
 
-Komari Web 构建编号：`39c64a5`
+Komari Web 构建编号：`c1bbc32`
 
 ## 第 6 次更新（2026-07-31 09:49，北京时间）
 
