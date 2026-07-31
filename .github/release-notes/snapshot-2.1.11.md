@@ -18,7 +18,7 @@
 
 Komari 构建编号：`__VERSION_HASH__`
 
-Komari Web 构建编号：`07655d2`
+Komari Web 构建编号：`e2cdb48`
 
 ## 第 5 次更新（2026-07-31 00:48，北京时间）
 
