@@ -164,6 +164,98 @@ func unzipToDir(zipPath, dstDir string) error {
 	return nil
 }
 
+func validateRestoredSQLite(path, label string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open restored %s: %w", label, err)
+	}
+	defer file.Close()
+	header := make([]byte, 16)
+	if _, err := io.ReadFull(file, header); err != nil {
+		return fmt.Errorf("read restored %s header: %w", label, err)
+	}
+	if string(header) != "SQLite format 3\x00" {
+		return fmt.Errorf("restored %s is not a valid SQLite database", label)
+	}
+	return nil
+}
+
+// restoreStagedBackup extracts and validates the entire archive before it
+// replaces data/. Directory renames keep the previous data intact if the new
+// package cannot be prepared or published.
+func restoreStagedBackup(dataDir string) error {
+	backupZipPath := filepath.Join(dataDir, "backup.zip")
+	if _, err := os.Stat(backupZipPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect staged backup: %w", err)
+	}
+
+	stageDir, err := os.MkdirTemp(filepath.Dir(dataDir), ".komari-restore-*")
+	if err != nil {
+		return fmt.Errorf("create restore staging directory: %w", err)
+	}
+	stagePublished := false
+	defer func() {
+		if !stagePublished {
+			_ = os.RemoveAll(stageDir)
+		}
+	}()
+	if err := unzipToDir(backupZipPath, stageDir); err != nil {
+		return fmt.Errorf("extract backup into staging directory: %w", err)
+	}
+	if err := validateRestoredSQLite(filepath.Join(stageDir, "komari.db"), "komari.db"); err != nil {
+		return err
+	}
+	metricsPath := filepath.Join(stageDir, "metrics.db")
+	if _, err := os.Stat(metricsPath); err == nil {
+		if err := validateRestoredSQLite(metricsPath, "metrics.db"); err != nil {
+			return err
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect restored metrics.db: %w", err)
+	}
+	_ = os.Remove(filepath.Join(stageDir, "komari-backup-markup"))
+	if err := os.MkdirAll(filepath.Join(stageDir, "theme"), 0o755); err != nil {
+		return fmt.Errorf("prepare restored theme directory: %w", err)
+	}
+
+	backupDir := filepath.Join(filepath.Dir(dataDir), "backup")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		return fmt.Errorf("create pre-restore backup directory: %w", err)
+	}
+	timestamp := time.Now().UTC().Format("20060102-150405")
+	preRestorePath := filepath.Join(backupDir, fmt.Sprintf("pre-restore-%s.zip", timestamp))
+	if err := zipDirectoryExcluding(dataDir, preRestorePath, map[string]struct{}{backupZipPath: {}}); err != nil {
+		return fmt.Errorf("preserve current data before restore: %w", err)
+	}
+
+	oldDir, err := os.MkdirTemp(filepath.Dir(dataDir), ".komari-restore-old-*")
+	if err != nil {
+		return fmt.Errorf("reserve previous data path: %w", err)
+	}
+	if err := os.RemoveAll(oldDir); err != nil {
+		return fmt.Errorf("prepare previous data path: %w", err)
+	}
+	if err := os.Rename(dataDir, oldDir); err != nil {
+		return fmt.Errorf("move current data aside: %w", err)
+	}
+	if err := os.Rename(stageDir, dataDir); err != nil {
+		rollbackErr := os.Rename(oldDir, dataDir)
+		if rollbackErr != nil {
+			return fmt.Errorf("publish restored data: %v; restore previous data: %w", err, rollbackErr)
+		}
+		return fmt.Errorf("publish restored data: %w", err)
+	}
+	stagePublished = true
+	if err := os.RemoveAll(oldDir); err != nil {
+		logger.Errorf("dbcore", "[restore] restored data is active, but old staging directory could not be removed: %v", err)
+	}
+	logger.Infof("dbcore", "[restore] backup restored atomically; previous data saved to %s", preRestorePath)
+	return nil
+}
+
 var (
 	instance *gorm.DB
 	once     sync.Once
@@ -319,49 +411,10 @@ func Close() error {
 func doInitialize() error {
 	var err error
 
-	// 在数据库初始化前执行：如果存在 ./data/backup.zip，则进行恢复逻辑
-	func() {
-		backupZipPath := filepath.Join(".", "data", "backup.zip")
-		if _, statErr := os.Stat(backupZipPath); statErr == nil {
-			// 4. 把除了 ./data/backup.zip 之外的所有文件压缩到 ./backup/{time}.zip
-			if err := os.MkdirAll("./backup", 0755); err != nil {
-				logger.Errorf("dbcore", "[restore] failed to create backup dir: %v", err)
-			} else {
-				tsName := time.Now().UTC().Format("20060102-150405")
-				bakPath := filepath.Join("./backup", fmt.Sprintf("%s.zip", tsName))
-				if zipErr := zipDirectoryExcluding("./data", bakPath, map[string]struct{}{backupZipPath: {}}); zipErr != nil {
-					logger.Errorf("dbcore", "[restore] failed to zip current data: %v", zipErr)
-				} else {
-					logger.Infof("dbcore", "[restore] current data zipped to %s", bakPath)
-				}
-			}
-
-			// 5. 删除除了 ./data/backup.zip 之外的所有文件
-			if delErr := removeAllInDirExcept("./data", map[string]struct{}{backupZipPath: {}}); delErr != nil {
-				logger.Errorf("dbcore", "[restore] failed to cleanup data dir: %v", delErr)
-			}
-
-			// 6. 解压 ./data/backup.zip 到 ./data
-			if unzipErr := unzipToDir(backupZipPath, "./data"); unzipErr != nil {
-				logger.Errorf("dbcore", "[restore] failed to unzip backup into data: %v", unzipErr)
-			} else {
-				logger.Infof("dbcore", "[restore] backup.zip extracted to ./data")
-			}
-
-			// 7. 删除 ./data/backup.zip
-			if rmErr := os.Remove(backupZipPath); rmErr != nil {
-				logger.Errorf("dbcore", "[restore] failed to remove backup.zip: %v", rmErr)
-			} else {
-				logger.Infof("dbcore", "[restore] backup.zip removed")
-			}
-			// 8. 删除标记
-			if rmErr := os.Remove("./data/komari-backup-markup"); rmErr != nil {
-				logger.Errorf("dbcore", "[restore] failed to remove komari-backup-markup: %v", rmErr)
-			} else {
-				logger.Infof("dbcore", "[restore] komari-backup-markup removed")
-			}
-		}
-	}()
+	// 在数据库连接创建前完整校验并原子恢复，失败时保留原 data/ 不动。
+	if err := restoreStagedBackup(filepath.Join(".", "data")); err != nil {
+		return fmt.Errorf("restore staged backup: %w", err)
+	}
 
 	// 记录“打开数据库之前”komari.db 是否已存在，用于区分全新安装与旧版升级。
 	// 必须在（可能的）恢复逻辑之后、gorm.Open 之前采集：恢复会解压出旧库，

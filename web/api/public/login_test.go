@@ -108,6 +108,8 @@ func TestSessionCookieSecureFollowsRequestScheme(t *testing.T) {
 	tests := []struct {
 		name       string
 		requestURL string
+		remoteAddr string
+		forwarded  string
 		wantSecure bool
 	}{
 		{
@@ -119,6 +121,19 @@ func TestSessionCookieSecureFollowsRequestScheme(t *testing.T) {
 			requestURL: "https://example.test/login",
 			wantSecure: true,
 		},
+		{
+			name:       "trusted reverse proxy",
+			requestURL: "http://example.test/login",
+			remoteAddr: "127.0.0.1:43000",
+			forwarded:  "https",
+			wantSecure: true,
+		},
+		{
+			name:       "untrusted spoofed reverse proxy",
+			requestURL: "http://example.test/login",
+			remoteAddr: "203.0.113.10:43000",
+			forwarded:  "https",
+		},
 	}
 
 	for _, tt := range tests {
@@ -126,6 +141,12 @@ func TestSessionCookieSecureFollowsRequestScheme(t *testing.T) {
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodGet, tt.requestURL, nil)
+			if tt.remoteAddr != "" {
+				c.Request.RemoteAddr = tt.remoteAddr
+			}
+			if tt.forwarded != "" {
+				c.Request.Header.Set("X-Forwarded-Proto", tt.forwarded)
+			}
 
 			setSessionCookie(c, "test-session", sessionCookieMaxAge)
 

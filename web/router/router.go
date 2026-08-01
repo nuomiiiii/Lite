@@ -94,6 +94,9 @@ func registerAdminRoutes(r *gin.Engine) {
 	g.POST("/update/user", admin.UpdateUser)
 	g.PUT("/update/favicon", admin.UploadFavicon)
 	g.POST("/update/favicon", admin.DeleteFavicon)
+	g.GET("/settings/https", admin.GetHTTPSSettings)
+	g.POST("/settings/https", admin.UpdateHTTPSSettings)
+	g.POST("/settings/https/reload", admin.ReloadHTTPSCertificate)
 
 	// theme 含文件上传，保留 REST handler。
 	theme := g.Group("/theme")

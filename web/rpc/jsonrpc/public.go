@@ -50,6 +50,7 @@ func publicGetNodesInformation(ctx context.Context, _ *rpc.JsonRpcRequest) (any,
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to retrieve client information: "+err.Error(), nil)
 	}
+	applyThemeTrafficCompatibility(clientList)
 	isLogin := isLoginFromCtx(ctx)
 	j := 0
 	for i := 0; i < len(clientList); i++ {

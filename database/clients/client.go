@@ -352,6 +352,10 @@ func GetClientByUUID(uuid string) (client models.Client, err error) {
 	if err != nil {
 		return models.Client{}, err
 	}
+	if err := applyClientDisplayFieldsAndPersist(db, []models.Client{client}, time.Now().UTC()); err != nil {
+		return models.Client{}, err
+	}
+	applyClientDisplayFields(&client, time.Now().UTC())
 	return client, nil
 }
 
@@ -410,6 +414,9 @@ func getClientBasicInfo(query *gorm.DB) (clients []models.Client, err error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := applyClientDisplayFieldsAndPersist(query.Session(&gorm.Session{NewDB: true}), clients, time.Now().UTC()); err != nil {
+		return nil, err
+	}
 	return clients, nil
 }
 
@@ -428,19 +435,86 @@ func saveClient(db *gorm.DB, updates map[string]interface{}) error {
 		return fmt.Errorf("no fields to update")
 	}
 
+	var existing models.Client
+	if err := db.Select("uuid", "region", "region_override", "traffic_limit", "traffic_limit_type", "traffic_reset_day", "traffic_reset_allowance", "traffic_reset_cycle").
+		Where("uuid = ?", clientUUID).First(&existing).Error; err != nil {
+		return err
+	}
+
 	if v, exists := updates["traffic_limit"]; exists {
-		if val, ok := v.(float64); ok {
-			if val < 0 || val > math.MaxInt64-1 {
+		if val, isFloat := v.(float64); isFloat {
+			numeric, ok := toInt64(val)
+			if !ok || numeric < 0 {
 				return fmt.Errorf("traffic_limit must be a valid non-negative int64 value, got %v", val)
 			}
+			updates["traffic_limit"] = numeric
 		}
 	}
+	if value, exists := updates["traffic_limit_type"]; exists {
+		typeName, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("traffic_limit_type must be a string")
+		}
+		normalized, err := normalizeTrafficType(typeName)
+		if err != nil {
+			return err
+		}
+		updates["traffic_limit_type"] = normalized
+	}
+	if value, exists := updates["region_override"]; exists {
+		override, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("region_override must be a string")
+		}
+		normalized, err := normalizeRegionOverride(override)
+		if err != nil {
+			return err
+		}
+		updates["region_override"] = normalized
+	}
+	resetDay := existing.TrafficResetDay
 	if value, exists := updates["traffic_reset_day"]; exists {
 		normalized, err := normalizeTrafficResetDay(value)
 		if err != nil {
 			return err
 		}
 		updates["traffic_reset_day"] = normalized
+		resetDay = normalized
+	}
+	resetAllowance := existing.TrafficResetAllowance
+	if value, exists := updates["traffic_reset_allowance"]; exists {
+		numeric, ok := toInt64(value)
+		if !ok || numeric < 0 {
+			return fmt.Errorf("traffic_reset_allowance must be a valid non-negative integer")
+		}
+		resetAllowance = numeric
+		updates["traffic_reset_allowance"] = numeric
+	}
+	if _, allowanceChanged := updates["traffic_reset_allowance"]; allowanceChanged {
+		if resetAllowance > 0 {
+			cycle := currentTrafficCycle(resetDay, time.Now().UTC())
+			if cycle == "" {
+				return fmt.Errorf("set a traffic reset day from 1 to 31 before adding reset traffic")
+			}
+			limit := existing.TrafficLimit
+			if value, ok := updates["traffic_limit"]; ok {
+				limit, _ = toInt64(value)
+			}
+			if limit > math.MaxInt64-resetAllowance {
+				return fmt.Errorf("traffic limit plus reset traffic is too large")
+			}
+			updates["traffic_reset_cycle"] = cycle
+		} else {
+			updates["traffic_reset_cycle"] = ""
+		}
+	} else if _, resetDayChanged := updates["traffic_reset_day"]; resetDayChanged {
+		cycle := currentTrafficCycle(resetDay, time.Now().UTC())
+		if resetAllowance <= 0 || cycle == "" {
+			updates["traffic_reset_allowance"] = 0
+			updates["traffic_reset_cycle"] = ""
+		} else {
+			updates["traffic_reset_cycle"] = cycle
+		}
 	}
 	if value, exists := updates["currency"]; exists {
 		currency, ok := value.(string)
@@ -483,6 +557,55 @@ func saveClient(db *gorm.DB, updates map[string]interface{}) error {
 		return err
 	}
 	return nil
+}
+
+func toInt64(value interface{}) (int64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), true
+	case int32:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case uint:
+		if uint64(typed) > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(typed), true
+	case uint64:
+		if typed > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(typed), true
+	case float64:
+		if math.IsNaN(typed) || math.IsInf(typed, 0) || math.Trunc(typed) != typed || typed < math.MinInt64 || typed >= math.Exp2(63) {
+			return 0, false
+		}
+		return int64(typed), true
+	case json.Number:
+		parsed, err := typed.Int64()
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func normalizeRegionOverride(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	if len(value) == 2 {
+		upper := strings.ToUpper(value)
+		if upper[0] >= 'A' && upper[0] <= 'Z' && upper[1] >= 'A' && upper[1] <= 'Z' {
+			return string(rune(0x1F1E6+int(upper[0]-'A'))) + string(rune(0x1F1E6+int(upper[1]-'A'))), nil
+		}
+	}
+	runes := []rune(value)
+	if len(runes) == 2 && runes[0] >= 0x1F1E6 && runes[0] <= 0x1F1FF && runes[1] >= 0x1F1E6 && runes[1] <= 0x1F1FF {
+		return value, nil
+	}
+	return "", fmt.Errorf("region_override must be a two-letter country code or country flag")
 }
 
 func normalizeTrafficResetDay(value interface{}) (*int, error) {

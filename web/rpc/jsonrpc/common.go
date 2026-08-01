@@ -224,6 +224,7 @@ func getNodes(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcEr
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to get client info", cinfo)
 	}
+	applyThemeTrafficCompatibility(cinfo)
 	meta := rpc.MetaFromContext(ctx)
 
 	SendIpAddrToGuest, _ := config.GetAs[bool](config.SendIpAddrToGuestKey)

@@ -3,7 +3,6 @@ package notifier
 import (
 	"fmt"
 	"math"
-	"strings"
 	"time"
 
 	"github.com/komari-monitor/komari/database/clients"
@@ -17,8 +16,29 @@ import (
 )
 
 // trafficCache 用于记录每个客户端已触发的阈值步进，避免重复提醒
-// key: "traffic:"+clientUUID, value: int 步进百分比（例如 80, 85, 90 ... 100）
+// key: "traffic:"+clientUUID, value: trafficReminderState
 var trafficCache = cache.New(30*24*time.Hour, time.Hour) // 30天缓存，1小时清理
+
+type trafficUsageSnapshot struct {
+	Used  int64
+	Limit int64
+	Type  string
+}
+
+type trafficReminderState struct {
+	Step  int
+	Limit int64
+	Type  string
+}
+
+func currentTrafficUsage(client models.Client, up, down int64, now time.Time) trafficUsageSnapshot {
+	limit, typeName := clients.EffectiveTrafficLimit(client, now)
+	return trafficUsageSnapshot{
+		Used:  computeUsedByType(typeName, up, down),
+		Limit: limit,
+		Type:  typeName,
+	}
+}
 
 // CheckTraffic 检查各客户端流量使用情况，并在达到阈值和每+5%时提醒一次；100%时额外提醒一次
 // 由外部协程每分钟调用一次
@@ -52,23 +72,26 @@ func CheckTraffic() {
 		return
 	}
 
+	now := time.Now().UTC()
 	for _, c := range allClients {
-		if c.TrafficLimit <= 0 {
-			continue
-		}
-
 		r, ok := reports[c.UUID]
 		if !ok || r == nil {
 			continue
 		}
 
-		// 计算不同类型的使用值
-		used := computeUsedByType(strings.ToLower(c.TrafficLimitType), r.Network.TotalUp, r.Network.TotalDown)
-		if used <= 0 {
+		usage := currentTrafficUsage(c, r.Network.TotalUp, r.Network.TotalDown, now)
+		if usage.Limit <= 0 || usage.Used <= 0 {
 			continue
 		}
 
-		pct := float64(used) / float64(c.TrafficLimit) * 100.0
+		pct := float64(usage.Used) / float64(usage.Limit) * 100.0
+		key := "traffic:" + c.UUID
+		last, _ := trafficCache.Get(key)
+		state, _ := last.(trafficReminderState)
+		if state.Limit != usage.Limit || state.Type != usage.Type {
+			state = trafficReminderState{Limit: usage.Limit, Type: usage.Type}
+			trafficCache.SetDefault(key, state)
+		}
 		if pct < startThreshold {
 			continue
 		}
@@ -82,19 +105,16 @@ func CheckTraffic() {
 		// 	curStep = 100
 		// }
 
-		key := "traffic:" + c.UUID
-		last, _ := trafficCache.Get(key)
-		lastStep, _ := last.(int)
-
 		// 修复：当检测到当前进度小于历史记录时，说明流量已重置，将基准归零
-		if curStep < lastStep {
-			lastStep = 0
+		if curStep < state.Step {
+			state.Step = 0
 		}
 
-		if curStep > lastStep { // 只在进入新步进时提醒一次
-			trafficCache.SetDefault(key, curStep)
+		if curStep > state.Step { // 只在进入新步进时提醒一次
+			state.Step = curStep
+			trafficCache.SetDefault(key, state)
 
-			msg := fmt.Sprintf("used %d%% (%s / %s), type=%s", curStep, humanBytes(used), humanBytes(c.TrafficLimit), strings.ToLower(c.TrafficLimitType))
+			msg := fmt.Sprintf("used %d%% (%s / %s), type=%s", curStep, humanBytes(usage.Used), humanBytes(usage.Limit), usage.Type)
 			// 发送通知（内部会检查 NotificationEnabled）
 			_ = messageSender.SendEvent(models.EventMessage{
 				Event:   "Traffic",

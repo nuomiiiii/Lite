@@ -25,6 +25,7 @@ type Client struct {
 	IPv4                   string     `json:"ipv4,omitempty" gorm:"type:varchar(100)"`
 	IPv6                   string     `json:"ipv6,omitempty" gorm:"type:varchar(100)"`
 	Region                 string     `json:"region" gorm:"type:varchar(100)"`
+	RegionOverride         string     `json:"region_override" gorm:"type:varchar(16);not null;default:''"`
 	Remark                 string     `json:"remark,omitempty" gorm:"type:longtext"`
 	PublicRemark           string     `json:"public_remark,omitempty" gorm:"type:longtext"`
 	MemTotal               int64      `json:"mem_total" gorm:"type:bigint"`
@@ -44,6 +45,10 @@ type Client struct {
 	TrafficLimit           int64      `json:"traffic_limit" gorm:"type:bigint"`
 	TrafficLimitType       string     `json:"traffic_limit_type" gorm:"type:varchar(10);default:'max'"` // 流量阈值类型：sum max min up down
 	TrafficResetDay        *int       `json:"traffic_reset_day,omitempty" gorm:"type:int"`              // nil: follow agent; 0: disabled; 1-31: monthly reset day
+	TrafficResetAllowance  int64      `json:"traffic_reset_allowance" gorm:"type:bigint;not null;default:0"`
+	TrafficResetCycle      string     `json:"traffic_reset_cycle,omitempty" gorm:"type:varchar(10);not null;default:''"`
+	EffectiveTrafficLimit  int64      `json:"effective_traffic_limit" gorm:"-"`
+	EffectiveTrafficType   string     `json:"effective_traffic_type" gorm:"-"`
 	CreatedAt              time.Time  `json:"created_at"`
 	UpdatedAt              time.Time  `json:"updated_at"`
 }

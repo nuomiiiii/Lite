@@ -151,6 +151,16 @@ func TestFormatTrafficReportLineSupportsBillingAndCombinedContent(t *testing.T) 
 	)
 }
 
+func TestFormatTrafficReportLineIgnoresResetQuotaFields(t *testing.T) {
+	client := models.Client{
+		Name: "server-a", Price: 10, TrafficLimitType: "max",
+		TrafficResetAllowance: 1024, TrafficResetCycle: "2026-08-01",
+	}
+	line := formatTrafficReportLine(client, "period", trafficUsage{Up: 1024, Down: 2 * 1024}, false, true)
+	assert.Contains(t, line, "2.00 KB")
+	assert.NotContains(t, line, "3.00 KB")
+}
+
 func TestFormatTrafficReportLineExcludesBillingForFreeClients(t *testing.T) {
 	client := models.Client{Name: "free-server", Price: 0, TrafficLimitType: "sum"}
 	usage := trafficUsage{Up: 1024, Down: 2 * 1024}
