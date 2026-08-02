@@ -6,7 +6,8 @@
 [![Docker](https://img.shields.io/badge/GHCR-nuomiiiii%2Fkomari-2496ED?logo=docker)](https://github.com/nuomiiiii/komari/pkgs/container/komari)
 [![License](https://img.shields.io/github/license/nuomiiiii/komari)](LICENSE)
 
-Komari Lite 是一款轻量级、自托管的服务器监控与管理工具。服务端提供 Web 管理界面，Agent 负责采集节点状态、执行延迟与回程线路探测，以及经过授权的远程操作。本分支基于 [komari-monitor/komari](https://github.com/komari-monitor/komari) 持续开发，重点优化低配置设备上的数据库占用、维护负载和日常运维体验。
+Komari Lite 是一款轻量级、自托管的服务器监控与管理工具。服务端提供 Web 管理界面，Agent 负责采集节点状态、执行延迟与回程线路探测，以及经过授权的远程操作。
+本分支基于 [komari-monitor/komari](https://github.com/komari-monitor/komari) 持续开发，重点优化低配置设备上的数据库占用、维护负载和日常运维体验。
 
 > [!WARNING]
 > Komari Lite 只能部署在你拥有或已获得授权管理的设备上。请勿将其用于未经授权的访问、持久化、命令执行或其他滥用行为。管理员应为面板启用 HTTPS 和双因素认证，并妥善保护 Agent Token 与备份文件。
