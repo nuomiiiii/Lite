@@ -3,6 +3,8 @@ package public
 import (
 	"crypto/sha256"
 	"embed"
+	"encoding/json"
+	"html"
 	"io/fs"
 	"log"
 	"mime"
@@ -10,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -42,6 +45,14 @@ const (
 
 const themeChangeReloadScript = `<script>(()=>{window.addEventListener("storage",(event)=>{if(event.key==="komari-active-theme-changed"){window.location.reload();}});})();</script>`
 
+const documentTitleSyncMarker = "data-komari-title-sync"
+
+var (
+	documentTitlePattern = regexp.MustCompile(`(?is)<title(?:\s[^>]*)?>.*?</title\s*>`)
+	headClosePattern     = regexp.MustCompile(`(?i)</head\s*>`)
+	bodyClosePattern     = regexp.MustCompile(`(?i)</body\s*>`)
+)
+
 func injectThemeChangeReload(html string) string {
 	if strings.Contains(html, themeChangeReloadScript) {
 		return html
@@ -50,6 +61,33 @@ func injectThemeChangeReload(html string) string {
 		return strings.Replace(html, "</body>", themeChangeReloadScript+"</body>", 1)
 	}
 	return html + themeChangeReloadScript
+}
+
+func renderPublicDocumentTitle(htmlStr, title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		title = "Komari Lite"
+	}
+
+	titleTag := "<title>" + html.EscapeString(title) + "</title>"
+	if location := documentTitlePattern.FindStringIndex(htmlStr); location != nil {
+		htmlStr = htmlStr[:location[0]] + titleTag + htmlStr[location[1]:]
+	} else if location := headClosePattern.FindStringIndex(htmlStr); location != nil {
+		htmlStr = htmlStr[:location[0]] + titleTag + htmlStr[location[0]:]
+	} else {
+		htmlStr = titleTag + htmlStr
+	}
+
+	if strings.Contains(htmlStr, documentTitleSyncMarker) {
+		return htmlStr
+	}
+
+	encodedTitle, _ := json.Marshal(title)
+	script := `<script ` + documentTitleSyncMarker + `>(()=>{const expectedTitle=` + string(encodedTitle) + `;const syncTitle=()=>{if(document.title!==expectedTitle){document.title=expectedTitle;}};syncTitle();if(document.head){new MutationObserver(syncTitle).observe(document.head,{childList:true,subtree:true,characterData:true});}})();</script>`
+	if location := bodyClosePattern.FindStringIndex(htmlStr); location != nil {
+		return htmlStr[:location[0]] + script + htmlStr[location[0]:]
+	}
+	return htmlStr + script
 }
 
 func init() {
@@ -219,9 +257,8 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	// 核心逻辑：渲染 Index.html
 	serveIndex := func(c *gin.Context) {
 		reqPath := c.Request.URL.Path
-		if isPrivateApplicationPath(reqPath) {
-			setNoStoreHeaders(c)
-		}
+		// index.html contains live site metadata and must never be served stale.
+		setNoStoreHeaders(c)
 		cfg := getConfig()
 
 		currentTheme := cfg[config.ThemeKey].(string)
@@ -255,13 +292,15 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 
 		// 执行 HTML 内容替换
 		replacer := strings.NewReplacer(
-			"<title>Komari Monitor</title>", "<title>"+cfg[config.SitenameKey].(string)+"</title>",
 			"A simple server monitor tool.", cfg[config.DescriptionKey].(string),
 			"</head>", cfg[config.CustomHeadKey].(string)+"</head>",
 			"</body>", cfg[config.CustomBodyKey].(string)+"</body>",
 		)
 
-		rendered := replacer.Replace(htmlStr)
+		rendered := renderPublicDocumentTitle(
+			replacer.Replace(htmlStr),
+			cfg[config.SitenameKey].(string),
+		)
 		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(injectThemeChangeReload(rendered)))
 	}
 
