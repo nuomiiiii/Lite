@@ -203,9 +203,9 @@ func sendTrafficReport(daily, weekly, monthly, currentDaily bool) (TrafficReport
 		var usage trafficUsage
 		var err error
 		if currentDaily {
-			usage, err = getClientTrafficInRange(target.client.UUID, start, end)
+			usage, err = trafficledger.AdjustedMetricUsage(ctx, db, target.client.UUID, start, end)
 		} else {
-			usage, err = trafficledger.SumRange(ctx, db, target.client.UUID, ledgerStart, ledgerEnd)
+			usage, err = trafficledger.AdjustedLedgerUsage(ctx, db, target.client.UUID, ledgerStart, ledgerEnd)
 		}
 		if err != nil {
 			logger.Errorf("notifier", "Failed to compute traffic for client %s (%s): %v", target.client.UUID, label, err)

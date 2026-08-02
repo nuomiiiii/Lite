@@ -94,6 +94,9 @@ func registerAdminRoutes(r *gin.Engine) {
 	g.POST("/update/user", admin.UpdateUser)
 	g.PUT("/update/favicon", admin.UploadFavicon)
 	g.POST("/update/favicon", admin.DeleteFavicon)
+	g.GET("/settings/https", admin.GetHTTPSSettings)
+	g.POST("/settings/https", admin.UpdateHTTPSSettings)
+	g.POST("/settings/https/reload", admin.ReloadHTTPSCertificate)
 
 	// theme 含文件上传，保留 REST handler。
 	theme := g.Group("/theme")
@@ -178,6 +181,8 @@ func registerAdminRoutes(r *gin.Engine) {
 		clientGroup.POST("/:uuid/edit", jsonRpc.Bind("admin:editClient", jsonRpc.WithPath("uuid")))
 		clientGroup.POST("/:uuid/remove", jsonRpc.Bind("admin:removeClient", jsonRpc.WithPath("uuid")))
 		clientGroup.GET("/:uuid/token", jsonRpc.Bind("admin:getClientToken", jsonRpc.WithPath("uuid"), jsonRpc.WithFlat()))
+		clientGroup.GET("/:uuid/traffic-calibration", admin.GetTrafficCalibration)
+		clientGroup.POST("/:uuid/traffic-calibration", admin.UpdateTrafficCalibration)
 		clientGroup.POST("/token/rotate", api.RequireSensitive2FA(), jsonRpc.Bind("admin:rotateClientToken"))
 		clientGroup.POST("/order", jsonRpc.Bind("admin:orderClients"))
 		clientGroup.GET("/:uuid/terminal", api.RequireSensitive2FA(), terminal.RequestTerminal)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/trafficledger"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestBuildDashboardStorageUsesNewestCompactionTime(t *testing.T) {
@@ -55,7 +56,7 @@ func TestSummarizeDashboardTrafficExcludesFreeClientsFromBilling(t *testing.T) {
 	}, map[string][]trafficledger.HourlyUsage{
 		"a": {{Hour: trafficledger.BeijingDay(now).Add(2 * time.Hour), Usage: trafficledger.Usage{Up: 100, Down: 40}}},
 		"b": {{Hour: trafficledger.BeijingDay(now).Add(3 * time.Hour), Usage: trafficledger.Usage{Up: 20, Down: 80}}},
-	}, now)
+	}, nil, now)
 
 	if !summary.HistoryReady {
 		t.Fatal("complete dashboard history reported as incomplete")
@@ -83,9 +84,38 @@ func TestSummarizeDashboardTrafficMarksMissingHistory(t *testing.T) {
 		nil,
 		map[string]trafficledger.Usage{"a": {}},
 		nil,
+		nil,
 		time.Date(2026, 7, 31, 8, 0, 0, 0, time.UTC),
 	)
 	if summary.HistoryReady {
 		t.Fatal("missing ledger rows reported as ready")
 	}
+}
+
+func TestSummarizeDashboardTrafficUsesCalibratedDailyAndHourlyValues(t *testing.T) {
+	now := time.Date(2026, 8, 2, 8, 30, 0, 0, time.UTC)
+	today := trafficledger.BeijingDay(now)
+	yesterday := today.AddDate(0, 0, -1).Format(time.DateOnly)
+	todayKey := today.Format(time.DateOnly)
+	summary := summarizeDashboardTraffic(
+		[]models.Client{{UUID: "a", Price: 1, TrafficLimitType: "sum"}},
+		[]models.TrafficDailyLedger{{Client: "a", Day: yesterday, UpBytes: 100, DownBytes: 200}},
+		map[string]trafficledger.Usage{"a": {Up: 10, Down: 20}},
+		map[string][]trafficledger.HourlyUsage{
+			"a": {{Hour: today.Add(15 * time.Hour), Usage: trafficledger.Usage{Up: 10, Down: 20}}},
+		},
+		map[string]trafficledger.SignedUsage{
+			"a\x00" + yesterday: {Up: 50, Down: -25},
+			"a\x00" + todayKey:  {Up: 5, Down: -10},
+		},
+		now,
+	)
+
+	assert.Equal(t, int64(150), summary.Daily[len(summary.Daily)-2].Up)
+	assert.Equal(t, int64(175), summary.Daily[len(summary.Daily)-2].Down)
+	assert.Equal(t, int64(15), summary.TodayUp)
+	assert.Equal(t, int64(10), summary.TodayDown)
+	assert.Equal(t, int64(25), summary.TodayBillable)
+	assert.Equal(t, int64(15), summary.Hourly[len(summary.Hourly)-1].Up)
+	assert.Equal(t, int64(10), summary.Hourly[len(summary.Hourly)-1].Down)
 }

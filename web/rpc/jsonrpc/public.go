@@ -11,6 +11,7 @@ import (
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/database/tasks"
+	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/pkg/rpc"
 	"github.com/komari-monitor/komari/pkg/selfupdate"
 	"github.com/komari-monitor/komari/utils"
@@ -50,6 +51,7 @@ func publicGetNodesInformation(ctx context.Context, _ *rpc.JsonRpcRequest) (any,
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to retrieve client information: "+err.Error(), nil)
 	}
+	applyThemeTrafficCompatibility(clientList)
 	isLogin := isLoginFromCtx(ctx)
 	j := 0
 	for i := 0; i < len(clientList); i++ {
@@ -117,7 +119,16 @@ func publicGetClientRecentRecords(ctx context.Context, req *rpc.JsonRpcRequest) 
 	if !isLoginFromCtx(ctx) && isHiddenClient(params.UUID) {
 		return nil, rpc.MakeError(rpc.InvalidParams, "UUID is required", nil) // 防止未登录获取隐藏客户端
 	}
-	return agent_runtime.GetRecentReports(params.UUID), nil
+	reports := agent_runtime.GetRecentReports(params.UUID)
+	if usage, ok := calibratedUsageForClient(ctx, params.UUID); ok && len(reports) > 0 {
+		newestUp := reports[len(reports)-1].Network.TotalUp
+		newestDown := reports[len(reports)-1].Network.TotalDown
+		for index := range reports {
+			reports[index].Network.TotalUp = trafficledger.ShiftCumulativeCounter(reports[index].Network.TotalUp, newestUp, usage.Up)
+			reports[index].Network.TotalDown = trafficledger.ShiftCumulativeCounter(reports[index].Network.TotalDown, newestDown, usage.Down)
+		}
+	}
+	return reports, nil
 }
 
 // isHiddenClient 查询指定 uuid 是否为隐藏节点。
@@ -167,6 +178,14 @@ func publicGetRecordsByUUID(ctx context.Context, req *rpc.JsonRpcRequest) (any, 
 	clientRecords, err := records.GetRecordsByClientAndTimeForLoadType(params.UUID, now.Add(-time.Duration(hoursInt)*time.Hour), now, params.LoadType)
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch records: "+err.Error(), nil)
+	}
+	if usage, ok := calibratedUsageForClient(ctx, params.UUID); ok && len(clientRecords) > 0 {
+		newestUp := clientRecords[len(clientRecords)-1].NetTotalUp
+		newestDown := clientRecords[len(clientRecords)-1].NetTotalDown
+		for index := range clientRecords {
+			clientRecords[index].NetTotalUp = trafficledger.ShiftCumulativeCounter(clientRecords[index].NetTotalUp, newestUp, usage.Up)
+			clientRecords[index].NetTotalDown = trafficledger.ShiftCumulativeCounter(clientRecords[index].NetTotalDown, newestDown, usage.Down)
+		}
 	}
 	response := map[string]any{
 		"records": clientRecords,

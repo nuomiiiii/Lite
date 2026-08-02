@@ -3,11 +3,13 @@ package api
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/accounts"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/protocol/v1"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
 )
@@ -87,6 +89,9 @@ func GetClients(c *gin.Context) {
 		}
 
 		//过往节点数据信息
+		calibrated, _ := trafficledger.CurrentCalibratedCycleUsages(
+			c.Request.Context(), dbcore.GetDBInstance(), time.Now().UTC(),
+		)
 		for key, report := range agent_runtime.GetLatestReport() {
 			if !isLogin && hiddenMap[key] {
 				continue
@@ -98,6 +103,10 @@ func GetClients(c *gin.Context) {
 			report.UUID = "" // 不暴露 uuid
 			if report.CPU.Usage == 0 {
 				report.CPU.Usage = 0.01
+			}
+			if usage, ok := calibrated[key]; ok {
+				report.Network.TotalUp = usage.Up
+				report.Network.TotalDown = usage.Down
 			}
 			resp.Data[key] = *report
 		}

@@ -4,7 +4,7 @@ import "time"
 
 type Settings struct {
 	ID                     uint   `json:"id,omitempty"`                                        // 1
-	Sitename               string `json:"sitename" default:"Komari"`                           // 站点名称，默认 "Komari"
+	Sitename               string `json:"sitename" default:"Komari Lite"`                      // 站点名称，默认 "Komari Lite"
 	Description            string `json:"description" default:"A simple server monitor tool."` // 站点描述
 	CorsOriginCheckEnabled bool   `json:"cors_origin_check_enabled" default:"true"`            // 是否启用 API CORS 跨域请求校验，默认 true
 	CorsAllowedOrigins     string `json:"cors_allowed_origins" default:""`                     // API 跨域允许列表
@@ -27,6 +27,11 @@ type Settings struct {
 	OAuthProvider         string `json:"o_auth_provider" default:"github"`
 	DisablePasswordLogin  bool   `json:"disable_password_login" default:"false"`
 	CloudflareTunnelToken string `json:"cloudflare_tunnel_token" default:""`
+	HTTPSEnabled          bool   `json:"https_enabled" default:"false"`
+	HTTPSListen           string `json:"https_listen" default:":35938"`
+	HTTPSRedirectHTTP     bool   `json:"https_redirect_http" default:"false"`
+	HTTPSCertificatePath  string `json:"https_certificate_path" default:"./data/tls/server.crt"`
+	HTTPSPrivateKeyPath   string `json:"https_private_key_path" default:"./data/tls/server.key"`
 	// 自定义美化
 	CustomHead string `json:"custom_head" default:""`
 	CustomBody string `json:"custom_body" default:""`
@@ -68,6 +73,11 @@ const (
 	OAuthProviderKey         = "o_auth_provider"
 	DisablePasswordLoginKey  = "disable_password_login"
 	CloudflareTunnelTokenKey = "cloudflare_tunnel_token"
+	HTTPSEnabledKey          = "https_enabled"
+	HTTPSListenKey           = "https_listen"
+	HTTPSRedirectHTTPKey     = "https_redirect_http"
+	HTTPSCertificatePathKey  = "https_certificate_path"
+	HTTPSPrivateKeyPathKey   = "https_private_key_path"
 	CustomHeadKey            = "custom_head"
 	CustomBodyKey            = "custom_body"
 

@@ -664,7 +664,7 @@ func renderStatusTable(ctx context.Context, lang string, tzOffset *int, fontErr 
 	y := padding
 
 	// 标题
-	siteName, _ := conf.GetAs[string](conf.SitenameKey, "Komari Monitor")
+	siteName, _ := conf.GetAs[string](conf.SitenameKey, "Komari Lite")
 	fontMutex.RLock()
 	boldFace := fontFaceBold
 	normalFace := fontFace
@@ -832,7 +832,7 @@ func renderStatusTableWithBasicFont(ctx context.Context, lang string, tzOffset *
 	y := padding
 
 	// 标题
-	siteName, _ := conf.GetAs[string](conf.SitenameKey, "Komari Monitor")
+	siteName, _ := conf.GetAs[string](conf.SitenameKey, "Komari Lite")
 
 	drawStringBasic(img, siteName, padding+5, y+titleFontSize, color.Black)
 	y += headerHeight

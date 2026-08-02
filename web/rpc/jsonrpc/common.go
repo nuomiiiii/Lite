@@ -13,6 +13,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/tasks"
+	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/pkg/config"
 	"github.com/komari-monitor/komari/pkg/rpc"
 	"github.com/komari-monitor/komari/pkg/selfupdate"
@@ -224,6 +225,7 @@ func getNodes(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcEr
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to get client info", cinfo)
 	}
+	applyThemeTrafficCompatibility(cinfo)
 	meta := rpc.MetaFromContext(ctx)
 
 	SendIpAddrToGuest, _ := config.GetAs[bool](config.SendIpAddrToGuestKey)
@@ -287,6 +289,7 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 
 	meta := rpc.MetaFromContext(ctx)
 	latest := agent_runtime.GetLatestReport() // map[string]*v1.Report (copy)
+	calibrated, _ := trafficledger.CurrentCalibratedCycleUsages(ctx, dbcore.GetDBInstance(), time.Now().UTC())
 	onlineUUIDs := agent_runtime.GetAllOnlineUUIDs()
 	onlineSet := make(map[string]bool, len(onlineUUIDs))
 	for _, uuid := range onlineUUIDs {
@@ -356,6 +359,10 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 			return
 		}
 		stats := getPingStatsForNode(uuid, pingTasks)
+		totalUp, totalDown := rep.Network.TotalUp, rep.Network.TotalDown
+		if usage, ok := calibrated[uuid]; ok {
+			totalUp, totalDown = usage.Up, usage.Down
+		}
 		rl := recordLike{
 			Client:         uuid,
 			Time:           rep.UpdatedAt,
@@ -373,8 +380,8 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 			DiskTotal:      rep.Disk.Total,
 			NetIn:          rep.Network.Down,
 			NetOut:         rep.Network.Up,
-			NetTotalUp:     rep.Network.TotalUp,
-			NetTotalDown:   rep.Network.TotalDown,
+			NetTotalUp:     totalUp,
+			NetTotalDown:   totalDown,
 			Process:        rep.Process,
 			Connections:    rep.Connections.TCP + rep.Connections.UDP,
 			ConnectionsUdp: rep.Connections.UDP,
@@ -497,6 +504,14 @@ func getNodeRecentStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rp
 	}
 
 	reports := agent_runtime.GetRecentReports(params.UUID)
+	if usage, ok := calibratedUsageForClient(ctx, params.UUID); ok && len(reports) > 0 {
+		newestUp := reports[len(reports)-1].Network.TotalUp
+		newestDown := reports[len(reports)-1].Network.TotalDown
+		for index := range reports {
+			reports[index].Network.TotalUp = trafficledger.ShiftCumulativeCounter(reports[index].Network.TotalUp, newestUp, usage.Up)
+			reports[index].Network.TotalDown = trafficledger.ShiftCumulativeCounter(reports[index].Network.TotalDown, newestDown, usage.Down)
+		}
+	}
 
 	// 扁平化为 { count, records: [] }
 	type flatRecord struct {
@@ -560,4 +575,13 @@ func getNodeRecentStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rp
 	}
 	resp.Count = len(resp.Records)
 	return resp, nil
+}
+
+func calibratedUsageForClient(ctx context.Context, uuid string) (trafficledger.Usage, bool) {
+	values, err := trafficledger.CurrentCalibratedCycleUsages(ctx, dbcore.GetDBInstance(), time.Now().UTC())
+	if err != nil {
+		return trafficledger.Usage{}, false
+	}
+	usage, ok := values[uuid]
+	return usage, ok
 }

@@ -196,12 +196,17 @@ func buildDashboardServers(clientList []models.Client) dashboardServerSummary {
 func loadDashboardTraffic(ctx context.Context, clientList []models.Client, now time.Time) (dashboardTrafficSummary, error) {
 	today := trafficledger.BeijingDay(now)
 	start := today.AddDate(0, 0, -(trafficledger.DashboardHistoryDays - 1))
+	db := dbcore.GetDBInstance()
 	var rows []models.TrafficDailyLedger
-	if err := dbcore.GetDBInstance().WithContext(ctx).
+	if err := db.WithContext(ctx).
 		Select("client", "day", "up_bytes", "down_bytes").
 		Where("day >= ? AND day < ?", start.Format(time.DateOnly), today.Format(time.DateOnly)).
 		Find(&rows).Error; err != nil {
 		return dashboardTrafficSummary{}, fmt.Errorf("read dashboard traffic ledger: %w", err)
+	}
+	adjustments, err := trafficledger.DailyAdjustments(ctx, db, start, today.AddDate(0, 0, 1))
+	if err != nil {
+		return dashboardTrafficSummary{}, fmt.Errorf("read dashboard traffic calibration: %w", err)
 	}
 
 	todayUsage := make(map[string]trafficledger.Usage, len(clientList))
@@ -214,10 +219,10 @@ func loadDashboardTraffic(ctx context.Context, clientList []models.Client, now t
 		todayUsage[client.UUID] = usage
 		todayHourly[client.UUID] = hourly
 	}
-	return summarizeDashboardTraffic(clientList, rows, todayUsage, todayHourly, now), nil
+	return summarizeDashboardTraffic(clientList, rows, todayUsage, todayHourly, adjustments, now), nil
 }
 
-func summarizeDashboardTraffic(clientList []models.Client, rows []models.TrafficDailyLedger, todayUsage map[string]trafficledger.Usage, todayHourly map[string][]trafficledger.HourlyUsage, now time.Time) dashboardTrafficSummary {
+func summarizeDashboardTraffic(clientList []models.Client, rows []models.TrafficDailyLedger, todayUsage map[string]trafficledger.Usage, todayHourly map[string][]trafficledger.HourlyUsage, adjustments map[string]trafficledger.SignedUsage, now time.Time) dashboardTrafficSummary {
 	today := trafficledger.BeijingDay(now)
 	start := today.AddDate(0, 0, -(trafficledger.DashboardHistoryDays - 1))
 	clientsByID := make(map[string]models.Client, len(clientList))
@@ -246,10 +251,14 @@ func summarizeDashboardTraffic(clientList []models.Client, rows []models.Traffic
 		if !ok || day == nil {
 			continue
 		}
-		day.Up += row.UpBytes
-		day.Down += row.DownBytes
+		usage := trafficledger.ApplyAdjustment(
+			trafficledger.Usage{Up: row.UpBytes, Down: row.DownBytes},
+			adjustments[row.Client+"\x00"+row.Day],
+		)
+		day.Up += usage.Up
+		day.Down += usage.Down
 		if client.Price > 0 {
-			day.Billable += trafficledger.BillableUsage(client.TrafficLimitType, row.UpBytes, row.DownBytes)
+			day.Billable += trafficledger.BillableUsage(client.TrafficLimitType, usage.Up, usage.Down)
 		}
 		seen[row.Client+"\x00"+row.Day] = struct{}{}
 	}
@@ -257,7 +266,8 @@ func summarizeDashboardTraffic(clientList []models.Client, rows []models.Traffic
 	todayKey := today.Format(time.DateOnly)
 	todayDay := daysByKey[todayKey]
 	for _, client := range clientList {
-		usage := todayUsage[client.UUID]
+		adjustment := adjustments[client.UUID+"\x00"+todayKey]
+		usage := trafficledger.ApplyAdjustment(todayUsage[client.UUID], adjustment)
 		todayDay.Up += usage.Up
 		todayDay.Down += usage.Down
 		billable := int64(0)
@@ -268,7 +278,7 @@ func summarizeDashboardTraffic(clientList []models.Client, rows []models.Traffic
 		summary.TodayUp += usage.Up
 		summary.TodayDown += usage.Down
 		summary.TodayBillable += billable
-		for _, hourly := range todayHourly[client.UUID] {
+		for _, hourly := range trafficledger.ApplyHourlyAdjustment(todayHourly[client.UUID], adjustment, now) {
 			hour := hourly.Hour.In(trafficledger.BeijingLocation).Hour()
 			if hour >= 0 && hour < len(summary.Hourly) {
 				summary.Hourly[hour].Up += hourly.Up

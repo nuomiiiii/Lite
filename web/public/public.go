@@ -40,6 +40,18 @@ const (
 	IndexFile = "index.html" // 相对于 DistDir
 )
 
+const themeChangeReloadScript = `<script>(()=>{window.addEventListener("storage",(event)=>{if(event.key==="komari-active-theme-changed"){window.location.reload();}});})();</script>`
+
+func injectThemeChangeReload(html string) string {
+	if strings.Contains(html, themeChangeReloadScript) {
+		return html
+	}
+	if strings.Contains(html, "</body>") {
+		return strings.Replace(html, "</body>", themeChangeReloadScript+"</body>", 1)
+	}
+	return html + themeChangeReloadScript
+}
+
 func init() {
 	_ = os.MkdirAll("./data/theme", 0755)
 	if _, err := removeFaviconIfHashMatches(
@@ -153,7 +165,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			config.DescriptionKey: "A simple server monitor tool.",
 			config.CustomHeadKey:  "",
 			config.CustomBodyKey:  "",
-			config.SitenameKey:    "Komari Monitor",
+			config.SitenameKey:    "Komari Lite",
 			config.ThemeKey:       DefaultTheme,
 		})
 		return cfg
@@ -249,7 +261,8 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			"</body>", cfg[config.CustomBodyKey].(string)+"</body>",
 		)
 
-		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(replacer.Replace(htmlStr)))
+		rendered := replacer.Replace(htmlStr)
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(injectThemeChangeReload(rendered)))
 	}
 
 	// ================= 路由定义 =================

@@ -31,6 +31,7 @@ import (
 	"github.com/komari-monitor/komari/utils"
 	"github.com/komari-monitor/komari/utils/cloudflared"
 	"github.com/komari-monitor/komari/utils/geoip"
+	"github.com/komari-monitor/komari/utils/httpsserver"
 	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/utils/messageSender"
 	"github.com/komari-monitor/komari/utils/notifier"
@@ -575,9 +576,21 @@ func (a *App) BuildRouter() error {
 
 // Run 启动 HTTP 服务并阻塞直到收到中断信号或服务异常退出。
 func (a *App) Run() error {
+	httpsSettings, err := httpsserver.LoadSettings()
+	if err != nil {
+		logger.Errorf("https", "Failed to load built-in HTTPS settings: %v", err)
+	} else if err := httpsserver.Default.Start(a.engine, httpsSettings, flags.Listen); err != nil {
+		// Keep HTTP available so an invalid certificate or occupied HTTPS port
+		// can still be corrected from the admin page.
+		logger.Errorf("https", "Built-in HTTPS did not start: %v", err)
+	}
+	a.addCleanup("https-server", func(ctx context.Context) error {
+		return httpsserver.Default.Shutdown(ctx)
+	})
+
 	a.server = &http.Server{
 		Addr:    flags.Listen,
-		Handler: a.engine,
+		Handler: httpsserver.Default.HTTPRedirectHandler(a.engine),
 	}
 
 	serverErr := make(chan error, 1)

@@ -1,10 +1,10 @@
-name: Publish Storage Snapshot Docker
+name: Publish Snapshot Docker
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - snapshot-2.1.11-fix
+      - Snapshot
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          snapshot_branch="snapshot-2.1.11-fix"
+          snapshot_branch="Snapshot"
           if [ "${GITHUB_REF}" != "refs/heads/${snapshot_branch}" ]; then
             echo "This workflow only publishes refs/heads/${snapshot_branch}. Current ref: ${GITHUB_REF}" >&2
             exit 1
@@ -47,16 +47,20 @@ jobs:
     needs: validate-ref
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      snapshot_tag: ${{ steps.version.outputs.snapshot_tag }}
+      app_version: ${{ steps.version.outputs.app_version }}
     steps:
       - name: Generate snapshot version
         id: version
         shell: bash
         run: |
           set -euo pipefail
-          version="Snapshot-$(date -u -d '+8 hours' +%y%m%d%H%M)"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "Snapshot version: ${version}"
+          snapshot_tag="Snapshot-$(date -u -d '+8 hours' +%y%m%d%H%M)"
+          app_version="${snapshot_tag}"
+          echo "snapshot_tag=${snapshot_tag}" >> "${GITHUB_OUTPUT}"
+          echo "app_version=${app_version}" >> "${GITHUB_OUTPUT}"
+          echo "Snapshot tag: ${snapshot_tag}"
+          echo "Embedded version: ${app_version}"
 
   build-frontend:
     needs: validate-ref
@@ -69,7 +73,7 @@ jobs:
         uses: ./.github/actions/build-frontend
         with:
           artifact-name: komari-frontend
-          ref: snapshot-2.1.11-fix
+          ref: Snapshot
 
   test-backend:
     needs: build-frontend
@@ -117,7 +121,7 @@ jobs:
 
       - name: Build Linux binary
         env:
-          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.app_version }}
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 1
@@ -190,7 +194,7 @@ jobs:
 
       - name: Verify platforms and embedded version
         env:
-          VERSION: ${{ needs.prepare.outputs.version }}
+          VERSION: ${{ needs.prepare.outputs.app_version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -211,28 +215,30 @@ jobs:
       - name: Publish snapshot release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.prepare.outputs.version }}
+          SNAPSHOT_TAG: ${{ needs.prepare.outputs.snapshot_tag }}
+          APP_VERSION: ${{ needs.prepare.outputs.app_version }}
         shell: bash
         run: |
           set -euo pipefail
-          release_notes_file=".github/release-notes/snapshot-2.1.11.md"
+          release_notes_file=".github/release-notes/snapshot.md"
           release_time="$(date -u -d '+8 hours' '+%Y-%m-%d %H:%M')"
           version_hash="${GITHUB_SHA::7}"
           release_notes="$(<"${release_notes_file}")"
           release_notes="${release_notes//__RELEASE_TIME__/${release_time}}"
           release_notes="${release_notes//__VERSION_HASH__/${version_hash}}"
+          release_notes="${release_notes//__APP_VERSION__/${APP_VERSION}}"
 
-          if gh release view "${VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            gh release edit "${VERSION}" \
+          if gh release view "${SNAPSHOT_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release edit "${SNAPSHOT_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --title "${VERSION}" \
+              --title "Snapshot" \
               --notes "${release_notes}" \
               --prerelease
           else
-            gh release create "${VERSION}" \
+            gh release create "${SNAPSHOT_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
-              --title "${VERSION}" \
+              --title "Snapshot" \
               --notes "${release_notes}" \
               --prerelease
           fi
@@ -243,7 +249,7 @@ jobs:
             --json tagName,isPrerelease \
             --jq '.[] | select(.isPrerelease and (.tagName | startswith("Snapshot-"))) | .tagName' |
           while IFS= read -r tag; do
-            if [ -z "${tag}" ] || [ "${tag}" = "${VERSION}" ]; then
+            if [ -z "${tag}" ] || [ "${tag}" = "${SNAPSHOT_TAG}" ]; then
               continue
             fi
             gh release delete "${tag}" \

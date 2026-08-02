@@ -11,7 +11,7 @@ Komariは、サーバーのパフォーマンスを監視するためのシン�
 > Komariの展開および運用方法については、利用者自身が責任を負います。開発者は、無許可または不正な利用、およびその結果について責任を負いません。
 > Windows端末でリモートコントロールを有効にした場合、クライアントはユーザーがログインするたびに、KomariがリモートコントロールソフトウェアであることをWindows通知で知らせます。
 
-[ドキュメント](https://komari-document.pages.dev/) | [Telegramグループ](https://t.me/komari_monitor)
+[ドキュメント](https://nuomiiiii.github.io/komari-document/) | [Telegramグループ](https://t.me/komari_monitor)
 
 ## 特徴
 
@@ -100,13 +100,13 @@ sudo ./install-komari.sh
 
 ## フロントエンド開発ガイド
 
-[Komariテーマ開発ガイド | Komari](https://komari-document.pages.dev/dev/theme.html)
+[Komariテーマ開発ガイド | Komari](https://nuomiiiii.github.io/komari-document/dev/theme.html)
 
 [CrowdinでKomariを翻訳する](https://crowdin.com/project/komari/invite?h=cd051bf172c9a9f7f1360e87ffb521692507706)
 
 ## クライアントエージェント開発ガイド
 
-[Komariエージェント情報レポートおよびイベント処理ドキュメント](https://komari-document.pages.dev/dev/agent.html)
+[Komariエージェント情報レポートおよびイベント処理ドキュメント](https://nuomiiiii.github.io/komari-document/dev/agent.html)
 
 ## 貢献
 

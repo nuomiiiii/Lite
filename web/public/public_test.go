@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -105,5 +106,19 @@ func TestReplaceHTMLLanguage(t *testing.T) {
 				t.Fatalf("replaceHTMLLanguage() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInjectThemeChangeReload(t *testing.T) {
+	withBody := injectThemeChangeReload(`<html><body>theme</body></html>`)
+	if !strings.Contains(withBody, themeChangeReloadScript+"</body>") {
+		t.Fatalf("theme reload listener was not inserted before body close: %q", withBody)
+	}
+	if got := strings.Count(injectThemeChangeReload(withBody), themeChangeReloadScript); got != 1 {
+		t.Fatalf("theme reload listener count = %d, want 1", got)
+	}
+	withoutBody := injectThemeChangeReload(`<html>theme</html>`)
+	if !strings.HasSuffix(withoutBody, themeChangeReloadScript) {
+		t.Fatalf("theme reload listener was not appended: %q", withoutBody)
 	}
 }
