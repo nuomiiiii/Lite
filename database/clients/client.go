@@ -13,6 +13,7 @@ import (
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/tasks"
+	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/utils"
 
 	"github.com/google/uuid"
@@ -37,6 +38,7 @@ func DeleteClient(clientUuid string) error {
 		return err
 	}
 	deleted = true
+	trafficledger.InvalidateCalibratedCycleCache()
 	if pingTasksChanged {
 		if err := tasks.ReloadPingSchedule(); err != nil {
 			return err
@@ -74,12 +76,16 @@ func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
 		}
 
 		for label, model := range map[string]any{
-			"offline notifications":        &models.OfflineNotification{},
-			"traffic report notifications": &models.TrafficReportNotification{},
-			"traffic daily ledger":         &models.TrafficDailyLedger{},
-			"ping loss notifications":      &models.PingLossNotification{},
-			"task results":                 &models.TaskResult{},
+			"offline notifications":           &models.OfflineNotification{},
+			"traffic report notifications":    &models.TrafficReportNotification{},
+			"traffic daily ledger":            &models.TrafficDailyLedger{},
+			"traffic calibration adjustments": &models.TrafficCalibrationAdjustment{},
+			"ping loss notifications":         &models.PingLossNotification{},
+			"task results":                    &models.TaskResult{},
 		} {
+			if !tx.Migrator().HasTable(model) {
+				continue
+			}
 			if err := tx.Where("client = ?", clientUuid).Delete(model).Error; err != nil {
 				return fmt.Errorf("delete client %s: %w", label, err)
 			}
@@ -556,6 +562,7 @@ func saveClient(db *gorm.DB, updates map[string]interface{}) error {
 	if err != nil {
 		return err
 	}
+	trafficledger.InvalidateCalibratedCycleCache()
 	return nil
 }
 

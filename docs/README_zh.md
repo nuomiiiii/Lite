@@ -11,7 +11,7 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 > 用户需要自行承担部署和使用 Komari 的责任。开发者不对未经授权或滥用行为及其后果承担责任。
 > 在 Windows 端开启远程控制后，客户端会在每次用户登录时通过 Windows 通知提醒用户 Komari 是一款远程控制软件。
 
-[文档](https://komari-document.pages.dev/) | [文档(镜像站 By Geekertao)](https://www.komari.wiki) | [Telegram 群组](https://t.me/komari_monitor)
+[文档](https://nuomiiiii.github.io/komari-document/) | [文档(镜像站 By Geekertao)](https://www.komari.wiki) | [Telegram 群组](https://t.me/komari_monitor)
 
 ## 特性
 
@@ -100,13 +100,13 @@ sudo ./install-komari.sh
 
 ## 前端开发指南
 
-[Komari 主题开发指南 | Komari](https://komari-document.pages.dev/dev/theme.html)
+[Komari 主题开发指南 | Komari](https://nuomiiiii.github.io/komari-document/dev/theme.html)
 
 [在 Crowdin 上翻译 Komari](https://crowdin.com/project/komari/invite?h=cd051bf172c9a9f7f1360e87ffb521692507706)
 
 ## 客户端 Agent 开发指南
 
-[Komari Agent 信息上报与事件处理文档](https://komari-document.pages.dev/dev/agent.html)
+[Komari Agent 信息上报与事件处理文档](https://nuomiiiii.github.io/komari-document/dev/agent.html)
 
 ## 贡献
 

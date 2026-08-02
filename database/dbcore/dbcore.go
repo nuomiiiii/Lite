@@ -499,6 +499,7 @@ func doInitialize() error {
 		&models.OfflineNotification{},
 		&models.TrafficReportNotification{},
 		&models.TrafficDailyLedger{},
+		&models.TrafficCalibrationAdjustment{},
 		&models.PingTask{},
 		&models.PingLossNotification{},
 		&models.ReturnRouteTask{},
@@ -575,10 +576,14 @@ func cleanupOrphanedClientData(db *gorm.DB) error {
 			}
 		}
 		for label, model := range map[string]any{
-			"offline notifications":        &models.OfflineNotification{},
-			"traffic report notifications": &models.TrafficReportNotification{},
-			"traffic daily ledger":         &models.TrafficDailyLedger{},
+			"offline notifications":           &models.OfflineNotification{},
+			"traffic report notifications":    &models.TrafficReportNotification{},
+			"traffic daily ledger":            &models.TrafficDailyLedger{},
+			"traffic calibration adjustments": &models.TrafficCalibrationAdjustment{},
 		} {
+			if !tx.Migrator().HasTable(model) {
+				continue
+			}
 			if err := tx.Where(`NOT EXISTS (
 				SELECT 1 FROM clients WHERE clients.uuid = client
 			)`).Delete(model).Error; err != nil {

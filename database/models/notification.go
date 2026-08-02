@@ -49,6 +49,23 @@ type TrafficDailyLedger struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// TrafficCalibrationAdjustment stores one auditable traffic correction
+// allocated to a Beijing calendar day. Raw Agent metrics remain unchanged.
+type TrafficCalibrationAdjustment struct {
+	ID            uint64    `json:"id" gorm:"primaryKey;autoIncrement"`
+	CalibrationID string    `json:"calibration_id" gorm:"type:varchar(32);not null;index;uniqueIndex:idx_traffic_calibration_day"`
+	Client        string    `json:"client" gorm:"type:varchar(36);not null;index;constraint:OnDelete:CASCADE,OnUpdate:CASCADE;foreignKey:Client;references:UUID"`
+	ClientInfo    Client    `json:"-" gorm:"foreignKey:Client;references:UUID;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
+	Cycle         string    `json:"cycle" gorm:"type:varchar(10);not null;index"`
+	Day           string    `json:"day" gorm:"type:varchar(10);not null;index;uniqueIndex:idx_traffic_calibration_day"`
+	UpDelta       int64     `json:"up_delta" gorm:"type:bigint;not null;default:0"`
+	DownDelta     int64     `json:"down_delta" gorm:"type:bigint;not null;default:0"`
+	TargetUp      int64     `json:"target_up" gorm:"type:bigint;not null;default:0"`
+	TargetDown    int64     `json:"target_down" gorm:"type:bigint;not null;default:0"`
+	Operator      string    `json:"operator,omitempty" gorm:"type:varchar(36);not null;default:''"`
+	CreatedAt     time.Time `json:"created_at" gorm:"index"`
+}
+
 // PingLossNotification defines packet-loss alerts for one client and ping task.
 type PingLossNotification struct {
 	Id              uint       `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`

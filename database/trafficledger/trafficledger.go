@@ -34,8 +34,8 @@ var (
 )
 
 type Usage struct {
-	Up   int64
-	Down int64
+	Up   int64 `json:"up"`
+	Down int64 `json:"down"`
 }
 
 type HourlyUsage struct {

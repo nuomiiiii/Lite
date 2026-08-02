@@ -1,11 +1,13 @@
 package notifier
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"time"
 
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/pkg/config"
@@ -73,13 +75,22 @@ func CheckTraffic() {
 	}
 
 	now := time.Now().UTC()
+	calibrated, err := trafficledger.CurrentCalibratedCycleUsages(context.Background(), dbcore.GetDBInstance(), now)
+	if err != nil {
+		logger.Error("notifier", "failed to read calibrated traffic usage", "error", err)
+		calibrated = map[string]trafficledger.Usage{}
+	}
 	for _, c := range allClients {
 		r, ok := reports[c.UUID]
 		if !ok || r == nil {
 			continue
 		}
 
-		usage := currentTrafficUsage(c, r.Network.TotalUp, r.Network.TotalDown, now)
+		up, down := r.Network.TotalUp, r.Network.TotalDown
+		if value, ok := calibrated[c.UUID]; ok {
+			up, down = value.Up, value.Down
+		}
+		usage := currentTrafficUsage(c, up, down, now)
 		if usage.Limit <= 0 || usage.Used <= 0 {
 			continue
 		}

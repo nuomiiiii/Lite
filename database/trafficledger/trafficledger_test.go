@@ -25,6 +25,7 @@ func openLedgerTestDB(t *testing.T, name string) *gorm.DB {
 		&models.Client{},
 		&models.TrafficReportNotification{},
 		&models.TrafficDailyLedger{},
+		&models.TrafficCalibrationAdjustment{},
 	))
 	require.NoError(t, db.Create(&models.Client{UUID: "client-a", Token: "token-a"}).Error)
 	return db
