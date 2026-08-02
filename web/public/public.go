@@ -165,7 +165,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			config.DescriptionKey: "A simple server monitor tool.",
 			config.CustomHeadKey:  "",
 			config.CustomBodyKey:  "",
-			config.SitenameKey:    "Komari Monitor",
+			config.SitenameKey:    "Komari Lite",
 			config.ThemeKey:       DefaultTheme,
 		})
 		return cfg

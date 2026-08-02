@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="2400" height="800" viewBox="0 0 2400 800" role="img" aria-labelledby="title desc">
-  <title id="title">Komari</title>
-  <desc id="desc">Komari lightweight self-hosted server monitoring banner.</desc>
+  <title id="title">Komari Lite</title>
+  <desc id="desc">Komari Lite lightweight self-hosted server monitoring banner.</desc>
   <defs>
     <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
       <path d="M48 0H0V48" fill="none" stroke="#EEF1F3" stroke-width="2"/>
@@ -25,7 +25,7 @@
     <circle cx="706" cy="240" r="16" fill="#F2C14E"/>
   </g>
 
-  <text x="770" y="352" fill="#18232C" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="168" font-weight="720" letter-spacing="0">Komari</text>
+  <text x="770" y="352" fill="#18232C" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif" font-size="168" font-weight="720" letter-spacing="0"><tspan>Komari</tspan><tspan dx="38" fill="#12A998" font-size="104" font-weight="500">Lite</tspan></text>
   <text x="782" y="442" fill="#5F6B73" font-family="Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Microsoft YaHei, sans-serif" font-size="44" font-weight="500" letter-spacing="0">轻量级、自托管的服务器监控与管理工具</text>
   <g transform="translate(782 500)">
     <circle cx="10" cy="10" r="10" fill="#12B8A6"/>

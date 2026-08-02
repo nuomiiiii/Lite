@@ -1,15 +1,15 @@
-# Komari
+# Komari Lite
 
-![Komari](docs/assets/branding/komari-banner.svg)
+![Komari Lite](docs/assets/branding/komari-banner.svg)
 
 [![Release](https://img.shields.io/github/v/release/nuomiiiii/komari?label=release)](https://github.com/nuomiiiii/komari/releases)
 [![Docker](https://img.shields.io/badge/GHCR-nuomiiiii%2Fkomari-2496ED?logo=docker)](https://github.com/nuomiiiii/komari/pkgs/container/komari)
 [![License](https://img.shields.io/github/license/nuomiiiii/komari)](LICENSE)
 
-Komari 是一款轻量级、自托管的服务器监控与管理工具。服务端提供 Web 管理界面，Agent 负责采集节点状态、执行延迟与回程线路探测，以及经过授权的远程操作。本分支基于 [komari-monitor/komari](https://github.com/komari-monitor/komari) 持续开发，重点优化低配置设备上的数据库占用、维护负载和日常运维体验。
+Komari Lite 是一款轻量级、自托管的服务器监控与管理工具。服务端提供 Web 管理界面，Agent 负责采集节点状态、执行延迟与回程线路探测，以及经过授权的远程操作。本分支基于 [komari-monitor/komari](https://github.com/komari-monitor/komari) 持续开发，重点优化低配置设备上的数据库占用、维护负载和日常运维体验。
 
 > [!WARNING]
-> Komari 只能部署在你拥有或已获得授权管理的设备上。请勿将其用于未经授权的访问、持久化、命令执行或其他滥用行为。管理员应为面板启用 HTTPS 和双因素认证，并妥善保护 Agent Token 与备份文件。
+> Komari Lite 只能部署在你拥有或已获得授权管理的设备上。请勿将其用于未经授权的访问、持久化、命令执行或其他滥用行为。管理员应为面板启用 HTTPS 和双因素认证，并妥善保护 Agent Token 与备份文件。
 
 ## 2.1.12 主要更新
 
@@ -49,7 +49,7 @@ SQLite 指标库使用紧凑的无损编码和分层保留。压缩不会额外�
 > [!IMPORTANT]
 > `2.1.12` 包含指标数据库迁移，建议先备份完整 `data` 目录，再通过手动替换程序或重建 Docker 容器更新。首次启动时不要中断迁移，并等待迁移页面明确显示完成。
 
-1. 停止旧 Komari，备份程序和完整 `data` 目录。
+1. 停止旧 Komari Lite，备份程序和完整 `data` 目录。
 2. 更新程序或容器，并保持原有 `data` 挂载不变。
 3. 打开管理页面查看迁移进度，确认服务正常后再删除备份。
 4. 升级会自动清理已删除服务器和延迟任务的历史残留。SQLite 产生的空闲页会继续复用；如需立即把空间归还给磁盘，可在业务低峰期手动执行一次“回收空间”。
@@ -103,7 +103,7 @@ chmod +x komari-linux-amd64
 
 Agent 项目与安装说明见 [nuomiiiii/komari-agent](https://github.com/nuomiiiii/komari-agent)。`2.1.x` 服务端建议搭配当前兼容版本 Agent 使用；远程终端、文件管理和任务执行只有在 Agent 支持并由管理员主动发起时才可用。
 
-远程入口受管理员登录、双因素认证和短时会话限制。包括 Komari Server 所在节点在内，已授权并正常在线的 Agent 均可使用 Web 终端、文件和 Docker 管理；这不会修改系统 SSH、防火墙或其他远程连接配置。
+远程入口受管理员登录、双因素认证和短时会话限制。包括 Komari Lite Server 所在节点在内，已授权并正常在线的 Agent 均可使用 Web 终端、文件和 Docker 管理；这不会修改系统 SSH、防火墙或其他远程连接配置。
 
 ## Linux 一键更新与回退
 
@@ -129,7 +129,7 @@ go build -o komari
 - [版本发布](https://github.com/nuomiiiii/komari/releases)
 - [Agent](https://github.com/nuomiiiii/komari-agent)
 - [Nezha 主题](https://github.com/nuomiiiii/nezha)
-- [Komari 文档](https://nuomiiiii.github.io/komari-document/)
+- [Komari Lite 文档](https://nuomiiiii.github.io/komari-document/)
 - [上游 Komari](https://github.com/komari-monitor/komari)
 
 ## 致谢
