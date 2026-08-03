@@ -361,8 +361,18 @@ func TestGetReturnRouteSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Tasks != 3 || result.Healthy != 1 || result.Switched != 1 || result.RecentEvents != 1 {
+	if result.Tasks != 3 || result.Active != 2 || result.Healthy != 1 || result.Switched != 1 || result.Abnormal != 0 || result.RecentEvents != 1 {
 		t.Fatalf("summary = %#v", result)
+	}
+	if err := db.Model(&models.ReturnRouteStatus{}).Where("task_id = ?", tasks[0].Id).Update("last_error", "probe timeout").Error; err != nil {
+		t.Fatal(err)
+	}
+	result, err = getReturnRouteSummary(db, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Healthy != 1 || result.Switched != 0 || result.Abnormal != 1 {
+		t.Fatalf("summary after probe failure = %#v", result)
 	}
 }
 

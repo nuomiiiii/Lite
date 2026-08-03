@@ -30,8 +30,10 @@ type ReturnRouteOverview struct {
 
 type ReturnRouteSummary struct {
 	Tasks        int64 `json:"tasks"`
+	Active       int64 `json:"active"`
 	Healthy      int64 `json:"healthy"`
 	Switched     int64 `json:"switched"`
+	Abnormal     int64 `json:"abnormal"`
 	RecentEvents int64 `json:"recent_events"`
 }
 
@@ -231,12 +233,19 @@ func getReturnRouteSummary(db *gorm.DB, now time.Time) (ReturnRouteSummary, erro
 	if err := db.Model(&models.ReturnRouteTask{}).Count(&result.Tasks).Error; err != nil {
 		return result, err
 	}
+	if err := db.Model(&models.ReturnRouteTask{}).Where("enabled = ?", true).Count(&result.Active).Error; err != nil {
+		return result, err
+	}
 	activeTasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("enabled = ?", true)
-	if err := db.Model(&models.ReturnRouteStatus{}).Where("task_id IN (?) AND state = ?", activeTasks, "healthy").Count(&result.Healthy).Error; err != nil {
+	if err := db.Model(&models.ReturnRouteStatus{}).Where("task_id IN (?) AND state = ? AND (last_error IS NULL OR last_error = ?)", activeTasks, "healthy", "").Count(&result.Healthy).Error; err != nil {
 		return result, err
 	}
 	activeTasks = db.Model(&models.ReturnRouteTask{}).Select("id").Where("enabled = ?", true)
-	if err := db.Model(&models.ReturnRouteStatus{}).Where("task_id IN (?) AND state = ?", activeTasks, "switched").Count(&result.Switched).Error; err != nil {
+	if err := db.Model(&models.ReturnRouteStatus{}).Where("task_id IN (?) AND state = ? AND (last_error IS NULL OR last_error = ?)", activeTasks, "switched", "").Count(&result.Switched).Error; err != nil {
+		return result, err
+	}
+	activeTasks = db.Model(&models.ReturnRouteTask{}).Select("id").Where("enabled = ?", true)
+	if err := db.Model(&models.ReturnRouteStatus{}).Where("task_id IN (?) AND (state = ? OR (last_error IS NOT NULL AND last_error <> ?))", activeTasks, "unknown", "").Count(&result.Abnormal).Error; err != nil {
 		return result, err
 	}
 	if err := db.Model(&models.ReturnRouteEvent{}).Where("occurred_at >= ?", now.Add(-24*time.Hour)).Count(&result.RecentEvents).Error; err != nil {

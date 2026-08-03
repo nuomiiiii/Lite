@@ -11,6 +11,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/pkg/rpc"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
@@ -62,12 +63,19 @@ type dashboardStorageSummary struct {
 	LastCompactedAt *time.Time `json:"last_compacted_at"`
 }
 
+type dashboardReturnRouteSummary struct {
+	tasks.ReturnRouteSummary
+	LatestEvent *tasks.ReturnRouteEventItem `json:"latest_event,omitempty"`
+	Error       string                      `json:"error,omitempty"`
+}
+
 type dashboardResponse struct {
-	Servers     dashboardServerSummary  `json:"servers"`
-	Traffic     dashboardTrafficSummary `json:"traffic"`
-	Database    databaseStatusResponse  `json:"database"`
-	Storage     dashboardStorageSummary `json:"storage"`
-	GeneratedAt time.Time               `json:"generated_at"`
+	Servers     dashboardServerSummary      `json:"servers"`
+	Traffic     dashboardTrafficSummary     `json:"traffic"`
+	Database    databaseStatusResponse      `json:"database"`
+	Storage     dashboardStorageSummary     `json:"storage"`
+	ReturnRoute dashboardReturnRouteSummary `json:"return_route"`
+	GeneratedAt time.Time                   `json:"generated_at"`
 }
 
 var dashboardCache struct {
@@ -131,8 +139,30 @@ func buildDashboard(ctx context.Context, now time.Time) (dashboardResponse, erro
 			LocalTotal: localDatabaseTotal(main, monitoring),
 		},
 		Storage:     buildDashboardStorage(ctx, main, monitoring),
+		ReturnRoute: buildDashboardReturnRoute(),
 		GeneratedAt: now,
 	}, nil
+}
+
+func buildDashboardReturnRoute() dashboardReturnRouteSummary {
+	result := dashboardReturnRouteSummary{}
+	summary, err := tasks.GetReturnRouteSummary()
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	result.ReturnRouteSummary = summary
+
+	events, err := tasks.QueryReturnRouteEvents(tasks.ReturnRouteEventQuery{Page: 1, PageSize: 1})
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	if len(events.Events) > 0 {
+		latest := events.Events[0]
+		result.LatestEvent = &latest
+	}
+	return result
 }
 
 func buildDashboardStorage(ctx context.Context, statuses ...databaseStorageStatus) dashboardStorageSummary {

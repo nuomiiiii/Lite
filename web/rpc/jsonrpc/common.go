@@ -282,13 +282,16 @@ func getPublicInfo(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcE
 
 func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	var params struct {
-		UUID  string   `json:"uuid"`
-		UUIDs []string `json:"uuids"`
+		UUID    string   `json:"uuid"`
+		UUIDs   []string `json:"uuids"`
+		Compact bool     `json:"compact"`
 	}
 	req.BindParams(&params)
 
 	meta := rpc.MetaFromContext(ctx)
 	latest := agent_runtime.GetLatestReport() // map[string]*v1.Report (copy)
+	// The compact admin view also shows billing-cycle usage. This helper is
+	// cached for 15 seconds, so the 5-second status poll does not rescan SQLite.
 	calibrated, _ := trafficledger.CurrentCalibratedCycleUsages(ctx, dbcore.GetDBInstance(), time.Now().UTC())
 	onlineUUIDs := agent_runtime.GetAllOnlineUUIDs()
 	onlineSet := make(map[string]bool, len(onlineUUIDs))
@@ -351,14 +354,20 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 
 	respMap := make(map[string]recordLike, len(latest))
 
-	// 预取所有 ping 任务
-	pingTasks, _ := tasks.GetAllPingTasks()
+	// 精简模式跳过 Ping 汇总；本周期流量使用已有的 15 秒校准缓存。
+	var pingTasks []models.PingTask
+	if !params.Compact {
+		pingTasks, _ = tasks.GetAllPingTasks()
+	}
 
 	appendOne := func(uuid string, rep *v1.Report) {
 		if rep == nil {
 			return
 		}
-		stats := getPingStatsForNode(uuid, pingTasks)
+		var stats map[string]pingStat
+		if !params.Compact {
+			stats = getPingStatsForNode(uuid, pingTasks)
+		}
 		totalUp, totalDown := rep.Network.TotalUp, rep.Network.TotalDown
 		if usage, ok := calibrated[uuid]; ok {
 			totalUp, totalDown = usage.Up, usage.Down
