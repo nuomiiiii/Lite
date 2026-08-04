@@ -727,6 +727,32 @@ func TestCompactStepDefersCleanupAndCheckpointUntilCycleEnd(t *testing.T) {
 	}
 }
 
+func TestFinishCompactCycleCleansExpiredDataEveryCycle(t *testing.T) {
+	ctx := context.Background()
+	s, err := metric.Open(ctx, metric.SQLite(":memory:", metric.WithMaxOpenConns(1)))
+	if err != nil {
+		t.Fatalf("open metric store: %v", err)
+	}
+	defer s.Close()
+	if err := s.UpsertMetric(ctx, metric.Definition{Name: "retention.metric", Type: metric.TypeGauge, RetentionDays: 1}); err != nil {
+		t.Fatalf("upsert metric: %v", err)
+	}
+	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
+	for cycle := 1; cycle <= 2; cycle++ {
+		old := now.Add(-time.Duration(48+cycle) * time.Hour)
+		if err := s.Write(ctx, metric.Point{MetricName: "retention.metric", EntityID: "node", Timestamp: old, Value: float64(cycle)}); err != nil {
+			t.Fatalf("cycle %d write old point: %v", cycle, err)
+		}
+		if err := finishCompactCycle(ctx, s, now, false); err != nil {
+			t.Fatalf("cycle %d cleanup: %v", cycle, err)
+		}
+		points, err := s.Query(ctx, metric.Query{MetricName: "retention.metric", EntityID: "node", Start: old.Add(-time.Second), End: now})
+		if err != nil || len(points) != 0 {
+			t.Fatalf("cycle %d kept expired data: points=%d err=%v", cycle, len(points), err)
+		}
+	}
+}
+
 func TestRetryMetricWALCheckpointClearsPendingWAL(t *testing.T) {
 	ctx := context.Background()
 	previousStatus := GetRuntimeStatus()
@@ -889,7 +915,7 @@ func TestCompactStepAdvancesAfterMetricFailure(t *testing.T) {
 		}
 	}
 	now := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
-	old := now.Add(-time.Hour)
+	old := now.Add(-48 * time.Hour)
 	if err := s.Write(ctx, metric.Point{MetricName: "b.healthy", EntityID: "node", Timestamp: old, Value: 2}); err != nil {
 		t.Fatalf("write healthy point: %v", err)
 	}
@@ -1061,6 +1087,12 @@ func TestRecordMetricNamesForLoadType(t *testing.T) {
 		want     []string
 	}{
 		{"cpu", []string{MetricCPU}},
+		{"ram", []string{MetricRAM}},
+		{"disk", []string{MetricDisk}},
+		{"net_in", []string{MetricNetIn}},
+		{"netin", []string{MetricNetIn}},
+		{"net_out", []string{MetricNetOut}},
+		{"netout", []string{MetricNetOut}},
 		{"network", []string{MetricNetIn, MetricNetOut, MetricNetTotalUp, MetricNetTotalDown}},
 		{"connections", []string{MetricConnections, MetricConnectionsUDP}},
 		{"all", loadRecordMetricNames},

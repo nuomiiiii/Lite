@@ -2,6 +2,7 @@ package jsonrpc
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -148,6 +149,19 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 		}
 		cfg[config.TrafficReportTimeKey] = normalized
 	}
+	if rawPageSize, ok := cfg[config.AdminDefaultPageSizeKey]; ok {
+		pageSize, ok := normalizeAdminDefaultPageSize(rawPageSize)
+		if !ok {
+			return nil, rpc.MakeError(
+				rpc.InvalidParams,
+				"Admin default page size must be an integer between "+
+					strconv.Itoa(config.AdminDefaultPageSizeMin)+" and "+
+					strconv.Itoa(config.AdminDefaultPageSizeMax),
+				nil,
+			)
+		}
+		cfg[config.AdminDefaultPageSizeKey] = pageSize
+	}
 	// Ignore retired controls submitted by an older cached frontend. The
 	// startup normalizer keeps their persisted compatibility values fixed.
 	delete(cfg, config.LowResourceModeKey)
@@ -208,6 +222,15 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 	actor, ip := auditActor(ctx)
 	auditlog.Log(ip, actor, message, "info")
 	return nil, nil
+}
+
+func normalizeAdminDefaultPageSize(raw any) (int, bool) {
+	value, ok := raw.(float64)
+	if !ok || math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value ||
+		value < config.AdminDefaultPageSizeMin || value > config.AdminDefaultPageSizeMax {
+		return 0, false
+	}
+	return int(value), true
 }
 
 // mergedMetricConfig 读取当前持久化的 metric store 配置，并把本次请求中涉及的

@@ -229,7 +229,14 @@ func drainReportQueue(queue <-chan v1.Report, limit int) []v1.Report {
 	if limit <= 0 {
 		return nil
 	}
-	reports := make([]v1.Report, 0, limit)
+	capacity := len(queue)
+	if capacity == 0 {
+		return nil
+	}
+	if capacity > limit {
+		capacity = limit
+	}
+	reports := make([]v1.Report, 0, capacity)
 	for len(reports) < limit {
 		select {
 		case report := <-queue:

@@ -69,13 +69,22 @@ func executeLoadNotificationTask(task models.LoadNotification) {
 	overloadClients := make([]string, 0)
 	for _, clientUUID := range task.Clients {
 		// 获取客户端在时间窗口内的记录
-		records, err := getRecordsForClient(clientUUID, windowStart, now)
+		records, err := getRecordsForClient(clientUUID, windowStart, now, task.Metric)
 		if err != nil {
 			continue
 		}
+		var client *models.Client
+		if metricNeedsClientCapacity(task.Metric) {
+			loaded, err := clients.GetClientByUUID(clientUUID)
+			if err != nil {
+				logger.Errorf("notifier", "Failed to get client info for %s: %v", clientUUID, err)
+				continue
+			}
+			client = &loaded
+		}
 
 		// 检查指标是否达到阈值
-		if checkMetricThreshold(records, task) {
+		if checkMetricThreshold(records, task, client) {
 			overloadClients = append(overloadClients, clientUUID)
 		}
 
@@ -98,12 +107,12 @@ func shouldSkipNotification(task models.LoadNotification) bool {
 }
 
 // getRecordsForClient 获取指定客户端在时间窗口内的记录
-func getRecordsForClient(clientUUID string, start, end time.Time) ([]models.Record, error) {
-	return records.GetRecordsByClientAndTime(clientUUID, start, end)
+func getRecordsForClient(clientUUID string, start, end time.Time, metric string) ([]models.Record, error) {
+	return records.GetRecordsByClientAndTimeForLoadType(clientUUID, start, end, metric)
 }
 
 // checkMetricThreshold 检查指标是否达到阈值
-func checkMetricThreshold(records []models.Record, task models.LoadNotification) bool {
+func checkMetricThreshold(records []models.Record, task models.LoadNotification, client *models.Client) bool {
 	if len(records) == 0 {
 		return false
 	}
@@ -117,7 +126,7 @@ func checkMetricThreshold(records []models.Record, task models.LoadNotification)
 	exceededCount := 0
 
 	for _, record := range records {
-		metricValue := getMetricValue(record, task.Metric)
+		metricValue := getMetricValue(record, task.Metric, client)
 		if metricValue >= task.Threshold {
 			exceededCount++
 		}
@@ -127,7 +136,7 @@ func checkMetricThreshold(records []models.Record, task models.LoadNotification)
 }
 
 // getMetricValue 根据指标名称获取记录中的对应值
-func getMetricValue(record models.Record, metric string) float32 {
+func getMetricValue(record models.Record, metric string, client *models.Client) float32 {
 	switch metric {
 	case "cpu":
 		return record.Cpu
@@ -138,22 +147,12 @@ func getMetricValue(record models.Record, metric string) float32 {
 	case "net_out", "netout":
 		return bytesPerSecondToMbps(record.NetOut)
 	case "ram":
-		client, err := clients.GetClientByUUID(record.Client) // 确保客户端信息已加载
-		if err != nil {
-			logger.Errorf("notifier", "Failed to get client info for %s: %v", record.Client, err)
-			return 0
-		}
-		if record.RamTotal > 0 {
+		if client != nil && client.MemTotal > 0 {
 			return float32(record.Ram) / float32(client.MemTotal) * 100
 		}
 		return 0
 	case "swap":
-		client, err := clients.GetClientByUUID(record.Client) // 确保客户端信息已加载
-		if err != nil {
-			logger.Errorf("notifier", "Failed to get client info for %s: %v", record.Client, err)
-			return 0
-		}
-		if record.SwapTotal > 0 {
+		if client != nil && client.SwapTotal > 0 {
 			return float32(record.Swap) / float32(client.SwapTotal) * 100
 		}
 		return 0
@@ -162,12 +161,7 @@ func getMetricValue(record models.Record, metric string) float32 {
 	case "temp":
 		return record.Temp
 	case "disk":
-		client, err := clients.GetClientByUUID(record.Client) // 确保客户端信息已加载
-		if err != nil {
-			logger.Errorf("notifier", "Failed to get client info for %s: %v", record.Client, err)
-			return 0
-		}
-		if record.DiskTotal > 0 {
+		if client != nil && client.DiskTotal > 0 {
 			return float32(record.Disk) / float32(client.DiskTotal) * 100
 		}
 		return 0
@@ -186,6 +180,15 @@ func getMetricValue(record models.Record, metric string) float32 {
 			}
 		}
 		return 0
+	}
+}
+
+func metricNeedsClientCapacity(metric string) bool {
+	switch metric {
+	case "ram", "swap", "disk":
+		return true
+	default:
+		return false
 	}
 }
 

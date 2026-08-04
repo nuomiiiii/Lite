@@ -29,6 +29,18 @@ func RequireSameOriginWebSocket(upgrader *websocket.Upgrader) {
 	}
 }
 
+// RequireRemoteBrowserOrigin keeps normal same-origin enforcement while
+// accepting opaque origins used by some installed mobile web apps. The remote
+// endpoint additionally requires an administrator cookie and a single-use,
+// high-entropy browser ticket before it can attach to a session.
+func RequireRemoteBrowserOrigin(upgrader *websocket.Upgrader) {
+	upgrader.CheckOrigin = func(r *http.Request) bool {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		return origin == "" || strings.EqualFold(origin, "null") ||
+			security.OriginMatchesRequest(origin, r)
+	}
+}
+
 func AllowAgentWebSocket(upgrader *websocket.Upgrader) {
 	upgrader.CheckOrigin = func(r *http.Request) bool {
 		return r.Header.Get("Origin") == ""

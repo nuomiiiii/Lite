@@ -974,6 +974,10 @@ func recordMetricNamesForLoadType(loadType string) []string {
 		return []string{MetricCPU}
 	case "disk":
 		return []string{MetricDisk}
+	case "net_in", "netin":
+		return []string{MetricNetIn}
+	case "net_out", "netout":
+		return []string{MetricNetOut}
 	case "network":
 		return []string{MetricNetIn, MetricNetOut, MetricNetTotalUp, MetricNetTotalDown}
 	case "process":
