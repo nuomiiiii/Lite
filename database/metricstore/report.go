@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	logger "github.com/komari-monitor/komari/utils/log"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -32,9 +33,11 @@ type reportTrafficValues struct {
 var reportTrafficStates sync.Map
 
 const (
-	reportBatchInterval     = 3 * time.Second
-	reportBatchQueueSize    = 4096
-	reportBatchWriteTimeout = 10 * time.Second
+	reportBatchInterval         = 3 * time.Second
+	reportBatchQueueSize        = 4096
+	reportBatchWriteTimeout     = 10 * time.Second
+	reportTrafficRateMultiplier = int64(4)
+	reportTrafficRateAllowance  = int64(64 * 1024 * 1024)
 )
 
 var (
@@ -316,17 +319,23 @@ func writeReportBatch(ctx context.Context, reports []v1.Report) ([]v1.Report, er
 			state.mu.Unlock()
 		}
 		if !values.initialized {
-			totalUp, hasUp, err := latestReportCounter(ctx, s, MetricNetTotalUp, report.UUID, report.UpdatedAt)
+			totalUp, upTime, hasUp, err := latestReportCounter(ctx, s, MetricNetTotalUp, report.UUID, report.UpdatedAt)
 			if err == nil {
 				values.totalUp = totalUp
 				values.hasUp = hasUp
+				if hasUp && upTime.After(values.timestamp) {
+					values.timestamp = upTime
+				}
 			} else if ctx.Err() == nil {
 				logger.Errorf("metricstore", "failed to restore previous upload counter for %s: %v", report.UUID, err)
 			}
-			totalDown, hasDown, err := latestReportCounter(ctx, s, MetricNetTotalDown, report.UUID, report.UpdatedAt)
+			totalDown, downTime, hasDown, err := latestReportCounter(ctx, s, MetricNetTotalDown, report.UUID, report.UpdatedAt)
 			if err == nil {
 				values.totalDown = totalDown
 				values.hasDown = hasDown
+				if hasDown && downTime.After(values.timestamp) {
+					values.timestamp = downTime
+				}
 			} else if ctx.Err() == nil {
 				logger.Errorf("metricstore", "failed to restore previous download counter for %s: %v", report.UUID, err)
 			}
@@ -339,13 +348,14 @@ func writeReportBatch(ctx context.Context, reports []v1.Report) ([]v1.Report, er
 		if !values.timestamp.IsZero() && !report.UpdatedAt.After(values.timestamp) {
 			report.UpdatedAt = values.timestamp.Add(time.Nanosecond)
 		}
+		elapsed := report.UpdatedAt.Sub(values.timestamp)
 		trafficUp := int64(0)
 		if values.hasUp {
-			trafficUp = TrafficCounterDelta(report.Network.TotalUp, values.totalUp)
+			trafficUp = ReportTrafficCounterDelta(report.Network.TotalUp, values.totalUp, report.Network.Up, elapsed)
 		}
 		trafficDown := int64(0)
 		if values.hasDown {
-			trafficDown = TrafficCounterDelta(report.Network.TotalDown, values.totalDown)
+			trafficDown = ReportTrafficCounterDelta(report.Network.TotalDown, values.totalDown, report.Network.Down, elapsed)
 		}
 		points = append(points, reportMetricPoints(report, trafficUp, trafficDown)...)
 		values.timestamp = report.UpdatedAt
@@ -406,15 +416,15 @@ func reportMetricPoints(report v1.Report, trafficUp, trafficDown int64) []metric
 	return points
 }
 
-func latestReportCounter(ctx context.Context, s *metric.Store, metricName, entityID string, before time.Time) (int64, bool, error) {
+func latestReportCounter(ctx context.Context, s *metric.Store, metricName, entityID string, before time.Time) (int64, time.Time, bool, error) {
 	point, ok, err := s.LatestBefore(ctx, metricName, entityID, before)
 	if err != nil {
-		return 0, false, err
+		return 0, time.Time{}, false, err
 	}
 	if !ok {
-		return 0, false, nil
+		return 0, time.Time{}, false, nil
 	}
-	return int64(point.Value), true, nil
+	return int64(point.Value), point.Timestamp.UTC(), true, nil
 }
 
 // GetLatestTrafficBefore returns the latest retained upload/download counters
@@ -429,11 +439,11 @@ func GetLatestTrafficBefore(ctx context.Context, entityIDs []string, before time
 		if entityID == "" {
 			continue
 		}
-		up, hasUp, err := latestReportCounter(ctx, s, MetricNetTotalUp, entityID, before)
+		up, _, hasUp, err := latestReportCounter(ctx, s, MetricNetTotalUp, entityID, before)
 		if err != nil {
 			return nil, err
 		}
-		down, hasDown, err := latestReportCounter(ctx, s, MetricNetTotalDown, entityID, before)
+		down, _, hasDown, err := latestReportCounter(ctx, s, MetricNetTotalDown, entityID, before)
 		if err != nil {
 			return nil, err
 		}
@@ -450,8 +460,9 @@ func GetLatestTrafficBefore(ctx context.Context, entityIDs []string, before time
 	return result, nil
 }
 
-// TrafficCounterDelta returns a reset-aware increase between two cumulative
-// traffic counters. After a reset, the current counter is the new increase.
+// TrafficCounterDelta returns the increase between two counters. A decrease
+// starts a new continuity epoch; the first value in that epoch is a baseline,
+// not traffic that can safely be attributed to the current report interval.
 func TrafficCounterDelta(current, previous int64) int64 {
 	if current < 0 || previous < 0 {
 		return 0
@@ -459,7 +470,39 @@ func TrafficCounterDelta(current, previous int64) int64 {
 	if current >= previous {
 		return current - previous
 	}
-	return current
+	return 0
+}
+
+// ReportTrafficCounterDelta rejects positive jumps that cannot be explained by
+// the Agent's measured transfer rate. This protects interface additions and
+// Agent restarts without imposing a fixed link-speed limit.
+func ReportTrafficCounterDelta(current, previous, bytesPerSecond int64, elapsed time.Duration) int64 {
+	delta := TrafficCounterDelta(current, previous)
+	if delta == 0 || elapsed <= 0 {
+		return delta
+	}
+	if delta > reportTrafficDeltaUpperBound(bytesPerSecond, elapsed) {
+		return 0
+	}
+	return delta
+}
+
+func reportTrafficDeltaUpperBound(bytesPerSecond int64, elapsed time.Duration) int64 {
+	if bytesPerSecond < 0 {
+		return reportTrafficRateAllowance
+	}
+	seconds := int64((elapsed + time.Second - 1) / time.Second)
+	if seconds <= 0 || bytesPerSecond == 0 {
+		return reportTrafficRateAllowance
+	}
+	if bytesPerSecond > math.MaxInt64/seconds {
+		return math.MaxInt64
+	}
+	expected := bytesPerSecond * seconds
+	if expected > (math.MaxInt64-reportTrafficRateAllowance)/reportTrafficRateMultiplier {
+		return math.MaxInt64
+	}
+	return expected*reportTrafficRateMultiplier + reportTrafficRateAllowance
 }
 
 func deleteReportTrafficState(entityID string) {

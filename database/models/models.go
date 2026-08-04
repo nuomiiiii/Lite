@@ -100,6 +100,8 @@ type Record struct {
 	NetTotalDown   int64     `json:"net_total_down" gorm:"type:bigint"`
 	TrafficUp      int64     `json:"traffic_up" gorm:"type:bigint"`
 	TrafficDown    int64     `json:"traffic_down" gorm:"type:bigint"`
+	TrafficUpSet   bool      `json:"-" gorm:"-"`
+	TrafficDownSet bool      `json:"-" gorm:"-"`
 	Process        int       `json:"process"`
 	Connections    int       `json:"connections"`
 	ConnectionsUdp int       `json:"connections_udp"`

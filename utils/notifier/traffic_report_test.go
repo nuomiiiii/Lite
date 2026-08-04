@@ -88,8 +88,8 @@ func TestSumTrafficDeltasHandlesCounterResetInFallback(t *testing.T) {
 	}
 
 	up, down := sumTrafficDeltas(records, previous)
-	assert.Equal(t, int64(200), up)
-	assert.Equal(t, int64(200), down)
+	assert.Equal(t, int64(100), up)
+	assert.Equal(t, int64(50), down)
 }
 
 func TestSumTrafficDeltasEmpty(t *testing.T) {
@@ -100,11 +100,13 @@ func TestSumTrafficDeltasEmpty(t *testing.T) {
 
 func TestTrafficDeltaOrFallback(t *testing.T) {
 	// 存储的增量为正时直接使用
-	assert.Equal(t, int64(42), trafficDeltaOrFallback(42, 500, 100))
-	// 增量缺失（<=0）时回退到累计差值
-	assert.Equal(t, int64(400), trafficDeltaOrFallback(0, 500, 100))
-	// 回退路径识别计数器重置
-	assert.Equal(t, int64(50), trafficDeltaOrFallback(0, 50, 500))
+	assert.Equal(t, int64(42), trafficDeltaOrFallback(42, true, 500, 100))
+	// 明确存储为 0 时保留 0，不把它误判成字段缺失
+	assert.Equal(t, int64(0), trafficDeltaOrFallback(0, true, 500, 100))
+	// 旧数据缺少增量字段时回退到累计差值
+	assert.Equal(t, int64(400), trafficDeltaOrFallback(0, false, 500, 100))
+	// 回退路径把计数器下降视为新基准
+	assert.Equal(t, int64(0), trafficDeltaOrFallback(0, false, 50, 500))
 }
 
 func TestComputeUsedByType(t *testing.T) {
@@ -233,7 +235,7 @@ func TestSumTrafficDeltasIgnoresTransientCounterRollback(t *testing.T) {
 	assert.Equal(t, gib/2, up)
 }
 
-func TestSumTrafficDeltasKeepsConfirmedCounterReset(t *testing.T) {
+func TestSumTrafficDeltasCountsOnlyPostResetIncrement(t *testing.T) {
 	const gib = int64(1024 * 1024 * 1024)
 	start := time.Date(2026, 6, 7, 13, 0, 0, 0, time.UTC)
 	previous := &trafficDeltaRecord{
@@ -246,7 +248,7 @@ func TestSumTrafficDeltasKeepsConfirmedCounterReset(t *testing.T) {
 	}
 
 	up, _ := sumTrafficDeltas(records, previous)
-	assert.Equal(t, 2*gib, up)
+	assert.Equal(t, gib, up)
 }
 
 func TestSumTrafficDeltasCorrectsInflatedRollupDelta(t *testing.T) {

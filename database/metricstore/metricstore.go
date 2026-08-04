@@ -1120,8 +1120,10 @@ func applyRecordMetricValue(rec *models.Record, metricName string, value float64
 		rec.NetTotalDown = int64(value)
 	case MetricTrafficUp:
 		rec.TrafficUp = int64(value)
+		rec.TrafficUpSet = true
 	case MetricTrafficDown:
 		rec.TrafficDown = int64(value)
+		rec.TrafficDownSet = true
 	case MetricProcess:
 		rec.Process = int(value)
 	case MetricConnections:

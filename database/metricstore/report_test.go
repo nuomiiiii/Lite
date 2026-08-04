@@ -86,8 +86,8 @@ func TestWriteReportStoresRawMetricsAndResetAwareTraffic(t *testing.T) {
 		t.Fatalf("write reset report: %v", err)
 	}
 
-	assertMetricValues(t, s, MetricTrafficUp, report.UUID, base.Add(-time.Second), base.Add(time.Minute), []float64{0, 50, 20})
-	assertMetricValues(t, s, MetricTrafficDown, report.UUID, base.Add(-time.Second), base.Add(time.Minute), []float64{0, 60, 30})
+	assertMetricValues(t, s, MetricTrafficUp, report.UUID, base.Add(-time.Second), base.Add(time.Minute), []float64{0, 50, 0})
+	assertMetricValues(t, s, MetricTrafficDown, report.UUID, base.Add(-time.Second), base.Add(time.Minute), []float64{0, 60, 0})
 	assertMetricValues(t, s, MetricNetTotalUp, report.UUID, base.Add(-time.Second), base.Add(time.Minute), []float64{100, 150, 20})
 
 	gpuPoints, err := s.Query(ctx, metric.Query{
@@ -297,7 +297,7 @@ func TestTrafficCounterDelta(t *testing.T) {
 		{name: "previous zero", current: 120, previous: 0, want: 120},
 		{name: "monotonic counter", current: 250, previous: 200, want: 50},
 		{name: "unchanged counter", current: 100, previous: 100, want: 0},
-		{name: "counter reset", current: 15, previous: 250, want: 15},
+		{name: "counter reset", current: 15, previous: 250, want: 0},
 		{name: "negative current", current: -1, previous: 100, want: 0},
 		{name: "negative previous", current: 15, previous: -1, want: 0},
 	}
@@ -307,6 +307,20 @@ func TestTrafficCounterDelta(t *testing.T) {
 				t.Fatalf("TrafficCounterDelta(%d, %d) = %d, want %d", test.current, test.previous, got, test.want)
 			}
 		})
+	}
+}
+
+func TestReportTrafficCounterDeltaRejectsUnexplainedPositiveJump(t *testing.T) {
+	const gib = int64(1024 * 1024 * 1024)
+
+	if got := ReportTrafficCounterDelta(2*gib, gib, 0, 3*time.Second); got != 0 {
+		t.Fatalf("unexplained positive jump = %d, want 0", got)
+	}
+	if got := ReportTrafficCounterDelta(2*gib, gib, 300*1024*1024, time.Second); got != gib {
+		t.Fatalf("rate-supported positive jump = %d, want %d", got, gib)
+	}
+	if got := ReportTrafficCounterDelta(gib/2, gib, 300*1024*1024, time.Second); got != 0 {
+		t.Fatalf("counter decrease = %d, want 0", got)
 	}
 }
 
