@@ -1844,12 +1844,19 @@ func (s *Store) DeleteBefore(ctx context.Context, metricName string, before time
 		metricName = sqliteMergedPingLatencyMetric
 	}
 	if s.sqliteStorageV4 {
+		beforeNano := before.UTC().UnixNano()
+		hasPoints, err := s.sqliteV4HasPointsBefore(ctx, metricName, beforeNano)
+		if err != nil {
+			return 0, err
+		}
+		if !hasPoints {
+			return 0, nil
+		}
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
 			return 0, err
 		}
 		defer func() { _ = tx.Rollback() }()
-		beforeNano := before.UTC().UnixNano()
 		deleted, err := s.deleteSQLiteV4PointsTx(ctx, tx, Query{MetricName: metricName}, &beforeNano)
 		if err != nil {
 			return deleted, err
@@ -1876,6 +1883,31 @@ func (s *Store) DeleteBefore(ctx context.Context, metricName string, before time
 		return deleted, err
 	}
 	return deleted, nil
+}
+
+func (s *Store) sqliteV4HasPointsBefore(ctx context.Context, metricName string, beforeNano int64) (bool, error) {
+	metricFilter := ""
+	blockArgs := []any{beforeNano}
+	hotArgs := []any{beforeNano}
+	if strings.TrimSpace(metricName) != "" {
+		metricFilter = " AND s.metric_name = ?"
+		blockArgs = append(blockArgs, metricName)
+		hotArgs = append(hotArgs, metricName)
+	}
+	args := append(blockArgs, hotArgs...)
+	var exists bool
+	err := s.db.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT EXISTS(
+			SELECT 1 FROM %s b JOIN %s s ON s.id = b.series_id
+			WHERE b.start_nano < ?%s LIMIT 1
+		) OR EXISTS(
+			SELECT 1 FROM %s p JOIN %s s ON s.id = p.series_id
+			WHERE p.ts_nano < ?%s LIMIT 1
+		)`,
+		s.tables.pointBlocks, s.tables.series, metricFilter,
+		s.tables.pointValues, s.tables.series, metricFilter,
+	), args...).Scan(&exists)
+	return exists, err
 }
 
 // CleanupExpired deletes expired raw points for every metric.

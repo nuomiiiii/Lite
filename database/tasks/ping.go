@@ -3,6 +3,7 @@ package tasks
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
@@ -136,33 +137,58 @@ func GetAllPingTasks() ([]models.PingTask, error) {
 
 // GetPingTasksByClient 获取指定服务器需要执行的延迟监测任务。
 func GetPingTasksByClient(uuid string) []models.PingTask {
-	db := dbcore.GetDBInstance()
-	var tasks []models.PingTask
-	if err := db.Where("clients LIKE ?", `%"`+uuid+`"%`).Find(&tasks).Error; err != nil {
+	tasks, err := getPingTasksByClient(dbcore.GetDBInstance(), uuid)
+	if err != nil {
 		return nil
 	}
 	return tasks
 }
 
+func getPingTasksByClient(db *gorm.DB, uuid string) ([]models.PingTask, error) {
+	var tasks []models.PingTask
+	if err := db.Where("clients LIKE ?", `%"`+uuid+`"%`).Order("weight ASC").Order("id ASC").Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
 func UpdatePingTaskOrder(order map[uint]int) error {
-	db := dbcore.GetDBInstance()
-	err := db.Transaction(func(tx *gorm.DB) error {
-		for id, weight := range order {
+	if len(order) == 0 {
+		return nil
+	}
+	if err := updatePingTaskOrder(dbcore.GetDBInstance(), order); err != nil {
+		return err
+	}
+	return ReloadPingSchedule()
+}
+
+func updatePingTaskOrder(db *gorm.DB, order map[uint]int) error {
+	if len(order) == 0 {
+		return nil
+	}
+	ids := make([]uint, 0, len(order))
+	for id := range order {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&models.PingTask{}).Where("id IN ?", ids).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != int64(len(ids)) {
+			return gorm.ErrRecordNotFound
+		}
+		for _, id := range ids {
+			weight := order[id]
 			result := tx.Model(&models.PingTask{}).Where("id = ?", id).Update("weight", weight)
 			if result.Error != nil {
 				return result.Error
 			}
-			if result.RowsAffected == 0 {
-				return gorm.ErrRecordNotFound
-			}
 		}
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	ReloadPingSchedule()
-	return nil
 }
 
 // ping 记录已完全迁移到 metric store（指标 ping.latency_ms），运行期读写全部走

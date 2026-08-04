@@ -208,6 +208,31 @@ func TestFullReportQueueRejectsNewReportWithoutDroppingData(t *testing.T) {
 	}
 }
 
+func TestDrainReportQueueUsesCurrentDepthAndHonorsLimit(t *testing.T) {
+	empty := make(chan v1.Report, 8_192)
+	if got := drainReportQueue(empty, 8_192); got != nil {
+		t.Fatalf("empty queue drain = %#v, want nil", got)
+	}
+	if allocations := testing.AllocsPerRun(1_000, func() {
+		_ = drainReportQueue(empty, 8_192)
+	}); allocations != 0 {
+		t.Fatalf("empty queue drain allocations = %v, want 0", allocations)
+	}
+
+	queue := make(chan v1.Report, 8_192)
+	for _, uuid := range []string{"a", "b", "c"} {
+		queue <- v1.Report{UUID: uuid}
+	}
+	got := drainReportQueue(queue, 2)
+	if len(got) != 2 || cap(got) != 2 || got[0].UUID != "a" || got[1].UUID != "b" {
+		t.Fatalf("limited queue drain = %#v (cap %d)", got, cap(got))
+	}
+	remaining := drainReportQueue(queue, 8_192)
+	if len(remaining) != 1 || cap(remaining) != 1 || remaining[0].UUID != "c" {
+		t.Fatalf("remaining queue drain = %#v (cap %d)", remaining, cap(remaining))
+	}
+}
+
 func TestRecordReconstructionUsesMetricSpecificAggregation(t *testing.T) {
 	ctx := context.Background()
 	s := useReportTestStore(t, nil)
@@ -234,6 +259,31 @@ func TestRecordReconstructionUsesMetricSpecificAggregation(t *testing.T) {
 	}
 	if records[0].Cpu != 20 || records[0].NetTotalUp != 200 || records[0].TrafficUp != 30 {
 		t.Fatalf("unexpected aggregation result: %#v", records[0])
+	}
+}
+
+func TestLoadMetricProjectionKeepsAverageAggregation(t *testing.T) {
+	ctx := context.Background()
+	s := useReportTestStore(t, nil)
+	base := time.Now().UTC().Truncate(time.Hour)
+	entityID := "node-load-projection"
+	if err := s.WriteBatch(ctx, []metric.Point{
+		{MetricName: MetricCPU, EntityID: entityID, Timestamp: base.Add(time.Second), Value: 10},
+		{MetricName: MetricCPU, EntityID: entityID, Timestamp: base.Add(2 * time.Second), Value: 90},
+		{MetricName: MetricRAM, EntityID: entityID, Timestamp: base.Add(time.Second), Value: 999},
+	}); err != nil {
+		t.Fatalf("write projected metrics: %v", err)
+	}
+
+	records, err := GetRecordsByClientAndTimeForLoadType(ctx, entityID, base, base.Add(48*time.Hour), "cpu")
+	if err != nil {
+		t.Fatalf("query CPU projection: %v", err)
+	}
+	if len(records) != 1 || records[0].Cpu != 50 {
+		t.Fatalf("CPU projection = %#v, want average 50", records)
+	}
+	if records[0].Ram != 0 {
+		t.Fatalf("CPU projection unexpectedly decoded RAM: %#v", records[0])
 	}
 }
 

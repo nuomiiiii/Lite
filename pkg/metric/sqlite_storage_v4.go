@@ -795,6 +795,13 @@ func (s *Store) deleteSQLiteV4PointsTx(ctx context.Context, tx *sql.Tx, filter Q
 	}
 	var total int64
 	for _, item := range series {
+		hasPoints, err := s.sqliteV4SeriesHasPointsForDelete(ctx, tx, item.id, beforeNano)
+		if err != nil {
+			return total, err
+		}
+		if !hasPoints {
+			continue
+		}
 		blocks, err := s.loadAllSQLiteV4BlockPoints(ctx, tx, item.id)
 		if err != nil {
 			return total, err
@@ -849,6 +856,26 @@ func (s *Store) deleteSQLiteV4PointsTx(ctx context.Context, tx *sql.Tx, filter Q
 		total += int64(len(deletedTimestamps))
 	}
 	return total, nil
+}
+
+func (s *Store) sqliteV4SeriesHasPointsForDelete(ctx context.Context, tx *sql.Tx, seriesID int64, beforeNano *int64) (bool, error) {
+	blockWhere := "series_id = ?"
+	hotWhere := "series_id = ?"
+	args := []any{seriesID}
+	if beforeNano != nil {
+		blockWhere += " AND start_nano < ?"
+		hotWhere += " AND ts_nano < ?"
+		args = append(args, *beforeNano, seriesID, *beforeNano)
+	} else {
+		args = append(args, seriesID)
+	}
+	var exists bool
+	err := tx.QueryRowContext(ctx, fmt.Sprintf(
+		`SELECT EXISTS(SELECT 1 FROM %s WHERE %s LIMIT 1)
+		 OR EXISTS(SELECT 1 FROM %s WHERE %s LIMIT 1)`,
+		s.tables.pointBlocks, blockWhere, s.tables.pointValues, hotWhere,
+	), args...).Scan(&exists)
+	return exists, err
 }
 
 func (s *Store) sqliteV4EntityIDs(ctx context.Context, query Query) ([]string, error) {

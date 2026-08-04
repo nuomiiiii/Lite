@@ -1,7 +1,10 @@
 package tasks
 
 import (
+	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/stretchr/testify/assert"
@@ -10,6 +13,56 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+func newPingTaskTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	dsn := fmt.Sprintf("file:ping-order-%d?mode=memory&cache=shared", time.Now().UnixNano())
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.PingTask{}))
+	return db
+}
+
+func TestGetPingTasksByClientUsesStableWeightOrder(t *testing.T) {
+	db := newPingTaskTestDB(t)
+	tasks := []models.PingTask{
+		{Name: "late", Weight: 20, Clients: models.StringArray{"node-a"}, Type: "icmp", Target: "late.example", Interval: 10},
+		{Name: "first-tie", Weight: 10, Clients: models.StringArray{"node-a"}, Type: "icmp", Target: "a.example", Interval: 10},
+		{Name: "second-tie", Weight: 10, Clients: models.StringArray{"node-a"}, Type: "icmp", Target: "b.example", Interval: 10},
+		{Name: "other-node", Weight: 0, Clients: models.StringArray{"node-b"}, Type: "icmp", Target: "other.example", Interval: 10},
+	}
+	require.NoError(t, db.Create(&tasks).Error)
+
+	got, err := getPingTasksByClient(db, "node-a")
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, []uint{tasks[1].Id, tasks[2].Id, tasks[0].Id}, []uint{got[0].Id, got[1].Id, got[2].Id})
+}
+
+func TestUpdatePingTaskOrderValidatesBatchBeforeWriting(t *testing.T) {
+	db := newPingTaskTestDB(t)
+	tasks := []models.PingTask{
+		{Name: "a", Weight: 1, Type: "icmp", Target: "a.example", Interval: 10},
+		{Name: "b", Weight: 2, Type: "icmp", Target: "b.example", Interval: 10},
+	}
+	require.NoError(t, db.Create(&tasks).Error)
+
+	err := updatePingTaskOrder(db, map[uint]int{tasks[0].Id: 10, 999_999: 20})
+	require.True(t, errors.Is(err, gorm.ErrRecordNotFound), "error = %v", err)
+	var unchanged []models.PingTask
+	require.NoError(t, db.Order("id ASC").Find(&unchanged).Error)
+	assert.Equal(t, []int{1, 2}, []int{unchanged[0].Weight, unchanged[1].Weight})
+
+	require.NoError(t, updatePingTaskOrder(db, map[uint]int{tasks[0].Id: 1, tasks[1].Id: 2}), "unchanged weights must remain valid")
+	require.NoError(t, updatePingTaskOrder(db, map[uint]int{tasks[0].Id: 30, tasks[1].Id: 20}))
+	var updated []models.PingTask
+	require.NoError(t, db.Order("id ASC").Find(&updated).Error)
+	assert.Equal(t, []int{30, 20}, []int{updated[0].Weight, updated[1].Weight})
+}
+
+func TestUpdatePingTaskOrderAcceptsEmptyBatchWithoutDatabase(t *testing.T) {
+	require.NoError(t, updatePingTaskOrder(nil, nil))
+}
 
 func TestDeletePingTaskRowsCleansMatchingPingLossNotifications(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:delete-ping-task-cleanup?mode=memory&cache=shared&_foreign_keys=off"), &gorm.Config{

@@ -1,4 +1,4 @@
-name: Publish Snapshot Docker
+name: Publish Snapshot
 
 on:
   workflow_dispatch:
@@ -27,7 +27,7 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Ensure this is the current storage snapshot commit
+      - name: Ensure this is the current snapshot commit
         shell: bash
         run: |
           set -euo pipefail
@@ -39,7 +39,7 @@ jobs:
           git fetch --no-tags --depth=1 origin "${snapshot_branch}"
           branch_sha="$(git rev-parse FETCH_HEAD)"
           if [ "${GITHUB_SHA}" != "${branch_sha}" ]; then
-            echo "A newer storage snapshot commit exists; this run will not publish." >&2
+            echo "A newer snapshot commit exists; this run will not publish." >&2
             exit 1
           fi
 
@@ -56,11 +56,9 @@ jobs:
         run: |
           set -euo pipefail
           snapshot_tag="Snapshot-$(date -u -d '+8 hours' +%y%m%d%H%M)"
-          app_version="${snapshot_tag}"
           echo "snapshot_tag=${snapshot_tag}" >> "${GITHUB_OUTPUT}"
-          echo "app_version=${app_version}" >> "${GITHUB_OUTPUT}"
+          echo "app_version=${snapshot_tag}" >> "${GITHUB_OUTPUT}"
           echo "Snapshot tag: ${snapshot_tag}"
-          echo "Embedded version: ${app_version}"
 
   build-frontend:
     needs: validate-ref
@@ -104,6 +102,12 @@ jobs:
             zig_target: x86_64-linux-musl
           - goarch: arm64
             zig_target: aarch64-linux-musl
+          - goarch: 386
+            zig_target: x86-linux-musl
+          - goarch: riscv64
+            zig_target: riscv64-linux-musl
+          - goarch: loong64
+            zig_target: loongarch64-linux-musl
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -135,7 +139,7 @@ jobs:
             -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${version_hash}" \
             -o "komari-linux-${GOARCH}"
 
-      - name: Upload Docker binary
+      - name: Upload Linux binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: komari-linux-${{ matrix.goarch }}
@@ -145,7 +149,7 @@ jobs:
     needs: [prepare, test-backend, build-linux]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       packages: write
     steps:
       - name: Checkout repository
@@ -158,7 +162,7 @@ jobs:
           git fetch --no-tags --depth=1 origin "${GITHUB_REF_NAME}"
           branch_sha="$(git rev-parse FETCH_HEAD)"
           if [ "${GITHUB_SHA}" != "${branch_sha}" ]; then
-            echo "A newer storage snapshot commit exists; Docker publish was skipped." >&2
+            echo "A newer snapshot commit exists; Docker publish was skipped." >&2
             exit 1
           fi
 
@@ -212,7 +216,55 @@ jobs:
             grep -F "\"hash\":\"${expected_hash}\"" <<<"${output}"
           done
 
-      - name: Publish snapshot release notes
+  publish-release:
+    needs: [prepare, publish-docker, build-linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: komari-linux-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums and update manifest
+        env:
+          VERSION: ${{ needs.prepare.outputs.app_version }}
+        working-directory: release-assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum komari-linux-* | sort -k2 > SHA256SUMS
+          node <<'NODE'
+          const crypto = require("crypto");
+          const fs = require("fs");
+          const files = fs.readdirSync(".")
+            .filter((name) => /^komari-linux-[A-Za-z0-9]+$/.test(name))
+            .sort();
+          const assets = files.map((name) => {
+            const content = fs.readFileSync(name);
+            return {
+              name,
+              os: "linux",
+              arch: name.replace("komari-linux-", ""),
+              size: content.length,
+              sha256: crypto.createHash("sha256").update(content).digest("hex"),
+            };
+          });
+          fs.writeFileSync("komari-update.json", JSON.stringify({
+            schema: 1,
+            version: process.env.VERSION,
+            version_hash: process.env.GITHUB_SHA.slice(0, 7),
+            assets,
+          }, null, 2) + "\n");
+          NODE
+
+      - name: Create release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SNAPSHOT_TAG: ${{ needs.prepare.outputs.snapshot_tag }}
@@ -220,10 +272,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          release_notes_file=".github/release-notes/snapshot.md"
           release_time="$(date -u -d '+8 hours' '+%Y-%m-%d %H:%M')"
           version_hash="${GITHUB_SHA::7}"
-          release_notes="$(<"${release_notes_file}")"
+          release_notes="$(<.github/release-notes/snapshot.md)"
           release_notes="${release_notes//__RELEASE_TIME__/${release_time}}"
           release_notes="${release_notes//__VERSION_HASH__/${version_hash}}"
           release_notes="${release_notes//__APP_VERSION__/${APP_VERSION}}"
@@ -231,18 +282,32 @@ jobs:
           if gh release view "${SNAPSHOT_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release edit "${SNAPSHOT_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
-              --title "Snapshot" \
+              --title "${SNAPSHOT_TAG}" \
               --notes "${release_notes}" \
               --prerelease
           else
             gh release create "${SNAPSHOT_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
               --target "${GITHUB_SHA}" \
-              --title "Snapshot" \
+              --title "${SNAPSHOT_TAG}" \
               --notes "${release_notes}" \
               --prerelease
           fi
 
+          gh release upload "${SNAPSHOT_TAG}" \
+            release-assets/komari-linux-* \
+            release-assets/SHA256SUMS \
+            release-assets/komari-update.json \
+            --repo "${GITHUB_REPOSITORY}" \
+            --clobber
+
+      - name: Remove older snapshot releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SNAPSHOT_TAG: ${{ needs.prepare.outputs.snapshot_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
           gh release list \
             --repo "${GITHUB_REPOSITORY}" \
             --limit 1000 \

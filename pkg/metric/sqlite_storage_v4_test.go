@@ -127,6 +127,32 @@ func TestSQLiteStorageV4SealsQueriesAndPartiallyDeletesBlocks(t *testing.T) {
 	if hot != 0 || blocks == 0 {
 		t.Fatalf("points were not sealed: hot=%d blocks=%d", hot, blocks)
 	}
+	if err := store.CheckpointWAL(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var changesBefore int64
+	if err := store.db.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&changesBefore); err != nil {
+		t.Fatal(err)
+	}
+	filesBefore, err := store.SQLiteFiles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := store.DeleteBefore(ctx, "seal", points[0].Timestamp)
+	if err != nil || deleted != 0 {
+		t.Fatalf("no-op block delete=%d want=0 err=%v", deleted, err)
+	}
+	var changesAfter int64
+	if err := store.db.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&changesAfter); err != nil {
+		t.Fatal(err)
+	}
+	filesAfter, err := store.SQLiteFiles(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changesAfter != changesBefore || filesAfter.WAL != filesBefore.WAL {
+		t.Fatalf("no-op delete wrote SQLite data: changes %d -> %d, WAL %d -> %d", changesBefore, changesAfter, filesBefore.WAL, filesAfter.WAL)
+	}
 	got, err := store.Query(ctx, Query{MetricName: "seal", EntityID: "node-a", Start: points[0].Timestamp, End: points[len(points)-1].Timestamp})
 	if err != nil || len(got) != len(points) {
 		t.Fatalf("query sealed points: count=%d err=%v", len(got), err)
@@ -142,7 +168,7 @@ func TestSQLiteStorageV4SealsQueriesAndPartiallyDeletesBlocks(t *testing.T) {
 	}
 
 	cutoff := points[50].Timestamp
-	deleted, err := store.DeleteBefore(ctx, "seal", cutoff)
+	deleted, err = store.DeleteBefore(ctx, "seal", cutoff)
 	if err != nil || deleted != 50 {
 		t.Fatalf("partial block delete=%d want=50 err=%v", deleted, err)
 	}
