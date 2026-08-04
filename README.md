@@ -5,6 +5,7 @@
 [![Release](https://img.shields.io/github/v/release/nuomiiiii/komari?label=release)](https://github.com/nuomiiiii/komari/releases)
 [![Docker](https://img.shields.io/badge/GHCR-nuomiiiii%2Fkomari-2496ED?logo=docker)](https://github.com/nuomiiiii/komari/pkgs/container/komari)
 [![License](https://img.shields.io/github/license/nuomiiiii/komari)](LICENSE)
+[![Telegram](https://img.shields.io/badge/Telegram-Komari_Lite-26A5E4?logo=telegram&logoColor=white)](https://t.me/komari_lite)
 
 Komari Lite 是一款轻量、自托管的服务器监控与运维管理工具。服务端提供 Web 管理界面，Agent 负责采集节点状态、执行延迟与回程线路探测，并在管理员授权后提供远程终端、文件管理和任务执行能力。
 
@@ -149,6 +150,7 @@ go build -o komari
 
 - [版本发布与完整更新日志](https://github.com/nuomiiiii/komari/releases)
 - [Komari Lite 文档](https://nuomiiiii.github.io/komari-document/)
+- [Telegram 群组](https://t.me/komari_lite)
 - [Komari Agent](https://github.com/nuomiiiii/komari-agent)
 - [Komari Web](https://github.com/nuomiiiii/komari-web)
 - [Nezha 主题](https://github.com/nuomiiiii/nezha)
