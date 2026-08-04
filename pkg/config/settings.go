@@ -2,10 +2,17 @@ package config
 
 import "time"
 
+const (
+	AdminDefaultPageSize    = 10
+	AdminDefaultPageSizeMin = 5
+	AdminDefaultPageSizeMax = 100
+)
+
 type Settings struct {
 	ID                     uint   `json:"id,omitempty"`                                        // 1
 	Sitename               string `json:"sitename" default:"Komari Lite"`                      // 站点名称，默认 "Komari Lite"
 	Description            string `json:"description" default:"A simple server monitor tool."` // 站点描述
+	AdminDefaultPageSize   int    `json:"admin_default_page_size" default:"10"`                // 后台列表默认每页条数
 	CorsOriginCheckEnabled bool   `json:"cors_origin_check_enabled" default:"true"`            // 是否启用 API CORS 跨域请求校验，默认 true
 	CorsAllowedOrigins     string `json:"cors_allowed_origins" default:""`                     // API 跨域允许列表
 	WsOriginCheckEnabled   bool   `json:"ws_origin_check_enabled" default:"true"`              // 是否校验 WebSocket Origin
@@ -51,6 +58,7 @@ type Settings struct {
 const (
 	SitenameKey               = "sitename"
 	DescriptionKey            = "description"
+	AdminDefaultPageSizeKey   = "admin_default_page_size"
 	CorsOriginCheckEnabledKey = "cors_origin_check_enabled"
 	CorsAllowedOriginsKey     = "cors_allowed_origins"
 	WsOriginCheckEnabledKey   = "ws_origin_check_enabled"
