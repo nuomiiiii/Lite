@@ -149,6 +149,14 @@ const (
 // A timeout only rolls back the active range; earlier ranges and their persisted
 // watermarks remain available for the next scheduled compaction attempt.
 func (s *Store) compactMetricIncrementalInChunks(ctx context.Context, metricName string, now time.Time, policy RollupPolicy, obsoleteIntervals []time.Duration) (int, error) {
+	pending, err := s.incrementalCompactionPending(ctx, metricName, now, policy, obsoleteIntervals)
+	if err != nil {
+		return 0, err
+	}
+	if !pending {
+		return 0, nil
+	}
+
 	total := 0
 	chunksSinceVacuum := 0
 	for {
