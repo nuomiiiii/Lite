@@ -287,6 +287,47 @@ func TestLoadMetricProjectionKeepsAverageAggregation(t *testing.T) {
 	}
 }
 
+func TestRecordPerEntityMaxPointsUsesBoundedOversampling(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	tests := []struct {
+		name       string
+		maxPoints  int
+		entities   int
+		wantPoints int
+	}{
+		{name: "five nodes preserve full resolution", maxPoints: 4000, entities: 5, wantPoints: 500},
+		{name: "eighty nodes avoid forty thousand temporary rows", maxPoints: 4000, entities: 80, wantPoints: 100},
+		{name: "very large fleets keep a useful floor", maxPoints: 4000, entities: 800, wantPoints: 16},
+		{name: "unlimited keeps compatibility limit", maxPoints: -1, entities: 80, wantPoints: 500},
+		{name: "largest budget does not overflow", maxPoints: maxInt, entities: 1, wantPoints: 500},
+		{name: "largest fleet count does not overflow", maxPoints: maxInt, entities: maxInt, wantPoints: 16},
+	}
+	for _, item := range tests {
+		t.Run(item.name, func(t *testing.T) {
+			if got := recordPerEntityMaxPoints(item.maxPoints, item.entities); got != item.wantPoints {
+				t.Fatalf("recordPerEntityMaxPoints(%d, %d) = %d, want %d", item.maxPoints, item.entities, got, item.wantPoints)
+			}
+		})
+	}
+}
+
+func TestRecordClientMaxPointsPreservesLegacyCap(t *testing.T) {
+	tests := []struct {
+		input int
+		want  int
+	}{
+		{input: -1, want: 500},
+		{input: 100, want: 100},
+		{input: 500, want: 500},
+		{input: 4000, want: 500},
+	}
+	for _, item := range tests {
+		if got := recordClientMaxPoints(item.input); got != item.want {
+			t.Fatalf("recordClientMaxPoints(%d) = %d, want %d", item.input, got, item.want)
+		}
+	}
+}
+
 func TestTrafficCounterDelta(t *testing.T) {
 	tests := []struct {
 		name     string
