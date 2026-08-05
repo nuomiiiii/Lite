@@ -72,6 +72,14 @@ func handleV2RPC(uuid string, req v2.Request, allowWait bool) v2.Response {
 				return v2.Error(req.ID, -32000, "failed to synchronize agent config", err.Error())
 			}
 		}
+		if params.ConfigResult != nil {
+			if _, err := clients.CompleteDeploymentConfig(uuid, *params.ConfigResult); err != nil {
+				return v2.Error(req.ID, -32000, "failed to save config result", err.Error())
+			}
+			if params.ConfigResult.EventID != "" {
+				agent_runtime.AckV2Events(uuid, []string{params.ConfigResult.EventID})
+			}
+		}
 		result := gin.H{"status": "success"}
 		runtimeConfig, err := getClientRuntimeConfig(uuid)
 		if err != nil {
@@ -209,10 +217,24 @@ func pushQueuedV2Events(conn *connection.SafeConn, uuid string) bool {
 	ackIDs := make([]string, 0, len(events))
 	for _, event := range events {
 		payload := v2.Request{JSONRPC: v2.Version, Method: event.Method, Params: event.Params}
+		if event.Method == v2.MethodAgentConfig {
+			payload.ID = event.ID
+		}
 		if err := conn.WriteJSON(payload); err != nil {
 			agent_runtime.AckV2Events(uuid, ackIDs)
 			logger.Errorf("client-api", "failed to push queued v2 event %s to client %s: %v", event.ID, uuid, err)
 			return false
+		}
+		if event.Method == v2.MethodAgentConfig {
+			var config v2.ConfigParams
+			if err := bindV2Params(event.Params, &config); err != nil {
+				logger.Errorf("client-api", "failed to read queued config revision for client %s: %v", uuid, err)
+				continue
+			}
+			if _, err := clients.MarkDeploymentConfigSent(uuid, config.Revision); err != nil {
+				logger.Errorf("client-api", "failed to mark queued config sent for client %s: %v", uuid, err)
+			}
+			continue
 		}
 		ackIDs = append(ackIDs, event.ID)
 	}

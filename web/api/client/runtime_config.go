@@ -10,12 +10,13 @@ func getClientRuntimeConfig(uuid string) (*v2.ConfigParams, error) {
 	if err != nil {
 		return nil, err
 	}
-	profile, saved, err := clients.GetDeploymentProfile(uuid)
+	profile, saved, deliveryState, err := clients.GetDeploymentProfileWithDelivery(uuid)
 	if err != nil {
 		return nil, err
 	}
 	if saved {
 		config := profile.RuntimeConfig()
+		config.Revision = deliveryState.Revision
 		return &config, nil
 	}
 	if clientInfo.TrafficResetDay == nil {

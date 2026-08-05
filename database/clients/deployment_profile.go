@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
@@ -16,6 +18,24 @@ import (
 )
 
 const defaultReportInterval = 3.0
+
+const (
+	DeploymentDeliverySaved      = "saved"
+	DeploymentDeliverySent       = "sent"
+	DeploymentDeliveryApplied    = "applied"
+	DeploymentDeliveryFailed     = "failed"
+	deploymentDeliveryErrorLimit = 512
+)
+
+type DeploymentDeliveryState struct {
+	Revision   uint64     `json:"revision"`
+	Status     string     `json:"status"`
+	Error      string     `json:"error,omitempty"`
+	SavedAt    time.Time  `json:"saved_at"`
+	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
+	SentAt     *time.Time `json:"sent_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
 
 // DeploymentProfile contains both runtime-manageable settings and values that
 // are retained solely to regenerate an installation command.
@@ -58,6 +78,19 @@ func GetDeploymentProfile(clientUUID string) (DeploymentProfile, bool, error) {
 	return getDeploymentProfile(dbcore.GetDBInstance(), clientUUID)
 }
 
+func GetDeploymentProfileWithDelivery(clientUUID string) (DeploymentProfile, bool, DeploymentDeliveryState, error) {
+	db := dbcore.GetDBInstance()
+	profile, saved, err := getDeploymentProfile(db, clientUUID)
+	if err != nil || !saved {
+		return profile, saved, DeploymentDeliveryState{}, err
+	}
+	var stored models.ClientDeploymentProfile
+	if err := db.First(&stored, "client = ?", clientUUID).Error; err != nil {
+		return DeploymentProfile{}, false, DeploymentDeliveryState{}, err
+	}
+	return profile, true, deploymentDeliveryState(stored), nil
+}
+
 func getDeploymentProfile(db *gorm.DB, clientUUID string) (DeploymentProfile, bool, error) {
 	var client models.Client
 	if err := db.Select("uuid", "traffic_reset_day").First(&client, "uuid = ?", clientUUID).Error; err != nil {
@@ -90,43 +123,191 @@ func getDeploymentProfile(db *gorm.DB, clientUUID string) (DeploymentProfile, bo
 }
 
 func SaveDeploymentProfile(clientUUID string, profile DeploymentProfile) (DeploymentProfile, error) {
-	return saveDeploymentProfile(dbcore.GetDBInstance(), clientUUID, profile)
+	profile, _, _, err := saveDeploymentProfileForDispatch(dbcore.GetDBInstance(), clientUUID, profile)
+	return profile, err
+}
+
+func SaveDeploymentProfileForDispatch(clientUUID string, profile DeploymentProfile) (DeploymentProfile, DeploymentDeliveryState, bool, error) {
+	return saveDeploymentProfileForDispatch(dbcore.GetDBInstance(), clientUUID, profile)
 }
 
 func saveDeploymentProfile(db *gorm.DB, clientUUID string, profile DeploymentProfile) (DeploymentProfile, error) {
+	profile, _, _, err := saveDeploymentProfileForDispatch(db, clientUUID, profile)
+	return profile, err
+}
+
+func saveDeploymentProfileForDispatch(db *gorm.DB, clientUUID string, profile DeploymentProfile) (DeploymentProfile, DeploymentDeliveryState, bool, error) {
 	if err := normalizeDeploymentProfile(&profile); err != nil {
-		return DeploymentProfile{}, err
+		return DeploymentProfile{}, DeploymentDeliveryState{}, false, err
 	}
 	encoded, err := json.Marshal(profile)
 	if err != nil {
-		return DeploymentProfile{}, fmt.Errorf("encode deployment profile: %w", err)
+		return DeploymentProfile{}, DeploymentDeliveryState{}, false, fmt.Errorf("encode deployment profile: %w", err)
 	}
 	resetDay := 0
 	if profile.EnableMonthRotate {
 		resetDay = profile.MonthRotate
 	}
 	now := time.Now().UTC()
-	row := models.ClientDeploymentProfile{
-		Client: clientUUID,
-		Config: string(encoded),
-	}
+	var savedRow models.ClientDeploymentProfile
+	runtimeChanged := false
 	err = db.Transaction(func(tx *gorm.DB) error {
 		var client models.Client
-		if err := tx.Select("uuid").First(&client, "uuid = ?", clientUUID).Error; err != nil {
+		if err := tx.Select("uuid", "traffic_reset_day").First(&client, "uuid = ?", clientUUID).Error; err != nil {
 			return err
+		}
+
+		var existing models.ClientDeploymentProfile
+		existingFound := true
+		if err := tx.First(&existing, "client = ?", clientUUID).Error; err != nil {
+			if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			existingFound = false
+		}
+		runtimeChanged = !existingFound
+		if existingFound {
+			var previous DeploymentProfile
+			if err := json.Unmarshal([]byte(existing.Config), &previous); err != nil {
+				return fmt.Errorf("decode existing deployment profile: %w", err)
+			}
+			if err := normalizeDeploymentProfile(&previous); err != nil {
+				return fmt.Errorf("validate existing deployment profile: %w", err)
+			}
+			previous.EnableMonthRotate = client.TrafficResetDay != nil && *client.TrafficResetDay > 0
+			if previous.EnableMonthRotate {
+				previous.MonthRotate = *client.TrafficResetDay
+			} else {
+				previous.MonthRotate = 0
+			}
+			runtimeChanged = !reflect.DeepEqual(previous.RuntimeConfig(), profile.RuntimeConfig()) ||
+				existing.DeliveryStatus == DeploymentDeliveryFailed
+		}
+
+		row := models.ClientDeploymentProfile{
+			Client:            clientUUID,
+			Config:            string(encoded),
+			Revision:          existing.Revision,
+			DeliveryStatus:    existing.DeliveryStatus,
+			DeliveryError:     existing.DeliveryError,
+			SavedAt:           &now,
+			DeliveryUpdatedAt: existing.DeliveryUpdatedAt,
+			SentAt:            existing.SentAt,
+			FinishedAt:        existing.FinishedAt,
+			CreatedAt:         existing.CreatedAt,
+		}
+		if runtimeChanged {
+			row.Revision++
+			if row.Revision == 0 {
+				row.Revision = 1
+			}
+			row.DeliveryStatus = DeploymentDeliverySaved
+			row.DeliveryError = ""
+			row.DeliveryUpdatedAt = &now
+			row.SentAt = nil
+			row.FinishedAt = nil
 		}
 		if err := tx.Model(&models.Client{}).Where("uuid = ?", clientUUID).Update("traffic_reset_day", resetDay).Error; err != nil {
 			return err
 		}
-		return tx.Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "client"}},
-			DoUpdates: clause.Assignments(map[string]any{"config": row.Config, "updated_at": now}),
-		}).Create(&row).Error
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "client"}},
+			DoUpdates: clause.Assignments(map[string]any{
+				"config": row.Config, "revision": row.Revision,
+				"delivery_status": row.DeliveryStatus, "delivery_error": row.DeliveryError,
+				"saved_at":            row.SavedAt,
+				"delivery_updated_at": row.DeliveryUpdatedAt, "sent_at": row.SentAt,
+				"finished_at": row.FinishedAt, "updated_at": now,
+			}),
+		}).Create(&row).Error; err != nil {
+			return err
+		}
+		return tx.First(&savedRow, "client = ?", clientUUID).Error
 	})
 	if err != nil {
-		return DeploymentProfile{}, err
+		return DeploymentProfile{}, DeploymentDeliveryState{}, false, err
 	}
-	return profile, nil
+	return profile, deploymentDeliveryState(savedRow), runtimeChanged, nil
+}
+
+func MarkDeploymentConfigSent(clientUUID string, revision uint64) (bool, error) {
+	return markDeploymentConfigSent(dbcore.GetDBInstance(), clientUUID, revision)
+}
+
+func markDeploymentConfigSent(db *gorm.DB, clientUUID string, revision uint64) (bool, error) {
+	if revision == 0 {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	result := db.Model(&models.ClientDeploymentProfile{}).
+		Where("client = ? AND revision = ? AND delivery_status IN ?", clientUUID, revision,
+			[]string{DeploymentDeliverySaved, DeploymentDeliverySent}).
+		Updates(map[string]any{
+			"delivery_status": DeploymentDeliverySent,
+			"delivery_error":  "", "delivery_updated_at": now, "sent_at": now,
+		})
+	return result.RowsAffected > 0, result.Error
+}
+
+func CompleteDeploymentConfig(clientUUID string, result v2.ConfigResultParams) (bool, error) {
+	return completeDeploymentConfig(dbcore.GetDBInstance(), clientUUID, result)
+}
+
+func completeDeploymentConfig(db *gorm.DB, clientUUID string, result v2.ConfigResultParams) (bool, error) {
+	if result.Revision == 0 || (result.Status != DeploymentDeliveryApplied && result.Status != DeploymentDeliveryFailed) {
+		return false, fmt.Errorf("invalid deployment config result")
+	}
+	errorMessage := strings.TrimSpace(result.Error)
+	errorMessage = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, errorMessage)
+	if len(errorMessage) > deploymentDeliveryErrorLimit {
+		errorMessage = truncateDeploymentError(errorMessage, deploymentDeliveryErrorLimit)
+	}
+	if result.Status == DeploymentDeliveryApplied {
+		errorMessage = ""
+	}
+	now := time.Now().UTC()
+	update := db.Model(&models.ClientDeploymentProfile{}).
+		Where("client = ? AND revision = ?", clientUUID, result.Revision).
+		Updates(map[string]any{
+			"delivery_status": result.Status, "delivery_error": errorMessage,
+			"delivery_updated_at": now, "finished_at": now,
+		})
+	return update.RowsAffected > 0, update.Error
+}
+
+func truncateDeploymentError(value string, limit int) string {
+	for len(value) > limit {
+		_, size := utf8.DecodeLastRuneInString(value)
+		if size <= 0 {
+			return value[:limit]
+		}
+		value = value[:len(value)-size]
+	}
+	return value
+}
+
+func deploymentDeliveryState(stored models.ClientDeploymentProfile) DeploymentDeliveryState {
+	status := stored.DeliveryStatus
+	if status == "" {
+		status = DeploymentDeliverySaved
+	}
+	return DeploymentDeliveryState{
+		Revision: stored.Revision, Status: status, Error: stored.DeliveryError,
+		SavedAt: deploymentSavedAt(stored), UpdatedAt: stored.DeliveryUpdatedAt,
+		SentAt: stored.SentAt, FinishedAt: stored.FinishedAt,
+	}
+}
+
+func deploymentSavedAt(stored models.ClientDeploymentProfile) time.Time {
+	if stored.SavedAt != nil {
+		return *stored.SavedAt
+	}
+	return stored.UpdatedAt
 }
 
 func normalizeDeploymentProfile(profile *DeploymentProfile) error {
@@ -327,6 +508,12 @@ func adoptDeploymentRuntimeConfig(db *gorm.DB, clientUUID, platform string, conf
 			return fmt.Errorf("encode reported deployment profile: %w", err)
 		}
 		row := models.ClientDeploymentProfile{Client: clientUUID, Config: string(encoded)}
+		now := time.Now().UTC()
+		row.Revision = 1
+		row.DeliveryStatus = DeploymentDeliveryApplied
+		row.SavedAt = &now
+		row.DeliveryUpdatedAt = &now
+		row.FinishedAt = &now
 		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&row)
 		if result.Error != nil {
 			return result.Error

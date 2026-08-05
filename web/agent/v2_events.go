@@ -51,6 +51,23 @@ func DispatchV2Event(uuid, method string, params any) bool {
 	return true
 }
 
+func DispatchV2Config(uuid string, params v2.ConfigParams) (v2.Event, bool, bool) {
+	if !IsV2Client(uuid) {
+		return v2.Event{}, false, false
+	}
+	event := EnqueueV2Event(uuid, v2.MethodAgentConfig, params)
+	if event.ID == "" {
+		return event, false, true
+	}
+	if conn := GetConnectedClients()[uuid]; conn != nil {
+		payload := v2.Request{JSONRPC: v2.Version, Method: event.Method, Params: event.Params, ID: event.ID}
+		if conn.WriteJSON(payload) == nil {
+			return event, true, true
+		}
+	}
+	return event, false, true
+}
+
 func DispatchPing(uuid string, legacy any, params v2.PingParams) bool {
 	if conn := GetConnectedClients()[uuid]; conn != nil {
 		payload := legacy
@@ -132,6 +149,9 @@ func coalesceV2EventLocked(q *v2EventQueue, event v2.Event) {
 }
 
 func v2EventCoalesceKey(event v2.Event) string {
+	if event.Method == v2.MethodAgentConfig {
+		return v2.MethodAgentConfig
+	}
 	if event.Method != v2.MethodAgentPing && event.Method != v2.MethodAgentRoute {
 		return ""
 	}

@@ -7,7 +7,6 @@ import (
 	"github.com/komari-monitor/komari/database/auditlog"
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/pkg/rpc"
-	v2 "github.com/komari-monitor/komari/protocol/v2"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
 	"gorm.io/gorm"
 )
@@ -39,14 +38,14 @@ func adminGetClientDeploymentProfile(_ context.Context, req *rpc.JsonRpcRequest)
 	if err := req.BindParams(&params); err != nil || params.UUID == "" {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid or missing UUID", nil)
 	}
-	profile, saved, err := clients.GetDeploymentProfile(params.UUID)
+	profile, saved, deliveryState, err := clients.GetDeploymentProfileWithDelivery(params.UUID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, rpc.MakeError(rpc.InvalidParams, "Client not found", nil)
 		}
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to load deployment profile: "+err.Error(), nil)
 	}
-	return map[string]any{"profile": profile, "saved": saved}, nil
+	return map[string]any{"profile": profile, "saved": saved, "delivery_state": deliveryState}, nil
 }
 
 func adminSaveClientDeploymentProfile(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
@@ -57,7 +56,7 @@ func adminSaveClientDeploymentProfile(ctx context.Context, req *rpc.JsonRpcReque
 	if err := req.BindParams(&params); err != nil || params.UUID == "" {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid deployment profile", nil)
 	}
-	profile, err := clients.SaveDeploymentProfile(params.UUID, params.Profile)
+	profile, deliveryState, runtimeChanged, err := clients.SaveDeploymentProfileForDispatch(params.UUID, params.Profile)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, rpc.MakeError(rpc.InvalidParams, "Client not found", nil)
@@ -65,18 +64,30 @@ func adminSaveClientDeploymentProfile(ctx context.Context, req *rpc.JsonRpcReque
 		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
 	}
 
-	runtimeConfig := profile.RuntimeConfig()
-	delivery := "saved_for_reconnect"
-	if agent_runtime.DispatchV2Event(params.UUID, v2.MethodAgentConfig, runtimeConfig) {
-		delivery = "dispatched"
-	} else if agent_runtime.IsAgentOnline(params.UUID) {
-		delivery = "agent_upgrade_required"
+	delivery := "saved"
+	if runtimeChanged {
+		runtimeConfig := profile.RuntimeConfig()
+		runtimeConfig.Revision = deliveryState.Revision
+		_, sent, supported := agent_runtime.DispatchV2Config(params.UUID, runtimeConfig)
+		if sent {
+			delivery = "sent"
+			if _, markErr := clients.MarkDeploymentConfigSent(params.UUID, deliveryState.Revision); markErr != nil {
+				return nil, rpc.MakeError(rpc.InternalError, "Failed to update deployment delivery state: "+markErr.Error(), nil)
+			}
+			deliveryState.Status = clients.DeploymentDeliverySent
+		} else if !supported && agent_runtime.IsAgentOnline(params.UUID) {
+			delivery = "agent_upgrade_required"
+		}
+	} else {
+		delivery = deliveryState.Status
 	}
 
 	actor, ip := auditActor(ctx)
 	auditlog.Log(ip, actor, "save client deployment profile:"+params.UUID, "info")
 	return map[string]any{
-		"profile":  profile,
-		"delivery": delivery,
+		"profile":         profile,
+		"delivery":        delivery,
+		"delivery_state":  deliveryState,
+		"runtime_changed": runtimeChanged,
 	}, nil
 }

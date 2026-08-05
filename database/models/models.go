@@ -49,6 +49,7 @@ type Client struct {
 	TrafficResetCycle      string     `json:"traffic_reset_cycle,omitempty" gorm:"type:varchar(10);not null;default:''"`
 	EffectiveTrafficLimit  int64      `json:"effective_traffic_limit" gorm:"-"`
 	EffectiveTrafficType   string     `json:"effective_traffic_type" gorm:"-"`
+	DeploymentStatus       string     `json:"deployment_status" gorm:"-"`
 	CreatedAt              time.Time  `json:"created_at"`
 	UpdatedAt              time.Time  `json:"updated_at"`
 }
@@ -56,10 +57,17 @@ type Client struct {
 // ClientDeploymentProfile stores private per-node installation preferences.
 // Config is only exposed through the dedicated administrator API.
 type ClientDeploymentProfile struct {
-	Client    string    `json:"-" gorm:"type:varchar(36);primaryKey"`
-	Config    string    `json:"-" gorm:"type:text;not null"`
-	CreatedAt time.Time `json:"-"`
-	UpdatedAt time.Time `json:"-"`
+	Client            string     `json:"-" gorm:"type:varchar(36);primaryKey"`
+	Config            string     `json:"-" gorm:"type:text;not null"`
+	Revision          uint64     `json:"-" gorm:"not null;default:0"`
+	DeliveryStatus    string     `json:"-" gorm:"type:varchar(16);not null;default:''"`
+	DeliveryError     string     `json:"-" gorm:"type:varchar(512);not null;default:''"`
+	SavedAt           *time.Time `json:"-"`
+	DeliveryUpdatedAt *time.Time `json:"-"`
+	SentAt            *time.Time `json:"-"`
+	FinishedAt        *time.Time `json:"-"`
+	CreatedAt         time.Time  `json:"-"`
+	UpdatedAt         time.Time  `json:"-"`
 }
 
 // User represents an authenticated user

@@ -84,6 +84,7 @@ func registerAgentRoutes(r *gin.Engine) {
 func registerAdminRoutes(r *gin.Engine) {
 	g := r.Group("/api/admin", api.RequireRole(api.RoleAdmin))
 	g.GET("/dashboard", jsonRpc.Bind("admin:getDashboard", jsonRpc.WithRaw()))
+	g.GET("/dashboard/charts", jsonRpc.Bind("admin:getDashboardCharts", jsonRpc.WithRaw()))
 
 	// --- 二进制/流/重定向类，保留 REST handler ---
 	g.GET("/download/backup", admin.DownloadBackup)

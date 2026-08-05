@@ -182,3 +182,77 @@ func TestAdoptDeploymentRuntimeConfigOnlyInitializesUnmanagedNode(t *testing.T) 
 		t.Fatalf("managed profile changed after stale report: %+v", profile)
 	}
 }
+
+func TestDeploymentConfigDeliveryTracksOnlyRuntimeChangesAndRejectsStaleResults(t *testing.T) {
+	db, err := gorm.Open(
+		sqlite.Open("file:deployment-profile-delivery?mode=memory&cache=shared"),
+		&gorm.Config{Logger: logger.Default.LogMode(logger.Silent)},
+	)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Client{}, &models.ClientDeploymentProfile{}); err != nil {
+		t.Fatalf("migrate database: %v", err)
+	}
+	if err := db.Create(&models.Client{UUID: "node-delivery", Token: "token-delivery"}).Error; err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+
+	profile := DeploymentProfile{Platform: "linux", EnableInterval: true, Interval: 10}
+	_, state, runtimeChanged, err := saveDeploymentProfileForDispatch(db, "node-delivery", profile)
+	if err != nil {
+		t.Fatalf("save initial profile: %v", err)
+	}
+	if !runtimeChanged || state.Revision != 1 || state.Status != DeploymentDeliverySaved {
+		t.Fatalf("initial delivery state = %+v, runtimeChanged=%v", state, runtimeChanged)
+	}
+	if marked, err := markDeploymentConfigSent(db, "node-delivery", 1); err != nil || !marked {
+		t.Fatalf("mark sent = %v, %v", marked, err)
+	}
+	if completed, err := completeDeploymentConfig(db, "node-delivery", v2.ConfigResultParams{
+		Revision: 1,
+		Status:   DeploymentDeliveryApplied,
+	}); err != nil || !completed {
+		t.Fatalf("complete revision 1 = %v, %v", completed, err)
+	}
+
+	profile.DisableWebSSH = true
+	_, state, runtimeChanged, err = saveDeploymentProfileForDispatch(db, "node-delivery", profile)
+	if err != nil {
+		t.Fatalf("save installation-only change: %v", err)
+	}
+	if runtimeChanged || state.Revision != 1 || state.Status != DeploymentDeliveryApplied {
+		t.Fatalf("installation-only state = %+v, runtimeChanged=%v", state, runtimeChanged)
+	}
+
+	profile.Interval = 20
+	_, state, runtimeChanged, err = saveDeploymentProfileForDispatch(db, "node-delivery", profile)
+	if err != nil {
+		t.Fatalf("save runtime change: %v", err)
+	}
+	if !runtimeChanged || state.Revision != 2 || state.Status != DeploymentDeliverySaved {
+		t.Fatalf("second delivery state = %+v, runtimeChanged=%v", state, runtimeChanged)
+	}
+	if completed, err := completeDeploymentConfig(db, "node-delivery", v2.ConfigResultParams{
+		Revision: 1,
+		Status:   DeploymentDeliveryFailed,
+		Error:    "stale result",
+	}); err != nil || completed {
+		t.Fatalf("stale result completion = %v, %v", completed, err)
+	}
+	if completed, err := completeDeploymentConfig(db, "node-delivery", v2.ConfigResultParams{
+		Revision: 2,
+		Status:   DeploymentDeliveryFailed,
+		Error:    " invalid interface\n ",
+	}); err != nil || !completed {
+		t.Fatalf("complete revision 2 = %v, %v", completed, err)
+	}
+
+	_, state, runtimeChanged, err = saveDeploymentProfileForDispatch(db, "node-delivery", profile)
+	if err != nil {
+		t.Fatalf("retry failed profile: %v", err)
+	}
+	if !runtimeChanged || state.Revision != 3 || state.Status != DeploymentDeliverySaved {
+		t.Fatalf("retry delivery state = %+v, runtimeChanged=%v", state, runtimeChanged)
+	}
+}
