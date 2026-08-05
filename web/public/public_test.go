@@ -191,7 +191,7 @@ func TestRenderPublicDocumentTitle(t *testing.T) {
 	}
 }
 
-func TestPublicIndexAlwaysRendersCustomHTML(t *testing.T) {
+func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
@@ -208,20 +208,34 @@ func TestPublicIndexAlwaysRendersCustomHTML(t *testing.T) {
 	router := gin.New()
 	Static(router.Group("/"), router.NoRoute)
 
-	for _, requestPath := range []string{"/", "/index.html", "/admin", "/terminal"} {
+	tests := []struct {
+		path       string
+		wantCustom bool
+	}{
+		{path: "/", wantCustom: true},
+		{path: "/index.html", wantCustom: true},
+		{path: "/admin"},
+		{path: "/admin/settings"},
+		{path: "/terminal"},
+		{path: "/terminal/session"},
+	}
+
+	for _, tt := range tests {
 		recorder := httptest.NewRecorder()
-		request := httptest.NewRequest(http.MethodGet, requestPath, nil)
+		request := httptest.NewRequest(http.MethodGet, tt.path, nil)
 		router.ServeHTTP(recorder, request)
 
 		if recorder.Code != http.StatusOK {
-			t.Fatalf("GET %s status = %d, want %d", requestPath, recorder.Code, http.StatusOK)
+			t.Fatalf("GET %s status = %d, want %d", tt.path, recorder.Code, http.StatusOK)
 		}
 		body := recorder.Body.String()
-		if !strings.Contains(body, `data-custom-head`) || !strings.Contains(body, `data-custom-body`) {
-			t.Fatalf("GET %s bypassed custom HTML rendering", requestPath)
+		hasCustomHead := strings.Contains(body, `data-custom-head`)
+		hasCustomBody := strings.Contains(body, `data-custom-body`)
+		if hasCustomHead != tt.wantCustom || hasCustomBody != tt.wantCustom {
+			t.Fatalf("GET %s custom HTML = (head: %t, body: %t), want both %t", tt.path, hasCustomHead, hasCustomBody, tt.wantCustom)
 		}
 		if got := recorder.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
-			t.Fatalf("GET %s Cache-Control = %q", requestPath, got)
+			t.Fatalf("GET %s Cache-Control = %q", tt.path, got)
 		}
 	}
 }

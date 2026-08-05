@@ -295,18 +295,19 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			htmlStr = replaceHTMLLanguage(htmlStr, language)
 		}
 
+		// Custom Head/Body content belongs to the public site only. Keeping the
+		// private applications on the built-in document prevents public CSS and
+		// scripts from changing the admin or terminal interfaces.
+		if privateApplication {
+			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(htmlStr))
+			return
+		}
+
 		htmlStr = injectCustomHTML(
 			htmlStr,
 			cfg[config.CustomHeadKey].(string),
 			cfg[config.CustomBodyKey].(string),
 		)
-
-		// 后台和终端保留系统内置页面元数据，但仍加载管理员保存的
-		// 自定义 Head/Body 内容。
-		if privateApplication {
-			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(htmlStr))
-			return
-		}
 
 		rendered := renderPublicDocumentTitle(
 			strings.ReplaceAll(
