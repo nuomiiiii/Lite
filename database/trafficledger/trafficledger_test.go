@@ -151,6 +151,87 @@ func TestDailyAllocationPreservesContinuousTotalAcrossMidnightRecovery(t *testin
 	assert.Equal(t, gib, daily[dayKey(start.AddDate(0, 0, 1))].Up)
 }
 
+func TestSumTrafficDeltasStartsNewEpochAfterPersistentCounterDrop(t *testing.T) {
+	base := time.Date(2026, 8, 5, 1, 27, 0, 0, BeijingLocation)
+	previous := &DeltaRecord{Time: base.Add(-time.Minute), NetTotalUp: 100, NetTotalDown: 200}
+	records := []DeltaRecord{
+		{
+			Time: base, NetTotalUp: 80, NetTotalDown: 150,
+			TrafficUp: 80, TrafficDown: 150, TrafficUpSet: true, TrafficDownSet: true,
+		},
+		{
+			Time: base.Add(time.Minute), NetTotalUp: 90, NetTotalDown: 160,
+			TrafficUp: 10, TrafficDown: 10, TrafficUpSet: true, TrafficDownSet: true,
+		},
+	}
+
+	up, down := SumTrafficDeltas(records, previous)
+	assert.Equal(t, int64(10), up)
+	assert.Equal(t, int64(10), down)
+}
+
+func TestSumTrafficDeltasCorrelatesAsymmetricRecoveryAfterScopeChange(t *testing.T) {
+	base := time.Date(2026, 8, 5, 1, 27, 0, 0, BeijingLocation)
+	previous := &DeltaRecord{Time: base.Add(-time.Minute), NetTotalUp: 100, NetTotalDown: 200}
+	records := []DeltaRecord{
+		{
+			Time: base, NetTotalUp: 80, NetTotalDown: 150,
+			TrafficUp: 80, TrafficDown: 150, TrafficUpSet: true, TrafficDownSet: true,
+		},
+		{
+			Time: base.Add(time.Minute), NetTotalUp: 110, NetTotalDown: 160,
+			TrafficUp: 30, TrafficDown: 10, TrafficUpSet: true, TrafficDownSet: true,
+		},
+	}
+
+	up, down := SumTrafficDeltas(records, previous)
+	assert.Equal(t, int64(30), up)
+	assert.Equal(t, int64(10), down)
+}
+
+func TestSumTrafficDeltasIgnoresTemporaryCorrelatedBadReading(t *testing.T) {
+	base := time.Date(2026, 8, 5, 1, 27, 0, 0, BeijingLocation)
+	previous := &DeltaRecord{Time: base.Add(-time.Minute), NetTotalUp: 100, NetTotalDown: 200}
+	records := []DeltaRecord{
+		{
+			Time: base, NetTotalUp: 80, NetTotalDown: 150,
+			TrafficUp: 80, TrafficDown: 150, TrafficUpSet: true, TrafficDownSet: true,
+		},
+		{
+			Time: base.Add(time.Minute), NetTotalUp: 110, NetTotalDown: 220,
+			TrafficUp: 30, TrafficDown: 70, TrafficUpSet: true, TrafficDownSet: true,
+		},
+	}
+
+	up, down := SumTrafficDeltas(records, previous)
+	assert.Equal(t, int64(10), up)
+	assert.Equal(t, int64(20), down)
+}
+
+func TestSumTrafficDeltasCountsOnlyAfterCounterResetBaseline(t *testing.T) {
+	base := time.Date(2026, 8, 5, 1, 27, 0, 0, BeijingLocation)
+	previous := &DeltaRecord{Time: base.Add(-time.Minute), NetTotalUp: 100, NetTotalDown: 200}
+	records := []DeltaRecord{
+		{
+			Time: base, NetTotalUp: 10, NetTotalDown: 20,
+			TrafficUpSet: true, TrafficDownSet: true,
+		},
+		{
+			Time: base.Add(time.Minute), NetTotalUp: 15, NetTotalDown: 30,
+			TrafficUp: 5, TrafficDown: 10, TrafficUpSet: true, TrafficDownSet: true,
+		},
+	}
+
+	up, down := SumTrafficDeltas(records, previous)
+	assert.Equal(t, int64(5), up)
+	assert.Equal(t, int64(10), down)
+}
+
+func TestTrafficDeltaOrFallbackDistinguishesStoredZeroFromLegacyMissingMetric(t *testing.T) {
+	assert.Equal(t, int64(0), TrafficDeltaOrFallback(0, true, 150, 100))
+	assert.Equal(t, int64(50), TrafficDeltaOrFallback(0, false, 150, 100))
+}
+
 func TestSumRangeRejectsPartialLedger(t *testing.T) {
 	db := openLedgerTestDB(t, "traffic-ledger-partial")
 	require.NoError(t, db.Create(&models.TrafficDailyLedger{

@@ -49,8 +49,25 @@ type Client struct {
 	TrafficResetCycle      string     `json:"traffic_reset_cycle,omitempty" gorm:"type:varchar(10);not null;default:''"`
 	EffectiveTrafficLimit  int64      `json:"effective_traffic_limit" gorm:"-"`
 	EffectiveTrafficType   string     `json:"effective_traffic_type" gorm:"-"`
+	DeploymentStatus       string     `json:"deployment_status" gorm:"-"`
 	CreatedAt              time.Time  `json:"created_at"`
 	UpdatedAt              time.Time  `json:"updated_at"`
+}
+
+// ClientDeploymentProfile stores private per-node installation preferences.
+// Config is only exposed through the dedicated administrator API.
+type ClientDeploymentProfile struct {
+	Client            string     `json:"-" gorm:"type:varchar(36);primaryKey"`
+	Config            string     `json:"-" gorm:"type:text;not null"`
+	Revision          uint64     `json:"-" gorm:"not null;default:0"`
+	DeliveryStatus    string     `json:"-" gorm:"type:varchar(16);not null;default:''"`
+	DeliveryError     string     `json:"-" gorm:"type:varchar(512);not null;default:''"`
+	SavedAt           *time.Time `json:"-"`
+	DeliveryUpdatedAt *time.Time `json:"-"`
+	SentAt            *time.Time `json:"-"`
+	FinishedAt        *time.Time `json:"-"`
+	CreatedAt         time.Time  `json:"-"`
+	UpdatedAt         time.Time  `json:"-"`
 }
 
 // User represents an authenticated user
@@ -61,6 +78,8 @@ type User struct {
 	SSOType   string    `json:"sso_type" gorm:"type:varchar(20)"`                   // e.g., "github", "google"
 	SSOID     string    `json:"sso_id" gorm:"type:varchar(100)"`                    // OAuth provider's user ID
 	TwoFactor string    `json:"two_factor,omitempty" gorm:"type:varchar(255)"`      // 2FA secret
+	Language  string    `json:"language,omitempty" gorm:"type:varchar(32);not null;default:''"`
+	Color     string    `json:"color,omitempty" gorm:"type:varchar(16);not null;default:''"`
 	Sessions  []Session `json:"sessions,omitempty" gorm:"foreignKey:UUID;references:UUID;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -100,6 +119,8 @@ type Record struct {
 	NetTotalDown   int64     `json:"net_total_down" gorm:"type:bigint"`
 	TrafficUp      int64     `json:"traffic_up" gorm:"type:bigint"`
 	TrafficDown    int64     `json:"traffic_down" gorm:"type:bigint"`
+	TrafficUpSet   bool      `json:"-" gorm:"-"`
+	TrafficDownSet bool      `json:"-" gorm:"-"`
 	Process        int       `json:"process"`
 	Connections    int       `json:"connections"`
 	ConnectionsUdp int       `json:"connections_udp"`

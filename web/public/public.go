@@ -63,6 +63,18 @@ func injectThemeChangeReload(html string) string {
 	return html + themeChangeReloadScript
 }
 
+func injectCustomHTML(htmlStr, customHead, customBody string) string {
+	if location := bodyClosePattern.FindStringIndex(htmlStr); location != nil {
+		htmlStr = htmlStr[:location[0]] + customBody + htmlStr[location[0]:]
+	} else {
+		htmlStr += customBody
+	}
+	if location := headClosePattern.FindStringIndex(htmlStr); location != nil {
+		return htmlStr[:location[0]] + customHead + htmlStr[location[0]:]
+	}
+	return customHead + htmlStr
+}
+
 func renderPublicDocumentTitle(htmlStr, title string) string {
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -262,12 +274,11 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		cfg := getConfig()
 
 		currentTheme := cfg[config.ThemeKey].(string)
-		shouldReplace := true
+		privateApplication := isPrivateApplicationPath(reqPath)
 
-		// 特殊页面：强制使用 default 主题，且不进行内容替换
-		if strings.HasPrefix(reqPath, "/admin") || strings.HasPrefix(reqPath, "/terminal") {
+		// 特殊页面：强制使用 default 主题。
+		if privateApplication {
 			currentTheme = DefaultTheme
-			shouldReplace = false
 		}
 
 		// 获取 dist/index.html (相对于主题根目录)
@@ -284,21 +295,26 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			htmlStr = replaceHTMLLanguage(htmlStr, language)
 		}
 
-		// 如果不替换，保留系统内置页面内容，仅同步 html lang。
-		if !shouldReplace {
+		// Custom Head/Body content belongs to the public site only. Keeping the
+		// private applications on the built-in document prevents public CSS and
+		// scripts from changing the admin or terminal interfaces.
+		if privateApplication {
 			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(htmlStr))
 			return
 		}
 
-		// 执行 HTML 内容替换
-		replacer := strings.NewReplacer(
-			"A simple server monitor tool.", cfg[config.DescriptionKey].(string),
-			"</head>", cfg[config.CustomHeadKey].(string)+"</head>",
-			"</body>", cfg[config.CustomBodyKey].(string)+"</body>",
+		htmlStr = injectCustomHTML(
+			htmlStr,
+			cfg[config.CustomHeadKey].(string),
+			cfg[config.CustomBodyKey].(string),
 		)
 
 		rendered := renderPublicDocumentTitle(
-			replacer.Replace(htmlStr),
+			strings.ReplaceAll(
+				htmlStr,
+				"A simple server monitor tool.",
+				cfg[config.DescriptionKey].(string),
+			),
 			cfg[config.SitenameKey].(string),
 		)
 		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(injectThemeChangeReload(rendered)))
@@ -393,7 +409,14 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		cfg := getConfig()
 		currentTheme := cfg[config.ThemeKey].(string)
 
-		// SPA 静态资源回退
+		// index.html is a live document, not a static asset. It must pass
+		// through serveIndex so site metadata and custom Head/Body content
+		// are applied even when a browser requests the file explicitly.
+		if reqPath == "/index.html" {
+			serveIndex(c)
+			return
+		}
+
 		distPath := path.Join(DistDir, reqPath)
 
 		content, mimeType, exists := getFileContent(currentTheme, distPath)

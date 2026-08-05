@@ -61,3 +61,58 @@ func TestRemoveV2EventQueueClearsOnlyDeletedClient(t *testing.T) {
 		t.Fatalf("unrelated node events = %#v", events)
 	}
 }
+
+func TestConfigEventsCoalesceToLatestRevisionPerNode(t *testing.T) {
+	v2EventMu.Lock()
+	original := v2EventQueues
+	v2EventQueues = make(map[string]*v2EventQueue)
+	v2EventMu.Unlock()
+	t.Cleanup(func() {
+		v2EventMu.Lock()
+		v2EventQueues = original
+		v2EventMu.Unlock()
+	})
+
+	EnqueueV2Event("node-a", v2.MethodAgentConfig, v2.ConfigParams{Revision: 1})
+	latest := EnqueueV2Event("node-a", v2.MethodAgentConfig, v2.ConfigParams{Revision: 2})
+	EnqueueV2Event("node-a", v2.MethodAgentExec, v2.ExecParams{TaskID: "keep"})
+	EnqueueV2Event("node-b", v2.MethodAgentConfig, v2.ConfigParams{Revision: 7})
+
+	events := TakeV2Events("node-a", nil, 16)
+	if len(events) != 2 || events[0].ID != latest.ID || events[0].Method != v2.MethodAgentConfig || events[1].Method != v2.MethodAgentExec {
+		t.Fatalf("node-a coalesced events = %#v", events)
+	}
+	var config v2.ConfigParams
+	if err := bindV2EventParams(events[0].Params, &config); err != nil || config.Revision != 2 {
+		t.Fatalf("latest config = %+v, %v", config, err)
+	}
+	other := TakeV2Events("node-b", nil, 16)
+	if len(other) != 1 || other[0].Method != v2.MethodAgentConfig {
+		t.Fatalf("node-b config changed = %#v", other)
+	}
+}
+
+func TestOfflineConfigQueueKeepsOnlyNewestRevisionAcrossRepeatedSaves(t *testing.T) {
+	v2EventMu.Lock()
+	original := v2EventQueues
+	v2EventQueues = make(map[string]*v2EventQueue)
+	v2EventMu.Unlock()
+	t.Cleanup(func() {
+		v2EventMu.Lock()
+		v2EventQueues = original
+		v2EventMu.Unlock()
+	})
+
+	for revision := uint64(1); revision <= 25; revision++ {
+		EnqueueV2Event("offline-node", v2.MethodAgentConfig, v2.ConfigParams{Revision: revision})
+	}
+
+	events := TakeV2Events("offline-node", nil, v2EventQueueLimit)
+	if len(events) != 1 || events[0].Method != v2.MethodAgentConfig {
+		t.Fatalf("offline config queue = %#v, want one config event", events)
+	}
+	var config v2.ConfigParams
+	if err := bindV2EventParams(events[0].Params, &config); err != nil || config.Revision != 25 {
+		t.Fatalf("queued config = %+v, %v; want revision 25", config, err)
+	}
+}

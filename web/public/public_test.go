@@ -2,10 +2,17 @@ package public
 
 import (
 	"crypto/sha256"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/pkg/config"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestRemoveFaviconIfHashMatches(t *testing.T) {
@@ -123,6 +130,20 @@ func TestInjectThemeChangeReload(t *testing.T) {
 	}
 }
 
+func TestInjectCustomHTML(t *testing.T) {
+	got := injectCustomHTML(
+		`<HTML><HEAD></HEAD><BODY><main></main></BODY></HTML>`,
+		`<style data-custom-head></style>`,
+		`<div data-custom-body></div>`,
+	)
+	if !strings.Contains(got, `<style data-custom-head></style></HEAD>`) {
+		t.Fatalf("custom Head content was not inserted before the closing tag: %q", got)
+	}
+	if !strings.Contains(got, `<div data-custom-body></div></BODY>`) {
+		t.Fatalf("custom Body content was not inserted before the closing tag: %q", got)
+	}
+}
+
 func TestRenderPublicDocumentTitle(t *testing.T) {
 	tests := map[string]struct {
 		html  string
@@ -167,5 +188,54 @@ func TestRenderPublicDocumentTitle(t *testing.T) {
 				t.Fatalf("title synchronization was injected more than once: %q", rerendered)
 			}
 		})
+	}
+}
+
+func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+	if err := config.SetMany(map[string]any{
+		config.CustomHeadKey: `<style data-custom-head>body{--custom-marker:1}</style>`,
+		config.CustomBodyKey: `<div data-custom-body>custom body marker</div>`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	Static(router.Group("/"), router.NoRoute)
+
+	tests := []struct {
+		path       string
+		wantCustom bool
+	}{
+		{path: "/", wantCustom: true},
+		{path: "/index.html", wantCustom: true},
+		{path: "/admin"},
+		{path: "/admin/settings"},
+		{path: "/terminal"},
+		{path: "/terminal/session"},
+	}
+
+	for _, tt := range tests {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, tt.path, nil)
+		router.ServeHTTP(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want %d", tt.path, recorder.Code, http.StatusOK)
+		}
+		body := recorder.Body.String()
+		hasCustomHead := strings.Contains(body, `data-custom-head`)
+		hasCustomBody := strings.Contains(body, `data-custom-body`)
+		if hasCustomHead != tt.wantCustom || hasCustomBody != tt.wantCustom {
+			t.Fatalf("GET %s custom HTML = (head: %t, body: %t), want both %t", tt.path, hasCustomHead, hasCustomBody, tt.wantCustom)
+		}
+		if got := recorder.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
+			t.Fatalf("GET %s Cache-Control = %q", tt.path, got)
+		}
 	}
 }

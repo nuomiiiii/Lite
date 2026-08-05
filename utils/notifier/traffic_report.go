@@ -327,6 +327,6 @@ func sumTrafficDeltas(records []trafficDeltaRecord, previous *trafficDeltaRecord
 	return trafficledger.SumTrafficDeltas(records, previous)
 }
 
-func trafficDeltaOrFallback(storedDelta, currentTotal, previousTotal int64) int64 {
-	return trafficledger.TrafficDeltaOrFallback(storedDelta, currentTotal, previousTotal)
+func trafficDeltaOrFallback(storedDelta int64, storedDeltaSet bool, currentTotal, previousTotal int64) int64 {
+	return trafficledger.TrafficDeltaOrFallback(storedDelta, storedDeltaSet, currentTotal, previousTotal)
 }

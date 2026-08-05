@@ -20,13 +20,17 @@ func TestGetClientBasicInfoUsesConfiguredOrder(t *testing.T) {
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Client{}))
+	require.NoError(t, db.AutoMigrate(&models.Client{}, &models.ClientDeploymentProfile{}))
 
 	createdAt := time.Date(2026, 7, 23, 0, 0, 0, 0, time.UTC)
 	require.NoError(t, db.Create([]models.Client{
 		{UUID: "client-c", Token: "token-c", Name: "C", Weight: 20, CreatedAt: createdAt},
 		{UUID: "client-b", Token: "token-b", Name: "B", Weight: 10, CreatedAt: createdAt.Add(time.Minute)},
 		{UUID: "client-a", Token: "token-a", Name: "A", Weight: 10, CreatedAt: createdAt},
+	}).Error)
+	require.NoError(t, db.Create([]models.ClientDeploymentProfile{
+		{Client: "client-a", Config: `{}`, Revision: 1, DeliveryStatus: DeploymentDeliveryApplied},
+		{Client: "client-c", Config: `{}`, Revision: 2, DeliveryStatus: DeploymentDeliveryFailed},
 	}).Error)
 
 	clients, err := getClientBasicInfo(db)
@@ -35,6 +39,9 @@ func TestGetClientBasicInfoUsesConfiguredOrder(t *testing.T) {
 	assert.Equal(t, []string{"client-a", "client-b", "client-c"}, []string{
 		clients[0].UUID, clients[1].UUID, clients[2].UUID,
 	})
+	assert.Equal(t, DeploymentDeliveryApplied, clients[0].DeploymentStatus)
+	assert.Empty(t, clients[1].DeploymentStatus)
+	assert.Equal(t, DeploymentDeliveryFailed, clients[2].DeploymentStatus)
 }
 
 func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {

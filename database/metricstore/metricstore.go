@@ -900,12 +900,19 @@ func GetRecordsByClientAndTime(ctx context.Context, clientUUID string, start, en
 // by a projected legacy record response. Fields outside that family remain at
 // their zero value, preserving the existing response shape.
 func GetRecordsByClientAndTimeForLoadType(ctx context.Context, clientUUID string, start, end time.Time, loadType string) ([]models.Record, error) {
+	return GetRecordsByClientAndTimeForLoadTypeMaxPoints(ctx, clientUUID, start, end, loadType, 500)
+}
+
+// GetRecordsByClientAndTimeForLoadTypeMaxPoints bounds the reconstructed
+// timeline before legacy response objects are allocated. The storage query can
+// therefore select a coarser materialized tier for large report windows.
+func GetRecordsByClientAndTimeForLoadTypeMaxPoints(ctx context.Context, clientUUID string, start, end time.Time, loadType string, maxPoints int) ([]models.Record, error) {
 	s := GetStore()
 	if s == nil {
 		return nil, fmt.Errorf("metric store not enabled")
 	}
 
-	return getRecordsByClientAndTimeFromSeries(ctx, s, clientUUID, start, end, recordMetricNamesForLoadType(loadType))
+	return getRecordsByClientAndTimeFromSeries(ctx, s, clientUUID, start, end, recordMetricNamesForLoadType(loadType), recordClientMaxPoints(maxPoints))
 }
 
 // GetTrafficRecordsByClientAndTime reconstructs only the four traffic series
@@ -922,7 +929,7 @@ func GetTrafficRecordsByClientAndTime(ctx context.Context, clientUUID string, st
 		MetricNetTotalDown,
 		MetricTrafficUp,
 		MetricTrafficDown,
-	})
+	}, 500)
 }
 
 // GetRecordsByTime 从 metric store 查询所有客户端在时间范围内的记录
@@ -933,20 +940,29 @@ func GetRecordsByTime(ctx context.Context, start, end time.Time) ([]models.Recor
 // GetRecordsByTimeForLoadType is the all-client counterpart of
 // GetRecordsByClientAndTimeForLoadType.
 func GetRecordsByTimeForLoadType(ctx context.Context, start, end time.Time, loadType string) ([]models.Record, error) {
+	return GetRecordsByTimeForLoadTypeMaxPoints(ctx, start, end, loadType, -1)
+}
+
+// GetRecordsByTimeForLoadTypeMaxPoints applies a global response budget before
+// reconstructing per-node records. A two-times oversampling margin preserves
+// proportional sampling when nodes have uneven reporting cadence while still
+// avoiding the old 500-points-per-node temporary result on large installations.
+func GetRecordsByTimeForLoadTypeMaxPoints(ctx context.Context, start, end time.Time, loadType string, maxPoints int) ([]models.Record, error) {
 	s := GetStore()
 	if s == nil {
 		return nil, fmt.Errorf("metric store not enabled")
 	}
 	metricNames := recordMetricNamesForLoadType(loadType)
 
-	interval := recordSeriesInterval(s, start, end, time.Now().UTC())
+	interval := recordSeriesInterval(s, start, end, time.Now().UTC(), 500)
 	entityIDs, err := listRecordEntityIDs(ctx, s, start, end, interval, metricNames)
 	if err != nil {
 		return nil, err
 	}
+	perEntityMaxPoints := recordPerEntityMaxPoints(maxPoints, len(entityIDs))
 	var records []models.Record
 	for _, entityID := range entityIDs {
-		items, err := getRecordsByClientAndTimeFromSeries(ctx, s, entityID, start, end, metricNames)
+		items, err := getRecordsByClientAndTimeFromSeries(ctx, s, entityID, start, end, metricNames, perEntityMaxPoints)
 		if err != nil {
 			return nil, err
 		}
@@ -994,9 +1010,9 @@ type recordSeriesKey struct {
 	ts     int64
 }
 
-func getRecordsByClientAndTimeFromSeries(ctx context.Context, s *metric.Store, clientUUID string, start, end time.Time, metricNames []string) ([]models.Record, error) {
+func getRecordsByClientAndTimeFromSeries(ctx context.Context, s *metric.Store, clientUUID string, start, end time.Time, metricNames []string, maxPoints int) ([]models.Record, error) {
 	now := time.Now().UTC()
-	interval := recordSeriesInterval(s, start, end, now)
+	interval := recordSeriesInterval(s, start, end, now, maxPoints)
 	recordMap := make(map[recordSeriesKey]*models.Record)
 	queries := make([]metric.AggregateQuery, 0, len(metricNames))
 	for _, metricName := range metricNames {
@@ -1053,8 +1069,8 @@ func recordMetricAggregation(metricName string) metric.Aggregation {
 	}
 }
 
-func recordSeriesInterval(s *metric.Store, start, end, now time.Time) time.Duration {
-	interval := recordDownsampleInterval(end.Sub(start), 500)
+func recordSeriesInterval(s *metric.Store, start, end, now time.Time, maxPoints int) time.Duration {
+	interval := recordDownsampleInterval(end.Sub(start), maxPoints)
 	return s.CompatibleSeriesInterval(start, now, interval)
 }
 
@@ -1071,6 +1087,38 @@ func recordDownsampleInterval(rangeDuration time.Duration, maxPoints int) time.D
 		return time.Second
 	}
 	return metric.FloorStandardInterval(interval)
+}
+
+func recordPerEntityMaxPoints(maxPoints, entityCount int) int {
+	if maxPoints <= 0 || entityCount <= 0 {
+		return 500
+	}
+	quotient := maxPoints / entityCount
+	if quotient >= 250 {
+		return 500
+	}
+	points := quotient * 2
+	remainder := maxPoints % entityCount
+	if remainder > 0 {
+		points++
+		if remainder > entityCount-remainder {
+			points++
+		}
+	}
+	if points < 16 {
+		return 16
+	}
+	if points > 500 {
+		return 500
+	}
+	return points
+}
+
+func recordClientMaxPoints(maxPoints int) int {
+	if maxPoints <= 0 || maxPoints > 500 {
+		return 500
+	}
+	return maxPoints
 }
 
 func listRecordEntityIDs(ctx context.Context, s *metric.Store, start, end time.Time, interval time.Duration, metricNames []string) ([]string, error) {
@@ -1120,8 +1168,10 @@ func applyRecordMetricValue(rec *models.Record, metricName string, value float64
 		rec.NetTotalDown = int64(value)
 	case MetricTrafficUp:
 		rec.TrafficUp = int64(value)
+		rec.TrafficUpSet = true
 	case MetricTrafficDown:
 		rec.TrafficDown = int64(value)
+		rec.TrafficDownSet = true
 	case MetricProcess:
 		rec.Process = int(value)
 	case MetricConnections:

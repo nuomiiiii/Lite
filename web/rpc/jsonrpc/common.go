@@ -432,6 +432,8 @@ func getMe(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) 
 		SSOType      string `json:"sso_type"`
 		Username     string `json:"username"`
 		UUID         string `json:"uuid"`
+		Language     string `json:"language"`
+		Color        string `json:"color"`
 	}
 
 	meta := rpc.MetaFromContext(ctx)
@@ -449,6 +451,8 @@ func getMe(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) 
 		resp.SSOType = meta.User.SSOType
 		resp.Username = meta.User.Username
 		resp.UUID = meta.User.UUID
+		resp.Language = meta.User.Language
+		resp.Color = meta.User.Color
 		return resp, nil
 	case rpc.PrincipalAnonymous:
 		resp.LoggedIn = false

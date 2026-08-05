@@ -983,6 +983,14 @@ func (s *Store) collectSeriesAcrossHandoffTiers(ctx context.Context, query Aggre
 			scanUpper = youngBoundary - 1
 		}
 		if scanUpper >= scanLower {
+			if s.sqliteStorageV4 && hasWatermark && !needDigest {
+				if err := s.foldSQLiteV4Rollups(ctx, s.reader(), q.MetricName, q.EntityID, q.Tags,
+					resNano, scanLower, scanUpper, groups, query.Interval, comp, query.PreserveSeries); err != nil {
+					return nil, err
+				}
+				youngBoundary = lower
+				continue
+			}
 			rows, err := s.scanRollupRowsBetween(ctx, q.MetricName, q.EntityID, q.Tags, resNano, scanLower, scanUpper, needDigest)
 			if err != nil {
 				return nil, err

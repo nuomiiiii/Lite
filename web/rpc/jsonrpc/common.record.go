@@ -81,8 +81,18 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 
 	switch params.Type {
 	case "load":
+		maxCount := params.MaxCount
+		if maxCount == 0 {
+			maxCount = 4000
+		}
+		queryMaxCount := maxCount
+		if !isAdmin {
+			// Keep hidden-node filtering exact for public responses. Logged-in
+			// admin reads can safely push the final budget into storage.
+			queryMaxCount = -1
+		}
 		// fetch load records
-		recs, err := getLoadRecordsCombined(params.UUID, startTime, endTime, params.LoadType)
+		recs, err := getLoadRecordsCombined(params.UUID, startTime, endTime, params.LoadType, queryMaxCount)
 		if err != nil {
 			return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch records", err.Error())
 		}
@@ -96,12 +106,6 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 				filtered = append(filtered, r)
 			}
 			recs = filtered
-		}
-
-		// resolve maxCount default for load
-		maxCount := params.MaxCount
-		if maxCount == 0 {
-			maxCount = 4000
 		}
 
 		// optional load_type filtering -> group by client
@@ -434,13 +438,13 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 
 // getLoadRecordsCombined fetches records for a client or all clients within a time range,
 // combining recent short-term table and long-term table with 15-min grouping for recent part.
-func getLoadRecordsCombined(uuid string, start, end time.Time, loadType string) ([]models.Record, error) {
+func getLoadRecordsCombined(uuid string, start, end time.Time, loadType string, maxCount int) ([]models.Record, error) {
 	// prefer the existing function when uuid provided
 	if uuid != "" {
-		return recordsdb.GetRecordsByClientAndTimeForLoadType(uuid, start, end, loadType)
+		return recordsdb.GetRecordsByClientAndTimeForLoadTypeMaxPoints(uuid, start, end, loadType, maxCount)
 	}
 	// 所有客户端：统一通过 records 包查询，启用 metric store 时自动走 metric store
-	return recordsdb.GetRecordsByTimeForLoadType(start, end, loadType)
+	return recordsdb.GetRecordsByTimeForLoadTypeMaxPoints(start, end, loadType, maxCount)
 }
 
 // ---------- downsampling helpers ----------

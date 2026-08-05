@@ -464,7 +464,7 @@ func doInitialize() error {
 		instance.Exec("PRAGMA busy_timeout = 5000;")
 		instance.Exec("PRAGMA wal_autocheckpoint = 256;")
 		instance.Exec("PRAGMA journal_size_limit = 1048576;")
-		instance.Exec("PRAGMA cache_size = -65536;")
+		instance.Exec(fmt.Sprintf("PRAGMA cache_size = -%d;", mainDatabaseCacheSizeKB()))
 		instance.Exec("PRAGMA temp_store = MEMORY;")
 		instance.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
 	default:
@@ -493,6 +493,7 @@ func doInitialize() error {
 	err = instance.AutoMigrate(
 		&models.User{},
 		&models.Client{},
+		&models.ClientDeploymentProfile{},
 		&models.Log{},
 		&models.Clipboard{},
 		&models.LoadNotification{},

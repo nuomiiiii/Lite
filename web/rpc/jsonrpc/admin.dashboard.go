@@ -17,7 +17,10 @@ import (
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
 )
 
-const dashboardCacheTTL = 15 * time.Second
+const (
+	dashboardSummaryCacheTTL = 5 * time.Second
+	dashboardChartsCacheTTL  = 30 * time.Second
+)
 
 type dashboardOfflineNode struct {
 	UUID     string     `json:"uuid"`
@@ -53,6 +56,7 @@ type dashboardTrafficSummary struct {
 	Hourly        []dashboardTrafficHour `json:"hourly"`
 	Daily         []dashboardTrafficDay  `json:"daily"`
 	HistoryReady  bool                   `json:"history_ready"`
+	Error         string                 `json:"error,omitempty"`
 }
 
 type dashboardStorageSummary struct {
@@ -71,16 +75,29 @@ type dashboardReturnRouteSummary struct {
 
 type dashboardResponse struct {
 	Servers     dashboardServerSummary      `json:"servers"`
-	Traffic     dashboardTrafficSummary     `json:"traffic"`
 	Database    databaseStatusResponse      `json:"database"`
 	Storage     dashboardStorageSummary     `json:"storage"`
 	ReturnRoute dashboardReturnRouteSummary `json:"return_route"`
+	Alerts      dashboardAlertSummaries     `json:"alerts"`
 	GeneratedAt time.Time                   `json:"generated_at"`
+}
+
+type dashboardChartsResponse struct {
+	Traffic     dashboardTrafficSummary `json:"traffic"`
+	Latency     dashboardLatencySummary `json:"latency"`
+	GeneratedAt time.Time               `json:"generated_at"`
 }
 
 var dashboardCache struct {
 	sync.Mutex
 	value dashboardResponse
+	at    time.Time
+	valid bool
+}
+
+var dashboardChartsCache struct {
+	sync.Mutex
+	value dashboardChartsResponse
 	at    time.Time
 	valid bool
 }
@@ -91,13 +108,18 @@ func init() {
 		Summary: "Get the cached administration dashboard summary",
 		Returns: "DashboardSummary",
 	})
+	RegisterWithGroupAndMeta("getDashboardCharts", rpc.RoleAdmin, adminGetDashboardCharts, &rpc.MethodMeta{
+		Name:    "admin:getDashboardCharts",
+		Summary: "Get cached administration dashboard chart data",
+		Returns: "DashboardCharts",
+	})
 }
 
 func adminGetDashboard(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	now := time.Now().UTC()
 	dashboardCache.Lock()
 	defer dashboardCache.Unlock()
-	if dashboardCache.valid && now.Sub(dashboardCache.at) < dashboardCacheTTL {
+	if dashboardCache.valid && now.Sub(dashboardCache.at) < dashboardSummaryCacheTTL {
 		return dashboardCache.value, nil
 	}
 
@@ -111,16 +133,27 @@ func adminGetDashboard(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.Js
 	return value, nil
 }
 
+func adminGetDashboardCharts(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	now := time.Now().UTC()
+	dashboardChartsCache.Lock()
+	defer dashboardChartsCache.Unlock()
+	if dashboardChartsCache.valid && now.Sub(dashboardChartsCache.at) < dashboardChartsCacheTTL {
+		return dashboardChartsCache.value, nil
+	}
+
+	value := buildDashboardCharts(ctx, now)
+	dashboardChartsCache.value = value
+	dashboardChartsCache.at = now
+	dashboardChartsCache.valid = true
+	return value, nil
+}
+
 func buildDashboard(ctx context.Context, now time.Time) (dashboardResponse, error) {
 	clientList, err := clients.GetAllClientBasicInfo()
 	if err != nil {
 		return dashboardResponse{}, fmt.Errorf("list dashboard clients: %w", err)
 	}
 
-	traffic, err := loadDashboardTraffic(ctx, clientList, now)
-	if err != nil {
-		return dashboardResponse{}, err
-	}
 	main := mainDatabaseStatus()
 	monitoring := monitoringDatabaseStatus(ctx)
 	legacySize := int64(0)
@@ -130,7 +163,6 @@ func buildDashboard(ctx context.Context, now time.Time) (dashboardResponse, erro
 
 	return dashboardResponse{
 		Servers: buildDashboardServers(clientList),
-		Traffic: traffic,
 		Database: databaseStatusResponse{
 			Type:       main.Driver,
 			Size:       legacySize,
@@ -140,8 +172,27 @@ func buildDashboard(ctx context.Context, now time.Time) (dashboardResponse, erro
 		},
 		Storage:     buildDashboardStorage(ctx, main, monitoring),
 		ReturnRoute: buildDashboardReturnRoute(),
+		Alerts:      buildDashboardAlerts(clientList, now),
 		GeneratedAt: now,
 	}, nil
+}
+
+func buildDashboardCharts(ctx context.Context, now time.Time) dashboardChartsResponse {
+	result := dashboardChartsResponse{GeneratedAt: now}
+	clientList, err := clients.GetAllClientBasicInfo()
+	if err != nil {
+		message := fmt.Sprintf("list dashboard clients: %v", err)
+		result.Traffic.Error = message
+		result.Latency.Error = message
+		return result
+	}
+	if result.Traffic, err = loadDashboardTraffic(ctx, clientList, now); err != nil {
+		result.Traffic = dashboardTrafficSummary{Error: err.Error()}
+	}
+	if result.Latency, err = loadDashboardLatency(ctx, clientList, now); err != nil {
+		result.Latency.Error = err.Error()
+	}
+	return result
 }
 
 func buildDashboardReturnRoute() dashboardReturnRouteSummary {

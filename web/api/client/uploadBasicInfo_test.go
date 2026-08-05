@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/komari-monitor/komari/cmd/flags"
+	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/pkg/config"
@@ -93,7 +94,51 @@ func TestV2BasicInfoFillsRegionFromGeoIP(t *testing.T) {
 	if err := bindV2Params(resp.Result, &result); err != nil {
 		t.Fatalf("bind response config: %v", err)
 	}
-	if result.Config == nil || result.Config.MonthRotate != 26 {
+	if result.Config == nil || result.Config.MonthRotate == nil || *result.Config.MonthRotate != 26 {
 		t.Fatalf("expected response reset day 26, got %+v", result.Config)
+	}
+}
+
+func TestV2BasicInfoSynchronizesCurrentAgentRuntimeConfig(t *testing.T) {
+	flags.DatabaseType = "sqlite"
+	flags.DatabaseFile = "file:v2_basic_info_runtime_config?mode=memory&cache=shared"
+	db := dbcore.GetDBInstance()
+
+	clientUUID := "client-v2-runtime-config"
+	if err := db.Create(&models.Client{UUID: clientUUID, Token: "token-v2-runtime-config"}).Error; err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	day, interval := 14, 9.0
+	include, exclude, mounts := "eth0", "lo", "/;/srv"
+	memoryCache, gpu := true, false
+	resp := handleV2RPC(clientUUID, v2.Request{
+		JSONRPC: v2.Version,
+		Method:  v2.MethodAgentBasicInfo,
+		Params: v2.BasicInfoParams{
+			Info:     map[string]interface{}{"version": "2.2.0.0"},
+			Platform: "linux",
+			ConfigState: &v2.ConfigParams{
+				MonthRotate:        &day,
+				Interval:           &interval,
+				IncludeNics:        &include,
+				ExcludeNics:        &exclude,
+				IncludeMountpoints: &mounts,
+				MemoryIncludeCache: &memoryCache,
+				EnableGPU:          &gpu,
+			},
+		},
+		ID: "basic-info-runtime-config",
+	}, false)
+	if resp.Error != nil {
+		t.Fatalf("v2 basic info failed: %+v", resp.Error)
+	}
+	profile, saved, err := clients.GetDeploymentProfile(clientUUID)
+	if err != nil {
+		t.Fatalf("load synchronized profile: %v", err)
+	}
+	if !saved || profile.MonthRotate != day || profile.Interval != interval ||
+		profile.IncludeNics != include || profile.ExcludeNics != exclude ||
+		profile.IncludeMountpoints != mounts || !profile.MemoryIncludeCache || profile.EnableGPU {
+		t.Fatalf("unexpected synchronized profile: %+v", profile)
 	}
 }
