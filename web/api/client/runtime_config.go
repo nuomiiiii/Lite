@@ -10,8 +10,17 @@ func getClientRuntimeConfig(uuid string) (*v2.ConfigParams, error) {
 	if err != nil {
 		return nil, err
 	}
+	profile, saved, err := clients.GetDeploymentProfile(uuid)
+	if err != nil {
+		return nil, err
+	}
+	if saved {
+		config := profile.RuntimeConfig()
+		return &config, nil
+	}
 	if clientInfo.TrafficResetDay == nil {
 		return nil, nil
 	}
-	return &v2.ConfigParams{MonthRotate: *clientInfo.TrafficResetDay}, nil
+	monthRotate := *clientInfo.TrafficResetDay
+	return &v2.ConfigParams{MonthRotate: &monthRotate}, nil
 }

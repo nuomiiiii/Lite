@@ -82,6 +82,7 @@ func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
 			"traffic calibration adjustments": &models.TrafficCalibrationAdjustment{},
 			"ping loss notifications":         &models.PingLossNotification{},
 			"task results":                    &models.TaskResult{},
+			"deployment profile":              &models.ClientDeploymentProfile{},
 		} {
 			if !tx.Migrator().HasTable(model) {
 				continue

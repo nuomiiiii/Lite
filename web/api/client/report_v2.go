@@ -67,6 +67,11 @@ func handleV2RPC(uuid string, req v2.Request, allowWait bool) v2.Response {
 		if err := ingestBasicInfo(uuid, params.Info, ""); err != nil {
 			return v2.Error(req.ID, -32000, "failed to save basic info", err.Error())
 		}
+		if params.ConfigState != nil {
+			if _, err := clients.AdoptDeploymentRuntimeConfig(uuid, params.Platform, *params.ConfigState); err != nil {
+				return v2.Error(req.ID, -32000, "failed to synchronize agent config", err.Error())
+			}
+		}
 		result := gin.H{"status": "success"}
 		runtimeConfig, err := getClientRuntimeConfig(uuid)
 		if err != nil {

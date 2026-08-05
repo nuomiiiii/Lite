@@ -53,6 +53,15 @@ type Client struct {
 	UpdatedAt              time.Time  `json:"updated_at"`
 }
 
+// ClientDeploymentProfile stores private per-node installation preferences.
+// Config is only exposed through the dedicated administrator API.
+type ClientDeploymentProfile struct {
+	Client    string    `json:"-" gorm:"type:varchar(36);primaryKey"`
+	Config    string    `json:"-" gorm:"type:text;not null"`
+	CreatedAt time.Time `json:"-"`
+	UpdatedAt time.Time `json:"-"`
+}
+
 // User represents an authenticated user
 type User struct {
 	UUID      string    `json:"uuid,omitempty" gorm:"type:varchar(36);primaryKey"`

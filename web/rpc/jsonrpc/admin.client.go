@@ -130,8 +130,9 @@ func adminEditClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.Js
 	}
 	if _, changed := update["traffic_reset_day"]; changed {
 		if clientInfo, err := clients.GetClientByUUID(uuid); err == nil && clientInfo.TrafficResetDay != nil {
+			monthRotate := *clientInfo.TrafficResetDay
 			agent_runtime.DispatchV2Event(uuid, v2.MethodAgentConfig, v2.ConfigParams{
-				MonthRotate: *clientInfo.TrafficResetDay,
+				MonthRotate: &monthRotate,
 			})
 		}
 	}
