@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,22 @@ import (
 )
 
 const constantSalt = "06Wm4Jv1Hkxx"
+
+var allowedPreferenceLanguages = map[string]struct{}{
+	"en-US": {},
+	"zh-CN": {},
+	"zh-TW": {},
+	"ja-JP": {},
+	"id-ID": {},
+}
+
+var allowedPreferenceColors = map[string]struct{}{
+	"gray": {}, "gold": {}, "bronze": {}, "brown": {}, "yellow": {}, "amber": {},
+	"orange": {}, "tomato": {}, "red": {}, "ruby": {}, "crimson": {}, "pink": {},
+	"plum": {}, "purple": {}, "violet": {}, "iris": {}, "indigo": {}, "blue": {},
+	"cyan": {}, "teal": {}, "jade": {}, "green": {}, "grass": {}, "lime": {},
+	"mint": {}, "sky": {},
+}
 
 // CheckPassword 检查密码是否正确
 //
@@ -149,6 +166,47 @@ func UpdateUser(uuid string, name, password, sso_type *string) error {
 	}
 	if password != nil {
 		DeleteAllSessions()
+	}
+	return nil
+}
+
+// UpdateUserPreferences updates only the UI preferences owned by one account.
+func UpdateUserPreferences(uuid string, language, color *string) error {
+	return UpdateUserPreferencesWithDB(dbcore.GetDBInstance(), uuid, language, color)
+}
+
+func UpdateUserPreferencesWithDB(db *gorm.DB, uuid string, language, color *string) error {
+	uuid = strings.TrimSpace(uuid)
+	if uuid == "" {
+		return fmt.Errorf("user UUID is required")
+	}
+
+	updates := make(map[string]interface{}, 3)
+	if language != nil {
+		normalized := strings.TrimSpace(*language)
+		if _, ok := allowedPreferenceLanguages[normalized]; !ok {
+			return fmt.Errorf("unsupported language preference")
+		}
+		updates["language"] = normalized
+	}
+	if color != nil {
+		normalized := strings.TrimSpace(*color)
+		if _, ok := allowedPreferenceColors[normalized]; !ok {
+			return fmt.Errorf("unsupported color preference")
+		}
+		updates["color"] = normalized
+	}
+	if len(updates) == 0 {
+		return fmt.Errorf("at least one preference is required")
+	}
+	updates["updated_at"] = time.Now().UTC()
+
+	result := db.Model(&models.User{}).Where("uuid = ?", uuid).Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("user not found: %s", uuid)
 	}
 	return nil
 }

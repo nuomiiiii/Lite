@@ -120,7 +120,7 @@ func TestDeploymentProfileAndBillingEditorShareTrafficResetDay(t *testing.T) {
 	}
 }
 
-func TestAdoptDeploymentRuntimeConfigOnlyInitializesUnmanagedNode(t *testing.T) {
+func TestAdoptDeploymentRuntimeConfigInitializesAndReconcilesDelivery(t *testing.T) {
 	db, err := gorm.Open(
 		sqlite.Open("file:deployment-profile-agent-state?mode=memory&cache=shared"),
 		&gorm.Config{Logger: logger.Default.LogMode(logger.Silent)},
@@ -180,6 +180,54 @@ func TestAdoptDeploymentRuntimeConfigOnlyInitializesUnmanagedNode(t *testing.T) 
 	}
 	if profile.Platform != "linux" || profile.Interval != interval {
 		t.Fatalf("managed profile changed after stale report: %+v", profile)
+	}
+
+	if err := db.Create(&models.Client{UUID: "node-legacy-match", Token: "token-legacy-match"}).Error; err != nil {
+		t.Fatalf("create matching legacy client: %v", err)
+	}
+	legacyMatch := DeploymentProfile{Platform: "linux", EnableInterval: true, Interval: 10}
+	encodedMatch, err := json.Marshal(legacyMatch)
+	if err != nil {
+		t.Fatalf("encode matching legacy profile: %v", err)
+	}
+	if err := db.Create(&models.ClientDeploymentProfile{Client: "node-legacy-match", Config: string(encodedMatch)}).Error; err != nil {
+		t.Fatalf("create matching legacy profile: %v", err)
+	}
+	matchingInterval := 10.0
+	adopted, err = adoptDeploymentRuntimeConfig(db, "node-legacy-match", "linux", v2.ConfigParams{Interval: &matchingInterval})
+	if err != nil || adopted {
+		t.Fatalf("reconcile matching legacy profile = %v, %v", adopted, err)
+	}
+	var matchingState models.ClientDeploymentProfile
+	if err := db.First(&matchingState, "client = ?", "node-legacy-match").Error; err != nil {
+		t.Fatalf("load matching legacy state: %v", err)
+	}
+	if matchingState.Revision != 1 || matchingState.DeliveryStatus != DeploymentDeliveryApplied || matchingState.FinishedAt == nil {
+		t.Fatalf("matching legacy delivery state = %+v", matchingState)
+	}
+
+	if err := db.Create(&models.Client{UUID: "node-legacy-mismatch", Token: "token-legacy-mismatch"}).Error; err != nil {
+		t.Fatalf("create mismatching legacy client: %v", err)
+	}
+	legacyMismatch := DeploymentProfile{Platform: "linux", EnableInterval: true, Interval: 15}
+	encodedMismatch, err := json.Marshal(legacyMismatch)
+	if err != nil {
+		t.Fatalf("encode mismatching legacy profile: %v", err)
+	}
+	if err := db.Create(&models.ClientDeploymentProfile{Client: "node-legacy-mismatch", Config: string(encodedMismatch)}).Error; err != nil {
+		t.Fatalf("create mismatching legacy profile: %v", err)
+	}
+	reportedInterval := 20.0
+	adopted, err = adoptDeploymentRuntimeConfig(db, "node-legacy-mismatch", "linux", v2.ConfigParams{Interval: &reportedInterval})
+	if err != nil || adopted {
+		t.Fatalf("reconcile mismatching legacy profile = %v, %v", adopted, err)
+	}
+	var mismatchingState models.ClientDeploymentProfile
+	if err := db.First(&mismatchingState, "client = ?", "node-legacy-mismatch").Error; err != nil {
+		t.Fatalf("load mismatching legacy state: %v", err)
+	}
+	if mismatchingState.Revision != 1 || mismatchingState.DeliveryStatus != DeploymentDeliverySaved || mismatchingState.FinishedAt != nil {
+		t.Fatalf("mismatching legacy delivery state = %+v", mismatchingState)
 	}
 }
 

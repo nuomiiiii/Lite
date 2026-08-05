@@ -478,9 +478,8 @@ func deploymentPlatformFromAgent(platform string) string {
 }
 
 // AdoptDeploymentRuntimeConfig initializes an unmanaged node from the
-// effective settings reported by Agent. Once a profile exists, Komari remains
-// authoritative and a stale Agent report cannot overwrite an administrator's
-// saved configuration.
+// effective settings reported by Agent. Managed profiles remain authoritative,
+// but a matching Agent report also closes the delivery state after reinstall.
 func AdoptDeploymentRuntimeConfig(clientUUID, platform string, config v2.ConfigParams) (bool, error) {
 	return adoptDeploymentRuntimeConfig(dbcore.GetDBInstance(), clientUUID, platform, config)
 }
@@ -519,7 +518,58 @@ func adoptDeploymentRuntimeConfig(db *gorm.DB, clientUUID, platform string, conf
 			return result.Error
 		}
 		if result.RowsAffected == 0 {
-			return nil
+			var existing models.ClientDeploymentProfile
+			if err := tx.First(&existing, "client = ?", clientUUID).Error; err != nil {
+				return err
+			}
+			var managed DeploymentProfile
+			if err := json.Unmarshal([]byte(existing.Config), &managed); err != nil {
+				return fmt.Errorf("decode managed deployment profile: %w", err)
+			}
+			if client.TrafficResetDay != nil {
+				managed.EnableMonthRotate = *client.TrafficResetDay > 0
+				managed.MonthRotate = *client.TrafficResetDay
+			}
+			if err := normalizeDeploymentProfile(&managed); err != nil {
+				return fmt.Errorf("validate managed deployment profile: %w", err)
+			}
+
+			updates := map[string]any{}
+			if reflect.DeepEqual(managed.RuntimeConfig(), reported.RuntimeConfig()) {
+				revision := existing.Revision
+				if revision == 0 {
+					revision = 1
+				}
+				if existing.Revision != revision || existing.DeliveryStatus != DeploymentDeliveryApplied || existing.DeliveryError != "" {
+					updates["revision"] = revision
+					updates["delivery_status"] = DeploymentDeliveryApplied
+					updates["delivery_error"] = ""
+					updates["delivery_updated_at"] = now
+					updates["finished_at"] = now
+				}
+			} else if existing.Revision == 0 {
+				// Profiles saved before delivery tracking have no revision. Promote
+				// them once so the response sent below is acknowledged by Agent.
+				updates["revision"] = uint64(1)
+				updates["delivery_status"] = DeploymentDeliverySaved
+				updates["delivery_error"] = ""
+				updates["delivery_updated_at"] = now
+				updates["sent_at"] = nil
+				updates["finished_at"] = nil
+			}
+			if len(updates) == 0 {
+				return nil
+			}
+			if existing.SavedAt == nil {
+				savedAt := existing.UpdatedAt
+				if savedAt.IsZero() {
+					savedAt = now
+				}
+				updates["saved_at"] = savedAt
+			}
+			return tx.Model(&models.ClientDeploymentProfile{}).
+				Where("client = ? AND revision = ? AND config = ?", clientUUID, existing.Revision, existing.Config).
+				Updates(updates).Error
 		}
 		adopted = true
 		if client.TrafficResetDay == nil {
