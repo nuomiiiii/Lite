@@ -83,8 +83,8 @@ func registerAgentRoutes(r *gin.Engine) {
 // registerAdminRoutes 管理员路由。除二进制/流类外全部经 Bind 绑定到 admin: 命名空间方法。
 func registerAdminRoutes(r *gin.Engine) {
 	g := r.Group("/api/admin", api.RequireRole(api.RoleAdmin))
-	g.GET("/dashboard", jsonRpc.Bind("admin:getDashboard", jsonRpc.WithRaw()))
-	g.GET("/dashboard/charts", jsonRpc.Bind("admin:getDashboardCharts", jsonRpc.WithRaw()))
+	g.GET("/dashboard", jsonRpc.Bind("admin:getDashboard", jsonRpc.WithQuery("sections", "limit"), jsonRpc.WithRaw()))
+	g.GET("/dashboard/charts", jsonRpc.Bind("admin:getDashboardCharts", jsonRpc.WithQuery("sections", "limit"), jsonRpc.WithRaw()))
 
 	// --- 二进制/流/重定向类，保留 REST handler ---
 	g.GET("/download/backup", admin.DownloadBackup)
@@ -152,6 +152,8 @@ func registerAdminRoutes(r *gin.Engine) {
 		settings.POST("/", jsonRpc.Bind("admin:editSettings"))
 		settings.GET("/xtermjs", jsonRpc.Bind("admin:getXtermjsSettings"))
 		settings.POST("/xtermjs", jsonRpc.Bind("admin:setXtermjsSettings", jsonRpc.WithMessage("settings saved")))
+		settings.GET("/dashboard", jsonRpc.Bind("admin:getDashboardSettings"))
+		settings.POST("/dashboard", jsonRpc.Bind("admin:setDashboardSettings", jsonRpc.WithMessage("settings saved")))
 		settings.POST("/oidc", jsonRpc.Bind("admin:setOidcProvider"))
 		settings.GET("/oidc", jsonRpc.Bind("admin:getOidcProvider", jsonRpc.WithQuery("provider")))
 		settings.POST("/message-sender", jsonRpc.Bind("admin:setMessageSenderProvider"))

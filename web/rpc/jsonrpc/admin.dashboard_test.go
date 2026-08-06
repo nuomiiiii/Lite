@@ -7,7 +7,9 @@ import (
 
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/trafficledger"
+	"github.com/komari-monitor/komari/pkg/metric"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildDashboardStorageUsesNewestCompactionTime(t *testing.T) {
@@ -34,6 +36,31 @@ func TestBuildDashboardStorageUsesNewestCompactionTime(t *testing.T) {
 	}
 }
 
+func TestDashboardLatencyMinuteAveragesAndJitterRanking(t *testing.T) {
+	current := time.Date(2026, 8, 6, 4, 30, 0, 0, time.UTC)
+	previous := current.Add(-time.Minute)
+	previousAverage, currentAverage, ok := dashboardLatencyMinuteAverages([]metric.AggregatePoint{
+		{Bucket: previous, Value: 10, Count: 2},
+		{Bucket: previous, Value: 20, Count: 1},
+		{Bucket: current, Value: 30, Count: 2},
+		{Bucket: current, Value: -1, Count: 5},
+	}, previous, current)
+	require.True(t, ok)
+	assert.InDelta(t, 40.0/3.0, previousAverage, 0.001)
+	assert.InDelta(t, 30, currentAverage, 0.001)
+
+	ranking := []dashboardLatencyJitterRankItem{}
+	for _, item := range []dashboardLatencyJitterRankItem{
+		{Name: "stable", Delta: 0},
+		{Name: "improved", Delta: -5},
+		{Name: "spike", Delta: 20},
+	} {
+		ranking = dashboardTopLatencyJitter(ranking, item, 5)
+	}
+	require.Len(t, ranking, 3)
+	assert.Equal(t, []string{"spike", "stable", "improved"}, []string{ranking[0].Name, ranking[1].Name, ranking[2].Name})
+}
+
 func TestSummarizeDashboardTrafficExcludesFreeClientsFromBilling(t *testing.T) {
 	now := time.Date(2026, 7, 31, 8, 0, 0, 0, time.UTC)
 	clients := []models.Client{
@@ -56,7 +83,7 @@ func TestSummarizeDashboardTrafficExcludesFreeClientsFromBilling(t *testing.T) {
 	}, map[string][]trafficledger.HourlyUsage{
 		"a": {{Hour: trafficledger.BeijingDay(now).Add(2 * time.Hour), Usage: trafficledger.Usage{Up: 100, Down: 40}}},
 		"b": {{Hour: trafficledger.BeijingDay(now).Add(3 * time.Hour), Usage: trafficledger.Usage{Up: 20, Down: 80}}},
-	}, nil, now)
+	}, nil, now, 5)
 
 	if !summary.HistoryReady {
 		t.Fatal("complete dashboard history reported as incomplete")
@@ -64,6 +91,9 @@ func TestSummarizeDashboardTrafficExcludesFreeClientsFromBilling(t *testing.T) {
 	if summary.TodayUp != 120 || summary.TodayDown != 120 || summary.TodayBillable != 140 {
 		t.Fatalf("unexpected today totals: %#v", summary)
 	}
+	assert.Equal(t, []string{"a", "b"}, []string{summary.Ranking[0].UUID, summary.Ranking[1].UUID})
+	assert.Equal(t, int64(140), summary.Ranking[0].Billable)
+	assert.Equal(t, int64(80), summary.Ranking[1].Billable)
 	if got := summary.Daily[0].Billable; got != 30 {
 		t.Fatalf("historical billable = %d, want 30", got)
 	}
@@ -86,6 +116,7 @@ func TestSummarizeDashboardTrafficMarksMissingHistory(t *testing.T) {
 		nil,
 		nil,
 		time.Date(2026, 7, 31, 8, 0, 0, 0, time.UTC),
+		5,
 	)
 	if summary.HistoryReady {
 		t.Fatal("missing ledger rows reported as ready")
@@ -109,6 +140,7 @@ func TestSummarizeDashboardTrafficUsesCalibratedDailyAndHourlyValues(t *testing.
 			"a\x00" + todayKey:  {Up: 5, Down: -10},
 		},
 		now,
+		5,
 	)
 
 	assert.Equal(t, int64(150), summary.Daily[len(summary.Daily)-2].Up)
