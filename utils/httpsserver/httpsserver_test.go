@@ -294,6 +294,9 @@ func TestHTTPSSecurityHeadersFollowStrictMode(t *testing.T) {
 	if value := response.Header().Get("X-Content-Type-Options"); value != "nosniff" {
 		t.Fatalf("X-Content-Type-Options = %q", value)
 	}
+	if value := response.Header().Get("Referrer-Policy"); value != "strict-origin-when-cross-origin" {
+		t.Fatalf("Referrer-Policy = %q", value)
+	}
 
 	manager.settings.RedirectHTTP = false
 	response = httptest.NewRecorder()
