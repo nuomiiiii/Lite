@@ -22,19 +22,20 @@ const (
 )
 
 const (
-	dashboardModuleServerStatus    = "server_status"
-	dashboardModuleTrafficSummary  = "traffic_summary"
-	dashboardModuleStorageSummary  = "storage_summary"
-	dashboardModuleResourceRanking = "resource_ranking"
-	dashboardModuleTrafficRanking  = "daily_traffic_ranking"
-	dashboardModuleLatencyRanking  = "latency_ranking"
-	dashboardModuleJitterRanking   = "latency_jitter_ranking"
-	dashboardModuleLatencyTrend    = "latency_trend"
-	dashboardModuleTrafficTrend    = "traffic_trend"
-	dashboardModuleBillingTrend    = "billing_trend"
-	dashboardModuleReturnRoute     = "return_route"
-	dashboardModuleAlerts          = "alerts"
-	dashboardModuleStorageDetail   = "storage_detail"
+	dashboardModuleServerStatus      = "server_status"
+	dashboardModuleTrafficSummary    = "traffic_summary"
+	dashboardModuleStorageSummary    = "storage_summary"
+	dashboardModuleResourceRanking   = "resource_ranking"
+	dashboardModuleTrafficRanking    = "daily_traffic_ranking"
+	dashboardModuleLatencyRanking    = "latency_ranking"
+	dashboardModuleJitterRanking     = "latency_jitter_ranking"
+	dashboardModulePacketLossRanking = "packet_loss_ranking"
+	dashboardModuleLatencyTrend      = "latency_trend"
+	dashboardModuleTrafficTrend      = "traffic_trend"
+	dashboardModuleBillingTrend      = "billing_trend"
+	dashboardModuleReturnRoute       = "return_route"
+	dashboardModuleAlerts            = "alerts"
+	dashboardModuleStorageDetail     = "storage_detail"
 )
 
 var dashboardModuleOrder = []string{
@@ -45,6 +46,7 @@ var dashboardModuleOrder = []string{
 	dashboardModuleTrafficRanking,
 	dashboardModuleLatencyRanking,
 	dashboardModuleJitterRanking,
+	dashboardModulePacketLossRanking,
 	dashboardModuleLatencyTrend,
 	dashboardModuleTrafficTrend,
 	dashboardModuleBillingTrend,
@@ -84,6 +86,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 			dashboardModuleTrafficRanking,
 			dashboardModuleLatencyRanking,
 			dashboardModuleJitterRanking,
+			dashboardModulePacketLossRanking,
 			dashboardModuleTrafficTrend,
 			dashboardModuleBillingTrend,
 			dashboardModuleReturnRoute,
@@ -124,6 +127,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 			dashboardModuleStorageDetail,
 			dashboardModuleLatencyRanking,
 			dashboardModuleJitterRanking,
+			dashboardModulePacketLossRanking,
 		},
 		RefreshSeconds: 30, ChartRefreshSeconds: 300, RankingLimit: 5,
 	},

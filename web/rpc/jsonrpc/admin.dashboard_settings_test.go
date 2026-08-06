@@ -133,4 +133,9 @@ func TestParseDashboardSectionsDefaultsAndFilters(t *testing.T) {
 		"sections": "latency_jitter",
 	}})
 	assert.Equal(t, dashboardChartLatencyJitter, jitterSections)
+
+	packetLossSections, _ := parseDashboardChartRequest(&rpc.JsonRpcRequest{Params: map[string]any{
+		"sections": "packet_loss",
+	}})
+	assert.Equal(t, dashboardChartPacketLoss, packetLossSections)
 }

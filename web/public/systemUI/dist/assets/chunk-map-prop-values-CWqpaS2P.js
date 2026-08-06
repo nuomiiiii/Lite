@@ -1,0 +1,1 @@
+function c(r,t){if(r!==void 0)return typeof r=="string"?t(r):Object.fromEntries(Object.entries(r).map(([n,e])=>[n,t(e)]))}function i(r){return r==="3"?"3":"2"}function s(r){switch(r){case"1":return"1";case"2":case"3":return"2";case"4":return"3"}}export{i as p,s as r,c as s};

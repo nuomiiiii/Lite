@@ -1,0 +1,129 @@
+<!doctype html>
+<html>
+  <head>
+    <script>
+      // 在页面渲染前就执行主题初始化
+      try {
+        const storageKey = "vite-ui-theme"
+        let theme = localStorage.getItem(storageKey)
+        if (theme === "system" || !theme) {
+          theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+        }
+        document.documentElement.classList.add(theme)
+      } catch (e) {
+        document.documentElement.classList.add("light")
+      }
+    </script>
+    <style>
+      /* Prevent FOUC in Safari */
+      html:not(.dark):not(.light) * {
+        visibility: hidden;
+      }
+
+      :root {
+        color-scheme: light;
+        --bg: #ffffff;
+      }
+
+      html.dark {
+        color-scheme: dark;
+        --bg: #242424;
+      }
+
+      html.light {
+        color-scheme: light;
+        --bg: #ffffff;
+      }
+
+      html {
+        background-color: var(--bg) !important;
+      }
+
+      body {
+        background-color: var(--bg) !important;
+      }
+
+      #root {
+        background-color: var(--bg) !important;
+        visibility: hidden;
+      }
+
+      #root.loaded {
+        visibility: visible;
+        animation: fadein 0.2s;
+      }
+
+      @keyframes fadein {
+        from {
+          opacity: 0;
+        }
+        to {
+          opacity: 1;
+        }
+      }
+    </style>
+    <script>
+      ;(function () {
+        const storageKey = "vite-ui-theme"
+        const theme = localStorage.getItem(storageKey) || "system"
+        const root = document.documentElement
+
+        function updateThemeColor(isDark) {
+          const themeColor = isDark ? "#242424" : "#fafafa"
+          document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeColor)
+        }
+
+        function setTheme(newTheme) {
+          root.classList.remove("light", "dark")
+          root.classList.add(newTheme)
+          updateThemeColor(newTheme === "dark")
+        }
+
+        if (theme === "system") {
+          const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+          setTheme(systemTheme)
+
+          window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", (e) => {
+            setTheme(e.matches ? "dark" : "light")
+          })
+        } else {
+          setTheme(theme)
+        }
+
+        // Add loaded class after React has mounted
+        window.addEventListener("load", () => {
+          const root = document.getElementById("root")
+          if (root) {
+            // 使用 RAF 确保在下一帧渲染
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                root.classList.add("loaded")
+              })
+            })
+          }
+        })
+      })()
+    </script>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Komari Monitor</title>
+    <meta name="description" content="A simple server monitor tool." />
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="hsl(0 0% 98%)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Nezha Monitoring" />
+    <link rel="apple-touch-icon" href="/android-chrome-192x192.png" />
+
+    <link rel="stylesheet" href="https://fastly.jsdelivr.net/gh/lipis/flag-icons@7.0.0/css/flag-icons.min.css" />
+    <link rel="stylesheet" href="https://fastly.jsdelivr.net/npm/font-logos@1/assets/font-logos.css" />
+    <script type="module" crossorigin src="/assets/index.DxjjyYQi.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index.DHN9ufoc.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

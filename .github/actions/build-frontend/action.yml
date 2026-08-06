@@ -1,5 +1,5 @@
-name: Build frontend theme
-description: Clone komari-web, build the default theme, and optionally upload it as an artifact.
+name: Build system UI
+description: Clone komari-web, build the theme-independent system UI, and optionally upload it as an artifact.
 
 inputs:
   node-version:
@@ -12,7 +12,7 @@ inputs:
     description: Optional komari-web ref to build. Uses the repository default branch when empty.
     default: main
   artifact-name:
-    description: Optional artifact name for the packed frontend theme.
+    description: Optional artifact name for the packed system UI.
     default: ""
 
 runs:
@@ -23,7 +23,7 @@ runs:
       with:
         node-version: ${{ inputs.node-version }}
 
-    - name: Clone and build frontend
+    - name: Clone and build system UI
       shell: bash
       run: |
         set -euxo pipefail
@@ -35,24 +35,24 @@ runs:
         fi
         cd komari-web
         npm ci
-        npm run build
+        VITE_SYSTEM_UI_BUILD=1 VITE_BASE_URL=/system-assets/ npm run build
         cd ..
 
-        mkdir -p web/public/defaultTheme/dist
-        rm -rf web/public/defaultTheme/dist/*
-        cp -r komari-web/dist/* web/public/defaultTheme/dist/
-        cp -f komari-web/komari-theme.json web/public/defaultTheme/
-        if [ -f komari-web/preview.png ]; then cp -f komari-web/preview.png web/public/defaultTheme/; fi
-        if [ -f komari-web/perview.png ]; then cp -f komari-web/perview.png web/public/defaultTheme/; fi
-        if [ -f web/public/defaultTheme/preview.png ] && [ ! -f web/public/defaultTheme/perview.png ]; then cp -f web/public/defaultTheme/preview.png web/public/defaultTheme/perview.png; fi
-        if [ -f web/public/defaultTheme/perview.png ] && [ ! -f web/public/defaultTheme/preview.png ]; then cp -f web/public/defaultTheme/perview.png web/public/defaultTheme/preview.png; fi
+        rm -rf web/public/systemUI
+        mkdir -p web/public/systemUI
+        cp -r komari-web/dist web/public/systemUI/
+
+        grep -F '/system-assets/' web/public/systemUI/dist/index.html
+        test -f web/public/bundledThemes/nezha/komari-theme.json
+        test -f web/public/bundledThemes/nezha/dist/index.html
+        test -f web/public/rescueTheme/dist/index.html
 
     - name: Pack frontend artifact
       if: ${{ inputs.artifact-name != '' }}
       shell: bash
       run: |
         set -euxo pipefail
-        tar -czf "$RUNNER_TEMP/${{ inputs.artifact-name }}.tar.gz" -C web/public/defaultTheme .
+        tar -czf "$RUNNER_TEMP/${{ inputs.artifact-name }}.tar.gz" -C web/public/systemUI .
 
     - name: Upload frontend artifact
       if: ${{ inputs.artifact-name != '' }}

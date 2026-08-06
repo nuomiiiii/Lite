@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html"
 	"io/fs"
 	"log"
@@ -27,7 +28,7 @@ var legacyDefaultFaviconSHA256 = [32]byte{
 	0x29, 0x4b, 0xf3, 0x38, 0x85, 0xc7, 0x1a, 0x69,
 }
 
-//go:embed defaultTheme
+//go:embed systemUI rescueTheme bundledThemes
 var PublicFS embed.FS
 
 // 常量定义
@@ -35,13 +36,17 @@ const (
 	DataDir            = "./data"
 	ThemesDir          = "theme"
 	FaviconFile        = "favicon.ico"
-	DefaultTheme       = "default"
+	DefaultTheme       = "nezha"
+	LegacyDefaultTheme = "default"
+	ClassicTheme       = "komari-classic"
 	LanguageCookieName = "language"
 
 	// 主题内部结构定义
 	DistDir   = "dist"       // 静态资源存放目录
 	IndexFile = "index.html" // 相对于 DistDir
 )
+
+const themeBundleMigrationKey = "theme_bundle_migration_v1"
 
 const themeChangeReloadScript = `<script>(()=>{window.addEventListener("storage",(event)=>{if(event.key==="komari-active-theme-changed"){window.location.reload();}});})();</script>`
 
@@ -201,15 +206,166 @@ func isSafePath(basePath, targetPath string) bool {
 	return !strings.HasPrefix(rel, "..") && rel != ".."
 }
 
-// Static 注册静态资源和 SPA 路由处理
-func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
-	// 初始化嵌入式文件系统，指向 defaultTheme 根目录
-	// 假设 defaultTheme 内部结构也是: dist/, theme.json 等
-	defaultThemeFS, err := fs.Sub(PublicFS, "defaultTheme")
+func embeddedFileContent(root, relativePath string) ([]byte, string, bool) {
+	cleanPath := path.Clean(strings.TrimPrefix(filepath.ToSlash(relativePath), "/"))
+	if cleanPath == "." || cleanPath == ".." || strings.HasPrefix(cleanPath, "../") {
+		return nil, "", false
+	}
+	content, err := fs.ReadFile(PublicFS, path.Join(root, cleanPath))
 	if err != nil {
-		panic("you may forget to put dist of frontend to web/public/defaultTheme/dist")
+		return nil, "", false
+	}
+	return content, mime.TypeByExtension(filepath.Ext(cleanPath)), true
+}
+
+func validThemeID(themeID string) bool {
+	return themeID != "" && !strings.Contains(themeID, "..") &&
+		!strings.ContainsAny(themeID, `/\\`)
+}
+
+func localThemeFileContent(themeID, relativePath string) ([]byte, string, bool) {
+	if !validThemeID(themeID) {
+		return nil, "", false
+	}
+	cleanPath := filepath.Clean(strings.TrimPrefix(relativePath, "/"))
+	themeBasePath := filepath.Join(DataDir, ThemesDir, themeID)
+	if !isSafePath(themeBasePath, cleanPath) {
+		return nil, "", false
+	}
+	localPath := filepath.Join(themeBasePath, cleanPath)
+	if info, err := os.Stat(localPath); err == nil && !info.IsDir() {
+		content, err := os.ReadFile(localPath)
+		if err == nil {
+			return content, mime.TypeByExtension(filepath.Ext(localPath)), true
+		}
+	}
+	return nil, "", false
+}
+
+func IsLocalThemeUsable(themeID string) bool {
+	if !validThemeID(themeID) {
+		return false
+	}
+	base := filepath.Join(DataDir, ThemesDir, themeID)
+	for _, relativePath := range []string{"komari-theme.json", filepath.Join(DistDir, IndexFile)} {
+		info, err := os.Stat(filepath.Join(base, relativePath))
+		if err != nil || info.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+func installEmbeddedTheme(root, themeID string) error {
+	if IsLocalThemeUsable(themeID) {
+		return nil
+	}
+	themesDir := filepath.Join(DataDir, ThemesDir)
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		return err
+	}
+	stageDir, err := os.MkdirTemp(themesDir, "."+themeID+"-stage-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(stageDir)
+	if err := fs.WalkDir(PublicFS, root, func(name string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative := strings.TrimPrefix(name, root+"/")
+		if relative == name || relative == "" {
+			return nil
+		}
+		target := filepath.Join(stageDir, filepath.FromSlash(relative))
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		content, err := fs.ReadFile(PublicFS, name)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, content, 0o644)
+	}); err != nil {
+		return err
 	}
 
+	finalDir := filepath.Join(themesDir, themeID)
+	backupDir := finalDir + ".previous"
+	_ = os.RemoveAll(backupDir)
+	if _, err := os.Stat(finalDir); err == nil {
+		if err := os.Rename(finalDir, backupDir); err != nil {
+			return err
+		}
+	}
+	if err := os.Rename(stageDir, finalDir); err != nil {
+		_ = os.Rename(backupDir, finalDir)
+		return err
+	}
+	_ = os.RemoveAll(backupDir)
+	return nil
+}
+
+func localThemeFallback() string {
+	for _, preferred := range []string{DefaultTheme, ClassicTheme} {
+		if IsLocalThemeUsable(preferred) {
+			return preferred
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(DataDir, ThemesDir))
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") && IsLocalThemeUsable(entry.Name()) {
+			return entry.Name()
+		}
+	}
+	return ""
+}
+
+// EnsureBundledThemes performs the one-time transition from the former
+// inseparable default frontend to managed public themes.
+func EnsureBundledThemes() error {
+	migrated, err := config.GetAs[int](themeBundleMigrationKey, 0)
+	if err != nil {
+		return err
+	}
+	currentTheme, err := config.GetAs[string](config.ThemeKey, DefaultTheme)
+	if err != nil {
+		return err
+	}
+	if currentTheme == "" {
+		currentTheme = DefaultTheme
+	}
+	if currentTheme == LegacyDefaultTheme {
+		currentTheme = DefaultTheme
+	}
+	if migrated < 1 {
+		if err := installEmbeddedTheme("bundledThemes/nezha", DefaultTheme); err != nil {
+			return fmt.Errorf("install bundled Nezha theme: %w", err)
+		}
+	}
+	if !IsLocalThemeUsable(currentTheme) {
+		currentTheme = localThemeFallback()
+		if currentTheme == "" {
+			if err := installEmbeddedTheme("bundledThemes/nezha", DefaultTheme); err != nil {
+				return fmt.Errorf("restore bundled Nezha theme: %w", err)
+			}
+			currentTheme = DefaultTheme
+		}
+	}
+	return config.SetMany(map[string]any{
+		config.ThemeKey:         currentTheme,
+		themeBundleMigrationKey: 1,
+	})
+}
+
+// Static 注册静态资源和 SPA 路由处理
+func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	getConfig := func() map[string]any {
 		cfg, _ := config.GetMany(map[string]any{
 			config.DescriptionKey: "A simple server monitor tool.",
@@ -221,49 +377,11 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		return cfg
 	}
 
-	// 核心逻辑：获取文件内容
-	// filePath: 相对于主题根目录的路径 (例如 "theme.json" 或 "dist/assets/a.js")
-	// 返回: content, contentType, exists
-	getFileContent := func(themeID string, relativePath string) ([]byte, string, bool) {
-		cleanPath := strings.TrimPrefix(relativePath, "/")
-
-		cleanPath = filepath.Clean(cleanPath)
-
-		if themeID != DefaultTheme {
-			if strings.Contains(themeID, "..") || strings.Contains(themeID, "/") || strings.Contains(themeID, "\\") {
-				return nil, "", false
-			}
-
-			themeBasePath := filepath.Join(DataDir, ThemesDir, themeID)
-
-			if !isSafePath(themeBasePath, cleanPath) {
-				return nil, "", false
-			}
-
-			localPath := filepath.Join(themeBasePath, cleanPath)
-			// 检查文件是否存在且不是目录
-			if info, err := os.Stat(localPath); err == nil && !info.IsDir() {
-				content, err := os.ReadFile(localPath)
-				if err == nil {
-					return content, mime.TypeByExtension(filepath.Ext(localPath)), true
-				}
-			}
-			// 本地文件不存在，或读取失败 -> 继续向下回退
+	getPublicFileContent := func(themeID, relativePath string) ([]byte, string, bool) {
+		if IsLocalThemeUsable(themeID) {
+			return localThemeFileContent(themeID, relativePath)
 		}
-
-		// 2. 尝试从嵌入式 defaultTheme/{cleanPath} 读取
-		// fs.ReadFile 处理 embed 路径时使用 "/"
-		embedPath := filepath.ToSlash(cleanPath)
-
-		if strings.Contains(embedPath, "..") {
-			return nil, "", false
-		}
-
-		if content, err := fs.ReadFile(defaultThemeFS, embedPath); err == nil {
-			return content, mime.TypeByExtension(filepath.Ext(embedPath)), true
-		}
-
-		return nil, "", false
+		return embeddedFileContent("rescueTheme", relativePath)
 	}
 
 	// 核心逻辑：渲染 Index.html
@@ -273,20 +391,18 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		setNoStoreHeaders(c)
 		cfg := getConfig()
 
-		currentTheme := cfg[config.ThemeKey].(string)
 		privateApplication := isPrivateApplicationPath(reqPath)
-
-		// 特殊页面：强制使用 default 主题。
+		targetFile := path.Join(DistDir, IndexFile)
+		var content []byte
+		var exists bool
 		if privateApplication {
-			currentTheme = DefaultTheme
+			content, _, exists = embeddedFileContent("systemUI", targetFile)
+		} else {
+			content, _, exists = getPublicFileContent(cfg[config.ThemeKey].(string), targetFile)
 		}
 
-		// 获取 dist/index.html (相对于主题根目录)
-		targetFile := path.Join(DistDir, IndexFile)
-		content, _, exists := getFileContent(currentTheme, targetFile)
-
 		if !exists {
-			c.String(http.StatusNotFound, "Index file missing (checked %s/dist/index.html and default).", currentTheme)
+			c.String(http.StatusNotFound, "Application index is unavailable.")
 			return
 		}
 
@@ -339,7 +455,15 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		// 通常构建后的资源在 dist 中，这里假设优先找 dist 内的，如果你的 favicon 在根目录，去掉 DistDir 拼接即可
 		cfg := getConfig()
 		themeFaviconPath := path.Join(DistDir, FaviconFile)
-		content, mimeType, exists := getFileContent(cfg[config.ThemeKey].(string), themeFaviconPath)
+		content, mimeType, exists := getPublicFileContent(cfg[config.ThemeKey].(string), themeFaviconPath)
+		if exists {
+			c.Data(http.StatusOK, mimeType, content)
+			return
+		}
+
+		// Fresh installations and themes without their own favicon use the
+		// system UI icon instead of returning a broken image.
+		content, mimeType, exists = embeddedFileContent("systemUI", themeFaviconPath)
 		if exists {
 			c.Data(http.StatusOK, mimeType, content)
 			return
@@ -348,14 +472,26 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		c.Status(http.StatusNotFound)
 	})
 
-	// 2. 静态资源路由 /themes/:id/*path
+	// System application assets are immutable and independent from public themes.
+	r.GET("/system-assets/*path", func(c *gin.Context) {
+		filePath := path.Join(DistDir, c.Param("path"))
+		content, mimeType, exists := embeddedFileContent("systemUI", filePath)
+		if !exists {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		setStaticCacheHeaders(c, c.Request.URL.Path)
+		c.Data(http.StatusOK, mimeType, content)
+	})
+
+	// 2. Static theme files are served only from installed, manageable themes.
 	// 允许访问 /themes/MyTheme/theme.json 和 /themes/MyTheme/dist/assets/a.js
 	r.GET("/themes/:id/*path", func(c *gin.Context) {
 		themeID := c.Param("id")
 		// c.Param("path") 包含了开头的 /，getFileContent 会处理
 		filePath := c.Param("path")
 
-		content, mimeType, exists := getFileContent(themeID, filePath)
+		content, mimeType, exists := localThemeFileContent(themeID, filePath)
 		if exists {
 			c.Data(http.StatusOK, mimeType, content)
 			return
@@ -407,8 +543,6 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		}()
 		reqPath := c.Request.URL.Path
 		cfg := getConfig()
-		currentTheme := cfg[config.ThemeKey].(string)
-
 		// index.html is a live document, not a static asset. It must pass
 		// through serveIndex so site metadata and custom Head/Body content
 		// are applied even when a browser requests the file explicitly.
@@ -419,20 +553,22 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 
 		distPath := path.Join(DistDir, reqPath)
 
-		content, mimeType, exists := getFileContent(currentTheme, distPath)
+		var content []byte
+		var mimeType string
+		var exists bool
+		if !isPrivateApplicationPath(reqPath) {
+			content, mimeType, exists = getPublicFileContent(cfg[config.ThemeKey].(string), distPath)
+		}
 		if exists {
 			setStaticCacheHeaders(c, reqPath)
 			c.Data(http.StatusOK, mimeType, content)
 			return
 		}
 
-		// 如果资源不存在，且路径包含扩展名 (如 .js, .css, .png)，则返回 404
-		// 避免将 index.html 作为 js 文件返回导致 "Failed to fetch dynamically imported module"
-		//ext := filepath.Ext(reqPath)
-		//if ext != "" && ext != ".html" {
-		//	c.Status(http.StatusNotFound)
-		//	return
-		//}
+		if ext := filepath.Ext(reqPath); ext != "" && ext != ".html" {
+			c.Status(http.StatusNotFound)
+			return
+		}
 
 		// 路由 (如 /dashboard, /settings) -> 返回 index.html
 		serveIndex(c)
@@ -446,7 +582,7 @@ func setNoStoreHeaders(c *gin.Context) {
 }
 
 func isPrivateApplicationPath(requestPath string) bool {
-	for _, prefix := range []string{"/admin", "/terminal"} {
+	for _, prefix := range []string{"/admin", "/terminal", "/install", "/manage"} {
 		if requestPath == prefix || strings.HasPrefix(requestPath, prefix+"/") {
 			return true
 		}
@@ -461,7 +597,8 @@ func setStaticCacheHeaders(c *gin.Context, requestPath string) {
 		setNoStoreHeaders(c)
 		return
 	}
-	if strings.HasPrefix(requestPath, "/assets/") && strings.Contains(strings.TrimSuffix(name, filepath.Ext(name)), "-") {
+	if (strings.HasPrefix(requestPath, "/assets/") || strings.HasPrefix(requestPath, "/system-assets/assets/")) &&
+		strings.Contains(strings.TrimSuffix(name, filepath.Ext(name)), "-") {
 		c.Header("Cache-Control", "public, max-age=31536000, immutable")
 	}
 }

@@ -105,9 +105,13 @@ func rollupGroupsToPoints(groups map[rollupKey]*rollupBucket, query AggregateQue
 		if !ok {
 			return nil, fmt.Errorf("%w: aggregation %q not supported over rollups", ErrInvalidArgument, query.Aggregation)
 		}
-		tags, err := rollupTagsFromJSON(b.tagsJSON)
-		if err != nil {
-			return nil, err
+		var tags map[string]string
+		if !query.OmitTags {
+			var err error
+			tags, err = rollupTagsFromJSON(b.tagsJSON)
+			if err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, AggregatePoint{
 			MetricName: query.MetricName,
@@ -128,7 +132,10 @@ func mergedRollupGroupsToPoints(groups map[rollupKey]*rollupBucket, query Aggreg
 	}
 	sortRollupKeys(keys)
 
-	tags := cloneStringMap(query.Tags)
+	var tags map[string]string
+	if !query.OmitTags {
+		tags = cloneStringMap(query.Tags)
+	}
 	out := make([]AggregatePoint, 0, len(keys))
 	for _, key := range keys {
 		b := groups[key]
@@ -136,13 +143,17 @@ func mergedRollupGroupsToPoints(groups map[rollupKey]*rollupBucket, query Aggreg
 		if !ok {
 			return nil, fmt.Errorf("%w: aggregation %q not supported over rollups", ErrInvalidArgument, query.Aggregation)
 		}
+		var pointTags map[string]string
+		if !query.OmitTags {
+			pointTags = cloneStringMap(tags)
+		}
 		out = append(out, AggregatePoint{
 			MetricName: query.MetricName,
 			EntityID:   query.EntityID,
 			Bucket:     time.Unix(0, key.bucket).UTC(),
 			Value:      v,
 			Count:      int(b.count),
-			Tags:       cloneStringMap(tags),
+			Tags:       pointTags,
 		})
 	}
 	return out, nil
@@ -835,6 +846,15 @@ func (s *Store) collectSeriesPhysicalGroups(ctx context.Context, query Aggregate
 	q := query.Query.normalized()
 	now = now.UTC()
 	collectRaw := func(raw Query) (map[rollupKey]*rollupBucket, error) {
+		if s.sqliteStorageV4 && !needDigest {
+			groups := make(map[rollupKey]*rollupBucket)
+			dashboardQuery := query
+			dashboardQuery.Query = raw
+			if err := s.foldSQLiteV4RawDashboardSnapshot(ctx, dashboardQuery, groups); err != nil {
+				return nil, err
+			}
+			return groups, nil
+		}
 		raw.Limit = 0
 		raw.Offset = 0
 		points, err := s.Query(ctx, raw)
@@ -1013,36 +1033,44 @@ func (s *Store) collectSeriesAcrossHandoffTiers(ctx context.Context, query Aggre
 	if rawStart <= q.End.UnixNano() {
 		rawQuery := q
 		rawQuery.Start = time.Unix(0, rawStart).UTC()
-		rawQuery.Limit = 0
-		rawQuery.Offset = 0
-		points, err := s.Query(ctx, rawQuery)
-		if err != nil {
-			return nil, err
-		}
-		if !hasWatermark && len(covered) > 0 {
-			remaining := points[:0]
-			for _, point := range points {
-				tagsHash, _, err := tagsFingerprint(point.Tags)
-				if err != nil {
-					return nil, err
-				}
-				identity := point.EntityID + "\x00" + tagsHash
-				timestamp := point.Timestamp.UnixNano()
-				isCovered := false
-				for _, span := range covered[identity] {
-					if timestamp >= span.start && timestamp < span.end {
-						isCovered = true
-						break
+		if s.sqliteStorageV4 && hasWatermark && !needDigest {
+			dashboardQuery := query
+			dashboardQuery.Query = rawQuery
+			if err := s.foldSQLiteV4RawDashboardSnapshot(ctx, dashboardQuery, groups); err != nil {
+				return nil, err
+			}
+		} else {
+			rawQuery.Limit = 0
+			rawQuery.Offset = 0
+			points, err := s.Query(ctx, rawQuery)
+			if err != nil {
+				return nil, err
+			}
+			if !hasWatermark && len(covered) > 0 {
+				remaining := points[:0]
+				for _, point := range points {
+					tagsHash, _, err := tagsFingerprint(point.Tags)
+					if err != nil {
+						return nil, err
+					}
+					identity := point.EntityID + "\x00" + tagsHash
+					timestamp := point.Timestamp.UnixNano()
+					isCovered := false
+					for _, span := range covered[identity] {
+						if timestamp >= span.start && timestamp < span.end {
+							isCovered = true
+							break
+						}
+					}
+					if !isCovered {
+						remaining = append(remaining, point)
 					}
 				}
-				if !isCovered {
-					remaining = append(remaining, point)
-				}
+				points = remaining
 			}
-			points = remaining
-		}
-		if _, err := foldRawPoints(groups, points, query.Interval, comp, query.PreserveSeries, needDigest); err != nil {
-			return nil, err
+			if _, err := foldRawPoints(groups, points, query.Interval, comp, query.PreserveSeries, needDigest); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return groups, nil

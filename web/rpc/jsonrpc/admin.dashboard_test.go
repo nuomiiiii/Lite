@@ -2,6 +2,8 @@ package jsonrpc
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -11,6 +13,36 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestDashboardModuleCacheCoalescesConcurrentLoads(t *testing.T) {
+	var cache dashboardModuleCache[int]
+	var calls atomic.Int32
+	now := time.Now().UTC()
+	var wait sync.WaitGroup
+	results := make(chan int, 8)
+	for range 8 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			value, err := cache.get(context.Background(), now, "same", time.Minute, func() (int, error) {
+				calls.Add(1)
+				time.Sleep(10 * time.Millisecond)
+				return 42, nil
+			})
+			if err != nil {
+				t.Errorf("load cached dashboard module: %v", err)
+				return
+			}
+			results <- value
+		}()
+	}
+	wait.Wait()
+	close(results)
+	for result := range results {
+		assert.Equal(t, 42, result)
+	}
+	assert.Equal(t, int32(1), calls.Load())
+}
 
 func TestBuildDashboardStorageUsesNewestCompactionTime(t *testing.T) {
 	older := time.Date(2026, 7, 31, 6, 0, 0, 0, time.UTC)
@@ -59,6 +91,74 @@ func TestDashboardLatencyMinuteAveragesAndJitterRanking(t *testing.T) {
 	}
 	require.Len(t, ranking, 3)
 	assert.Equal(t, []string{"spike", "stable", "improved"}, []string{ranking[0].Name, ranking[1].Name, ranking[2].Name})
+}
+
+func TestSummarizeDashboardPacketLossKeepsWorstOnlineTask(t *testing.T) {
+	clients := []models.Client{
+		{UUID: "node-a", Name: "Alpha"},
+		{UUID: "node-b", Name: "Beta"},
+		{UUID: "node-c", Name: "Offline"},
+		{UUID: "node-d", Name: "Clean"},
+	}
+	tasks := []models.PingTask{
+		{Id: 1, Name: "A good", Clients: models.StringArray{"node-a"}, Interval: 60},
+		{Id: 2, Name: "A worst", Clients: models.StringArray{"node-a"}, Interval: 60},
+		{Id: 3, Name: "B sparse", Clients: models.StringArray{"node-b"}, Interval: 60},
+		{Id: 4, Name: "B enough", Clients: models.StringArray{"node-b"}, Interval: 60},
+		{Id: 5, Name: "C lost", Clients: models.StringArray{"node-c"}, Interval: 60},
+		{Id: 6, Name: "D clean", Clients: models.StringArray{"node-d"}, Interval: 60},
+	}
+	points := []metric.AggregatePoint{
+		{EntityID: "node-a", Tags: map[string]string{"task_id": "1"}, Value: 0.125, Count: 8},
+		{EntityID: "node-a", Tags: map[string]string{"task_id": "2"}, Value: 0.5, Count: 8},
+		{EntityID: "node-b", Tags: map[string]string{"task_id": "3"}, Value: 1, Count: 7},
+		{EntityID: "node-b", Tags: map[string]string{"task_id": "4"}, Value: 0.25, Count: 8},
+		{EntityID: "node-c", Tags: map[string]string{"task_id": "5"}, Value: 1, Count: 15},
+		{EntityID: "node-d", Tags: map[string]string{"task_id": "6"}, Value: 0, Count: 15},
+	}
+	online := map[string]struct{}{"node-a": {}, "node-b": {}, "node-d": {}}
+
+	ranking := summarizeDashboardPacketLoss(clients, tasks, points, online, 5)
+	require.Len(t, ranking, 2)
+	assert.Equal(t, []string{"node-a", "node-b"}, []string{ranking[0].UUID, ranking[1].UUID})
+	assert.Equal(t, uint(2), ranking[0].TaskID)
+	assert.Equal(t, 4, ranking[0].Lost)
+	assert.Equal(t, 8, ranking[0].Total)
+	assert.InDelta(t, 50, ranking[0].LossRate, 0.001)
+}
+
+func TestDashboardPacketLossCoverageAndOrdering(t *testing.T) {
+	assert.False(t, dashboardPacketLossCoverageEnough(2, 60))
+	assert.False(t, dashboardPacketLossCoverageEnough(7, 60))
+	assert.True(t, dashboardPacketLossCoverageEnough(8, 60))
+	assert.True(t, dashboardPacketLossCoverageEnough(45, 10))
+
+	items := []dashboardPacketLossRankItem{
+		{Name: "later", LossRate: 20, Lost: 2, Valid: 8, clientOrder: 2},
+		{Name: "more-loss", LossRate: 20, Lost: 3, Valid: 7, clientOrder: 3},
+		{Name: "more-valid", LossRate: 20, Lost: 2, Valid: 9, clientOrder: 1},
+		{Name: "highest-rate", LossRate: 30, Lost: 1, Valid: 9, clientOrder: 4},
+	}
+	var ranking []dashboardPacketLossRankItem
+	for _, item := range items {
+		ranking = dashboardTopPacketLoss(ranking, item, 20)
+	}
+	assert.Equal(t, []string{"highest-rate", "more-loss", "more-valid", "later"}, []string{
+		ranking[0].Name, ranking[1].Name, ranking[2].Name, ranking[3].Name,
+	})
+}
+
+func TestDashboardPacketLossHonorsEveryTopLimit(t *testing.T) {
+	for _, limit := range []int{5, 10, 15, 20} {
+		var ranking []dashboardPacketLossRankItem
+		for index := 0; index < 25; index++ {
+			ranking = dashboardTopPacketLoss(ranking, dashboardPacketLossRankItem{
+				Name: "node", LossRate: float64(index + 1), clientOrder: index,
+			}, limit)
+		}
+		require.Len(t, ranking, limit)
+		assert.Equal(t, float64(25), ranking[0].LossRate)
+	}
 }
 
 func TestSummarizeDashboardTrafficExcludesFreeClientsFromBilling(t *testing.T) {

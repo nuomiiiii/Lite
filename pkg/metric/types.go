@@ -350,6 +350,9 @@ type AggregateQuery struct {
 	// PreserveSeries 在基于 rollup 的读取中保留 entity/tag 维度为独立聚合序列。
 	// 默认值保留历史 rollup 行为：把匹配到的序列合并进同一个输出桶。
 	PreserveSeries bool `json:"preserve_series,omitempty"`
+	// OmitTags is an internal read optimization for callers that only need the
+	// entity dimension. It is excluded from serialized query contracts.
+	OmitTags bool `json:"-"`
 	// BucketLimit and BucketOffset page over the produced aggregate buckets, not
 	// the underlying raw points. They are applied consistently across every
 	// backend and aggregation type. The embedded Query.Limit/Query.Offset are

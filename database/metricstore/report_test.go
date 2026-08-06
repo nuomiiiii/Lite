@@ -4,12 +4,72 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/pkg/metric"
 	v1 "github.com/komari-monitor/komari/protocol/v1"
 )
+
+func TestDashboardTrafficBatchMatchesPerClientSeries(t *testing.T) {
+	ctx := context.Background()
+	s := useReportTestStore(t, nil)
+	start := time.Now().UTC().Truncate(time.Hour)
+	end := start.Add(time.Hour)
+	clients := []string{"node-a", "node-b"}
+	points := make([]metric.Point, 0, len(clients)*12)
+	for index, client := range clients {
+		base := float64((index + 1) * 1000)
+		points = append(points,
+			metric.Point{MetricName: MetricNetTotalUp, EntityID: client, Timestamp: start.Add(-5 * time.Second), Value: base},
+			metric.Point{MetricName: MetricNetTotalDown, EntityID: client, Timestamp: start.Add(-5 * time.Second), Value: base * 2},
+		)
+		for sample := 1; sample <= 2; sample++ {
+			ts := start.Add(time.Duration(sample*10) * time.Second)
+			points = append(points,
+				metric.Point{MetricName: MetricNetTotalUp, EntityID: client, Timestamp: ts, Value: base + float64(sample*10)},
+				metric.Point{MetricName: MetricNetTotalDown, EntityID: client, Timestamp: ts, Value: base*2 + float64(sample*20)},
+				metric.Point{MetricName: MetricTrafficUp, EntityID: client, Timestamp: ts, Value: 10},
+				metric.Point{MetricName: MetricTrafficDown, EntityID: client, Timestamp: ts, Value: 20},
+			)
+		}
+	}
+	if err := s.WriteBatch(ctx, points); err != nil {
+		t.Fatalf("write dashboard traffic points: %v", err)
+	}
+
+	batch, baselines, err := GetTrafficRecordsByClientsAndTime(ctx, clients, start, end)
+	if err != nil {
+		t.Fatalf("query dashboard traffic batch: %v", err)
+	}
+	var legacy []models.Record
+	for _, client := range clients {
+		records, err := GetTrafficRecordsByClientAndTime(ctx, client, start, end)
+		if err != nil {
+			t.Fatalf("query legacy traffic for %s: %v", client, err)
+		}
+		legacy = append(legacy, records...)
+		baseline := baselines[client]
+		if baseline.NetTotalUp == 0 || baseline.NetTotalDown == 0 {
+			t.Fatalf("missing baseline for %s: %#v", client, baseline)
+		}
+	}
+	sortRecords(legacy)
+	converted := make([]models.Record, 0, len(batch))
+	for _, record := range batch {
+		converted = append(converted, models.Record{
+			Client: record.Client, Time: record.Time,
+			NetTotalUp: record.NetTotalUp, NetTotalDown: record.NetTotalDown,
+			TrafficUp: record.TrafficUp, TrafficDown: record.TrafficDown,
+			TrafficUpSet: record.TrafficUpSet, TrafficDownSet: record.TrafficDownSet,
+		})
+	}
+	if !reflect.DeepEqual(converted, legacy) {
+		t.Fatalf("batch traffic differs from per-client result\nbatch=%#v\nlegacy=%#v", batch, legacy)
+	}
+}
 
 func useReportTestStore(t *testing.T, policy *metric.RollupPolicy) *metric.Store {
 	t.Helper()
