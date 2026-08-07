@@ -2,6 +2,7 @@ package tasks
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ const returnRouteEventRetention = 90 * 24 * time.Hour
 const (
 	returnRouteLineCUGVIP       = "CUG VIP"
 	returnRouteLineCUGOptimized = "CUG 优化"
+	returnRouteLineCN2Pending   = "CN2 待确认"
 )
 
 type ReturnRouteOverview struct {
@@ -40,6 +42,7 @@ type ReturnRouteSummary struct {
 type ReturnRouteTaskQuery struct {
 	Page     int    `json:"page"`
 	PageSize int    `json:"page_size"`
+	TaskID   uint   `json:"task_id"`
 	Keyword  string `json:"keyword"`
 	Carrier  string `json:"carrier"`
 	State    string `json:"state"`
@@ -293,6 +296,9 @@ func queryReturnRouteTasks(db *gorm.DB, params ReturnRouteTaskQuery) (ReturnRout
 }
 
 func filterReturnRouteTasks(query *gorm.DB, params ReturnRouteTaskQuery, db *gorm.DB) (*gorm.DB, error) {
+	if params.TaskID > 0 {
+		query = query.Where("id = ?", params.TaskID)
+	}
 	if keyword := strings.ToLower(strings.TrimSpace(params.Keyword)); keyword != "" {
 		pattern := "%" + keyword + "%"
 		clients := db.Model(&models.Client{}).Select("uuid").Where("LOWER(name) LIKE ?", pattern)
@@ -502,7 +508,9 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 		}
 		ip := strings.TrimSpace(hop.IP)
 		routePath = append(routePath, fmt.Sprintf("%d %s %.1fms", hop.TTL, ip, hop.LatencyMS))
-		publicIPs = append(publicIPs, ip)
+		if isPublicReturnRouteIP(ip) {
+			publicIPs = append(publicIPs, ip)
+		}
 	}
 	rules := currentReturnRouteRules()
 	asns := lookupASNsWithRules(publicIPs, rules)
@@ -515,9 +523,16 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 			seen[asn] = true
 		}
 	}
-	hops := make([]returnRouteSignature, 0, len(publicIPs))
-	for _, ip := range publicIPs {
-		hops = append(hops, returnRouteSignature{ip: ip, asn: asns[ip]})
+	hops := make([]returnRouteSignature, 0, len(result.Hops))
+	for _, hop := range result.Hops {
+		ip := strings.TrimSpace(hop.IP)
+		if hop.Timeout || ip == "" {
+			hops = append(hops, returnRouteSignature{hidden: true})
+			continue
+		}
+		if isPublicReturnRouteIP(ip) {
+			hops = append(hops, returnRouteSignature{ip: ip, asn: asns[ip]})
+		}
 	}
 	line, confidence := classifyReturnRouteSignaturesWithRules(hops, rules)
 	probeError := strings.TrimSpace(result.Error)
@@ -543,7 +558,7 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 		status.Confidence = confidence
 		status.LastError = probeError
 		if probeError == "" && line != "UNKNOWN" {
-			event = advanceReturnRouteState(&status, task, line, now)
+			event = applyReturnRouteObservation(&status, task, line, now)
 		} else if status.CurrentLine == "" {
 			status.State = "unknown"
 		}
@@ -569,7 +584,7 @@ func SaveReturnRouteResult(client string, result v2.RouteResultParams) error {
 		if shouldSendReturnRouteEventNotification(task, *event) {
 			go sendReturnRouteNotification(task, *event, false)
 		}
-	} else if shouldSendReturnRouteRepeatNotification(task, statusSnapshot, now) {
+	} else if shouldSendReturnRouteRepeatNotificationAfterObservation(task, statusSnapshot, line, now) {
 		if reminder := buildReturnRouteRepeatNotification(task, statusSnapshot, now); reminder != nil {
 			go sendReturnRouteNotification(task, *reminder, true)
 		}
@@ -593,6 +608,10 @@ func shouldSendReturnRouteRepeatNotification(task models.ReturnRouteTask, status
 		return false
 	}
 	return returnRouteRepeatNotificationDue(status.LastNotifiedAt, task.Cooldown, now)
+}
+
+func shouldSendReturnRouteRepeatNotificationAfterObservation(task models.ReturnRouteTask, status models.ReturnRouteStatus, line string, now time.Time) bool {
+	return line != returnRouteLineCN2Pending && shouldSendReturnRouteRepeatNotification(task, status, now)
 }
 
 func returnRouteRepeatNotificationDue(lastNotifiedAt *time.Time, cooldown int, now time.Time) bool {
@@ -647,6 +666,18 @@ func advanceReturnRouteState(status *models.ReturnRouteStatus, task models.Retur
 		Kind: kind, FromLine: from, ToLine: line, Confidence: status.Confidence,
 		ASNPath: append(models.StringArray{}, status.ASNPath...), RoutePath: append(models.StringArray{}, status.RoutePath...), OccurredAt: now,
 	}
+}
+
+func applyReturnRouteObservation(status *models.ReturnRouteStatus, task models.ReturnRouteTask, line string, now time.Time) *models.ReturnRouteEvent {
+	if line != returnRouteLineCN2Pending {
+		return advanceReturnRouteState(status, task, line, now)
+	}
+	status.CandidateLine = returnRouteLineCN2Pending
+	status.CandidateCount = 0
+	if status.CurrentLine == "" {
+		status.State = "unknown"
+	}
+	return nil
 }
 
 func buildReturnRouteRepeatNotification(task models.ReturnRouteTask, status models.ReturnRouteStatus, now time.Time) *models.ReturnRouteEvent {
@@ -729,8 +760,9 @@ func classifyReturnRoute(path models.StringArray) (string, float64) {
 }
 
 type returnRouteSignature struct {
-	ip  string
-	asn int
+	ip     string
+	asn    int
+	hidden bool
 }
 
 func classifyReturnRouteHops(ips []string, asns map[string]int) (string, float64) {
@@ -749,6 +781,7 @@ func classifyReturnRouteSignatures(hops []returnRouteSignature) (string, float64
 }
 
 func classifyReturnRouteSignaturesWithRules(hops []returnRouteSignature, rules *compiledReturnRouteRules) (string, float64) {
+	hops, hiddenHops := prepareReturnRouteSignatures(hops)
 	hasCUGAccess := hasUnicomReturnRouteGroup(hops, rules, "unicom_10099")
 	has9929 := hasUnicomReturnRouteGroup(hops, rules, "unicom_9929")
 	has4837 := hasUnicomReturnRouteGroup(hops, rules, "unicom_4837")
@@ -756,7 +789,7 @@ func classifyReturnRouteSignaturesWithRules(hops []returnRouteSignature, rules *
 	// Prefer the first premium ingress visible in the ordered path. The target
 	// carrier's ordinary backbone usually appears later and must not mask an
 	// injected route through another carrier.
-	for index, hop := range hops {
+	for _, hop := range hops {
 		switch unicomReturnRouteGroup(hop, rules) {
 		case "unicom_10099":
 			switch {
@@ -789,25 +822,10 @@ func classifyReturnRouteSignaturesWithRules(hops []returnRouteSignature, rules *
 			return "CMIN2", rules.document.Confidence["cmin2"]
 		case rules.hasSignature("cmi", hop):
 			return "CMI", rules.document.Confidence["cmi"]
-		case rules.hasSignature("cn2_global", hop):
-			if hasCN2BackboneAfter(hops, index, rules) {
-				return "CN2 GIA", rules.document.Confidence["cn2_gia"]
-			}
-		case rules.hasASN("cn2_backbone", hop.asn):
-			if hasASNGroupBefore(hops, index, rules, "cn2_global") {
-				return "CN2 GIA", rules.document.Confidence["cn2_gia"]
-			}
-			return "CN2 GT", rules.document.Confidence["cn2_gt"]
 		}
-		if rules.hasPrefix("cn2_backbone", hop.ip) {
-			if hasASNGroupBefore(hops, index, rules, "cn2_global") {
-				return "CN2 GIA", rules.document.Confidence["cn2_gia"]
-			}
-			if hasASNGroupBefore(hops, index, rules, "telecom_163") {
-				return "CN2 GT", rules.document.Confidence["cn2_gt_strong"]
-			}
-			return "CN2 GT", rules.document.Confidence["cn2_gt_prefix_only"]
-		}
+	}
+	if line, confidence, ok := classifyCN2ReturnRoute(hops, hiddenHops, rules); ok {
+		return line, confidence
 	}
 
 	for _, hop := range hops {
@@ -824,6 +842,82 @@ func classifyReturnRouteSignaturesWithRules(hops []returnRouteSignature, rules *
 		}
 	}
 	return "UNKNOWN", 0
+}
+
+func prepareReturnRouteSignatures(hops []returnRouteSignature) ([]returnRouteSignature, int) {
+	prepared := make([]returnRouteSignature, 0, len(hops))
+	hidden := 0
+	for _, hop := range hops {
+		hop.ip = strings.TrimSpace(hop.ip)
+		if hop.hidden || hop.ip == "*" {
+			hidden++
+			continue
+		}
+		if hop.ip != "" && !isPublicReturnRouteIP(hop.ip) {
+			continue
+		}
+		if hop.ip == "" && hop.asn <= 0 {
+			continue
+		}
+		prepared = append(prepared, hop)
+	}
+	return prepared, hidden
+}
+
+func isPublicReturnRouteIP(value string) bool {
+	ip := net.ParseIP(strings.TrimSpace(value))
+	return ip != nil && ip.IsGlobalUnicast() && !ip.IsPrivate()
+}
+
+func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *compiledReturnRouteRules) (string, float64, bool) {
+	firstCN2 := -1
+	for index, hop := range hops {
+		if rules.hasSignature("cn2_backbone", hop) {
+			firstCN2 = index
+			break
+		}
+	}
+	if firstCN2 < 0 {
+		return "", 0, false
+	}
+
+	for index := 0; index < firstCN2; index++ {
+		if rules.hasSignature("cn2_global", hops[index]) {
+			return "CN2 GIA", rules.document.Confidence["cn2_gia"], true
+		}
+	}
+	if hiddenHops >= 3 {
+		return returnRouteLineCN2Pending, 0.5, true
+	}
+
+	cn2Count := 0
+	firstTelecomAfterCN2 := -1
+	telecomTransitCount := 0
+	for index := firstCN2; index < len(hops); index++ {
+		hop := hops[index]
+		if rules.hasSignature("cn2_backbone", hop) {
+			cn2Count++
+		}
+		if index > firstCN2 && rules.hasSignature("telecom_163", hop) {
+			if firstTelecomAfterCN2 < 0 {
+				firstTelecomAfterCN2 = index
+			}
+			if index < len(hops)-1 {
+				telecomTransitCount++
+			}
+		}
+	}
+
+	if telecomTransitCount >= 2 && !hasCN2BackboneAfter(hops, firstTelecomAfterCN2, rules) {
+		return "CN2 GT", rules.document.Confidence["cn2_gt_strong"], true
+	}
+	if firstTelecomAfterCN2 >= 0 {
+		return returnRouteLineCN2Pending, 0.5, true
+	}
+	if cn2Count >= 2 {
+		return "CN2 GIA", rules.document.Confidence["cn2_gia"], true
+	}
+	return returnRouteLineCN2Pending, 0.5, true
 }
 
 func hasUnicomReturnRouteGroup(hops []returnRouteSignature, rules *compiledReturnRouteRules, group string) bool {

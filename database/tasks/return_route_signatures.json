@@ -17,7 +17,7 @@
     "cmi": [],
     "cn2_global": [],
     "cn2_backbone": ["59.43.0.0/16"],
-    "telecom_163": ["202.97.0.0/16"],
+    "telecom_163": [],
     "unicom_10099": [],
     "unicom_9929": [],
     "unicom_4837": [],

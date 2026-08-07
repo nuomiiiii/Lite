@@ -145,6 +145,11 @@ func init() {
 		Summary: "Get cached administration dashboard chart data",
 		Returns: "DashboardCharts",
 	})
+	RegisterWithGroupAndMeta("getDashboardAlertItems", rpc.RoleAdmin, adminGetDashboardAlertItems, &rpc.MethodMeta{
+		Name:    "admin:getDashboardAlertItems",
+		Summary: "List currently affected dashboard alert targets",
+		Returns: "DashboardAlertItems",
+	})
 }
 
 func adminGetDashboard(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {

@@ -3,6 +3,8 @@ package jsonrpc
 import (
 	"context"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/pkg/config"
+	"github.com/komari-monitor/komari/pkg/rpc"
 	v1 "github.com/komari-monitor/komari/protocol/v1"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
 )
@@ -19,15 +22,31 @@ import (
 type dashboardAlertLatest struct {
 	Title      string     `json:"title"`
 	NodeName   string     `json:"node_name,omitempty"`
+	NodeUUID   string     `json:"node_uuid,omitempty"`
+	TaskID     uint       `json:"task_id,omitempty"`
+	TaskName   string     `json:"task_name,omitempty"`
 	OccurredAt *time.Time `json:"occurred_at,omitempty"`
+	DueAt      *time.Time `json:"due_at,omitempty"`
+}
+
+type dashboardAlertAffectedItem struct {
+	Kind       string     `json:"kind"`
+	Title      string     `json:"title"`
+	NodeUUID   string     `json:"node_uuid,omitempty"`
+	NodeName   string     `json:"node_name,omitempty"`
+	TaskID     uint       `json:"task_id,omitempty"`
+	TaskName   string     `json:"task_name,omitempty"`
+	OccurredAt *time.Time `json:"occurred_at,omitempty"`
+	DueAt      *time.Time `json:"due_at,omitempty"`
 }
 
 type dashboardAlertSummary struct {
-	Current        int                   `json:"current"`
-	AffectedNodes  int                   `json:"affected_nodes"`
-	RecoveredToday int                   `json:"recovered_today"`
-	LatestAlert    *dashboardAlertLatest `json:"latest_alert,omitempty"`
-	Error          string                `json:"error,omitempty"`
+	Current        int                          `json:"current"`
+	AffectedNodes  int                          `json:"affected_nodes"`
+	RecoveredToday int                          `json:"recovered_today"`
+	LatestAlert    *dashboardAlertLatest        `json:"latest_alert,omitempty"`
+	Error          string                       `json:"error,omitempty"`
+	Items          []dashboardAlertAffectedItem `json:"-"`
 }
 
 type dashboardAlertSummaries struct {
@@ -37,6 +56,56 @@ type dashboardAlertSummaries struct {
 	Traffic     dashboardAlertSummary `json:"traffic"`
 	ReturnRoute dashboardAlertSummary `json:"return_route"`
 	Billing     dashboardAlertSummary `json:"billing"`
+}
+
+type dashboardAlertItemsResponse struct {
+	Kind        string                       `json:"kind"`
+	Items       []dashboardAlertAffectedItem `json:"items"`
+	GeneratedAt time.Time                    `json:"generated_at"`
+}
+
+var dashboardAlertKinds = map[string]struct{}{
+	"offline": {}, "resource": {}, "latency_loss": {}, "traffic": {}, "return_route": {}, "billing": {},
+}
+
+func adminGetDashboardAlertItems(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	rawKind, _ := rpc.GetParamAs[string](req, "kind")
+	kind := strings.ToLower(strings.TrimSpace(rawKind))
+	if _, ok := dashboardAlertKinds[kind]; !ok {
+		return nil, rpc.MakeError(rpc.InvalidParams, "unsupported dashboard alert kind", nil)
+	}
+	clientList, err := clients.GetAllClientBasicInfo()
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	now := time.Now().UTC()
+	clientByID := make(map[string]models.Client, len(clientList))
+	for _, client := range clientList {
+		clientByID[client.UUID] = client
+	}
+	reports := agent_runtime.GetLatestReport()
+	var summary dashboardAlertSummary
+	switch kind {
+	case "offline":
+		summary = buildDashboardOfflineAlerts(clientByID, now)
+	case "resource":
+		summary = buildDashboardResourceAlerts(clientByID, reports)
+	case "latency_loss":
+		summary = buildDashboardLatencyAlerts(now)
+	case "traffic":
+		summary = buildDashboardTrafficAlerts(clientList, reports, now)
+	case "return_route":
+		summary = buildDashboardReturnRouteAlerts(now)
+	case "billing":
+		summary = buildDashboardBillingAlerts(clientList, now)
+	}
+	if summary.Error != "" {
+		return nil, rpc.MakeError(rpc.InternalError, summary.Error, nil)
+	}
+	if summary.Items == nil {
+		summary.Items = []dashboardAlertAffectedItem{}
+	}
+	return dashboardAlertItemsResponse{Kind: kind, Items: summary.Items, GeneratedAt: now}, nil
 }
 
 func buildDashboardAlerts(clientList []models.Client, now time.Time) dashboardAlertSummaries {
@@ -73,15 +142,20 @@ func buildDashboardResourceAlerts(clientByID map[string]models.Client, reports m
 			if !ok || value < float64(rule.Threshold) {
 				continue
 			}
-			result.Current++
-			affected[clientID] = struct{}{}
 			title := strings.TrimSpace(rule.Name)
 			if title == "" {
 				title = strings.ToUpper(strings.TrimSpace(rule.Metric))
 			}
-			setDashboardLatest(&result, title, client.Name, report.UpdatedAt)
+			if _, seen := affected[clientID]; !seen {
+				affected[clientID] = struct{}{}
+				result.Items = append(result.Items, dashboardAlertAffectedItem{
+					Kind: "resource", Title: title, NodeUUID: clientID, NodeName: client.Name,
+				})
+			}
+			setDashboardLatest(&result, title, client.Name, clientID, 0, "", report.UpdatedAt)
 		}
 	}
+	result.Current = len(result.Items)
 	result.AffectedNodes = len(affected)
 	return result
 }
@@ -153,8 +227,11 @@ func buildDashboardOfflineAlerts(clientByID map[string]models.Client, now time.T
 		}
 		result.Current++
 		result.AffectedNodes++
+		result.Items = append(result.Items, dashboardAlertAffectedItem{
+			Kind: "offline", Title: "offline", NodeUUID: notification.Client, NodeName: client.Name,
+		})
 		if notification.LastNotified != nil {
-			setDashboardLatest(&result, "offline", client.Name, *notification.LastNotified)
+			setDashboardLatest(&result, "offline", client.Name, notification.Client, 0, "", *notification.LastNotified)
 		}
 	}
 	return result
@@ -162,7 +239,7 @@ func buildDashboardOfflineAlerts(clientByID map[string]models.Client, now time.T
 
 func buildDashboardLatencyAlerts(now time.Time) dashboardAlertSummary {
 	var notifications []models.PingLossNotification
-	if err := dbcore.GetDBInstance().Preload("ClientInfo").Where("enable = ?", true).Find(&notifications).Error; err != nil {
+	if err := dbcore.GetDBInstance().Preload("ClientInfo").Preload("Task").Where("enable = ?", true).Find(&notifications).Error; err != nil {
 		return dashboardAlertSummary{Error: err.Error()}
 	}
 	result := dashboardAlertSummary{}
@@ -176,8 +253,13 @@ func buildDashboardLatencyAlerts(now time.Time) dashboardAlertSummary {
 		}
 		result.Current++
 		affected[notification.Client] = struct{}{}
+		result.Items = append(result.Items, dashboardAlertAffectedItem{
+			Kind: "latency_loss", Title: "ping loss", NodeUUID: notification.Client,
+			NodeName: notification.ClientInfo.Name, TaskID: notification.TaskId, TaskName: notification.Task.Name,
+		})
 		if notification.LastNotified != nil {
-			setDashboardLatest(&result, "ping loss", notification.ClientInfo.Name, *notification.LastNotified)
+			setDashboardLatest(&result, "ping loss", notification.ClientInfo.Name, notification.Client,
+				notification.TaskId, notification.Task.Name, *notification.LastNotified)
 		}
 	}
 	result.AffectedNodes = len(affected)
@@ -223,7 +305,11 @@ func buildDashboardTrafficAlerts(clientList []models.Client, reports map[string]
 		}
 		result.Current++
 		result.AffectedNodes++
-		setDashboardLatest(&result, fmt.Sprintf("%.0f%%", percent), client.Name, report.UpdatedAt)
+		title := fmt.Sprintf("%.0f%%", percent)
+		result.Items = append(result.Items, dashboardAlertAffectedItem{
+			Kind: "traffic", Title: title, NodeUUID: client.UUID, NodeName: client.Name,
+		})
+		setDashboardLatest(&result, title, client.Name, client.UUID, 0, "", report.UpdatedAt)
 	}
 	return result
 }
@@ -233,14 +319,29 @@ func buildDashboardReturnRouteAlerts(now time.Time) dashboardAlertSummary {
 	if err != nil {
 		return dashboardAlertSummary{Error: err.Error()}
 	}
-	result := dashboardAlertSummary{Current: int(summary.Switched + summary.Abnormal)}
+	result := dashboardAlertSummary{Current: int(summary.Switched)}
 	db := dbcore.GetDBInstance()
 	if err := db.Table("return_route_statuses").
 		Select("COUNT(DISTINCT return_route_tasks.client)").
 		Joins("JOIN return_route_tasks ON return_route_tasks.id = return_route_statuses.task_id").
-		Where("return_route_tasks.enabled = ? AND (return_route_statuses.state IN ? OR (return_route_statuses.last_error IS NOT NULL AND return_route_statuses.last_error <> ?))", true, []string{"switched", "unknown"}, "").
+		Where("return_route_tasks.enabled = ? AND return_route_statuses.state = ?", true, "switched").
 		Scan(&result.AffectedNodes).Error; err != nil {
 		result.Error = err.Error()
+	}
+	var switchedTasks []models.ReturnRouteTask
+	switchedTaskIDs := db.Model(&models.ReturnRouteStatus{}).Select("task_id").Where("state = ?", "switched")
+	if err := db.Preload("ClientInfo").Where("enabled = ? AND id IN (?)", true, switchedTaskIDs).Order("id ASC").Find(&switchedTasks).Error; err != nil {
+		if result.Error == "" {
+			result.Error = err.Error()
+		}
+	} else {
+		for _, task := range switchedTasks {
+			result.Items = append(result.Items, dashboardAlertAffectedItem{
+				Kind: "return_route", Title: task.Name, NodeUUID: task.Client,
+				NodeName: task.ClientInfo.Name, TaskID: task.Id, TaskName: task.Name,
+			})
+		}
+		result.Current = len(result.Items)
 	}
 	dayStart := trafficledger.BeijingDay(now).UTC()
 	dayEnd := trafficledger.BeijingDay(now).AddDate(0, 0, 1).UTC()
@@ -259,6 +360,9 @@ func buildDashboardReturnRouteAlerts(now time.Time) dashboardAlertSummary {
 		result.LatestAlert = &dashboardAlertLatest{
 			Title:      strings.TrimSpace(event.FromLine + " -> " + event.ToLine),
 			NodeName:   event.NodeName,
+			NodeUUID:   event.Client,
+			TaskID:     event.TaskId,
+			TaskName:   event.TaskName,
 			OccurredAt: &occurredAt,
 		}
 	} else if err != nil && result.Error == "" {
@@ -284,26 +388,44 @@ func buildDashboardBillingAlerts(clientList []models.Client, now time.Time) dash
 	var nearest *models.Client
 	for index := range clientList {
 		client := &clientList[index]
-		if client.ExpiredAt == nil || client.ExpiredAt.Before(now) || client.ExpiredAt.After(deadline) {
+		if client.ExpiredAt == nil || client.ExpiredAt.After(deadline) {
 			continue
 		}
 		result.Current++
 		result.AffectedNodes++
+		dueAt := client.ExpiredAt.UTC()
+		title := dashboardBillingAlertTitle(dueAt, now)
+		result.Items = append(result.Items, dashboardAlertAffectedItem{
+			Kind: "billing", Title: title, NodeUUID: client.UUID, NodeName: client.Name, DueAt: &dueAt,
+		})
 		if nearest == nil || client.ExpiredAt.Before(*nearest.ExpiredAt) {
 			nearest = client
 		}
 	}
+	sort.SliceStable(result.Items, func(left, right int) bool {
+		return result.Items[left].DueAt.Before(*result.Items[right].DueAt)
+	})
 	if nearest != nil {
-		days := int(nearest.ExpiredAt.Sub(now).Hours() / 24)
+		dueAt := nearest.ExpiredAt.UTC()
 		result.LatestAlert = &dashboardAlertLatest{
-			Title:    fmt.Sprintf("%d days left", days),
+			Title:    dashboardBillingAlertTitle(dueAt, now),
 			NodeName: nearest.Name,
+			NodeUUID: nearest.UUID,
+			DueAt:    &dueAt,
 		}
 	}
 	return result
 }
 
-func setDashboardLatest(summary *dashboardAlertSummary, title, nodeName string, occurredAt time.Time) {
+func dashboardBillingAlertTitle(expiry, now time.Time) string {
+	hours := expiry.Sub(now).Hours()
+	if hours < 0 {
+		return fmt.Sprintf("expired %d days", int(math.Ceil(-hours/24)))
+	}
+	return fmt.Sprintf("%d days left", int(math.Ceil(hours/24)))
+}
+
+func setDashboardLatest(summary *dashboardAlertSummary, title, nodeName, nodeUUID string, taskID uint, taskName string, occurredAt time.Time) {
 	if occurredAt.IsZero() {
 		return
 	}
@@ -311,7 +433,9 @@ func setDashboardLatest(summary *dashboardAlertSummary, title, nodeName string, 
 	if summary.LatestAlert != nil && summary.LatestAlert.OccurredAt != nil && !when.After(*summary.LatestAlert.OccurredAt) {
 		return
 	}
-	summary.LatestAlert = &dashboardAlertLatest{Title: title, NodeName: nodeName, OccurredAt: &when}
+	summary.LatestAlert = &dashboardAlertLatest{
+		Title: title, NodeName: nodeName, NodeUUID: nodeUUID, TaskID: taskID, TaskName: taskName, OccurredAt: &when,
+	}
 }
 
 func sameDashboardDay(left, right time.Time) bool {
