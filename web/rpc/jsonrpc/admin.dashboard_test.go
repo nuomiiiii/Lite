@@ -103,7 +103,7 @@ func TestSummarizeDashboardPacketLossKeepsWorstOnlineTask(t *testing.T) {
 	tasks := []models.PingTask{
 		{Id: 1, Name: "A good", Clients: models.StringArray{"node-a"}, Interval: 60},
 		{Id: 2, Name: "A worst", Clients: models.StringArray{"node-a"}, Interval: 60},
-		{Id: 3, Name: "B sparse", Clients: models.StringArray{"node-b"}, Interval: 60},
+		{Id: 3, Name: "B new task", Clients: models.StringArray{"node-b"}, Interval: 60},
 		{Id: 4, Name: "B enough", Clients: models.StringArray{"node-b"}, Interval: 60},
 		{Id: 5, Name: "C lost", Clients: models.StringArray{"node-c"}, Interval: 60},
 		{Id: 6, Name: "D clean", Clients: models.StringArray{"node-d"}, Interval: 60},
@@ -111,7 +111,7 @@ func TestSummarizeDashboardPacketLossKeepsWorstOnlineTask(t *testing.T) {
 	points := []metric.AggregatePoint{
 		{EntityID: "node-a", Tags: map[string]string{"task_id": "1"}, Value: 0.125, Count: 8},
 		{EntityID: "node-a", Tags: map[string]string{"task_id": "2"}, Value: 0.5, Count: 8},
-		{EntityID: "node-b", Tags: map[string]string{"task_id": "3"}, Value: 1, Count: 7},
+		{EntityID: "node-b", Tags: map[string]string{"task_id": "3"}, Value: 3.0 / 7.0, Count: 7},
 		{EntityID: "node-b", Tags: map[string]string{"task_id": "4"}, Value: 0.25, Count: 8},
 		{EntityID: "node-c", Tags: map[string]string{"task_id": "5"}, Value: 1, Count: 15},
 		{EntityID: "node-d", Tags: map[string]string{"task_id": "6"}, Value: 0, Count: 15},
@@ -125,14 +125,13 @@ func TestSummarizeDashboardPacketLossKeepsWorstOnlineTask(t *testing.T) {
 	assert.Equal(t, 4, ranking[0].Lost)
 	assert.Equal(t, 8, ranking[0].Total)
 	assert.InDelta(t, 50, ranking[0].LossRate, 0.001)
+	assert.Equal(t, uint(3), ranking[1].TaskID)
+	assert.Equal(t, 3, ranking[1].Lost)
+	assert.Equal(t, 7, ranking[1].Total)
+	assert.InDelta(t, 300.0/7.0, ranking[1].LossRate, 0.001)
 }
 
-func TestDashboardPacketLossCoverageAndOrdering(t *testing.T) {
-	assert.False(t, dashboardPacketLossCoverageEnough(2, 60))
-	assert.False(t, dashboardPacketLossCoverageEnough(7, 60))
-	assert.True(t, dashboardPacketLossCoverageEnough(8, 60))
-	assert.True(t, dashboardPacketLossCoverageEnough(45, 10))
-
+func TestDashboardPacketLossOrdering(t *testing.T) {
 	items := []dashboardPacketLossRankItem{
 		{Name: "later", LossRate: 20, Lost: 2, Valid: 8, clientOrder: 2},
 		{Name: "more-loss", LossRate: 20, Lost: 3, Valid: 7, clientOrder: 3},

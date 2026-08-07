@@ -70,12 +70,13 @@ type cleanupFunc struct {
 // 每个阶段返回错误即可让上层决定是否中止启动；各资源在创建时把对应清理登记到
 // cleanup 栈，关闭时按后进先出（LIFO）顺序释放。
 type App struct {
-	settings   *config.Settings
-	engine     *gin.Engine
-	server     *http.Server
-	reload     *ReloadManager
-	dbReady    bool
-	oauthReady bool
+	settings       *config.Settings
+	engine         *gin.Engine
+	server         *http.Server
+	reload         *ReloadManager
+	dbReady        bool
+	oauthReady     bool
+	simulationDone <-chan struct{}
 
 	cleanups []cleanupFunc
 }
@@ -106,11 +107,13 @@ func (a *App) Bootstrap() error {
 	if err := dbcore.Initialize(); err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
-
 	a.dbReady = true
 	a.addCleanup("database", func(context.Context) error {
 		return dbcore.Close()
 	})
+	if err := frontendpublic.EnsureBundledThemes(); err != nil {
+		return fmt.Errorf("failed to initialize public themes: %w", err)
+	}
 
 	gin.SetMode(gin.ReleaseMode)
 
@@ -258,6 +261,21 @@ func (a *App) InstallRequired() (bool, error) {
 	return count == 0, nil
 }
 
+func firstRunInstallRedirect() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		requestPath := c.Request.URL.Path
+		if c.Request.Method == http.MethodGet &&
+			!strings.HasPrefix(requestPath, "/api") &&
+			requestPath != installweb.PagePath &&
+			filepath.Ext(requestPath) == "" {
+			c.Redirect(http.StatusTemporaryRedirect, installweb.PagePath)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 // RunInstallGuide starts the restricted first-run HTTP server.
 func (a *App) RunInstallGuide() (bool, error) {
 	controller := installweb.NewController(dbcore.GetDBInstance())
@@ -273,16 +291,13 @@ func (a *App) RunInstallGuide() (bool, error) {
 		}
 		c.Next()
 	})
+	r.Use(firstRunInstallRedirect())
 	controller.Register(r)
 	frontendpublic.Static(r.Group("/"), func(handlers ...gin.HandlerFunc) {
 		r.NoRoute(func(c *gin.Context) {
 			requestPath := c.Request.URL.Path
 			if strings.HasPrefix(requestPath, "/api") {
 				api.RespondError(c, http.StatusNotFound, "Not found in install mode")
-				return
-			}
-			if c.Request.Method == http.MethodGet && requestPath != installweb.PagePath && filepath.Ext(requestPath) == "" {
-				c.Redirect(http.StatusTemporaryRedirect, installweb.PagePath)
 				return
 			}
 			for _, handler := range handlers {

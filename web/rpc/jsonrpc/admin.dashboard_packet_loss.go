@@ -130,7 +130,7 @@ func summarizeDashboardPacketLoss(clientList []models.Client, taskList []models.
 				continue
 			}
 			aggregate := aggregates[dashboardPacketLossKey{client: client.UUID, taskID: task.Id}]
-			if !dashboardPacketLossCoverageEnough(aggregate.total, task.Interval) {
+			if aggregate.total <= 0 {
 				continue
 			}
 			lost := int(math.Round(aggregate.losses))
@@ -159,14 +159,6 @@ func summarizeDashboardPacketLoss(clientList []models.Client, taskList []models.
 		}
 	}
 	return result
-}
-
-func dashboardPacketLossCoverageEnough(total, intervalSeconds int) bool {
-	if total < 3 || intervalSeconds <= 0 {
-		return false
-	}
-	expected := int(math.Ceil(dashboardPacketLossWindow.Seconds() / float64(intervalSeconds)))
-	return total*2 >= expected
 }
 
 func dashboardPacketLossBefore(left, right dashboardPacketLossRankItem) bool {

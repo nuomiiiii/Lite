@@ -630,7 +630,7 @@ func (m *Manager) setSecurityHeaders(w http.ResponseWriter, secure bool) {
 		}
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Referrer-Policy", "same-origin")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 }
 
 func buildProvider(settings Settings) (certificateProvider, error) {
