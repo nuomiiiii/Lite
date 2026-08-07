@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
@@ -26,7 +28,7 @@ func TestClassifyReturnRoute(t *testing.T) {
 		{models.StringArray{"AS3356", "AS58807", "AS9808", "AS56041"}, "CMIN2"},
 		{models.StringArray{"AS58453", "AS9808"}, "CMI"},
 		{models.StringArray{"AS23764", "AS4809"}, "CN2 GIA"},
-		{models.StringArray{"AS4809", "AS4134"}, "CN2 GT"},
+		{models.StringArray{"AS4809", "AS4134"}, returnRouteLineCN2Pending},
 		{models.StringArray{"AS10099", "AS9929"}, returnRouteLineCUGVIP},
 		{models.StringArray{"AS9929", "AS10099"}, returnRouteLineCUGVIP},
 		{models.StringArray{"AS10099", "AS4837"}, returnRouteLineCUGOptimized},
@@ -90,13 +92,331 @@ func TestClassifyReturnRouteUsesLocalCN2PrefixWhenCymruMisses(t *testing.T) {
 		"218.30.48.97": 4134,
 		"61.175.22.42": 4134,
 	}
-	if line, confidence := classifyReturnRouteHops(ips, asns); line != "CN2 GT" || confidence < 0.9 {
-		t.Fatalf("local 59.43 feature classified as %q, %.2f; want CN2 GT", line, confidence)
+	if line, confidence := classifyReturnRouteHops(ips, asns); line != returnRouteLineCN2Pending || confidence <= 0 {
+		t.Fatalf("incomplete local 59.43 feature classified as %q, %.2f; want %s", line, confidence, returnRouteLineCN2Pending)
 	}
 
 	gias := map[string]int{"207.57.144.1": 23764}
 	if line, confidence := classifyReturnRouteHops([]string{"207.57.144.1", "59.43.159.17"}, gias); line != "CN2 GIA" || confidence < 0.9 {
 		t.Fatalf("AS23764 -> 59.43 classified as %q, %.2f; want CN2 GIA", line, confidence)
+	}
+}
+
+func TestClassifyCN2UsesOrderedCarrierSegments(t *testing.T) {
+	tests := []struct {
+		name string
+		hops []returnRouteSignature
+		want string
+	}{
+		{
+			name: "foreign AS4134 handoff followed by continuous CN2 is GIA",
+			hops: []returnRouteSignature{
+				{ip: "218.30.48.21", asn: 4134},
+				{ip: "59.43.182.186"},
+				{ip: "59.43.38.165"},
+				{ip: "59.43.138.49"},
+				{ip: "59.43.80.141"},
+			},
+			want: "CN2 GIA",
+		},
+		{
+			name: "continuous CN2 followed by provincial AS4134 access hops is GIA",
+			hops: []returnRouteSignature{
+				{ip: "207.57.144.1", asn: 1054},
+				{ip: "107.155.0.34", asn: 21859},
+				{ip: "218.30.48.97", asn: 4134},
+				{ip: "59.43.246.237", asn: 4809},
+				{ip: "59.43.39.85", asn: 4809},
+				{ip: "59.43.159.17", asn: 4809},
+				{ip: "59.43.80.141", asn: 4809},
+				{hidden: true},
+				{ip: "60.188.65.38", asn: 4134},
+				{hidden: true},
+				{hidden: true},
+				{ip: "183.131.147.4", asn: 4134},
+			},
+			want: "CN2 GIA",
+		},
+		{
+			name: "hidden domestic backbone after foreign handoff remains pending",
+			hops: []returnRouteSignature{
+				{hidden: true},
+				{ip: "100.72.56.6"},
+				{hidden: true},
+				{hidden: true},
+				{ip: "193.41.250.146", asn: 906},
+				{ip: "218.30.48.142", asn: 4134},
+				{ip: "218.30.48.141", asn: 4134},
+				{hidden: true},
+				{hidden: true},
+				{hidden: true},
+				{hidden: true},
+				{hidden: true},
+				{ip: "60.191.202.142", asn: 4134},
+				{ip: "183.131.147.4", asn: 4134},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "one CN2 hop followed by final AS4134 access remains pending",
+			hops: []returnRouteSignature{
+				{ip: "218.30.48.97", asn: 4134},
+				{ip: "59.43.159.17", asn: 4809},
+				{ip: "60.188.65.38", asn: 4134},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "sustained CN2 followed by multiple provincial Telecom access hops is GIA",
+			hops: []returnRouteSignature{
+				{ip: "10.54.0.1"},
+				{ip: "10.54.255.0"},
+				{ip: "218.30.48.21", asn: 4134},
+				{ip: "59.43.182.186"},
+				{ip: "59.43.38.165"},
+				{ip: "59.43.138.49"},
+				{ip: "59.43.80.141"},
+				{ip: "222.72.237.53", asn: 4812},
+				{hidden: true},
+				{ip: "124.77.0.1", asn: 4812},
+			},
+			want: "CN2 GIA",
+		},
+		{
+			name: "regional Telecom access followed by another carrier remains pending",
+			hops: []returnRouteSignature{
+				{ip: "59.43.182.186"},
+				{ip: "59.43.38.165"},
+				{ip: "222.72.237.53", asn: 4812},
+				{ip: "1.1.1.1", asn: 13335},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "global CN2 ingress is GIA",
+			hops: []returnRouteSignature{{asn: 23764}, {asn: 4809}},
+			want: "CN2 GIA",
+		},
+		{
+			name: "one near-terminal 163 hop is pending",
+			hops: []returnRouteSignature{
+				{ip: "218.30.48.21", asn: 4134},
+				{ip: "59.43.182.186"},
+				{ip: "202.97.12.1", asn: 4134},
+				{ip: "61.175.22.42", asn: 4134},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "multiple domestic 163 transit hops are GT",
+			hops: []returnRouteSignature{
+				{ip: "59.43.182.186"},
+				{ip: "202.97.12.1", asn: 4134},
+				{ip: "202.97.12.2", asn: 4134},
+				{ip: "61.175.22.42", asn: 4134},
+			},
+			want: "CN2 GT",
+		},
+		{
+			name: "hidden hops do not mask a visible 163 transit segment",
+			hops: []returnRouteSignature{
+				{hidden: true},
+				{ip: "100.72.56.6"},
+				{hidden: true},
+				{ip: "193.41.250.173"},
+				{ip: "193.41.250.146"},
+				{ip: "218.30.48.142", asn: 4134},
+				{ip: "202.97.33.125", asn: 4134},
+				{ip: "59.43.182.89", asn: 4809},
+				{ip: "202.97.100.222", asn: 4134},
+				{hidden: true},
+				{hidden: true},
+				{ip: "202.97.101.238", asn: 4134},
+				{ip: "60.191.202.142", asn: 4134},
+				{hidden: true},
+				{hidden: true},
+				{ip: "183.131.147.4", asn: 4134},
+			},
+			want: "CN2 GT",
+		},
+		{
+			name: "one terminal 202.97 handoff followed by local access remains pending",
+			hops: []returnRouteSignature{
+				{hidden: true},
+				{ip: "10.110.193.1"},
+				{ip: "218.30.48.73", asn: 4134},
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "59.43.138.57", asn: 4809},
+				{hidden: true},
+				{ip: "202.97.23.230", asn: 4134},
+				{ip: "60.191.202.154", asn: 4134},
+				{hidden: true},
+				{hidden: true},
+				{ip: "183.131.147.4", asn: 4134},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "one terminal 202.97 handoff without visible access remains pending",
+			hops: []returnRouteSignature{
+				{ip: "218.30.48.73", asn: 4134},
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "59.43.138.57", asn: 4809},
+				{ip: "59.43.80.145", asn: 4809},
+				{ip: "202.97.23.230", asn: 4134},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "a final second 202.97 hop is not two transit nodes",
+			hops: []returnRouteSignature{
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "202.97.23.229", asn: 4134},
+				{ip: "202.97.23.230", asn: 4134},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "one terminal 202.97 handoff and one visible access hop remains pending",
+			hops: []returnRouteSignature{
+				{hidden: true},
+				{ip: "10.110.193.1"},
+				{ip: "218.30.48.73", asn: 4134},
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "59.43.138.57", asn: 4809},
+				{ip: "59.43.80.145", asn: 4809},
+				{ip: "202.97.23.230", asn: 4134},
+				{ip: "60.191.202.154", asn: 4134},
+				{hidden: true},
+				{hidden: true},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "one terminal 202.97 handoff returning to CN2 remains pending",
+			hops: []returnRouteSignature{
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "202.97.23.230", asn: 4134},
+				{ip: "59.43.80.145", asn: 4809},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "one terminal 202.97 handoff crossing carriers remains pending",
+			hops: []returnRouteSignature{
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "202.97.23.230", asn: 4134},
+				{ip: "1.1.1.1", asn: 13335},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "multiple provincial AS4134 access hops after sustained CN2 are GIA",
+			hops: []returnRouteSignature{
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "60.191.202.154", asn: 4134},
+				{ip: "183.131.147.4", asn: 4134},
+			},
+			want: "CN2 GIA",
+		},
+		{
+			name: "CN2 prefix works without ASN lookup",
+			hops: []returnRouteSignature{{ip: "59.43.182.186"}, {ip: "59.43.38.165"}},
+			want: "CN2 GIA",
+		},
+		{
+			name: "hidden hops do not mask a visible continuous CN2 path",
+			hops: []returnRouteSignature{
+				{ip: "59.43.182.186"}, {hidden: true}, {hidden: true}, {hidden: true}, {ip: "59.43.38.165"},
+			},
+			want: "CN2 GIA",
+		},
+		{
+			name: "hidden hops keep an incomplete CN2 path pending",
+			hops: []returnRouteSignature{
+				{ip: "59.43.182.186"}, {hidden: true}, {hidden: true}, {hidden: true}, {ip: "61.175.22.42", asn: 4134},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			line, confidence := classifyReturnRouteSignatures(test.hops)
+			if line != test.want || confidence <= 0 {
+				t.Fatalf("classified as %q, %.2f; want %q", line, confidence, test.want)
+			}
+		})
+	}
+}
+
+func TestCN2ManualAndBGPPrefixRulesStaySeparated(t *testing.T) {
+	base, err := compileReturnRouteRules(builtinReturnRouteRuleJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.hasPrefix("telecom_163", "202.97.1.1") || base.hasPrefix("telecom_163", "202.97.200.1") {
+		t.Fatal("manual rules still contain the broad 202.97.0.0/16 prefix")
+	}
+
+	data, err := os.ReadFile("return_route_bgp_prefixes.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bgp, err := compileReturnRouteBGPRules(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := mergeReturnRouteRules(base, bgp)
+	if !rules.hasPrefix("telecom_163", "202.97.1.1") {
+		t.Fatal("BGP rules no longer recognize 202.97.0.0/17")
+	}
+	if !rules.hasPrefix("unicom_4837", "202.97.200.1") {
+		t.Fatal("BGP rules no longer recognize 202.97.128.0/17 in its generated group")
+	}
+	if !isTelecom163BackboneCandidate(returnRouteSignature{ip: "202.97.1.1"}, rules) {
+		t.Fatal("telecom BGP prefix was not accepted as a 163 backbone candidate")
+	}
+	if isTelecom163BackboneCandidate(returnRouteSignature{ip: "202.97.200.1", asn: 4134}, rules) {
+		t.Fatal("conflicting ASN overrode the more specific non-telecom BGP prefix")
+	}
+}
+
+func TestPrepareReturnRouteSignaturesExcludesSharedAddressSpace(t *testing.T) {
+	prepared, hidden := prepareReturnRouteSignatures([]returnRouteSignature{
+		{hidden: true},
+		{ip: "100.72.56.6"},
+		{ip: "10.110.193.1"},
+		{ip: "59.43.181.145", asn: 4809},
+	})
+	if hidden != 1 || len(prepared) != 1 || prepared[0].ip != "59.43.181.145" {
+		t.Fatalf("prepared route = %#v, hidden=%d", prepared, hidden)
+	}
+}
+
+func TestFailedBGPRefreshPreservesActiveRules(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		http.Error(response, "temporary failure", http.StatusBadGateway)
+	}))
+	defer server.Close()
+	t.Setenv("KOMARI_RETURN_ROUTE_BGP_RULE_URL", server.URL)
+
+	originalClient := returnRouteBGPHTTPClient
+	returnRouteBGPHTTPClient = server.Client()
+	t.Cleanup(func() { returnRouteBGPHTTPClient = originalClient })
+
+	before := currentReturnRouteRules()
+	if err := refreshReturnRouteBGPRules(context.Background()); err == nil {
+		t.Fatal("failed BGP response unexpectedly succeeded")
+	}
+	if after := currentReturnRouteRules(); after != before {
+		t.Fatal("failed BGP refresh replaced the last active rule set")
 	}
 }
 
@@ -219,6 +539,36 @@ func TestReturnRouteStateRequiresSwitchAndRecoveryConfirmation(t *testing.T) {
 	}
 }
 
+func TestPendingCN2ObservationPreservesConfirmedState(t *testing.T) {
+	now := time.Now().UTC()
+	changedAt := now.Add(-time.Hour)
+	lastNotifiedAt := now.Add(-2 * time.Hour)
+	task := models.ReturnRouteTask{ExpectedLine: "CN2 GIA", Notify: true, Cooldown: 60, SwitchConfirm: 2, RecoveryConfirm: 2}
+	status := models.ReturnRouteStatus{
+		CurrentLine: "CN2 GT", State: "switched", CandidateLine: "CN2 GIA", CandidateCount: 1,
+		LastChangedAt: &changedAt, LastNotifiedAt: &lastNotifiedAt,
+	}
+
+	if event := applyReturnRouteObservation(&status, task, returnRouteLineCN2Pending, now); event != nil {
+		t.Fatalf("pending observation created an event: %#v", event)
+	}
+	if status.CurrentLine != "CN2 GT" || status.State != "switched" || status.CandidateLine != returnRouteLineCN2Pending || status.CandidateCount != 0 {
+		t.Fatalf("pending observation changed confirmed state: %#v", status)
+	}
+	if status.LastChangedAt == nil || !status.LastChangedAt.Equal(changedAt) {
+		t.Fatalf("pending observation changed last transition time: %#v", status.LastChangedAt)
+	}
+	if shouldSendReturnRouteRepeatNotificationAfterObservation(task, status, returnRouteLineCN2Pending, now) {
+		t.Fatal("pending observation triggered a repeated switch notification")
+	}
+
+	empty := models.ReturnRouteStatus{}
+	applyReturnRouteObservation(&empty, task, returnRouteLineCN2Pending, now)
+	if empty.State != "unknown" || empty.CurrentLine != "" || empty.CandidateCount != 0 {
+		t.Fatalf("pending observation established an unconfirmed baseline: %#v", empty)
+	}
+}
+
 func TestBuildReturnRouteRepeatNotificationOnlyWhileSwitched(t *testing.T) {
 	task := models.ReturnRouteTask{
 		Id: 7, Client: "node", Name: "route", Carrier: "telecom", Region: "华东",
@@ -307,6 +657,13 @@ func TestQueryReturnRouteTasksFiltersAndPaginates(t *testing.T) {
 	}
 	if len(result.Statuses) != 1 || result.Statuses[0].State != "switched" {
 		t.Fatalf("filtered statuses = %#v", result.Statuses)
+	}
+	exact, err := queryReturnRouteTasks(db, ReturnRouteTaskQuery{TaskID: tasks[1].Id})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exact.Total != 1 || len(exact.Tasks) != 1 || exact.Tasks[0].Id != tasks[1].Id {
+		t.Fatalf("exact task filter = %#v, total=%d", exact.Tasks, exact.Total)
 	}
 
 	page, err := queryReturnRouteTasks(db, ReturnRouteTaskQuery{Page: 2, PageSize: 1})

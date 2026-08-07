@@ -50,6 +50,22 @@ func TestDashboardModuleCacheCoalescesConcurrentLoads(t *testing.T) {
 	assert.Equal(t, int32(1), calls.Load())
 }
 
+func TestDashboardBillingAlertTitleIncludesExpiredAndUpcomingStates(t *testing.T) {
+	now := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+	assert.Equal(t, "3 days left", dashboardBillingAlertTitle(now.Add(72*time.Hour), now))
+	assert.Equal(t, "expired 1 days", dashboardBillingAlertTitle(now.Add(-12*time.Hour), now))
+}
+
+func TestDashboardLatestAlertKeepsExactNavigationTarget(t *testing.T) {
+	now := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+	var summary dashboardAlertSummary
+	setDashboardLatest(&summary, "loss", "node", "node-uuid", 7, "ping", now)
+	require.NotNil(t, summary.LatestAlert)
+	assert.Equal(t, "node-uuid", summary.LatestAlert.NodeUUID)
+	assert.Equal(t, uint(7), summary.LatestAlert.TaskID)
+	assert.Equal(t, "ping", summary.LatestAlert.TaskName)
+}
+
 func TestDashboardModuleCacheHonorsFifteenSecondRefresh(t *testing.T) {
 	var cache dashboardModuleCache[int]
 	var calls atomic.Int32
