@@ -192,7 +192,7 @@ func TestClassifyCN2UsesOrderedCarrierSegments(t *testing.T) {
 			want: "CN2 GT",
 		},
 		{
-			name: "hidden hops between CN2 and a visible 163 segment are GT",
+			name: "one terminal 202.97 handoff followed by local access is GIA",
 			hops: []returnRouteSignature{
 				{hidden: true},
 				{ip: "10.110.193.1"},
@@ -207,7 +207,36 @@ func TestClassifyCN2UsesOrderedCarrierSegments(t *testing.T) {
 				{hidden: true},
 				{ip: "183.131.147.4", asn: 4134},
 			},
-			want: "CN2 GT",
+			want: "CN2 GIA",
+		},
+		{
+			name: "one terminal 202.97 handoff without visible access remains pending",
+			hops: []returnRouteSignature{
+				{ip: "218.30.48.73", asn: 4134},
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "59.43.138.57", asn: 4809},
+				{ip: "59.43.80.145", asn: 4809},
+				{ip: "202.97.23.230", asn: 4134},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "one terminal 202.97 handoff and one visible access hop is GIA",
+			hops: []returnRouteSignature{
+				{hidden: true},
+				{ip: "10.110.193.1"},
+				{ip: "218.30.48.73", asn: 4134},
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "59.43.138.57", asn: 4809},
+				{ip: "59.43.80.145", asn: 4809},
+				{ip: "202.97.23.230", asn: 4134},
+				{ip: "60.191.202.154", asn: 4134},
+				{hidden: true},
+				{hidden: true},
+			},
+			want: "CN2 GIA",
 		},
 		{
 			name: "CN2 prefix works without ASN lookup",

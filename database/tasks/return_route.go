@@ -893,7 +893,8 @@ func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *
 	}
 	cn2Count := 0
 	firstTelecomAfterCN2 := -1
-	telecomTransitCount := 0
+	first163BackboneAfterCN2 := -1
+	telecom163BackboneCount := 0
 	for index := firstCN2; index < len(hops); index++ {
 		hop := hops[index]
 		if rules.hasSignature("cn2_backbone", hop) {
@@ -903,20 +904,34 @@ func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *
 			if firstTelecomAfterCN2 < 0 {
 				firstTelecomAfterCN2 = index
 			}
-			if index < len(hops)-1 {
-				telecomTransitCount++
+			if isTelecom163BackboneCandidate(hop, rules) {
+				if first163BackboneAfterCN2 < 0 {
+					first163BackboneAfterCN2 = index
+				}
+				telecom163BackboneCount++
 			}
 		}
 	}
 
-	if telecomTransitCount >= 2 && !hasCN2BackboneAfter(hops, firstTelecomAfterCN2, rules) {
+	if telecom163BackboneCount >= 2 && !hasCN2BackboneAfter(hops, first163BackboneAfterCN2, rules) {
 		return "CN2 GT", rules.document.Confidence["cn2_gt_strong"], true
 	}
 	if firstTelecomAfterCN2 >= 0 {
 		// A single final AS4134 hop is the target access network, not a
 		// domestic 163 transit segment. Require multiple CN2 hops so an
 		// incomplete one-hop observation still remains pending.
-		if firstTelecomAfterCN2 == len(hops)-1 && cn2Count >= 2 {
+		if firstTelecomAfterCN2 == len(hops)-1 && cn2Count >= 2 && telecom163BackboneCount == 0 {
+			return "CN2 GIA", rules.document.Confidence["cn2_gia"], true
+		}
+		// A single 202.97 backbone handoff at the end of a sustained CN2
+		// segment is a local delivery pattern when the remaining visible hops
+		// stay inside China Telecom. Do not count provincial access prefixes as
+		// additional 163 backbone transit nodes.
+		if cn2Count >= 2 &&
+			telecom163BackboneCount == 1 &&
+			first163BackboneAfterCN2 < len(hops)-1 &&
+			!hasCN2BackboneAfter(hops, first163BackboneAfterCN2, rules) &&
+			allTelecomHopsAfter(hops, first163BackboneAfterCN2, rules) {
 			return "CN2 GIA", rules.document.Confidence["cn2_gia"], true
 		}
 		return returnRouteLineCN2Pending, pendingConfidence, true
@@ -925,6 +940,22 @@ func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *
 		return "CN2 GIA", rules.document.Confidence["cn2_gia"], true
 	}
 	return returnRouteLineCN2Pending, pendingConfidence, true
+}
+
+func isTelecom163BackboneCandidate(hop returnRouteSignature, rules *compiledReturnRouteRules) bool {
+	ip := net.ParseIP(strings.TrimSpace(hop.ip)).To4()
+	return ip != nil &&
+		ip[0] == 202 && ip[1] == 97 &&
+		(rules.hasPrefix("telecom_163", hop.ip) || rules.hasASN("telecom_163", hop.asn))
+}
+
+func allTelecomHopsAfter(hops []returnRouteSignature, index int, rules *compiledReturnRouteRules) bool {
+	for i := index + 1; i < len(hops); i++ {
+		if !rules.hasSignature("telecom_163", hops[i]) {
+			return false
+		}
+	}
+	return index+1 < len(hops)
 }
 
 func hasUnicomReturnRouteGroup(hops []returnRouteSignature, rules *compiledReturnRouteRules, group string) bool {
