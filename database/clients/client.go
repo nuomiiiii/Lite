@@ -298,13 +298,7 @@ func CreateClient() (clientUUID, token string, err error) {
 	token = utils.GenerateToken()
 	clientUUID = uuid.New().String()
 
-	client := models.Client{
-		UUID:      clientUUID,
-		Token:     token,
-		Name:      "client_" + clientUUID[0:8],
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
-	}
+	client := newClient(clientUUID, token, "client_"+clientUUID[0:8], time.Now().UTC())
 
 	err = db.Create(&client).Error
 	if err != nil {
@@ -323,13 +317,7 @@ func CreateClientWithName(name string) (clientUUID, token string, err error) {
 	db := dbcore.GetDBInstance()
 	token = utils.GenerateToken()
 	clientUUID = uuid.New().String()
-	client := models.Client{
-		UUID:      clientUUID,
-		Token:     token,
-		Name:      name,
-		CreatedAt: time.Now().UTC(),
-		UpdatedAt: time.Now().UTC(),
-	}
+	client := newClient(clientUUID, token, name, time.Now().UTC())
 
 	err = db.Create(&client).Error
 	if err != nil {
@@ -339,6 +327,17 @@ func CreateClientWithName(name string) (clientUUID, token string, err error) {
 		logger.ErrorArgs("clients", "Failed to apply default-on ping tasks to new client:", err)
 	}
 	return clientUUID, token, nil
+}
+
+func newClient(clientUUID, token, name string, now time.Time) models.Client {
+	return models.Client{
+		UUID:             clientUUID,
+		Token:            token,
+		Name:             name,
+		TrafficLimitType: "sum",
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
 }
 
 /*

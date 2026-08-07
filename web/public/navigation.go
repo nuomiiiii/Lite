@@ -6,14 +6,12 @@ import (
 	"path"
 	"strconv"
 	"strings"
-	"unicode/utf16"
 
 	"github.com/komari-monitor/komari/pkg/config"
 )
 
 const (
 	themeServerUUIDPlaceholder = "{uuid}"
-	themeServerIDPlaceholder   = "{id}"
 )
 
 type ThemeNavigation struct {
@@ -43,11 +41,7 @@ func (navigation ThemeNavigation) ServerDetailURL(uuid string, taskID uint) stri
 		return "/"
 	}
 	target := navigation.serverDetailTemplate
-	if strings.Contains(target, themeServerUUIDPlaceholder) {
-		target = strings.Replace(target, themeServerUUIDPlaceholder, url.PathEscape(uuid), 1)
-	} else {
-		target = strings.Replace(target, themeServerIDPlaceholder, strconv.FormatUint(uint64(themeServerNumericID(uuid)), 10), 1)
-	}
+	target = strings.Replace(target, themeServerUUIDPlaceholder, url.PathEscape(uuid), 1)
 	parsed, err := url.Parse(target)
 	if err != nil {
 		return "/"
@@ -92,27 +86,18 @@ func bundledThemeNavigation(themeID string) ThemeNavigation {
 }
 
 func validThemeServerDetailTemplate(template string) bool {
-	placeholderCount := strings.Count(template, themeServerUUIDPlaceholder) + strings.Count(template, themeServerIDPlaceholder)
-	if placeholderCount != 1 || strings.Contains(template, "\\") {
+	if strings.Count(template, themeServerUUIDPlaceholder) != 1 || strings.Contains(template, "\\") {
 		return false
 	}
 	probe := strings.Replace(template, themeServerUUIDPlaceholder, "node", 1)
-	probe = strings.Replace(probe, themeServerIDPlaceholder, "123", 1)
+	if strings.ContainsAny(probe, "{}") {
+		return false
+	}
 	parsed, err := url.Parse(probe)
 	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return false
 	}
 	return strings.HasPrefix(parsed.Path, "/") && path.Clean(parsed.Path) == parsed.Path
-}
-
-// themeServerNumericID matches the unsigned 32-bit JavaScript hash used by
-// legacy Nezha-style themes for their numeric server route.
-func themeServerNumericID(uuid string) uint32 {
-	var hash uint32
-	for _, codeUnit := range utf16.Encode([]rune(uuid)) {
-		hash = uint32(codeUnit) + (hash << 5) - hash
-	}
-	return hash
 }
 
 func validThemeQueryParameter(parameter string) bool {
