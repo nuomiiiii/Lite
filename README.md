@@ -14,7 +14,7 @@ Komari Lite 是一款轻量、自托管的服务器监控与运维管理工具�
 **当前正式版：[`2.2.1`](https://github.com/nuomiiiii/komari/releases/tag/2.2.1)**
 
 > [!IMPORTANT]
-> 从 `2.2.1` 开始，系统 Web UI 与公开大屏主题已经解耦：Komari Web 只负责管理后台、远程终端等系统页面，主题只影响公开大屏。默认集成的 Nezha 主题可独立更新，并可在已有其他可用主题时删除；主题管理始终要求至少保留一个可用主题。原经典主题已拆分为独立的 [komari-Classic](https://github.com/nuomiiiii/komari-Classic)，不再随 Komari Lite 内置。
+> 从 `2.2.1` 开始，系统 Web UI 与公开大屏主题已经解耦：Komari Lite Web 只负责管理后台、远程终端等系统页面，主题只影响公开大屏。默认集成的 Nezha 主题可独立更新，并可在已有其他可用主题时删除；主题管理始终要求至少保留一个可用主题。原经典主题已拆分为独立的 [komari-Classic](https://github.com/nuomiiiii/komari-Classic)，不再随 Komari Lite 内置。
 
 [快速开始](#快速开始) · [功能概览](#功能概览) · [升级说明](#从旧版本升级) · [Agent](#agent-与远程管理) · [完整更新日志](https://github.com/nuomiiiii/komari/releases)
 
@@ -28,7 +28,7 @@ Komari Lite 是一款轻量、自托管的服务器监控与运维管理工具�
 - **刷新和返回不再整页闪烁**：仪表盘按管理员账号、模块组合和 Top 数量保存最长 10 分钟的会话快照。刷新页面或从公开大屏返回时先恢复上一帧完整内容，再在后台静默更新；请求失败时继续保留已有数据。
 - **刷新周期更灵活**：“实时概览刷新”和“历史图表刷新”默认均为 `30s`。实时概览新增 `15s`，历史图表支持 `15s / 30s / 60s / 120s`；在线状态和资源排行跟随实时周期，流量、时延、抖动和丢包排行跟随历史周期。
 - **查询与历史数据更稳妥**：优化仪表盘和公开大屏的数据处理，修正历史指标清理逻辑，减少重复查询和临时内存占用；公开接口继续保持现有 JSON 结构、时间顺序、标签、空数据填充和权限过滤，第三方主题无需适配批量查询。
-- **主题与系统界面彻底解耦**：主题仅控制公开大屏，管理后台和远程终端由 Komari Web 独立控制；补齐最后一个主题保护，并修复 Logo、国家或地区图标及其他静态资源在不同部署路径下缺失的问题。
+- **主题与系统界面彻底解耦**：主题仅控制公开大屏，管理后台和远程终端由 Komari Lite Web 独立控制；补齐最后一个主题保护，并修复 Logo、国家或地区图标及其他静态资源在不同部署路径下缺失的问题。
 - **设置和交互继续完善**：新节点首次编辑时默认选择“总和”流量统计方式，不迁移或覆盖已有节点配置；远程终端节点卡片支持整卡点击并在新分页打开，同时修复仪表盘三列对齐、长流量刻度裁切、初始化跳转、404 提示和 HTTPS 生命周期状态等问题。
 
 ## 功能概览
@@ -146,15 +146,15 @@ go build -o komari
 ./komari server -l 0.0.0.0:25774
 ```
 
-正式构建会将 [nuomiiiii/komari-web](https://github.com/nuomiiiii/komari-web) 作为独立系统 UI 构建，并把产物放入 `web/public/systemUI/dist`；公开大屏主题则保存在独立的主题目录中。正式版本必须使用与 Komari Lite 相同版本的 Komari Web 标签，可参考仓库内的 GitHub Actions 构建流程。
+正式构建会将 [Komari Lite Web](https://github.com/nuomiiiii/komari-web) 作为独立系统 UI 构建，并把产物放入 `web/public/systemUI/dist`；公开大屏主题则保存在独立的主题目录中。正式版本必须使用与 Komari Lite 相同版本的 Komari Lite Web 标签，可参考仓库内的 GitHub Actions 构建流程。
 
 ## 相关链接
 
 - [版本发布与完整更新日志](https://github.com/nuomiiiii/komari/releases)
 - [Komari Lite 文档](https://nuomiiiii.github.io/komari-document/)
 - [Telegram 群组](https://t.me/komari_lite)
-- [Komari Agent](https://github.com/nuomiiiii/komari-agent)
-- [Komari Web](https://github.com/nuomiiiii/komari-web)
+- [Komari Lite Agent](https://github.com/nuomiiiii/komari-agent)
+- [Komari Lite Web](https://github.com/nuomiiiii/komari-web)
 - [Nezha 主题](https://github.com/nuomiiiii/nezha)
 - [上游 Komari](https://github.com/komari-monitor/komari)
 
