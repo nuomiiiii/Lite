@@ -33,10 +33,6 @@ func RunServer() {
 		_ = app.Shutdown()
 		logger.Fatalf("server", "server startup failed at %q: %v", "bootstrap", err)
 	}
-	if err := app.SeedSimulationBase(); err != nil {
-		_ = app.Shutdown()
-		logger.Fatalf("server", "server startup failed at %q: %v", "seed-local-simulation", err)
-	}
 
 	installRequired, err := app.InstallRequired()
 	if err != nil {
@@ -93,7 +89,6 @@ func RunServer() {
 	}
 	stages := []stage{
 		{"init-stores", app.InitStores},
-		{"init-local-simulation", app.InitSimulation},
 		{"init-providers", app.InitProviders},
 		{"start-background", app.StartBackground},
 		{"build-router", app.BuildRouter},
