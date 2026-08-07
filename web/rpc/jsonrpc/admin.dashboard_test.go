@@ -2,6 +2,8 @@ package jsonrpc
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -9,9 +11,12 @@ import (
 
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/trafficledger"
+	"github.com/komari-monitor/komari/pkg/config"
 	"github.com/komari-monitor/komari/pkg/metric"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestDashboardModuleCacheCoalescesConcurrentLoads(t *testing.T) {
@@ -42,6 +47,69 @@ func TestDashboardModuleCacheCoalescesConcurrentLoads(t *testing.T) {
 		assert.Equal(t, 42, result)
 	}
 	assert.Equal(t, int32(1), calls.Load())
+}
+
+func TestDashboardNavigationFollowsThirdPartyThemeManifest(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	config.SetDb(db)
+
+	themeDir := filepath.Join("data", "theme", "third-party")
+	require.NoError(t, os.MkdirAll(themeDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(themeDir, "komari-theme.json"),
+		[]byte(`{"navigation":{"server_detail":"/nodes/{id}","ping_task_parameter":"task"}}`),
+		0o644,
+	))
+	require.NoError(t, config.Set(config.ThemeKey, "third-party"))
+
+	const uuid = "node-a"
+	const detailURL = "/nodes/3254795094"
+	charts := decorateDashboardNavigation(dashboardChartsResponse{
+		Traffic: dashboardTrafficSummary{Ranking: []dashboardTrafficRankItem{{UUID: uuid}}},
+		Latency: dashboardLatencySummary{
+			Ranking:       []dashboardLatencyRankItem{{UUID: uuid, TaskID: 5}},
+			JitterRanking: []dashboardLatencyJitterRankItem{{UUID: uuid, TaskID: 6}},
+		},
+		PacketLoss: dashboardPacketLossSummary{Ranking: []dashboardPacketLossRankItem{{UUID: uuid, TaskID: 7}}},
+	})
+	assert.Equal(t, detailURL, charts.Traffic.Ranking[0].DetailURL)
+	assert.Equal(t, detailURL+"?task=5", charts.Latency.Ranking[0].DetailURL)
+	assert.Equal(t, detailURL+"?task=6", charts.Latency.JitterRanking[0].DetailURL)
+	assert.Equal(t, detailURL+"?task=7", charts.PacketLoss.Ranking[0].DetailURL)
+
+	summary := decorateDashboardSummaryNavigation(dashboardResponse{Resources: dashboardResourceSummary{
+		CPU:    []dashboardResourceRankItem{{UUID: uuid}},
+		Memory: []dashboardResourceRankItem{{UUID: uuid}},
+		Disk:   []dashboardResourceRankItem{{UUID: uuid}},
+	}})
+	assert.Equal(t, detailURL, summary.Resources.CPU[0].DetailURL)
+	assert.Equal(t, detailURL, summary.Resources.Memory[0].DetailURL)
+	assert.Equal(t, detailURL, summary.Resources.Disk[0].DetailURL)
+
+	// Themes published before navigation metadata existed keep Komari's
+	// traditional UUID detail route and do not receive an unknown task query.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(themeDir, "komari-theme.json"),
+		[]byte(`{"name":"Legacy third-party theme"}`),
+		0o644,
+	))
+	legacy := decorateDashboardNavigation(dashboardChartsResponse{
+		Latency:    dashboardLatencySummary{Ranking: []dashboardLatencyRankItem{{UUID: uuid, TaskID: 5}}},
+		PacketLoss: dashboardPacketLossSummary{Ranking: []dashboardPacketLossRankItem{{UUID: uuid, TaskID: 7}}},
+	})
+	assert.Equal(t, "/instance/node-a", legacy.Latency.Ranking[0].DetailURL)
+	assert.Equal(t, "/instance/node-a", legacy.PacketLoss.Ranking[0].DetailURL)
+}
+
+func TestDashboardPreferredPingTaskIDUsesTaskWeightOrder(t *testing.T) {
+	tasks := []models.PingTask{
+		{Id: 9, Clients: models.StringArray{"node-a"}, Weight: 1},
+		{Id: 3, Clients: models.StringArray{"node-a"}, Weight: 2},
+	}
+	assert.Equal(t, uint(9), dashboardPreferredPingTaskID("node-a", map[uint]struct{}{3: {}, 9: {}}, tasks))
+	assert.Zero(t, dashboardPreferredPingTaskID("node-b", map[uint]struct{}{3: {}, 9: {}}, tasks))
 }
 
 func TestBuildDashboardStorageUsesNewestCompactionTime(t *testing.T) {

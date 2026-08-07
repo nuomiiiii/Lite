@@ -2,6 +2,11 @@ name: Publish Snapshot
 
 on:
   workflow_dispatch:
+    inputs:
+      existing_tag:
+        description: Existing snapshot tag to update in place; leave empty to create a new snapshot
+        required: false
+        type: string
   push:
     branches:
       - Snapshot
@@ -55,7 +60,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          snapshot_tag="Snapshot-$(date -u -d '+8 hours' +%y%m%d%H%M)"
+          snapshot_tag="${{ inputs.existing_tag }}"
+          if [ -n "${snapshot_tag}" ]; then
+            [[ "${snapshot_tag}" =~ ^Snapshot-[0-9]{10}$ ]] || {
+              echo "Invalid existing snapshot tag: ${snapshot_tag}" >&2
+              exit 1
+            }
+          else
+            snapshot_tag="Snapshot-$(date -u -d '+8 hours' +%y%m%d%H%M)"
+          fi
           echo "snapshot_tag=${snapshot_tag}" >> "${GITHUB_OUTPUT}"
           echo "app_version=${snapshot_tag}" >> "${GITHUB_OUTPUT}"
           echo "Snapshot tag: ${snapshot_tag}"
@@ -276,10 +289,15 @@ jobs:
           version_hash="${GITHUB_SHA::7}"
           release_notes="$(<.github/release-notes/snapshot.md)"
           release_notes="${release_notes//__RELEASE_TIME__/${release_time}}"
+          release_notes="${release_notes//__UPDATE_TIME__/${release_time}}"
           release_notes="${release_notes//__VERSION_HASH__/${version_hash}}"
           release_notes="${release_notes//__APP_VERSION__/${APP_VERSION}}"
 
           if gh release view "${SNAPSHOT_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" \
+              -f sha="${GITHUB_SHA}" \
+              -F force=true
             gh release edit "${SNAPSHOT_TAG}" \
               --repo "${GITHUB_REPOSITORY}" \
               --title "${SNAPSHOT_TAG}" \

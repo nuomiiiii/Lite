@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ type dashboardLatencyRankItem struct {
 	UUID      string  `json:"uuid"`
 	Name      string  `json:"name"`
 	Average   float64 `json:"average"`
+	TaskID    uint    `json:"task_id,omitempty"`
 	DetailURL string  `json:"detail_url,omitempty"`
 }
 
@@ -41,6 +43,7 @@ type dashboardLatencyJitterRankItem struct {
 	Previous  float64 `json:"previous"`
 	Current   float64 `json:"current"`
 	Delta     float64 `json:"delta"`
+	TaskID    uint    `json:"task_id,omitempty"`
 	DetailURL string  `json:"detail_url,omitempty"`
 }
 
@@ -51,7 +54,8 @@ type dashboardLatencyBucket struct {
 
 func loadDashboardLatency(ctx context.Context, clientList []models.Client, now time.Time, rankingLimit int) (dashboardLatencySummary, error) {
 	result := dashboardLatencySummary{}
-	if pingTasks, err := dbtasks.GetAllPingTasks(); err == nil {
+	pingTasks, pingTasksErr := dbtasks.GetAllPingTasks()
+	if pingTasksErr == nil {
 		result.Targets = len(pingTasks)
 	}
 	store := metricstore.GetStore()
@@ -81,6 +85,7 @@ func loadDashboardLatency(ctx context.Context, clientList []models.Client, now t
 	}
 	buckets := make(map[time.Time]dashboardLatencyBucket)
 	nodeBuckets := make(map[string]dashboardLatencyBucket, len(clientList))
+	nodeTaskIDs := make(map[string]map[uint]struct{}, len(clientList))
 	for _, point := range series {
 		if point.Count <= 0 || point.Value < 0 {
 			continue
@@ -98,6 +103,12 @@ func loadDashboardLatency(ctx context.Context, clientList []models.Client, now t
 		node.Sum += weighted
 		node.Count += point.Count
 		nodeBuckets[point.EntityID] = node
+		if taskID, ok := dashboardLatencyTaskID(point); ok {
+			if nodeTaskIDs[point.EntityID] == nil {
+				nodeTaskIDs[point.EntityID] = make(map[uint]struct{})
+			}
+			nodeTaskIDs[point.EntityID][taskID] = struct{}{}
+		}
 	}
 	for _, client := range clientList {
 		node := nodeBuckets[client.UUID]
@@ -110,6 +121,7 @@ func loadDashboardLatency(ctx context.Context, clientList []models.Client, now t
 		}
 		result.Ranking = dashboardTopLatency(result.Ranking, dashboardLatencyRankItem{
 			UUID: client.UUID, Name: name, Average: node.Sum / float64(node.Count),
+			TaskID: dashboardPreferredPingTaskID(client.UUID, nodeTaskIDs[client.UUID], pingTasks),
 		}, rankingLimit)
 	}
 
@@ -180,10 +192,20 @@ func loadDashboardLatencyJitter(ctx context.Context, clientList []models.Client,
 	if err != nil {
 		return nil, fmt.Errorf("query two-minute latency window: %w", err)
 	}
+	pingTasks, _ := dbtasks.GetAllPingTasks()
 
 	pointsByClient := make(map[string][]metric.AggregatePoint, len(clientList))
+	nodeTaskIDs := make(map[string]map[uint]struct{}, len(clientList))
 	for _, point := range series {
 		pointsByClient[point.EntityID] = append(pointsByClient[point.EntityID], point)
+		if point.Count > 0 && point.Value >= 0 {
+			if taskID, ok := dashboardLatencyTaskID(point); ok {
+				if nodeTaskIDs[point.EntityID] == nil {
+					nodeTaskIDs[point.EntityID] = make(map[uint]struct{})
+				}
+				nodeTaskIDs[point.EntityID][taskID] = struct{}{}
+			}
+		}
 	}
 	result := make([]dashboardLatencyJitterRankItem, 0, rankingLimit)
 	for _, client := range clientList {
@@ -198,9 +220,24 @@ func loadDashboardLatencyJitter(ctx context.Context, clientList []models.Client,
 		}
 		result = dashboardTopLatencyJitter(result, dashboardLatencyJitterRankItem{
 			UUID: client.UUID, Name: name, Previous: previous, Current: current, Delta: current - previous,
+			TaskID: dashboardPreferredPingTaskID(client.UUID, nodeTaskIDs[client.UUID], pingTasks),
 		}, rankingLimit)
 	}
 	return result, nil
+}
+
+func dashboardLatencyTaskID(point metric.AggregatePoint) (uint, bool) {
+	value, err := strconv.ParseUint(strings.TrimSpace(point.Tags["task_id"]), 10, 64)
+	return uint(value), err == nil && value > 0
+}
+
+func dashboardPreferredPingTaskID(clientUUID string, validTaskIDs map[uint]struct{}, tasks []models.PingTask) uint {
+	for _, task := range tasks {
+		if _, ok := validTaskIDs[task.Id]; ok && task.AppliesToClient(clientUUID) {
+			return task.Id
+		}
+	}
+	return 0
 }
 
 func dashboardLatencyMinuteAverages(points []metric.AggregatePoint, previousMinute, currentMinute time.Time) (float64, float64, bool) {

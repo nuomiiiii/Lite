@@ -48,6 +48,8 @@ const (
 
 const themeBundleMigrationKey = "theme_bundle_migration_v1"
 
+const currentThemeBundleMigration = 2
+
 const themeChangeReloadScript = `<script>(()=>{window.addEventListener("storage",(event)=>{if(event.key==="komari-active-theme-changed"){window.location.reload();}});})();</script>`
 
 const documentTitleSyncMarker = "data-komari-title-sync"
@@ -264,7 +266,11 @@ func IsLocalThemeUsable(themeID string) bool {
 }
 
 func installEmbeddedTheme(root, themeID string) error {
-	if IsLocalThemeUsable(themeID) {
+	return installEmbeddedThemeWithReplace(root, themeID, false)
+}
+
+func installEmbeddedThemeWithReplace(root, themeID string, replace bool) error {
+	if !replace && IsLocalThemeUsable(themeID) {
 		return nil
 	}
 	themesDir := filepath.Join(DataDir, ThemesDir)
@@ -356,6 +362,15 @@ func EnsureBundledThemes() error {
 			return fmt.Errorf("install bundled Nezha theme: %w", err)
 		}
 	}
+	// The first decoupled snapshot installed Nezha as a managed theme but did
+	// not refresh that copy on later Komari upgrades. Replace an existing copy
+	// once so deployments do not keep an old router/API bundle indefinitely.
+	// A user who deleted Nezha and selected another theme keeps that choice.
+	if migrated >= 1 && migrated < currentThemeBundleMigration && IsLocalThemeUsable(DefaultTheme) {
+		if err := installEmbeddedThemeWithReplace("bundledThemes/nezha", DefaultTheme, true); err != nil {
+			return fmt.Errorf("refresh bundled Nezha theme: %w", err)
+		}
+	}
 	if !IsLocalThemeUsable(currentTheme) {
 		currentTheme = localThemeFallback()
 		if currentTheme == "" {
@@ -367,7 +382,7 @@ func EnsureBundledThemes() error {
 	}
 	return config.SetMany(map[string]any{
 		config.ThemeKey:         currentTheme,
-		themeBundleMigrationKey: 1,
+		themeBundleMigrationKey: currentThemeBundleMigration,
 	})
 }
 

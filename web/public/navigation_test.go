@@ -14,12 +14,23 @@ func TestThemeNavigationBuildsSafeServerAndTaskURL(t *testing.T) {
 	}
 }
 
+func TestThemeNavigationSupportsLegacyNumericServerRoute(t *testing.T) {
+	navigation, ok := parseThemeNavigation([]byte(`{"navigation":{"server_detail":"/server/{id}"}}`))
+	if !ok {
+		t.Fatal("valid numeric theme navigation was rejected")
+	}
+	if got := navigation.ServerDetailURL("node-a", 0); got != "/server/3254795094" {
+		t.Fatalf("numeric server detail URL = %q", got)
+	}
+}
+
 func TestThemeNavigationRejectsExternalAndTraversalRoutes(t *testing.T) {
 	for _, route := range []string{
 		"https://example.com/server/{uuid}",
 		"/server/../{uuid}",
 		"//example.com/{uuid}",
 		"/server/static",
+		"/server/{uuid}/{id}",
 	} {
 		manifest := []byte(`{"navigation":{"server_detail":"` + route + `"}}`)
 		if _, ok := parseThemeNavigation(manifest); ok {
@@ -35,7 +46,7 @@ func TestBundledThemeNavigationKeepsBothDetailRoutes(t *testing.T) {
 	if got := bundledThemeNavigation(ClassicTheme).ServerDetailURL("node-a", 9); got != "/instance/node-a" {
 		t.Fatalf("classic detail URL = %q", got)
 	}
-	if got := bundledThemeNavigation("unknown").ServerDetailURL("node-a", 9); got != "/" {
-		t.Fatalf("unknown theme detail URL = %q", got)
+	if got := bundledThemeNavigation("unknown").ServerDetailURL("node-a", 9); got != "/instance/node-a" {
+		t.Fatalf("legacy third-party theme detail URL = %q", got)
 	}
 }

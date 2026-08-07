@@ -321,6 +321,98 @@ func TestEnsureBundledThemesRepairsRestoreWithoutThemeFiles(t *testing.T) {
 	}
 }
 
+func TestEnsureBundledThemesRefreshesExistingNezhaOnce(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+
+	staleDir := filepath.Join(DataDir, ThemesDir, DefaultTheme, DistDir)
+	if err := os.MkdirAll(staleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(DataDir, ThemesDir, DefaultTheme, "komari-theme.json"), []byte(`{"short":"nezha"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staleDir, IndexFile), []byte("stale-theme-index"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SetMany(map[string]any{
+		config.ThemeKey:         DefaultTheme,
+		themeBundleMigrationKey: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureBundledThemes(); err != nil {
+		t.Fatal(err)
+	}
+	index, err := os.ReadFile(filepath.Join(staleDir, IndexFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(index) == "stale-theme-index" {
+		t.Fatal("existing Nezha theme was not refreshed")
+	}
+	migration, err := config.GetAs[int](themeBundleMigrationKey, 0)
+	if err != nil || migration != currentThemeBundleMigration {
+		t.Fatalf("theme bundle migration = %d, err=%v", migration, err)
+	}
+
+	if err := os.WriteFile(filepath.Join(staleDir, IndexFile), []byte("user-updated-after-migration"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureBundledThemes(); err != nil {
+		t.Fatal(err)
+	}
+	index, err = os.ReadFile(filepath.Join(staleDir, IndexFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(index) != "user-updated-after-migration" {
+		t.Fatal("completed migration overwrote a later user theme update")
+	}
+}
+
+func TestEnsureBundledThemesDoesNotReinstallDeletedNezha(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+
+	customDir := filepath.Join(DataDir, ThemesDir, "third-party", DistDir)
+	if err := os.MkdirAll(customDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(DataDir, ThemesDir, "third-party", "komari-theme.json"), []byte(`{"short":"third-party"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(customDir, IndexFile), []byte("third-party-theme"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SetMany(map[string]any{
+		config.ThemeKey:         "third-party",
+		themeBundleMigrationKey: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureBundledThemes(); err != nil {
+		t.Fatal(err)
+	}
+	if IsLocalThemeUsable(DefaultTheme) {
+		t.Fatal("deleted Nezha theme was reinstalled for a third-party active theme")
+	}
+	active, err := config.GetAs[string](config.ThemeKey)
+	if err != nil || active != "third-party" {
+		t.Fatalf("active theme = %q, err=%v", active, err)
+	}
+}
+
 func TestStaticKeepsSystemUIAndPublicThemeResourcesIsolated(t *testing.T) {
 	t.Chdir(t.TempDir())
 	gin.SetMode(gin.TestMode)
