@@ -53,6 +53,9 @@ type Config struct {
 	//
 	// ConnectTimeout 限制 Open 中首次 ping 数据库的时间。
 	ConnectTimeout time.Duration
+	// HeavyReadConcurrency bounds simultaneous historical batch scans for every
+	// backend. Zero keeps the compatibility default of one heavy scan at a time.
+	HeavyReadConcurrency int
 	// SQLite holds SQLite-specific options.
 	//
 	// SQLite 保存 SQLite 专用选项。
@@ -426,6 +429,15 @@ func WithSQLiteReadPool(n int) Option {
 func WithSQLiteHeavyReadConcurrency(n int) Option {
 	return func(c *Config) {
 		c.SQLite.HeavyReadConcurrency = n
+		c.HeavyReadConcurrency = n
+	}
+}
+
+// WithHeavyReadConcurrency limits simultaneous historical scans on every
+// backend. It does not split one scan into per-node goroutines.
+func WithHeavyReadConcurrency(n int) Option {
+	return func(c *Config) {
+		c.HeavyReadConcurrency = n
 	}
 }
 

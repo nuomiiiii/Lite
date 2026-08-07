@@ -17,7 +17,7 @@ func TestNormalizeDashboardSettingsDefaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, dashboardPresetOverview, normalized.Preset)
 	assert.Equal(t, 30, normalized.RefreshSeconds)
-	assert.Equal(t, 120, normalized.ChartRefreshSeconds)
+	assert.Equal(t, 30, normalized.ChartRefreshSeconds)
 	assert.Equal(t, 5, normalized.RankingLimit)
 	assert.Len(t, normalized.Modules, len(dashboardModuleOrder))
 	for _, module := range normalized.Modules {
@@ -39,11 +39,13 @@ func TestNormalizeDashboardSettingsPreservesOrderAndAppendsMissingModules(t *tes
 			{ID: dashboardModuleAlerts, Enabled: true},
 			{ID: dashboardModuleServerStatus, Enabled: true},
 		},
-		RefreshSeconds:      60,
-		ChartRefreshSeconds: 300,
+		RefreshSeconds:      15,
+		ChartRefreshSeconds: 15,
 		RankingLimit:        20,
 	}, true)
 	require.NoError(t, err)
+	assert.Equal(t, 15, normalized.RefreshSeconds)
+	assert.Equal(t, 15, normalized.ChartRefreshSeconds)
 	assert.Equal(t, 20, normalized.RankingLimit)
 	assert.Equal(t, dashboardModuleAlerts, normalized.Modules[0].ID)
 	assert.Equal(t, dashboardModuleServerStatus, normalized.Modules[1].ID)
@@ -72,6 +74,40 @@ func TestNormalizeDashboardSettingsRejectsUnsafeIntervals(t *testing.T) {
 		RefreshSeconds:      5,
 		ChartRefreshSeconds: 30,
 		RankingLimit:        100,
+	}, true)
+	require.Error(t, err)
+}
+
+func TestDashboardRefreshIntervalsAndLegacyChartMigration(t *testing.T) {
+	for _, value := range []int{15, 30, 60, 120} {
+		assert.True(t, dashboardRefreshAllowed(value), value)
+		assert.True(t, dashboardChartRefreshAllowed(value), value)
+	}
+	for _, value := range []int{0, 5, 300} {
+		assert.False(t, dashboardRefreshAllowed(value), value)
+		assert.False(t, dashboardChartRefreshAllowed(value), value)
+	}
+
+	legacy, err := normalizeDashboardSettings(dashboardSettings{
+		Preset: dashboardPresetCustom,
+		Modules: []dashboardModuleSetting{
+			{ID: dashboardModuleLatencyTrend, Enabled: true},
+		},
+		RefreshSeconds:      30,
+		ChartRefreshSeconds: 300,
+		RankingLimit:        5,
+	}, false)
+	require.NoError(t, err)
+	assert.Equal(t, 120, legacy.ChartRefreshSeconds)
+
+	_, err = normalizeDashboardSettings(dashboardSettings{
+		Preset: dashboardPresetCustom,
+		Modules: []dashboardModuleSetting{
+			{ID: dashboardModuleLatencyTrend, Enabled: true},
+		},
+		RefreshSeconds:      30,
+		ChartRefreshSeconds: 300,
+		RankingLimit:        5,
 	}, true)
 	require.Error(t, err)
 }
@@ -133,4 +169,9 @@ func TestParseDashboardSectionsDefaultsAndFilters(t *testing.T) {
 		"sections": "latency_jitter",
 	}})
 	assert.Equal(t, dashboardChartLatencyJitter, jitterSections)
+
+	packetLossSections, _ := parseDashboardChartRequest(&rpc.JsonRpcRequest{Params: map[string]any{
+		"sections": "packet_loss",
+	}})
+	assert.Equal(t, dashboardChartPacketLoss, packetLossSections)
 }

@@ -71,6 +71,21 @@ func (c *sqliteAxisCache) rollup(key sqliteAxisCacheKey) ([]sqliteV4RollupRecord
 	return append([]sqliteV4RollupRecord(nil), records...), true
 }
 
+// rollupView returns the immutable cached axis without copying it. Dashboard
+// summary decoding reads these fields into a local record and never mutates the
+// shared slice.
+func (c *sqliteAxisCache) rollupView(key sqliteAxisCacheKey) ([]sqliteV4RollupRecord, bool) {
+	if c == nil {
+		return nil, false
+	}
+	element, ok := c.items[key]
+	if !ok {
+		return nil, false
+	}
+	c.order.MoveToFront(element)
+	return element.Value.(*sqliteAxisCacheEntry).records, true
+}
+
 func (c *sqliteAxisCache) add(entry *sqliteAxisCacheEntry) {
 	if c == nil || entry == nil || entry.bytes <= 0 || entry.bytes > c.maxBytes {
 		return

@@ -1,6 +1,18 @@
 package admin
 
-import "testing"
+import (
+	"archive/zip"
+	"bytes"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+	"github.com/komari-monitor/komari/database/models"
+)
 
 // TestIsValidThemeShort_PathTraversal 防止 DeleteTheme/UpdateTheme/SetTheme
 // 的路径穿越漏洞：req.Short 直接进入 filepath.Join("./data/theme", short)，
@@ -43,5 +55,112 @@ func TestIsValidThemeShort_PathTraversal(t *testing.T) {
 		if !isValidThemeShort(in) {
 			t.Errorf("isValidThemeShort(%q) = false, want true (合法名称被误拒)", in)
 		}
+	}
+}
+
+func themeArchive(t *testing.T, files map[string]string) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	for name, content := range files {
+		entry, err := writer.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := entry.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
+}
+
+func TestUploadThemeAcceptsMultipartForm(t *testing.T) {
+	t.Chdir(t.TempDir())
+	archive := themeArchive(t, map[string]string{
+		"komari-theme.json": `{"name":"Uploaded","short":"uploaded","configuration":{"type":"managed","data":[]}}`,
+		"dist/index.html":   `<html><body>uploaded theme</body></html>`,
+	})
+
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	file, err := form.CreateFormFile("file", "uploaded.zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(archive); err != nil {
+		t.Fatal(err)
+	}
+	if err := form.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.PUT("/upload", UploadTheme)
+	request := httptest.NewRequest(http.MethodPut, "/upload", &body)
+	request.Header.Set("Content-Type", form.FormDataContentType())
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("upload status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join("data", "theme", "uploaded", "dist", "index.html")); err != nil {
+		t.Fatalf("uploaded theme was not installed: %v", err)
+	}
+}
+
+func TestFailedThemeUpdatePreservesExistingTheme(t *testing.T) {
+	t.Chdir(t.TempDir())
+	themeDir := filepath.Join("data", "theme", "existing")
+	if err := os.MkdirAll(filepath.Join(themeDir, "dist"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"Existing","short":"existing","configuration":{"type":"managed","data":[]}}`
+	if err := os.WriteFile(filepath.Join(themeDir, "komari-theme.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(themeDir, "dist", "index.html"), []byte("old theme"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	invalidArchive := themeArchive(t, map[string]string{
+		"komari-theme.json": manifest,
+		"dist/app.js":       "new but incomplete",
+	})
+	archivePath, err := temporaryThemeArchive(invalidArchive, "invalid-theme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(archivePath)
+	if _, err := extractAndValidateTheme(archivePath); err == nil {
+		t.Fatal("invalid update unexpectedly succeeded")
+	}
+	content, err := os.ReadFile(filepath.Join(themeDir, "dist", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "old theme" {
+		t.Fatalf("existing theme changed after failed update: %q", content)
+	}
+}
+
+func TestThemeDeletionFallbackRequiresAnotherTheme(t *testing.T) {
+	themes := []models.Theme{{Short: "nezha"}}
+	found, fallback := themeDeletionFallback(themes, "nezha")
+	if !found || fallback != "" {
+		t.Fatalf("single theme deletion plan = (%t, %q)", found, fallback)
+	}
+
+	themes = append(themes, models.Theme{Short: "komari-classic"})
+	found, fallback = themeDeletionFallback(themes, "nezha")
+	if !found || fallback != "komari-classic" {
+		t.Fatalf("fallback deletion plan = (%t, %q)", found, fallback)
+	}
+	if found, _ := themeDeletionFallback(themes, "missing"); found {
+		t.Fatal("missing theme was reported as installed")
 	}
 }

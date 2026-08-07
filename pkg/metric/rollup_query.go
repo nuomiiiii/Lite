@@ -105,9 +105,13 @@ func rollupGroupsToPoints(groups map[rollupKey]*rollupBucket, query AggregateQue
 		if !ok {
 			return nil, fmt.Errorf("%w: aggregation %q not supported over rollups", ErrInvalidArgument, query.Aggregation)
 		}
-		tags, err := rollupTagsFromJSON(b.tagsJSON)
-		if err != nil {
-			return nil, err
+		var tags map[string]string
+		if !query.OmitTags {
+			var err error
+			tags, err = rollupTagsFromJSON(b.tagsJSON)
+			if err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, AggregatePoint{
 			MetricName: query.MetricName,
@@ -128,7 +132,10 @@ func mergedRollupGroupsToPoints(groups map[rollupKey]*rollupBucket, query Aggreg
 	}
 	sortRollupKeys(keys)
 
-	tags := cloneStringMap(query.Tags)
+	var tags map[string]string
+	if !query.OmitTags {
+		tags = cloneStringMap(query.Tags)
+	}
 	out := make([]AggregatePoint, 0, len(keys))
 	for _, key := range keys {
 		b := groups[key]
@@ -136,13 +143,17 @@ func mergedRollupGroupsToPoints(groups map[rollupKey]*rollupBucket, query Aggreg
 		if !ok {
 			return nil, fmt.Errorf("%w: aggregation %q not supported over rollups", ErrInvalidArgument, query.Aggregation)
 		}
+		var pointTags map[string]string
+		if !query.OmitTags {
+			pointTags = cloneStringMap(tags)
+		}
 		out = append(out, AggregatePoint{
 			MetricName: query.MetricName,
 			EntityID:   query.EntityID,
 			Bucket:     time.Unix(0, key.bucket).UTC(),
 			Value:      v,
 			Count:      int(b.count),
-			Tags:       cloneStringMap(tags),
+			Tags:       pointTags,
 		})
 	}
 	return out, nil
@@ -312,20 +323,23 @@ func foldRollupRows(groups map[rollupKey]*rollupBucket, rows []storedRollup, int
 	if groups == nil {
 		groups = make(map[rollupKey]*rollupBucket)
 	}
-	size := interval.Nanoseconds()
 	for _, r := range rows {
-		bkt := floorDivNano(r.bucket, size)
-		key := foldedRollupKey(r.entityID, r.bucketData.tagsHash, bkt, preserveSeries)
-		b := groups[key]
-		if b == nil {
-			b = newRollupBucketWithDigest(comp, needDigest)
-			b.tagsHash = r.bucketData.tagsHash
-			b.tagsJSON = r.bucketData.tagsJSON
-			groups[key] = b
-		}
-		b.mergeStored(r.bucketData)
+		foldRollupRow(groups, r, interval, comp, preserveSeries, needDigest)
 	}
 	return groups
+}
+
+func foldRollupRow(groups map[rollupKey]*rollupBucket, row storedRollup, interval time.Duration, comp float64, preserveSeries, needDigest bool) {
+	bucketNano := floorDivNano(row.bucket, interval.Nanoseconds())
+	key := foldedRollupKey(row.entityID, row.bucketData.tagsHash, bucketNano, preserveSeries)
+	bucket := groups[key]
+	if bucket == nil {
+		bucket = newRollupBucketWithDigest(comp, needDigest)
+		bucket.tagsHash = row.bucketData.tagsHash
+		bucket.tagsJSON = row.bucketData.tagsJSON
+		groups[key] = bucket
+	}
+	bucket.mergeStored(row.bucketData)
 }
 
 // foldRawPoints folds raw points into interval-wide output buckets, adding each
@@ -599,8 +613,8 @@ func (s *Store) Series(ctx context.Context, query AggregateQuery, now time.Time)
 }
 
 // SeriesBatch evaluates related series under one bounded historical-read slot.
-// It preserves query order and the exact Series behavior for every item while
-// avoiding one admission cycle per metric on multi-series dashboard reads.
+// Compatible raw filters share QueryBatch, while multiple aggregations of the
+// same physical series share one bucket state.
 func (s *Store) SeriesBatch(ctx context.Context, queries []AggregateQuery, now time.Time) ([][]AggregatePoint, error) {
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
@@ -610,32 +624,16 @@ func (s *Store) SeriesBatch(ctx context.Context, queries []AggregateQuery, now t
 			return nil, err
 		}
 	}
-	if s.cfg.Driver == DriverSQLite {
-		select {
-		case s.heavyReadGate <- struct{}{}:
-			defer func() { <-s.heavyReadGate }()
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	if len(queries) == 0 {
+		return [][]AggregatePoint{}, nil
 	}
-
-	result := make([][]AggregatePoint, len(queries))
-	for index, query := range queries {
-		virtualLoss := s.sqlitePingMerged && query.MetricName == sqliteVirtualPingLossMetric
-		if virtualLoss {
-			query.MetricName = sqliteMergedPingLatencyMetric
-			query.Aggregation = pingLossPhysicalAggregation(query.Aggregation)
-		}
-		points, err := s.seriesPhysical(ctx, query, now)
-		if err != nil {
-			return nil, err
-		}
-		if virtualLoss {
-			points = restoreVirtualPingLossAggregates(points)
-		}
-		result[index] = points
+	select {
+	case s.heavyReadGate <- struct{}{}:
+		defer func() { <-s.heavyReadGate }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	return result, nil
+	return s.seriesBatchWithinGate(ctx, queries, now)
 }
 
 // SeriesSummary contains the aggregate views used by the ping statistics API.
@@ -657,68 +655,11 @@ type SeriesSummary struct {
 // migrated SQLite stores scan the merged physical series exactly once.
 func (s *Store) PingSeriesSummary(ctx context.Context, query AggregateQuery, now time.Time) (SeriesSummary, error) {
 	query.Aggregation = AggAvg
-	if err := s.ensureOpen(); err != nil {
-		return SeriesSummary{}, err
-	}
-	if err := query.Validate(); err != nil {
-		return SeriesSummary{}, err
-	}
-	if !s.sqlitePingMerged || query.MetricName != sqliteMergedPingLatencyMetric {
-		return s.pingSeriesSummaryCompatibility(ctx, query, now)
-	}
-
-	select {
-	case s.heavyReadGate <- struct{}{}:
-		defer func() { <-s.heavyReadGate }()
-	case <-ctx.Done():
-		return SeriesSummary{}, ctx.Err()
-	}
-
-	rawOnly, err := s.seriesPhysicalUsesOnlyRaw(ctx, query, now)
+	result, err := s.PingSeriesSummaryBatch(ctx, []AggregateQuery{query}, now)
 	if err != nil {
 		return SeriesSummary{}, err
 	}
-	if rawOnly {
-		return s.pingSeriesSummaryFromRaw(ctx, query)
-	}
-
-	groups, err := s.collectSeriesPhysicalGroups(ctx, query, now, true)
-	if err != nil {
-		return SeriesSummary{}, err
-	}
-	build := func(metricName string, aggregation Aggregation) ([]AggregatePoint, error) {
-		view := query
-		view.MetricName = metricName
-		view.Aggregation = aggregation
-		points, err := rollupGroupsToPoints(groups, view)
-		if err != nil {
-			return nil, err
-		}
-		return pageBuckets(points, view.BucketLimit, view.BucketOffset), nil
-	}
-
-	var summary SeriesSummary
-	views := []struct {
-		aggregation Aggregation
-		target      *[]AggregatePoint
-	}{
-		{AggAvg, &summary.Avg},
-		{AggMin, &summary.Min},
-		{AggMax, &summary.Max},
-		{AggLast, &summary.Last},
-		{AggP50, &summary.P50},
-		{AggP99, &summary.P99},
-		{AggStdDev, &summary.StdDev},
-	}
-	for _, view := range views {
-		points, err := build(sqliteMergedPingLatencyMetric, view.aggregation)
-		if err != nil {
-			return SeriesSummary{}, err
-		}
-		*view.target = points
-	}
-	summary.Loss, err = build(sqliteVirtualPingLossMetric, aggPingLossAvg)
-	return summary, err
+	return result[0], nil
 }
 
 func (s *Store) pingSeriesSummaryFromRaw(ctx context.Context, query AggregateQuery) (SeriesSummary, error) {
@@ -835,6 +776,15 @@ func (s *Store) collectSeriesPhysicalGroups(ctx context.Context, query Aggregate
 	q := query.Query.normalized()
 	now = now.UTC()
 	collectRaw := func(raw Query) (map[rollupKey]*rollupBucket, error) {
+		if s.sqliteStorageV4 && !needDigest {
+			groups := make(map[rollupKey]*rollupBucket)
+			dashboardQuery := query
+			dashboardQuery.Query = raw
+			if err := s.foldSQLiteV4RawDashboardSnapshot(ctx, dashboardQuery, groups); err != nil {
+				return nil, err
+			}
+			return groups, nil
+		}
 		raw.Limit = 0
 		raw.Offset = 0
 		points, err := s.Query(ctx, raw)
@@ -1013,36 +963,44 @@ func (s *Store) collectSeriesAcrossHandoffTiers(ctx context.Context, query Aggre
 	if rawStart <= q.End.UnixNano() {
 		rawQuery := q
 		rawQuery.Start = time.Unix(0, rawStart).UTC()
-		rawQuery.Limit = 0
-		rawQuery.Offset = 0
-		points, err := s.Query(ctx, rawQuery)
-		if err != nil {
-			return nil, err
-		}
-		if !hasWatermark && len(covered) > 0 {
-			remaining := points[:0]
-			for _, point := range points {
-				tagsHash, _, err := tagsFingerprint(point.Tags)
-				if err != nil {
-					return nil, err
-				}
-				identity := point.EntityID + "\x00" + tagsHash
-				timestamp := point.Timestamp.UnixNano()
-				isCovered := false
-				for _, span := range covered[identity] {
-					if timestamp >= span.start && timestamp < span.end {
-						isCovered = true
-						break
+		if s.sqliteStorageV4 && hasWatermark && !needDigest {
+			dashboardQuery := query
+			dashboardQuery.Query = rawQuery
+			if err := s.foldSQLiteV4RawDashboardSnapshot(ctx, dashboardQuery, groups); err != nil {
+				return nil, err
+			}
+		} else {
+			rawQuery.Limit = 0
+			rawQuery.Offset = 0
+			points, err := s.Query(ctx, rawQuery)
+			if err != nil {
+				return nil, err
+			}
+			if !hasWatermark && len(covered) > 0 {
+				remaining := points[:0]
+				for _, point := range points {
+					tagsHash, _, err := tagsFingerprint(point.Tags)
+					if err != nil {
+						return nil, err
+					}
+					identity := point.EntityID + "\x00" + tagsHash
+					timestamp := point.Timestamp.UnixNano()
+					isCovered := false
+					for _, span := range covered[identity] {
+						if timestamp >= span.start && timestamp < span.end {
+							isCovered = true
+							break
+						}
+					}
+					if !isCovered {
+						remaining = append(remaining, point)
 					}
 				}
-				if !isCovered {
-					remaining = append(remaining, point)
-				}
+				points = remaining
 			}
-			points = remaining
-		}
-		if _, err := foldRawPoints(groups, points, query.Interval, comp, query.PreserveSeries, needDigest); err != nil {
-			return nil, err
+			if _, err := foldRawPoints(groups, points, query.Interval, comp, query.PreserveSeries, needDigest); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return groups, nil

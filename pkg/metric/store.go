@@ -111,7 +111,10 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 		}
 	}
 
-	heavyReadConcurrency := cfg.SQLite.HeavyReadConcurrency
+	heavyReadConcurrency := cfg.HeavyReadConcurrency
+	if heavyReadConcurrency <= 0 {
+		heavyReadConcurrency = cfg.SQLite.HeavyReadConcurrency
+	}
 	if heavyReadConcurrency <= 0 {
 		heavyReadConcurrency = cfg.SQLite.ReadPoolSize
 	}

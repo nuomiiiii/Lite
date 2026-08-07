@@ -78,11 +78,11 @@ func TestSQLiteStorageV4MigratesUpstreamLegacyDataAndPreservesQueries(t *testing
 	assertSQLiteQueryPlanUses(t, sqliteQueryPlan(t, ctx, store.db,
 		`SELECT ts_nano, value FROM metric_points WHERE metric_name = ? AND entity_id = ? AND ts_nano BETWEEN ? AND ? ORDER BY ts_nano`,
 		"latency", "node-a", base.UnixNano(), base.Add(time.Minute).UnixNano()),
-		"SEARCH s USING COVERING INDEX", "SEARCH p USING PRIMARY KEY")
+		"SEARCH p USING PRIMARY KEY")
 	assertSQLiteQueryPlanUses(t, sqliteQueryPlan(t, ctx, store.db,
 		`SELECT bucket_nano, count FROM metric_rollups WHERE metric_name = ? AND entity_id = ? AND resolution_nano = ? AND bucket_nano BETWEEN ? AND ? ORDER BY bucket_nano`,
 		"latency", "node-a", time.Minute.Nanoseconds(), base.UnixNano(), base.Add(time.Minute).UnixNano()),
-		"SEARCH s USING COVERING INDEX", "SEARCH r USING PRIMARY KEY")
+		"SEARCH r USING PRIMARY KEY")
 
 	points, err := store.Query(ctx, Query{
 		MetricName: "latency", EntityID: "node-a", Start: base, End: base.Add(time.Minute), Tags: tags,
@@ -506,6 +506,12 @@ func assertSQLiteV3Schema(t *testing.T, ctx context.Context, db *sql.DB) {
 		if err != nil || kind != wantKind {
 			t.Fatalf("SQLite V3 object %s: kind=%q want=%q err=%v", name, kind, wantKind, err)
 		}
+	}
+	var indexKind string
+	if err := db.QueryRowContext(ctx,
+		`SELECT type FROM sqlite_master WHERE name = ?`, "metric__series_entity_idx",
+	).Scan(&indexKind); err != nil || indexKind != "index" {
+		t.Fatalf("SQLite V3 series entity index: kind=%q want=index err=%v", indexKind, err)
 	}
 	var mode int
 	if err := db.QueryRowContext(ctx, `PRAGMA auto_vacuum`).Scan(&mode); err != nil || mode != 2 {

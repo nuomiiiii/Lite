@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/komari-monitor/komari/database/clients"
@@ -18,11 +17,6 @@ import (
 	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/pkg/rpc"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
-)
-
-const (
-	dashboardSummaryCacheTTL = 5 * time.Second
-	dashboardChartsCacheTTL  = 30 * time.Second
 )
 
 type dashboardOfflineNode struct {
@@ -53,11 +47,12 @@ type dashboardTrafficHour struct {
 }
 
 type dashboardTrafficRankItem struct {
-	UUID     string `json:"uuid"`
-	Name     string `json:"name"`
-	Up       int64  `json:"up"`
-	Down     int64  `json:"down"`
-	Billable int64  `json:"billable"`
+	UUID      string `json:"uuid"`
+	Name      string `json:"name"`
+	Up        int64  `json:"up"`
+	Down      int64  `json:"down"`
+	Billable  int64  `json:"billable"`
+	DetailURL string `json:"detail_url,omitempty"`
 }
 
 type dashboardTrafficSummary struct {
@@ -86,11 +81,12 @@ type dashboardReturnRouteSummary struct {
 }
 
 type dashboardResourceRankItem struct {
-	UUID   string  `json:"uuid"`
-	Name   string  `json:"name"`
-	CPU    float64 `json:"cpu"`
-	Memory float64 `json:"memory"`
-	Disk   float64 `json:"disk"`
+	UUID      string  `json:"uuid"`
+	Name      string  `json:"name"`
+	CPU       float64 `json:"cpu"`
+	Memory    float64 `json:"memory"`
+	Disk      float64 `json:"disk"`
+	DetailURL string  `json:"detail_url,omitempty"`
 }
 
 type dashboardResourceSummary struct {
@@ -127,29 +123,15 @@ const (
 	dashboardChartTraffic dashboardChartSections = 1 << iota
 	dashboardChartLatency
 	dashboardChartLatencyJitter
-	dashboardChartAll = dashboardChartTraffic | dashboardChartLatency | dashboardChartLatencyJitter
+	dashboardChartPacketLoss
+	dashboardChartAll = dashboardChartTraffic | dashboardChartLatency | dashboardChartLatencyJitter | dashboardChartPacketLoss
 )
 
 type dashboardChartsResponse struct {
-	Traffic     dashboardTrafficSummary `json:"traffic"`
-	Latency     dashboardLatencySummary `json:"latency"`
-	GeneratedAt time.Time               `json:"generated_at"`
-}
-
-var dashboardCache struct {
-	sync.Mutex
-	value dashboardResponse
-	at    time.Time
-	key   string
-	valid bool
-}
-
-var dashboardChartsCache struct {
-	sync.Mutex
-	value dashboardChartsResponse
-	at    time.Time
-	key   string
-	valid bool
+	Traffic     dashboardTrafficSummary    `json:"traffic"`
+	Latency     dashboardLatencySummary    `json:"latency"`
+	PacketLoss  dashboardPacketLossSummary `json:"packet_loss"`
+	GeneratedAt time.Time                  `json:"generated_at"`
 }
 
 func init() {
@@ -168,40 +150,19 @@ func init() {
 func adminGetDashboard(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	now := time.Now().UTC()
 	sections, rankingLimit := parseDashboardSummaryRequest(req)
-	cacheKey := fmt.Sprintf("%d:%d", sections, rankingLimit)
-	dashboardCache.Lock()
-	defer dashboardCache.Unlock()
-	if dashboardCache.valid && dashboardCache.key == cacheKey && now.Sub(dashboardCache.at) < dashboardSummaryCacheTTL {
-		return dashboardCache.value, nil
-	}
-
-	value, err := buildDashboard(ctx, now, sections, rankingLimit)
+	settings := loadDashboardSettings()
+	value, err := buildDashboardCached(ctx, now, sections, rankingLimit, time.Duration(settings.RefreshSeconds)*time.Second)
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
-	dashboardCache.value = value
-	dashboardCache.at = now
-	dashboardCache.key = cacheKey
-	dashboardCache.valid = true
-	return value, nil
+	return decorateDashboardSummaryNavigation(value), nil
 }
 
 func adminGetDashboardCharts(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	now := time.Now().UTC()
 	sections, rankingLimit := parseDashboardChartRequest(req)
-	cacheKey := fmt.Sprintf("%d:%d", sections, rankingLimit)
-	dashboardChartsCache.Lock()
-	defer dashboardChartsCache.Unlock()
-	if dashboardChartsCache.valid && dashboardChartsCache.key == cacheKey && now.Sub(dashboardChartsCache.at) < dashboardChartsCacheTTL {
-		return dashboardChartsCache.value, nil
-	}
-
-	value := buildDashboardCharts(ctx, now, sections, rankingLimit)
-	dashboardChartsCache.value = value
-	dashboardChartsCache.at = now
-	dashboardChartsCache.key = cacheKey
-	dashboardChartsCache.valid = true
-	return value, nil
+	settings := loadDashboardSettings()
+	return decorateDashboardNavigation(buildDashboardChartsCached(ctx, now, sections, rankingLimit, time.Duration(settings.ChartRefreshSeconds)*time.Second)), nil
 }
 
 func buildDashboard(ctx context.Context, now time.Time, sections dashboardSummarySections, rankingLimit int) (dashboardResponse, error) {
@@ -263,6 +224,9 @@ func buildDashboardCharts(ctx context.Context, now time.Time, sections dashboard
 		if sections&dashboardChartLatencyJitter != 0 {
 			result.Latency.JitterError = message
 		}
+		if sections&dashboardChartPacketLoss != 0 {
+			result.PacketLoss.Error = message
+		}
 		return result
 	}
 	if sections&dashboardChartTraffic != 0 {
@@ -278,6 +242,11 @@ func buildDashboardCharts(ctx context.Context, now time.Time, sections dashboard
 	if sections&dashboardChartLatencyJitter != 0 {
 		if result.Latency.JitterRanking, err = loadDashboardLatencyJitter(ctx, clientList, now, rankingLimit); err != nil {
 			result.Latency.JitterError = err.Error()
+		}
+	}
+	if sections&dashboardChartPacketLoss != 0 {
+		if result.PacketLoss, err = loadDashboardPacketLoss(ctx, clientList, now, rankingLimit); err != nil {
+			result.PacketLoss.Error = err.Error()
 		}
 	}
 	return result
@@ -322,6 +291,8 @@ func parseDashboardChartRequest(req *rpc.JsonRpcRequest) (dashboardChartSections
 			sections |= dashboardChartLatency
 		case "latency_jitter":
 			sections |= dashboardChartLatencyJitter
+		case "packet_loss":
+			sections |= dashboardChartPacketLoss
 		}
 	}
 	return sections, parseDashboardRankingLimit(req)
@@ -505,13 +476,13 @@ func loadDashboardTraffic(ctx context.Context, clientList []models.Client, now t
 
 	todayUsage := make(map[string]trafficledger.Usage, len(clientList))
 	todayHourly := make(map[string][]trafficledger.HourlyUsage, len(clientList))
+	clientIDs := make([]string, 0, len(clientList))
 	for _, client := range clientList {
-		usage, hourly, err := trafficledger.MetricUsageByHour(ctx, client.UUID, today.UTC(), now.UTC())
-		if err != nil {
-			return dashboardTrafficSummary{}, fmt.Errorf("read today's traffic for client %s: %w", client.UUID, err)
-		}
-		todayUsage[client.UUID] = usage
-		todayHourly[client.UUID] = hourly
+		clientIDs = append(clientIDs, client.UUID)
+	}
+	todayUsage, todayHourly, err = trafficledger.MetricUsageByHourBatch(ctx, clientIDs, today.UTC(), now.UTC())
+	if err != nil {
+		return dashboardTrafficSummary{}, fmt.Errorf("read today's dashboard traffic: %w", err)
 	}
 	return summarizeDashboardTraffic(clientList, rows, todayUsage, todayHourly, adjustments, now, rankingLimit), nil
 }

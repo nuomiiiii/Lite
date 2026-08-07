@@ -351,15 +351,18 @@ func (m *Manager) DisableAfterResponse(settings Settings, delay time.Duration) e
 			m.mu.Unlock()
 			return
 		}
-		currentSettings := m.settings
-		currentProvider := m.provider
-		m.server = nil
-		m.redirectServer = nil
-		m.listener = nil
-		m.status = statusFrom(currentSettings, currentProvider, false, errText)
 		m.mu.Unlock()
 
 		shutdownServers(server, redirectServer, listener)
+
+		m.mu.Lock()
+		if m.server == server && !m.settings.Enabled {
+			m.server = nil
+			m.redirectServer = nil
+			m.listener = nil
+			m.status = statusFrom(m.settings, m.provider, false, errText)
+		}
+		m.mu.Unlock()
 		logger.Infof("https", "Built-in HTTPS server was disabled after the settings response completed")
 	})
 	return nil

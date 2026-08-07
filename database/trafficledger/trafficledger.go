@@ -471,6 +471,53 @@ func MetricUsageByHour(ctx context.Context, clientID string, start, end time.Tim
 	return usageByHourFromRecords(records, previous)
 }
 
+// MetricUsageByHourBatch calculates the same per-client totals as
+// MetricUsageByHour while sharing the underlying metric scans across clients.
+func MetricUsageByHourBatch(ctx context.Context, clientIDs []string, start, end time.Time) (map[string]Usage, map[string][]HourlyUsage, error) {
+	if end.Before(start) {
+		return nil, nil, fmt.Errorf("traffic metric range end precedes start")
+	}
+	records, baselines, err := metricstore.GetTrafficRecordsByClientsAndTime(ctx, clientIDs, start, end)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	recordsByClient := make(map[string][]DeltaRecord, len(clientIDs))
+	for _, record := range records {
+		recordsByClient[record.Client] = append(recordsByClient[record.Client], DeltaRecord{
+			Time: record.Time, NetTotalUp: record.NetTotalUp, NetTotalDown: record.NetTotalDown,
+			TrafficUp: record.TrafficUp, TrafficDown: record.TrafficDown,
+			TrafficUpSet: record.TrafficUpSet, TrafficDownSet: record.TrafficDownSet,
+		})
+	}
+
+	usageByClient := make(map[string]Usage, len(clientIDs))
+	hourlyByClient := make(map[string][]HourlyUsage, len(clientIDs))
+	seen := make(map[string]struct{}, len(clientIDs))
+	for _, clientID := range clientIDs {
+		if clientID == "" {
+			continue
+		}
+		if _, ok := seen[clientID]; ok {
+			continue
+		}
+		seen[clientID] = struct{}{}
+		var previous *DeltaRecord
+		if baseline, ok := baselines[clientID]; ok {
+			previous = &DeltaRecord{
+				Time: baseline.Time, NetTotalUp: baseline.NetTotalUp, NetTotalDown: baseline.NetTotalDown,
+			}
+		}
+		usage, hourly, err := usageByHourFromRecords(recordsByClient[clientID], previous)
+		if err != nil {
+			return nil, nil, fmt.Errorf("calculate traffic for client %s: %w", clientID, err)
+		}
+		usageByClient[clientID] = usage
+		hourlyByClient[clientID] = hourly
+	}
+	return usageByClient, hourlyByClient, nil
+}
+
 func usageByHourFromRecords(records []DeltaRecord, previous *DeltaRecord) (Usage, []HourlyUsage, error) {
 	hasPrevious := previous != nil
 	var previousUp, previousDown int64

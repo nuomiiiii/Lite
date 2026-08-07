@@ -2,6 +2,7 @@ package public
 
 import (
 	"crypto/sha256"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -218,6 +219,8 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		{path: "/admin/settings"},
 		{path: "/terminal"},
 		{path: "/terminal/session"},
+		{path: "/install"},
+		{path: "/manage"},
 	}
 
 	for _, tt := range tests {
@@ -236,6 +239,242 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		}
 		if got := recorder.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
 			t.Fatalf("GET %s Cache-Control = %q", tt.path, got)
+		}
+	}
+}
+
+func TestEnsureBundledThemesUsesNezhaForNewInstall(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+
+	if err := EnsureBundledThemes(); err != nil {
+		t.Fatal(err)
+	}
+	active, err := config.GetAs[string](config.ThemeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active != DefaultTheme {
+		t.Fatalf("active theme = %q, want %q", active, DefaultTheme)
+	}
+	if !IsLocalThemeUsable(DefaultTheme) {
+		t.Fatal("bundled Nezha theme was not installed")
+	}
+}
+
+func TestEnsureBundledThemesMigratesLegacyDefaultToNezha(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+	if err := config.Set(config.ThemeKey, LegacyDefaultTheme); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureBundledThemes(); err != nil {
+		t.Fatal(err)
+	}
+	active, err := config.GetAs[string](config.ThemeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active != DefaultTheme {
+		t.Fatalf("active theme = %q, want %q", active, DefaultTheme)
+	}
+	if !IsLocalThemeUsable(DefaultTheme) {
+		t.Fatal("legacy migration did not install the bundled Nezha theme")
+	}
+	if IsLocalThemeUsable(ClassicTheme) {
+		t.Fatal("legacy migration unexpectedly installed the independent Classic theme")
+	}
+}
+
+func TestEnsureBundledThemesRepairsRestoreWithoutThemeFiles(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+	if err := config.SetMany(map[string]any{
+		config.ThemeKey:         "missing-after-restore",
+		themeBundleMigrationKey: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureBundledThemes(); err != nil {
+		t.Fatal(err)
+	}
+	active, err := config.GetAs[string](config.ThemeKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active != DefaultTheme || !IsLocalThemeUsable(DefaultTheme) {
+		t.Fatalf("restored theme state = %q usable=%t", active, IsLocalThemeUsable(DefaultTheme))
+	}
+}
+
+func TestEnsureBundledThemesRefreshesExistingNezhaOnce(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+
+	staleDir := filepath.Join(DataDir, ThemesDir, DefaultTheme, DistDir)
+	if err := os.MkdirAll(staleDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(DataDir, ThemesDir, DefaultTheme, "komari-theme.json"), []byte(`{"short":"nezha"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staleDir, IndexFile), []byte("stale-theme-index"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SetMany(map[string]any{
+		config.ThemeKey:         DefaultTheme,
+		themeBundleMigrationKey: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureBundledThemes(); err != nil {
+		t.Fatal(err)
+	}
+	index, err := os.ReadFile(filepath.Join(staleDir, IndexFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(index) == "stale-theme-index" {
+		t.Fatal("existing Nezha theme was not refreshed")
+	}
+	migration, err := config.GetAs[int](themeBundleMigrationKey, 0)
+	if err != nil || migration != currentThemeBundleMigration {
+		t.Fatalf("theme bundle migration = %d, err=%v", migration, err)
+	}
+
+	if err := os.WriteFile(filepath.Join(staleDir, IndexFile), []byte("user-updated-after-migration"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureBundledThemes(); err != nil {
+		t.Fatal(err)
+	}
+	index, err = os.ReadFile(filepath.Join(staleDir, IndexFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(index) != "user-updated-after-migration" {
+		t.Fatal("completed migration overwrote a later user theme update")
+	}
+}
+
+func TestEnsureBundledThemesDoesNotReinstallDeletedNezha(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+
+	customDir := filepath.Join(DataDir, ThemesDir, "third-party", DistDir)
+	if err := os.MkdirAll(customDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(DataDir, ThemesDir, "third-party", "komari-theme.json"), []byte(`{"short":"third-party"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(customDir, IndexFile), []byte("third-party-theme"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SetMany(map[string]any{
+		config.ThemeKey:         "third-party",
+		themeBundleMigrationKey: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureBundledThemes(); err != nil {
+		t.Fatal(err)
+	}
+	if IsLocalThemeUsable(DefaultTheme) {
+		t.Fatal("deleted Nezha theme was reinstalled for a third-party active theme")
+	}
+	active, err := config.GetAs[string](config.ThemeKey)
+	if err != nil || active != "third-party" {
+		t.Fatalf("active theme = %q, err=%v", active, err)
+	}
+}
+
+func TestStaticKeepsSystemUIAndPublicThemeResourcesIsolated(t *testing.T) {
+	t.Chdir(t.TempDir())
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+	if err := config.SetMany(map[string]any{
+		config.ThemeKey:      "missing-theme",
+		config.CustomHeadKey: `<meta data-public-custom-head>`,
+		config.CustomBodyKey: `<div data-public-custom-body></div>`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	Static(router.Group("/"), router.NoRoute)
+
+	request := func(requestPath string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, requestPath, nil))
+		return recorder
+	}
+
+	publicPage := request("/")
+	if publicPage.Code != http.StatusOK || !strings.Contains(publicPage.Body.String(), "data-public-custom-head") {
+		t.Fatalf("public rescue page status=%d body=%q", publicPage.Code, publicPage.Body.String())
+	}
+	if !strings.Contains(publicPage.Body.String(), "font-logos") {
+		t.Fatal("missing public theme did not use the embedded Nezha rescue page")
+	}
+
+	adminPage := request("/admin/settings/theme")
+	if adminPage.Code != http.StatusOK {
+		t.Fatalf("system UI status=%d", adminPage.Code)
+	}
+	if !strings.Contains(adminPage.Body.String(), "/system-assets/") {
+		t.Fatal("system UI did not reference its independent asset prefix")
+	}
+	if strings.Contains(adminPage.Body.String(), "data-public-custom-head") || strings.Contains(adminPage.Body.String(), "font-logos") {
+		t.Fatal("public theme content leaked into the system UI")
+	}
+
+	entries, err := fs.Glob(PublicFS, "systemUI/dist/assets/entry-*.js")
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("find embedded system UI entry: %v", err)
+	}
+	assetPath := "/system-assets/" + strings.TrimPrefix(entries[0], "systemUI/dist/")
+	if asset := request(assetPath); asset.Code != http.StatusOK {
+		t.Fatalf("GET %s status=%d", assetPath, asset.Code)
+	}
+	if favicon := request("/favicon.ico"); favicon.Code != http.StatusOK || favicon.Header().Get("Content-Type") != "image/x-icon" {
+		t.Fatalf("system favicon fallback status=%d content-type=%q", favicon.Code, favicon.Header().Get("Content-Type"))
+	}
+	for _, missing := range []string{
+		"/system-assets/assets/not-present.js",
+		"/themes/nezha/dist/not-present.js",
+		"/assets/not-present.js",
+	} {
+		if response := request(missing); response.Code != http.StatusNotFound {
+			t.Fatalf("GET %s status=%d, want 404", missing, response.Code)
 		}
 	}
 }

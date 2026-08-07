@@ -83,11 +83,12 @@ func buildMetricConfig(cfg *MetricStoreConfig, autoMigrate bool) (metric.Config,
 		metric.WithTablePrefix(tablePrefix),
 		metric.WithAutoMigrate(autoMigrate),
 	}
+	resources := detectSQLiteResourceProfile()
+	opts = append(opts, metric.WithHeavyReadConcurrency(resources.HeavyReadConcurrent))
 	opts = append(opts, metric.WithRollupPolicy(defaultRollupPolicy()))
 
 	switch driver {
 	case metric.DriverSQLite:
-		resources := detectSQLiteResourceProfile()
 		dsn := cfg.DSN
 		if dsn == "" || dsn == "./data/metrics.db" {
 			// 注意：刻意不使用 cache=shared。SQLite 共享缓存模式使用表级锁，
@@ -833,12 +834,6 @@ func createMetricDefinitionsWithDefaultRetention(ctx context.Context, s *metric.
 			return fmt.Errorf("failed to create metric %s: %w", def.Name, err)
 		}
 	}
-	for _, name := range obsoleteBuiltinMetricNames {
-		if err := s.DeleteMetric(ctx, name); err != nil {
-			return fmt.Errorf("failed to remove obsolete metric %s: %w", name, err)
-		}
-	}
-
 	return nil
 }
 
@@ -930,6 +925,164 @@ func GetTrafficRecordsByClientAndTime(ctx context.Context, clientUUID string, st
 		MetricTrafficUp,
 		MetricTrafficDown,
 	}, 500)
+}
+
+// GetTrafficRecordsByClientsAndTime reads the dashboard traffic window with a
+// fixed number of metric scans while retaining the client dimension. It also
+// returns the closest counter baseline before start for every requested client.
+type DashboardTrafficRecord struct {
+	Client         string
+	Time           time.Time
+	NetTotalUp     int64
+	NetTotalDown   int64
+	TrafficUp      int64
+	TrafficDown    int64
+	TrafficUpSet   bool
+	TrafficDownSet bool
+}
+
+func GetTrafficRecordsByClientsAndTime(ctx context.Context, clientUUIDs []string, start, end time.Time) ([]DashboardTrafficRecord, map[string]DashboardTrafficRecord, error) {
+	s := GetStore()
+	if s == nil {
+		return nil, nil, fmt.Errorf("metric store not enabled")
+	}
+	if end.Before(start) {
+		return nil, nil, fmt.Errorf("traffic metric range end precedes start")
+	}
+
+	requested := make(map[string]struct{}, len(clientUUIDs))
+	for _, clientUUID := range clientUUIDs {
+		if clientUUID != "" {
+			requested[clientUUID] = struct{}{}
+		}
+	}
+	if len(requested) == 0 {
+		return []DashboardTrafficRecord{}, map[string]DashboardTrafficRecord{}, nil
+	}
+
+	now := time.Now().UTC()
+	interval := recordSeriesInterval(s, start, end, now, 500)
+	recordMap := make(map[recordSeriesKey]DashboardTrafficRecord, len(requested)*recordClientMaxPoints(500))
+	trafficMetrics := []string{MetricNetTotalUp, MetricNetTotalDown, MetricTrafficUp, MetricTrafficDown}
+	queries := make([]metric.AggregateQuery, 0, len(trafficMetrics))
+	for _, metricName := range trafficMetrics {
+		queries = append(queries, metric.AggregateQuery{
+			Query: metric.Query{
+				MetricName: metricName,
+				Start:      start,
+				End:        end,
+				Order:      metric.OrderAsc,
+			},
+			Aggregation:    recordMetricAggregation(metricName),
+			Interval:       interval,
+			PreserveSeries: true,
+			OmitTags:       true,
+		})
+	}
+	series, err := s.DashboardSeriesBatch(ctx, queries, now)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to query dashboard traffic metrics: %w", err)
+	}
+	for index, points := range series {
+		metricName := trafficMetrics[index]
+		for _, point := range points {
+			if _, ok := requested[point.EntityID]; !ok {
+				continue
+			}
+			key := recordSeriesKey{client: point.EntityID, ts: point.Bucket.Unix()}
+			record, exists := recordMap[key]
+			if !exists {
+				record = DashboardTrafficRecord{Client: point.EntityID, Time: point.Bucket.UTC()}
+			}
+			applyDashboardTrafficMetricValue(&record, metricName, point.Value)
+			recordMap[key] = record
+		}
+	}
+
+	baselines := make(map[string]DashboardTrafficRecord, len(requested))
+	baselineStart := start.Add(-interval)
+	baselineEnd := start.Add(-time.Nanosecond)
+	baselineMetrics := []string{MetricNetTotalUp, MetricNetTotalDown}
+	baselineQueries := make([]metric.AggregateQuery, 0, len(baselineMetrics))
+	for _, metricName := range baselineMetrics {
+		baselineQueries = append(baselineQueries, metric.AggregateQuery{
+			Query: metric.Query{
+				MetricName: metricName,
+				Start:      baselineStart,
+				End:        baselineEnd,
+				Order:      metric.OrderAsc,
+			},
+			Aggregation:    metric.AggLast,
+			Interval:       interval,
+			PreserveSeries: true,
+			OmitTags:       true,
+		})
+	}
+	baselineSeries, err := s.DashboardSeriesBatch(ctx, baselineQueries, now)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to query dashboard traffic baselines: %w", err)
+	}
+	for index, points := range baselineSeries {
+		metricName := baselineMetrics[index]
+		for _, point := range points {
+			if _, ok := requested[point.EntityID]; !ok {
+				continue
+			}
+			baseline := baselines[point.EntityID]
+			baseline.Client = point.EntityID
+			if point.Bucket.After(baseline.Time) {
+				baseline.Time = point.Bucket.UTC()
+			}
+			applyDashboardTrafficMetricValue(&baseline, metricName, point.Value)
+			baselines[point.EntityID] = baseline
+		}
+	}
+
+	missing := make([]string, 0)
+	for clientUUID := range requested {
+		if _, ok := baselines[clientUUID]; !ok {
+			missing = append(missing, clientUUID)
+		}
+	}
+	if len(missing) > 0 {
+		fallback, err := GetLatestTrafficBefore(ctx, missing, start)
+		if err != nil {
+			return nil, nil, err
+		}
+		for clientUUID, baseline := range fallback {
+			baselines[clientUUID] = DashboardTrafficRecord{
+				Client: clientUUID, Time: baseline.Time,
+				NetTotalUp: baseline.NetTotalUp, NetTotalDown: baseline.NetTotalDown,
+			}
+		}
+	}
+
+	records := make([]DashboardTrafficRecord, 0, len(recordMap))
+	for _, record := range recordMap {
+		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Client != records[j].Client {
+			return records[i].Client < records[j].Client
+		}
+		return records[i].Time.Before(records[j].Time)
+	})
+	return records, baselines, nil
+}
+
+func applyDashboardTrafficMetricValue(record *DashboardTrafficRecord, metricName string, value float64) {
+	switch metricName {
+	case MetricNetTotalUp:
+		record.NetTotalUp = int64(value)
+	case MetricNetTotalDown:
+		record.NetTotalDown = int64(value)
+	case MetricTrafficUp:
+		record.TrafficUp = int64(value)
+		record.TrafficUpSet = true
+	case MetricTrafficDown:
+		record.TrafficDown = int64(value)
+		record.TrafficDownSet = true
+	}
 }
 
 // GetRecordsByTime 从 metric store 查询所有客户端在时间范围内的记录

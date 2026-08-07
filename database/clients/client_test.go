@@ -44,6 +44,36 @@ func TestGetClientBasicInfoUsesConfiguredOrder(t *testing.T) {
 	assert.Equal(t, DeploymentDeliveryFailed, clients[2].DeploymentStatus)
 }
 
+func TestNewClientDefaultsTrafficLimitTypeToSum(t *testing.T) {
+	now := time.Date(2026, 8, 7, 0, 0, 0, 0, time.UTC)
+	client := newClient("client-new", "token-new", "New Server", now)
+
+	assert.Equal(t, "sum", client.TrafficLimitType)
+	assert.Equal(t, now, client.CreatedAt)
+	assert.Equal(t, now, client.UpdatedAt)
+}
+
+func TestSaveClientKeepsExistingTrafficLimitTypeWhenOmitted(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:keep-existing-traffic-type?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Client{}))
+	require.NoError(t, db.Create(&models.Client{
+		UUID: "client-existing", Token: "token-existing", Name: "Existing Server", TrafficLimitType: "max",
+	}).Error)
+
+	require.NoError(t, saveClient(db, map[string]interface{}{
+		"uuid": "client-existing",
+		"name": "Renamed Server",
+	}))
+
+	var client models.Client
+	require.NoError(t, db.First(&client, "uuid = ?", "client-existing").Error)
+	assert.Equal(t, "max", client.TrafficLimitType)
+	assert.Equal(t, "Renamed Server", client.Name)
+}
+
 func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 	for _, foreignKeys := range []bool{false, true} {
 		t.Run(fmt.Sprintf("foreign_keys_%t", foreignKeys), func(t *testing.T) {

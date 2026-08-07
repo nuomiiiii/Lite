@@ -22,19 +22,20 @@ const (
 )
 
 const (
-	dashboardModuleServerStatus    = "server_status"
-	dashboardModuleTrafficSummary  = "traffic_summary"
-	dashboardModuleStorageSummary  = "storage_summary"
-	dashboardModuleResourceRanking = "resource_ranking"
-	dashboardModuleTrafficRanking  = "daily_traffic_ranking"
-	dashboardModuleLatencyRanking  = "latency_ranking"
-	dashboardModuleJitterRanking   = "latency_jitter_ranking"
-	dashboardModuleLatencyTrend    = "latency_trend"
-	dashboardModuleTrafficTrend    = "traffic_trend"
-	dashboardModuleBillingTrend    = "billing_trend"
-	dashboardModuleReturnRoute     = "return_route"
-	dashboardModuleAlerts          = "alerts"
-	dashboardModuleStorageDetail   = "storage_detail"
+	dashboardModuleServerStatus      = "server_status"
+	dashboardModuleTrafficSummary    = "traffic_summary"
+	dashboardModuleStorageSummary    = "storage_summary"
+	dashboardModuleResourceRanking   = "resource_ranking"
+	dashboardModuleTrafficRanking    = "daily_traffic_ranking"
+	dashboardModuleLatencyRanking    = "latency_ranking"
+	dashboardModuleJitterRanking     = "latency_jitter_ranking"
+	dashboardModulePacketLossRanking = "packet_loss_ranking"
+	dashboardModuleLatencyTrend      = "latency_trend"
+	dashboardModuleTrafficTrend      = "traffic_trend"
+	dashboardModuleBillingTrend      = "billing_trend"
+	dashboardModuleReturnRoute       = "return_route"
+	dashboardModuleAlerts            = "alerts"
+	dashboardModuleStorageDetail     = "storage_detail"
 )
 
 var dashboardModuleOrder = []string{
@@ -45,6 +46,7 @@ var dashboardModuleOrder = []string{
 	dashboardModuleTrafficRanking,
 	dashboardModuleLatencyRanking,
 	dashboardModuleJitterRanking,
+	dashboardModulePacketLossRanking,
 	dashboardModuleLatencyTrend,
 	dashboardModuleTrafficTrend,
 	dashboardModuleBillingTrend,
@@ -73,7 +75,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 			dashboardModuleAlerts,
 			dashboardModuleStorageDetail,
 		},
-		RefreshSeconds: 30, ChartRefreshSeconds: 120, RankingLimit: 5,
+		RefreshSeconds: 30, ChartRefreshSeconds: 30, RankingLimit: 5,
 	},
 	dashboardPresetNetwork: {
 		Modules: []string{
@@ -84,6 +86,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 			dashboardModuleTrafficRanking,
 			dashboardModuleLatencyRanking,
 			dashboardModuleJitterRanking,
+			dashboardModulePacketLossRanking,
 			dashboardModuleTrafficTrend,
 			dashboardModuleBillingTrend,
 			dashboardModuleReturnRoute,
@@ -99,7 +102,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 			dashboardModuleAlerts,
 			dashboardModuleStorageDetail,
 		},
-		RefreshSeconds: 30, ChartRefreshSeconds: 300, RankingLimit: 5,
+		RefreshSeconds: 30, ChartRefreshSeconds: 120, RankingLimit: 5,
 	},
 	dashboardPresetTraffic: {
 		Modules: []string{
@@ -124,8 +127,9 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 			dashboardModuleStorageDetail,
 			dashboardModuleLatencyRanking,
 			dashboardModuleJitterRanking,
+			dashboardModulePacketLossRanking,
 		},
-		RefreshSeconds: 30, ChartRefreshSeconds: 300, RankingLimit: 5,
+		RefreshSeconds: 30, ChartRefreshSeconds: 120, RankingLimit: 5,
 	},
 	dashboardPresetLite: {
 		Modules: []string{
@@ -135,7 +139,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 			dashboardModuleAlerts,
 			dashboardModuleStorageDetail,
 		},
-		RefreshSeconds: 60, ChartRefreshSeconds: 300, RankingLimit: 5,
+		RefreshSeconds: 60, ChartRefreshSeconds: 120, RankingLimit: 5,
 	},
 }
 
@@ -269,10 +273,10 @@ func normalizeDashboardSettings(input dashboardSettings, strict bool) (dashboard
 	if result.Preset != dashboardPresetCustom {
 		if strict {
 			if input.RefreshSeconds != 0 && !dashboardRefreshAllowed(input.RefreshSeconds) {
-				return dashboardSettings{}, errors.New("refresh_seconds must be 30, 60, or 120")
+				return dashboardSettings{}, errors.New("refresh_seconds must be 15, 30, 60, or 120")
 			}
 			if input.ChartRefreshSeconds != 0 && !dashboardChartRefreshAllowed(input.ChartRefreshSeconds) {
-				return dashboardSettings{}, errors.New("chart_refresh_seconds must be 60, 120, or 300")
+				return dashboardSettings{}, errors.New("chart_refresh_seconds must be 15, 30, 60, or 120")
 			}
 			if input.RankingLimit != 0 && !dashboardRankingLimitAllowed(input.RankingLimit) {
 				return dashboardSettings{}, errors.New("ranking_limit must be 5, 10, 15, or 20")
@@ -333,13 +337,16 @@ func normalizeDashboardSettings(input dashboardSettings, strict bool) (dashboard
 
 	if !dashboardRefreshAllowed(result.RefreshSeconds) {
 		if strict && result.RefreshSeconds != 0 {
-			return dashboardSettings{}, errors.New("refresh_seconds must be 30, 60, or 120")
+			return dashboardSettings{}, errors.New("refresh_seconds must be 15, 30, 60, or 120")
 		}
 		result.RefreshSeconds = defaults.RefreshSeconds
 	}
+	if !strict && result.ChartRefreshSeconds == 300 {
+		result.ChartRefreshSeconds = 120
+	}
 	if !dashboardChartRefreshAllowed(result.ChartRefreshSeconds) {
 		if strict && result.ChartRefreshSeconds != 0 {
-			return dashboardSettings{}, errors.New("chart_refresh_seconds must be 60, 120, or 300")
+			return dashboardSettings{}, errors.New("chart_refresh_seconds must be 15, 30, 60, or 120")
 		}
 		result.ChartRefreshSeconds = defaults.ChartRefreshSeconds
 	}
@@ -354,11 +361,11 @@ func normalizeDashboardSettings(input dashboardSettings, strict bool) (dashboard
 }
 
 func dashboardRefreshAllowed(value int) bool {
-	return value == 30 || value == 60 || value == 120
+	return value == 15 || value == 30 || value == 60 || value == 120
 }
 
 func dashboardChartRefreshAllowed(value int) bool {
-	return value == 60 || value == 120 || value == 300
+	return value == 15 || value == 30 || value == 60 || value == 120
 }
 
 func dashboardRankingLimitAllowed(value int) bool {
