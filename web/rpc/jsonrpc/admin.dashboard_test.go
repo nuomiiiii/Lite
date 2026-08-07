@@ -59,13 +59,13 @@ func TestDashboardNavigationFollowsThirdPartyThemeManifest(t *testing.T) {
 	require.NoError(t, os.MkdirAll(themeDir, 0o755))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(themeDir, "komari-theme.json"),
-		[]byte(`{"navigation":{"server_detail":"/nodes/{id}","ping_task_parameter":"task"}}`),
+		[]byte(`{"navigation":{"server_detail":"/nodes/{uuid}","ping_task_parameter":"task"}}`),
 		0o644,
 	))
 	require.NoError(t, config.Set(config.ThemeKey, "third-party"))
 
 	const uuid = "node-a"
-	const detailURL = "/nodes/3254795094"
+	const detailURL = "/nodes/node-a"
 	charts := decorateDashboardNavigation(dashboardChartsResponse{
 		Traffic: dashboardTrafficSummary{Ranking: []dashboardTrafficRankItem{{UUID: uuid}}},
 		Latency: dashboardLatencySummary{
