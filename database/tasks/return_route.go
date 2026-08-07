@@ -866,7 +866,10 @@ func prepareReturnRouteSignatures(hops []returnRouteSignature) ([]returnRouteSig
 
 func isPublicReturnRouteIP(value string) bool {
 	ip := net.ParseIP(strings.TrimSpace(value))
-	return ip != nil && ip.IsGlobalUnicast() && !ip.IsPrivate()
+	if ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return false
+	}
+	return true
 }
 
 func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *compiledReturnRouteRules) (string, float64, bool) {
@@ -895,6 +898,7 @@ func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *
 	firstTelecomAfterCN2 := -1
 	first163BackboneAfterCN2 := -1
 	telecom163BackboneCount := 0
+	telecom163BackboneTransitCount := 0
 	for index := firstCN2; index < len(hops); index++ {
 		hop := hops[index]
 		if rules.hasSignature("cn2_backbone", hop) {
@@ -909,19 +913,26 @@ func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *
 					first163BackboneAfterCN2 = index
 				}
 				telecom163BackboneCount++
+				if index < len(hops)-1 {
+					telecom163BackboneTransitCount++
+				}
 			}
 		}
 	}
 
-	if telecom163BackboneCount >= 2 && !hasCN2BackboneAfter(hops, first163BackboneAfterCN2, rules) {
+	if telecom163BackboneTransitCount >= 2 && !hasCN2BackboneAfter(hops, first163BackboneAfterCN2, rules) {
 		return "CN2 GT", rules.document.Confidence["cn2_gt_strong"], true
 	}
 	if firstTelecomAfterCN2 >= 0 {
-		// A single final AS4134 hop is the target access network, not a
-		// domestic 163 transit segment. Require multiple CN2 hops so an
-		// incomplete one-hop observation still remains pending.
-		if firstTelecomAfterCN2 == len(hops)-1 && cn2Count >= 2 && telecom163BackboneCount == 0 {
-			return "CN2 GIA", rules.document.Confidence["cn2_gia"], true
+		// A final Telecom access hop, or a continuous regional Telecom access
+		// ASN after sustained CN2, is local delivery rather than domestic 163
+		// transit. Generic AS4134 access sequences remain pending because their
+		// role cannot be established from the ASN alone.
+		if cn2Count >= 2 && telecom163BackboneCount == 0 {
+			if firstTelecomAfterCN2 == len(hops)-1 ||
+				allRegionalTelecomAccessHopsFrom(hops, firstTelecomAfterCN2, rules) {
+				return "CN2 GIA", rules.document.Confidence["cn2_gia"], true
+			}
 		}
 		// A single 202.97 backbone handoff at the end of a sustained CN2
 		// segment is a local delivery pattern when the remaining visible hops
@@ -929,6 +940,7 @@ func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *
 		// additional 163 backbone transit nodes.
 		if cn2Count >= 2 &&
 			telecom163BackboneCount == 1 &&
+			telecom163BackboneTransitCount == 1 &&
 			first163BackboneAfterCN2 < len(hops)-1 &&
 			!hasCN2BackboneAfter(hops, first163BackboneAfterCN2, rules) &&
 			allTelecomHopsAfter(hops, first163BackboneAfterCN2, rules) {
@@ -944,9 +956,15 @@ func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *
 
 func isTelecom163BackboneCandidate(hop returnRouteSignature, rules *compiledReturnRouteRules) bool {
 	ip := net.ParseIP(strings.TrimSpace(hop.ip)).To4()
-	return ip != nil &&
-		ip[0] == 202 && ip[1] == 97 &&
-		(rules.hasPrefix("telecom_163", hop.ip) || rules.hasASN("telecom_163", hop.asn))
+	if ip == nil || ip[0] != 202 || ip[1] != 97 {
+		return false
+	}
+	for _, group := range requiredReturnRouteASNGroups {
+		if rules.hasPrefix(group, hop.ip) {
+			return group == "telecom_163"
+		}
+	}
+	return rules.hasASN("telecom_163", hop.asn)
 }
 
 func allTelecomHopsAfter(hops []returnRouteSignature, index int, rules *compiledReturnRouteRules) bool {
@@ -956,6 +974,19 @@ func allTelecomHopsAfter(hops []returnRouteSignature, index int, rules *compiled
 		}
 	}
 	return index+1 < len(hops)
+}
+
+func allRegionalTelecomAccessHopsFrom(hops []returnRouteSignature, index int, rules *compiledReturnRouteRules) bool {
+	if index < 0 || index >= len(hops) {
+		return false
+	}
+	for i := index; i < len(hops); i++ {
+		hop := hops[i]
+		if hop.asn <= 0 || hop.asn == 4134 || !rules.hasASN("telecom_163", hop.asn) {
+			return false
+		}
+	}
+	return true
 }
 
 func hasUnicomReturnRouteGroup(hops []returnRouteSignature, rules *compiledReturnRouteRules, group string) bool {

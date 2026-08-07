@@ -145,6 +145,32 @@ func TestClassifyCN2UsesOrderedCarrierSegments(t *testing.T) {
 			want: returnRouteLineCN2Pending,
 		},
 		{
+			name: "sustained CN2 followed by multiple provincial Telecom access hops is GIA",
+			hops: []returnRouteSignature{
+				{ip: "10.54.0.1"},
+				{ip: "10.54.255.0"},
+				{ip: "218.30.48.21", asn: 4134},
+				{ip: "59.43.182.186"},
+				{ip: "59.43.38.165"},
+				{ip: "59.43.138.49"},
+				{ip: "59.43.80.141"},
+				{ip: "222.72.237.53", asn: 4812},
+				{hidden: true},
+				{ip: "124.77.0.1", asn: 4812},
+			},
+			want: "CN2 GIA",
+		},
+		{
+			name: "regional Telecom access followed by another carrier remains pending",
+			hops: []returnRouteSignature{
+				{ip: "59.43.182.186"},
+				{ip: "59.43.38.165"},
+				{ip: "222.72.237.53", asn: 4812},
+				{ip: "1.1.1.1", asn: 13335},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
 			name: "global CN2 ingress is GIA",
 			hops: []returnRouteSignature{{asn: 23764}, {asn: 4809}},
 			want: "CN2 GIA",
@@ -222,6 +248,16 @@ func TestClassifyCN2UsesOrderedCarrierSegments(t *testing.T) {
 			want: returnRouteLineCN2Pending,
 		},
 		{
+			name: "a final second 202.97 hop is not two transit nodes",
+			hops: []returnRouteSignature{
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "202.97.23.229", asn: 4134},
+				{ip: "202.97.23.230", asn: 4134},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
 			name: "one terminal 202.97 handoff and one visible access hop is GIA",
 			hops: []returnRouteSignature{
 				{hidden: true},
@@ -237,6 +273,36 @@ func TestClassifyCN2UsesOrderedCarrierSegments(t *testing.T) {
 				{hidden: true},
 			},
 			want: "CN2 GIA",
+		},
+		{
+			name: "one terminal 202.97 handoff returning to CN2 remains pending",
+			hops: []returnRouteSignature{
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "202.97.23.230", asn: 4134},
+				{ip: "59.43.80.145", asn: 4809},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "one terminal 202.97 handoff crossing carriers remains pending",
+			hops: []returnRouteSignature{
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "202.97.23.230", asn: 4134},
+				{ip: "1.1.1.1", asn: 13335},
+			},
+			want: returnRouteLineCN2Pending,
+		},
+		{
+			name: "multiple provincial AS4134 access hops are not GT evidence",
+			hops: []returnRouteSignature{
+				{ip: "59.43.181.145", asn: 4809},
+				{ip: "59.43.38.185", asn: 4809},
+				{ip: "60.191.202.154", asn: 4134},
+				{ip: "183.131.147.4", asn: 4134},
+			},
+			want: returnRouteLineCN2Pending,
 		},
 		{
 			name: "CN2 prefix works without ASN lookup",
@@ -291,6 +357,24 @@ func TestCN2ManualAndBGPPrefixRulesStaySeparated(t *testing.T) {
 	}
 	if !rules.hasPrefix("unicom_4837", "202.97.200.1") {
 		t.Fatal("BGP rules no longer recognize 202.97.128.0/17 in its generated group")
+	}
+	if !isTelecom163BackboneCandidate(returnRouteSignature{ip: "202.97.1.1"}, rules) {
+		t.Fatal("telecom BGP prefix was not accepted as a 163 backbone candidate")
+	}
+	if isTelecom163BackboneCandidate(returnRouteSignature{ip: "202.97.200.1", asn: 4134}, rules) {
+		t.Fatal("conflicting ASN overrode the more specific non-telecom BGP prefix")
+	}
+}
+
+func TestPrepareReturnRouteSignaturesPreservesSharedAddressSpace(t *testing.T) {
+	prepared, hidden := prepareReturnRouteSignatures([]returnRouteSignature{
+		{hidden: true},
+		{ip: "100.72.56.6"},
+		{ip: "10.110.193.1"},
+		{ip: "59.43.181.145", asn: 4809},
+	})
+	if hidden != 1 || len(prepared) != 2 || prepared[0].ip != "100.72.56.6" || prepared[1].ip != "59.43.181.145" {
+		t.Fatalf("prepared route = %#v, hidden=%d", prepared, hidden)
 	}
 }
 
