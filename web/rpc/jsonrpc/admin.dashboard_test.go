@@ -81,7 +81,7 @@ func TestDashboardNavigationFollowsThirdPartyThemeManifest(t *testing.T) {
 	require.NoError(t, os.MkdirAll(themeDir, 0o755))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(themeDir, "komari-theme.json"),
-		[]byte(`{"navigation":{"server_detail":"/nodes/{uuid}","ping_task_parameter":"task"}}`),
+		[]byte(`{"navigation":{"server_detail":"/nodes/{uuid}","server_network":"/nodes/{uuid}?tab=network","ping_task_parameter":"task"}}`),
 		0o644,
 	))
 	require.NoError(t, config.Set(config.ThemeKey, "third-party"))
@@ -97,8 +97,8 @@ func TestDashboardNavigationFollowsThirdPartyThemeManifest(t *testing.T) {
 		PacketLoss: dashboardPacketLossSummary{Ranking: []dashboardPacketLossRankItem{{UUID: uuid, TaskID: 7}}},
 	})
 	assert.Equal(t, detailURL, charts.Traffic.Ranking[0].DetailURL)
-	assert.Equal(t, detailURL+"?task=5", charts.Latency.Ranking[0].DetailURL)
-	assert.Equal(t, detailURL+"?task=6", charts.Latency.JitterRanking[0].DetailURL)
+	assert.Equal(t, detailURL+"?tab=network", charts.Latency.Ranking[0].DetailURL)
+	assert.Equal(t, detailURL+"?tab=network", charts.Latency.JitterRanking[0].DetailURL)
 	assert.Equal(t, detailURL+"?task=7", charts.PacketLoss.Ranking[0].DetailURL)
 
 	summary := decorateDashboardSummaryNavigation(dashboardResponse{Resources: dashboardResourceSummary{
@@ -181,6 +181,30 @@ func TestDashboardLatencyMinuteAveragesAndJitterRanking(t *testing.T) {
 	}
 	require.Len(t, ranking, 3)
 	assert.Equal(t, []string{"spike", "stable", "improved"}, []string{ranking[0].Name, ranking[1].Name, ranking[2].Name})
+}
+
+func TestDashboardLatencyJitterUsesLatestAdjacentValidMinutes(t *testing.T) {
+	current := time.Date(2026, 8, 7, 11, 30, 0, 0, time.UTC)
+	previous, latest, ok := dashboardLatestLatencyMinuteAverages([]metric.AggregatePoint{
+		{Bucket: current.Add(-4 * time.Minute), Value: 15, Count: 1},
+		{Bucket: current.Add(-3 * time.Minute), Value: 25, Count: 1},
+		{Bucket: current.Add(-2 * time.Minute), Value: -1, Count: 4},
+		{Bucket: current, Value: 40, Count: 1},
+	}, current)
+	require.True(t, ok)
+	assert.InDelta(t, 15, previous, 0.001)
+	assert.InDelta(t, 25, latest, 0.001)
+}
+
+func TestDashboardLatencyJitterAcceptsSingleSparseSamplePerMinute(t *testing.T) {
+	current := time.Date(2026, 8, 7, 11, 30, 0, 0, time.UTC)
+	previous, latest, ok := dashboardLatestLatencyMinuteAverages([]metric.AggregatePoint{
+		{Bucket: current.Add(-time.Minute), Value: 20, Count: 1, Tags: map[string]string{"task_id": "1"}},
+		{Bucket: current, Value: 35, Count: 1, Tags: map[string]string{"task_id": "2"}},
+	}, current)
+	require.True(t, ok)
+	assert.InDelta(t, 20, previous, 0.001)
+	assert.InDelta(t, 35, latest, 0.001)
 }
 
 func TestDashboardLatencyRankingsHonorEveryTopLimit(t *testing.T) {

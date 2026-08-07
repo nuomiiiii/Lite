@@ -2,13 +2,14 @@
     "name": "Nezha",
     "short": "nezha",
     "description": "Nezha Theme for Komari Monitor",
-    "version": "3.0.8",
+    "version": "3.1.1",
     "author": "Nomi",
     "url": "https://github.com/nuomiiiii/nezha",
     "upstream": "https://github.com/BITJEBE/nezha-BITJEBE",
     "preview": "preview-ae4b40a5.png",
     "navigation": {
         "server_detail": "/server/{uuid}",
+        "server_network": "/server/{uuid}?view=network",
         "ping_task_parameter": "ping_task"
     },
     "configuration": {

@@ -83,11 +83,12 @@ func buildMetricConfig(cfg *MetricStoreConfig, autoMigrate bool) (metric.Config,
 		metric.WithTablePrefix(tablePrefix),
 		metric.WithAutoMigrate(autoMigrate),
 	}
+	resources := detectSQLiteResourceProfile()
+	opts = append(opts, metric.WithHeavyReadConcurrency(resources.HeavyReadConcurrent))
 	opts = append(opts, metric.WithRollupPolicy(defaultRollupPolicy()))
 
 	switch driver {
 	case metric.DriverSQLite:
-		resources := detectSQLiteResourceProfile()
 		dsn := cfg.DSN
 		if dsn == "" || dsn == "./data/metrics.db" {
 			// 注意：刻意不使用 cache=shared。SQLite 共享缓存模式使用表级锁，

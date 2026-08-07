@@ -48,7 +48,7 @@ const (
 
 const themeBundleMigrationKey = "theme_bundle_migration_v1"
 
-const currentThemeBundleMigration = 2
+const currentThemeBundleMigration = 3
 
 const themeChangeReloadScript = `<script>(()=>{window.addEventListener("storage",(event)=>{if(event.key==="komari-active-theme-changed"){window.location.reload();}});})();</script>`
 

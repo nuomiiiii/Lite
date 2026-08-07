@@ -52,6 +52,8 @@ type dashboardLatencyBucket struct {
 	Count int
 }
 
+const dashboardLatencyJitterLookback = 10 * time.Minute
+
 func loadDashboardLatency(ctx context.Context, clientList []models.Client, now time.Time, rankingLimit int) (dashboardLatencySummary, error) {
 	result := dashboardLatencySummary{}
 	pingTasks, pingTasksErr := dbtasks.GetAllPingTasks()
@@ -177,11 +179,10 @@ func loadDashboardLatencyJitter(ctx context.Context, clientList []models.Client,
 		return nil, fmt.Errorf("metric store is not initialized")
 	}
 	currentMinute := now.UTC().Truncate(time.Minute)
-	previousMinute := currentMinute.Add(-time.Minute)
 	series, err := store.DashboardSeries(ctx, metric.AggregateQuery{
 		Query: metric.Query{
 			MetricName: metricstore.MetricPingLatency,
-			Start:      previousMinute,
+			Start:      currentMinute.Add(-dashboardLatencyJitterLookback),
 			End:        now,
 			Order:      metric.OrderAsc,
 		},
@@ -190,7 +191,7 @@ func loadDashboardLatencyJitter(ctx context.Context, clientList []models.Client,
 		PreserveSeries: true,
 	}, now)
 	if err != nil {
-		return nil, fmt.Errorf("query two-minute latency window: %w", err)
+		return nil, fmt.Errorf("query latency jitter window: %w", err)
 	}
 	pingTasks, _ := dbtasks.GetAllPingTasks()
 
@@ -210,7 +211,7 @@ func loadDashboardLatencyJitter(ctx context.Context, clientList []models.Client,
 	result := make([]dashboardLatencyJitterRankItem, 0, rankingLimit)
 	for _, client := range clientList {
 		points := pointsByClient[client.UUID]
-		previous, current, ok := dashboardLatencyMinuteAverages(points, previousMinute, currentMinute)
+		previous, current, ok := dashboardLatestLatencyMinuteAverages(points, currentMinute)
 		if !ok {
 			continue
 		}
@@ -241,26 +242,42 @@ func dashboardPreferredPingTaskID(clientUUID string, validTaskIDs map[uint]struc
 }
 
 func dashboardLatencyMinuteAverages(points []metric.AggregatePoint, previousMinute, currentMinute time.Time) (float64, float64, bool) {
-	var previousSum, currentSum float64
-	var previousCount, currentCount int
+	buckets := dashboardLatencyMinuteBuckets(points)
+	previous, previousOK := buckets[previousMinute]
+	current, currentOK := buckets[currentMinute]
+	if !previousOK || !currentOK || previous.Count == 0 || current.Count == 0 {
+		return 0, 0, false
+	}
+	return previous.Sum / float64(previous.Count), current.Sum / float64(current.Count), true
+}
+
+func dashboardLatestLatencyMinuteAverages(points []metric.AggregatePoint, currentMinute time.Time) (float64, float64, bool) {
+	buckets := dashboardLatencyMinuteBuckets(points)
+	for later := currentMinute; !later.Before(currentMinute.Add(-dashboardLatencyJitterLookback)); later = later.Add(-time.Minute) {
+		earlier := later.Add(-time.Minute)
+		previous, previousOK := buckets[earlier]
+		current, currentOK := buckets[later]
+		if !previousOK || !currentOK || previous.Count == 0 || current.Count == 0 {
+			continue
+		}
+		return previous.Sum / float64(previous.Count), current.Sum / float64(current.Count), true
+	}
+	return 0, 0, false
+}
+
+func dashboardLatencyMinuteBuckets(points []metric.AggregatePoint) map[time.Time]dashboardLatencyBucket {
+	buckets := make(map[time.Time]dashboardLatencyBucket)
 	for _, point := range points {
 		if point.Count <= 0 || point.Value < 0 {
 			continue
 		}
 		bucket := point.Bucket.UTC().Truncate(time.Minute)
-		switch bucket {
-		case previousMinute:
-			previousSum += point.Value * float64(point.Count)
-			previousCount += point.Count
-		case currentMinute:
-			currentSum += point.Value * float64(point.Count)
-			currentCount += point.Count
-		}
+		value := buckets[bucket]
+		value.Sum += point.Value * float64(point.Count)
+		value.Count += point.Count
+		buckets[bucket] = value
 	}
-	if previousCount == 0 || currentCount == 0 {
-		return 0, 0, false
-	}
-	return previousSum / float64(previousCount), currentSum / float64(currentCount), true
+	return buckets
 }
 
 func dashboardTopLatencyJitter(top []dashboardLatencyJitterRankItem, item dashboardLatencyJitterRankItem, limit int) []dashboardLatencyJitterRankItem {

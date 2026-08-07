@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +56,10 @@ func runSQLIntegration(t *testing.T, name string, cfg Config, expectSQLPercentil
 
 	prefix := fmt.Sprintf("it_%d_", time.Now().UnixNano())
 	cfg.TablePrefix = prefix
+	cfg.RollupPolicy = RollupPolicy{
+		RawRetention: 15 * time.Minute,
+		Tiers:        []RollupTier{{Interval: time.Minute, Retention: 24 * time.Hour}},
+	}
 	store, err := Open(ctx, cfg)
 	if err != nil {
 		t.Fatalf("open %s store: %v", name, err)
@@ -190,6 +195,91 @@ func runSQLIntegration(t *testing.T, name string, cfg Config, expectSQLPercentil
 	}
 	if err := store.Ping(ctx); err != nil {
 		t.Fatalf("store unusable after space reclaim: %v", err)
+	}
+	assertSQLBatchReadSemantics(t, ctx, store)
+}
+
+func assertSQLBatchReadSemantics(t *testing.T, ctx context.Context, store *Store) {
+	t.Helper()
+	for _, metricName := range []string{"batch.cpu", "batch.memory"} {
+		if err := store.CreateMetric(ctx, Definition{Name: metricName, Type: TypeGauge, RetentionDays: 7}); err != nil {
+			t.Fatalf("create batch metric %s: %v", metricName, err)
+		}
+	}
+	base := time.Date(2026, 6, 21, 1, 0, 0, 0, time.UTC)
+	points := make([]Point, 0, 24)
+	for metricIndex, metricName := range []string{"batch.cpu", "batch.memory"} {
+		for entityIndex, entityID := range []string{"node-a", "node-b"} {
+			for sample := 0; sample < 6; sample++ {
+				points = append(points, Point{
+					MetricName: metricName,
+					EntityID:   entityID,
+					Timestamp:  base.Add(time.Duration(sample) * time.Minute),
+					Value:      float64(metricIndex*100 + entityIndex*10 + sample + 1),
+					Tags:       map[string]string{"scope": "batch"},
+				})
+			}
+		}
+	}
+	if err := store.WriteBatch(ctx, points); err != nil {
+		t.Fatalf("write batch comparison points: %v", err)
+	}
+
+	aggregations := []Aggregation{AggAvg, AggMin, AggMax, AggSum, AggCount, AggFirst, AggLast, AggRate, AggStdDev, AggP50, AggP99}
+	rawQueries := make([]AggregateQuery, 0, len(aggregations))
+	for _, aggregation := range aggregations {
+		rawQueries = append(rawQueries, AggregateQuery{
+			Query: Query{
+				MetricName: "batch.cpu", EntityID: "node-a", Start: base, End: base.Add(5 * time.Minute),
+				Tags: map[string]string{"scope": "batch"}, Order: OrderAsc,
+			},
+			Aggregation: aggregation, Interval: 2 * time.Minute, PreserveSeries: true,
+		})
+	}
+	assertSQLSeriesBatchMatches(t, ctx, store, rawQueries, base.Add(10*time.Minute), "raw_relational", 1)
+
+	now := base.Add(2 * time.Hour)
+	if _, err := store.Compact(ctx, now); err != nil {
+		t.Fatalf("compact batch comparison points: %v", err)
+	}
+	rollupQueries := make([]AggregateQuery, 0, 40)
+	for _, metricName := range []string{"batch.cpu", "batch.memory"} {
+		for _, entityID := range []string{"node-a", "node-b"} {
+			for _, aggregation := range []Aggregation{AggAvg, AggMin, AggMax, AggSum, AggCount, AggFirst, AggLast, AggStdDev, AggP50, AggP99} {
+				rollupQueries = append(rollupQueries, AggregateQuery{
+					Query: Query{
+						MetricName: metricName, EntityID: entityID, Start: base, End: base.Add(5 * time.Minute),
+						Tags: map[string]string{"scope": "batch"}, Order: OrderAsc,
+					},
+					Aggregation: aggregation, Interval: 2 * time.Minute, PreserveSeries: true,
+				})
+			}
+		}
+	}
+	assertSQLSeriesBatchMatches(t, ctx, store, rollupQueries, now, "rollup_relational", 1)
+}
+
+func assertSQLSeriesBatchMatches(t *testing.T, ctx context.Context, store *Store, queries []AggregateQuery, now time.Time, scanKind string, wantScans int) {
+	t.Helper()
+	want := make([][]AggregatePoint, len(queries))
+	for index, query := range queries {
+		points, err := store.Series(ctx, query, now)
+		if err != nil {
+			t.Fatalf("individual %s/%s: %v", query.MetricName, query.Aggregation, err)
+		}
+		want[index] = points
+	}
+	scanCounts := make(map[string]int)
+	observed := withMetricBatchScanObserver(ctx, func(kind string) { scanCounts[kind]++ })
+	got, err := store.SeriesBatch(observed, queries, now)
+	if err != nil {
+		t.Fatalf("series batch: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("series batch changed results\ngot:  %#v\nwant: %#v", got, want)
+	}
+	if gotScans := scanCounts[scanKind]; gotScans != wantScans {
+		t.Fatalf("%s scans = %d, want %d for %d logical queries", scanKind, gotScans, wantScans, len(queries))
 	}
 }
 

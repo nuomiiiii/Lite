@@ -13,6 +13,10 @@ import (
 var dashboardTrafficBenchmarkRecords int
 var dashboardLatencyBenchmarkPoints int
 
+func BenchmarkDashboardTrafficRead5(b *testing.B) {
+	benchmarkDashboardTrafficRead(b, 5, false)
+}
+
 func BenchmarkDashboardTrafficRead30(b *testing.B) {
 	benchmarkDashboardTrafficRead(b, 30, false)
 }
@@ -31,6 +35,10 @@ func BenchmarkDashboardTrafficHybridRead80(b *testing.B) {
 
 func BenchmarkDashboardLatencyRead30(b *testing.B) {
 	benchmarkDashboardLatencyRead(b, 30)
+}
+
+func BenchmarkDashboardLatencyRead5(b *testing.B) {
+	benchmarkDashboardLatencyRead(b, 5)
 }
 
 func BenchmarkDashboardLatencyRead80(b *testing.B) {

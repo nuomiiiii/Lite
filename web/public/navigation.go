@@ -15,13 +15,15 @@ const (
 )
 
 type ThemeNavigation struct {
-	serverDetailTemplate string
-	pingTaskParameter    string
+	serverDetailTemplate  string
+	serverNetworkTemplate string
+	pingTaskParameter     string
 }
 
 type themeNavigationManifest struct {
 	Navigation struct {
 		ServerDetail      string `json:"server_detail"`
+		ServerNetwork     string `json:"server_network"`
 		PingTaskParameter string `json:"ping_task_parameter"`
 	} `json:"navigation"`
 }
@@ -37,10 +39,21 @@ func ActiveThemeNavigation() ThemeNavigation {
 }
 
 func (navigation ThemeNavigation) ServerDetailURL(uuid string, taskID uint) string {
-	if !validThemeServerDetailTemplate(navigation.serverDetailTemplate) || strings.TrimSpace(uuid) == "" {
+	return navigation.serverURL(navigation.serverDetailTemplate, uuid, taskID)
+}
+
+func (navigation ThemeNavigation) ServerNetworkURL(uuid string) string {
+	if validThemeServerRouteTemplate(navigation.serverNetworkTemplate, true) {
+		return navigation.serverURL(navigation.serverNetworkTemplate, uuid, 0)
+	}
+	return navigation.ServerDetailURL(uuid, 0)
+}
+
+func (navigation ThemeNavigation) serverURL(template, uuid string, taskID uint) string {
+	if !validThemeServerRouteTemplate(template, true) || strings.TrimSpace(uuid) == "" {
 		return "/"
 	}
-	target := navigation.serverDetailTemplate
+	target := template
 	target = strings.Replace(target, themeServerUUIDPlaceholder, url.PathEscape(uuid), 1)
 	parsed, err := url.Parse(target)
 	if err != nil {
@@ -60,11 +73,15 @@ func parseThemeNavigation(data []byte) (ThemeNavigation, bool) {
 		return ThemeNavigation{}, false
 	}
 	navigation := ThemeNavigation{
-		serverDetailTemplate: strings.TrimSpace(manifest.Navigation.ServerDetail),
-		pingTaskParameter:    strings.TrimSpace(manifest.Navigation.PingTaskParameter),
+		serverDetailTemplate:  strings.TrimSpace(manifest.Navigation.ServerDetail),
+		serverNetworkTemplate: strings.TrimSpace(manifest.Navigation.ServerNetwork),
+		pingTaskParameter:     strings.TrimSpace(manifest.Navigation.PingTaskParameter),
 	}
 	if !validThemeServerDetailTemplate(navigation.serverDetailTemplate) {
 		return ThemeNavigation{}, false
+	}
+	if navigation.serverNetworkTemplate != "" && !validThemeServerRouteTemplate(navigation.serverNetworkTemplate, true) {
+		navigation.serverNetworkTemplate = ""
 	}
 	if navigation.pingTaskParameter != "" && !validThemeQueryParameter(navigation.pingTaskParameter) {
 		navigation.pingTaskParameter = ""
@@ -75,7 +92,11 @@ func parseThemeNavigation(data []byte) (ThemeNavigation, bool) {
 func bundledThemeNavigation(themeID string) ThemeNavigation {
 	switch strings.TrimSpace(themeID) {
 	case DefaultTheme:
-		return ThemeNavigation{serverDetailTemplate: "/server/{uuid}", pingTaskParameter: "ping_task"}
+		return ThemeNavigation{
+			serverDetailTemplate:  "/server/{uuid}",
+			serverNetworkTemplate: "/server/{uuid}?view=network",
+			pingTaskParameter:     "ping_task",
+		}
 	case ClassicTheme, LegacyDefaultTheme:
 		return ThemeNavigation{serverDetailTemplate: "/instance/{uuid}"}
 	default:
@@ -86,6 +107,10 @@ func bundledThemeNavigation(themeID string) ThemeNavigation {
 }
 
 func validThemeServerDetailTemplate(template string) bool {
+	return validThemeServerRouteTemplate(template, false)
+}
+
+func validThemeServerRouteTemplate(template string, allowQuery bool) bool {
 	if strings.Count(template, themeServerUUIDPlaceholder) != 1 || strings.Contains(template, "\\") {
 		return false
 	}
@@ -94,7 +119,7 @@ func validThemeServerDetailTemplate(template string) bool {
 		return false
 	}
 	parsed, err := url.Parse(probe)
-	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || (!allowQuery && parsed.RawQuery != "") || parsed.Fragment != "" {
 		return false
 	}
 	return strings.HasPrefix(parsed.Path, "/") && path.Clean(parsed.Path) == parsed.Path
