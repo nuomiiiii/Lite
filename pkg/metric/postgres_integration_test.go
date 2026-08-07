@@ -33,6 +33,17 @@ func TestMySQLIntegration(t *testing.T) {
 	runSQLIntegration(t, "mysql", MySQL(dsn), false)
 }
 
+// TestMariaDBIntegration keeps MariaDB coverage independent from MySQL so CI
+// can validate both server implementations with the same storage semantics.
+func TestMariaDBIntegration(t *testing.T) {
+	dsn := os.Getenv("METRIC_MARIADB_DSN")
+	if dsn == "" {
+		t.Skip("METRIC_MARIADB_DSN is not set")
+	}
+
+	runSQLIntegration(t, "mariadb", MySQL(dsn), false)
+}
+
 // runSQLIntegration exercises the SQL store against an external database.
 //
 // runSQLIntegration 在外部数据库上执行通用 SQL 集成测试流程。

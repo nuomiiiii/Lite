@@ -1230,6 +1230,31 @@ func (s *Store) foldSQLiteV4Rollups(ctx context.Context, q querier, metricName, 
 				_ = blockRows.Close()
 				return err
 			}
+			item := seriesByID[seriesID]
+			if dashboardQueryCache(ctx) != nil {
+				first, last, err := s.visitSQLiteDashboardRollupBlock(ctx,
+					codec, count, uint32(checksum), payload, axisID, axisCodec, axisChecksum, axisPayload,
+					func(record sqliteV4RollupRecord) error {
+						if record.bucketNano < lower || record.bucketNano > upper {
+							return nil
+						}
+						if _, overridden := hotOverrides[hotKey{seriesID: seriesID, bucket: record.bucketNano}]; overridden {
+							return nil
+						}
+						merge(item, record)
+						return nil
+					},
+				)
+				if err != nil {
+					_ = blockRows.Close()
+					return fmt.Errorf("metric: decode SQLite V4 dashboard rollup block series=%d start=%d: %w", seriesID, blockStart, err)
+				}
+				if first != blockStart || last != blockEnd {
+					_ = blockRows.Close()
+					return fmt.Errorf("metric: SQLite V4 dashboard rollup block boundary mismatch for series=%d start=%d", seriesID, blockStart)
+				}
+				continue
+			}
 			records, err := s.decodeSQLiteRollupBlockCached(
 				codec, count, uint32(checksum), payload, axisID, axisCodec, axisChecksum, axisPayload,
 				0, 0, nil, false,
@@ -1242,7 +1267,6 @@ func (s *Store) foldSQLiteV4Rollups(ctx context.Context, q querier, metricName, 
 				_ = blockRows.Close()
 				return fmt.Errorf("metric: SQLite V4 rollup block boundary mismatch for series=%d start=%d", seriesID, blockStart)
 			}
-			item := seriesByID[seriesID]
 			for _, record := range records {
 				if record.bucketNano < lower || record.bucketNano > upper {
 					continue

@@ -159,4 +159,85 @@ func TestDashboardSeriesMatchesMixedRollupAndRawWindow(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("dashboard mixed series changed semantics\ngot=%#v\nwant=%#v", got, want)
 	}
+	assertDashboardStoreAxisCacheEmpty(t, store)
+}
+
+func TestDashboardSeriesBatchMatchesIndividualMixedWindows(t *testing.T) {
+	ctx := context.Background()
+	store := newRollupStore(t, RollupPolicy{
+		RawRetention: 15 * time.Minute,
+		Tiers: []RollupTier{
+			{Interval: time.Minute, Retention: 24 * time.Hour},
+		},
+	})
+	for _, definition := range []Definition{
+		{Name: "batch-counter", Type: TypeCounter, RetentionDays: 7},
+		{Name: "batch-delta", Type: TypeGauge, RetentionDays: 7},
+	} {
+		if err := store.CreateMetric(ctx, definition); err != nil {
+			t.Fatalf("create metric %s: %v", definition.Name, err)
+		}
+	}
+	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+	points := make([]Point, 0, 16)
+	for _, entityID := range []string{"node-a", "node-b"} {
+		tags := map[string]string{"source": "agent"}
+		for index, offset := range []time.Duration{-90 * time.Minute, -60 * time.Minute, -10 * time.Minute, -5 * time.Minute} {
+			value := float64((index + 1) * 10)
+			points = append(points,
+				Point{MetricName: "batch-counter", EntityID: entityID, Timestamp: now.Add(offset), Value: value, Tags: tags},
+				Point{MetricName: "batch-delta", EntityID: entityID, Timestamp: now.Add(offset), Value: value / 2, Tags: tags},
+			)
+		}
+	}
+	if err := store.WriteBatch(ctx, points); err != nil {
+		t.Fatalf("write batch points: %v", err)
+	}
+	if _, err := store.Compact(ctx, now); err != nil {
+		t.Fatalf("compact batch points: %v", err)
+	}
+
+	queries := []AggregateQuery{
+		{
+			Query:       Query{MetricName: "batch-counter", Start: now.Add(-2 * time.Hour), End: now, Tags: map[string]string{"source": "agent"}, Order: OrderAsc},
+			Aggregation: AggLast, Interval: time.Hour, PreserveSeries: true,
+		},
+		{
+			Query:       Query{MetricName: "batch-delta", Start: now.Add(-2 * time.Hour), End: now, Tags: map[string]string{"source": "agent"}, Order: OrderAsc},
+			Aggregation: AggSum, Interval: time.Hour, PreserveSeries: true,
+		},
+	}
+	want := make([][]AggregatePoint, len(queries))
+	for index, query := range queries {
+		series, err := store.DashboardSeries(ctx, query, now)
+		if err != nil {
+			t.Fatalf("query individual series %s: %v", query.MetricName, err)
+		}
+		want[index] = series
+	}
+	got, err := store.DashboardSeriesBatch(ctx, queries, now)
+	if err != nil {
+		t.Fatalf("query dashboard series batch: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("dashboard batch changed mixed-window semantics\ngot=%#v\nwant=%#v", got, want)
+	}
+
+	publicBatch, err := store.SeriesBatch(ctx, queries, now)
+	if err != nil {
+		t.Fatalf("query public series batch: %v", err)
+	}
+	if !reflect.DeepEqual(publicBatch, want) {
+		t.Fatalf("public batch changed mixed-window semantics\ngot=%#v\nwant=%#v", publicBatch, want)
+	}
+	assertDashboardStoreAxisCacheEmpty(t, store)
+}
+
+func assertDashboardStoreAxisCacheEmpty(t *testing.T, store *Store) {
+	t.Helper()
+	store.axisCacheMu.Lock()
+	defer store.axisCacheMu.Unlock()
+	if store.axisCache != nil && store.axisCache.used != 0 {
+		t.Fatalf("dashboard query retained %d bytes in the Store axis cache", store.axisCache.used)
+	}
 }

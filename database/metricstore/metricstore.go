@@ -833,12 +833,6 @@ func createMetricDefinitionsWithDefaultRetention(ctx context.Context, s *metric.
 			return fmt.Errorf("failed to create metric %s: %w", def.Name, err)
 		}
 	}
-	for _, name := range obsoleteBuiltinMetricNames {
-		if err := s.DeleteMetric(ctx, name); err != nil {
-			return fmt.Errorf("failed to remove obsolete metric %s: %w", name, err)
-		}
-	}
-
 	return nil
 }
 
@@ -969,8 +963,9 @@ func GetTrafficRecordsByClientsAndTime(ctx context.Context, clientUUIDs []string
 	interval := recordSeriesInterval(s, start, end, now, 500)
 	recordMap := make(map[recordSeriesKey]DashboardTrafficRecord, len(requested)*recordClientMaxPoints(500))
 	trafficMetrics := []string{MetricNetTotalUp, MetricNetTotalDown, MetricTrafficUp, MetricTrafficDown}
+	queries := make([]metric.AggregateQuery, 0, len(trafficMetrics))
 	for _, metricName := range trafficMetrics {
-		points, err := s.DashboardSeries(ctx, metric.AggregateQuery{
+		queries = append(queries, metric.AggregateQuery{
 			Query: metric.Query{
 				MetricName: metricName,
 				Start:      start,
@@ -981,10 +976,14 @@ func GetTrafficRecordsByClientsAndTime(ctx context.Context, clientUUIDs []string
 			Interval:       interval,
 			PreserveSeries: true,
 			OmitTags:       true,
-		}, now)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to query dashboard traffic metric %s: %w", metricName, err)
-		}
+		})
+	}
+	series, err := s.DashboardSeriesBatch(ctx, queries, now)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to query dashboard traffic metrics: %w", err)
+	}
+	for index, points := range series {
+		metricName := trafficMetrics[index]
 		for _, point := range points {
 			if _, ok := requested[point.EntityID]; !ok {
 				continue
@@ -1002,8 +1001,10 @@ func GetTrafficRecordsByClientsAndTime(ctx context.Context, clientUUIDs []string
 	baselines := make(map[string]DashboardTrafficRecord, len(requested))
 	baselineStart := start.Add(-interval)
 	baselineEnd := start.Add(-time.Nanosecond)
-	for _, metricName := range []string{MetricNetTotalUp, MetricNetTotalDown} {
-		points, err := s.DashboardSeries(ctx, metric.AggregateQuery{
+	baselineMetrics := []string{MetricNetTotalUp, MetricNetTotalDown}
+	baselineQueries := make([]metric.AggregateQuery, 0, len(baselineMetrics))
+	for _, metricName := range baselineMetrics {
+		baselineQueries = append(baselineQueries, metric.AggregateQuery{
 			Query: metric.Query{
 				MetricName: metricName,
 				Start:      baselineStart,
@@ -1014,10 +1015,14 @@ func GetTrafficRecordsByClientsAndTime(ctx context.Context, clientUUIDs []string
 			Interval:       interval,
 			PreserveSeries: true,
 			OmitTags:       true,
-		}, now)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to query dashboard traffic baseline %s: %w", metricName, err)
-		}
+		})
+	}
+	baselineSeries, err := s.DashboardSeriesBatch(ctx, baselineQueries, now)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to query dashboard traffic baselines: %w", err)
+	}
+	for index, points := range baselineSeries {
+		metricName := baselineMetrics[index]
 		for _, point := range points {
 			if _, ok := requested[point.EntityID]; !ok {
 				continue

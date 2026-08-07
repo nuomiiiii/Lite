@@ -28,6 +28,7 @@ const (
 const (
 	sqliteCheckpointSQL = "PRAGMA wal_checkpoint(TRUNCATE)"
 	sqliteVacuumSQL     = "VACUUM"
+	sqliteOptimizeSQL   = "PRAGMA optimize"
 )
 
 // SQLiteFileSizes separates retained database pages from WAL/SHM runtime
@@ -168,8 +169,14 @@ func (s *Store) ReclaimSpace(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, sqliteVacuumSQL); err != nil {
 			return fmt.Errorf("metric: vacuum sqlite database: %w", err)
 		}
-		// VACUUM itself can populate the WAL; truncate it again so the reported
-		// physical size reflects the completed reclamation.
+		// VACUUM and optimize can populate the WAL. Checkpoint around optimize so
+		// the reported physical size reflects the completed reclamation.
+		if err := sqliteCheckpoint(ctx, s.db); err != nil {
+			return err
+		}
+		if err := optimizeSQLite(ctx, s.db); err != nil {
+			return err
+		}
 		return sqliteCheckpoint(ctx, s.db)
 	case DriverMySQL:
 		query, err := managedReclaimQuery(s.cfg.Driver, s.tables)
@@ -339,6 +346,13 @@ func sqliteCheckpoint(ctx context.Context, db *sql.DB) error {
 	}
 	if busy != 0 {
 		return fmt.Errorf("metric: checkpoint sqlite WAL: database is busy (%d log frames, %d checkpointed)", logFrames, checkpointedFrames)
+	}
+	return nil
+}
+
+func optimizeSQLite(ctx context.Context, db *sql.DB) error {
+	if _, err := db.ExecContext(ctx, sqliteOptimizeSQL); err != nil {
+		return fmt.Errorf("metric: optimize sqlite query planner: %w", err)
 	}
 	return nil
 }

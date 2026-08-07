@@ -150,7 +150,8 @@ func init() {
 func adminGetDashboard(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	now := time.Now().UTC()
 	sections, rankingLimit := parseDashboardSummaryRequest(req)
-	value, err := buildDashboardCached(ctx, now, sections, rankingLimit)
+	settings := loadDashboardSettings()
+	value, err := buildDashboardCached(ctx, now, sections, rankingLimit, time.Duration(settings.RefreshSeconds)*time.Second)
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
@@ -160,7 +161,8 @@ func adminGetDashboard(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 func adminGetDashboardCharts(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	now := time.Now().UTC()
 	sections, rankingLimit := parseDashboardChartRequest(req)
-	return decorateDashboardNavigation(buildDashboardChartsCached(ctx, now, sections, rankingLimit)), nil
+	settings := loadDashboardSettings()
+	return decorateDashboardNavigation(buildDashboardChartsCached(ctx, now, sections, rankingLimit, time.Duration(settings.ChartRefreshSeconds)*time.Second)), nil
 }
 
 func buildDashboard(ctx context.Context, now time.Time, sections dashboardSummarySections, rankingLimit int) (dashboardResponse, error) {

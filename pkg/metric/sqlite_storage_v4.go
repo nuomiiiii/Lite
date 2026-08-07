@@ -56,6 +56,9 @@ func (s *Store) migrateSQLiteStorageV4(ctx context.Context) error {
 		if err := s.markSQLiteStorageCurrent(ctx); err != nil {
 			return err
 		}
+		if err := optimizeSQLite(ctx, s.db); err != nil {
+			log.Printf("metric: SQLite post-migration query planner optimization skipped: %v", err)
+		}
 		s.reportMigrationProgress(MigrationPhaseCompleted, 1, 1, 0)
 		return nil
 	}
@@ -163,6 +166,9 @@ func (s *Store) migrateSQLiteStorageV4(ctx context.Context) error {
 	s.reportMigrationProgress(MigrationPhaseReclaiming, 1, 1, pointSourceCount+rollupSourceCount+tierBuckets+pingBuckets+sharedBuckets)
 	if err := s.markSQLiteStorageCurrent(ctx); err != nil {
 		return err
+	}
+	if err := optimizeSQLite(ctx, s.db); err != nil {
+		log.Printf("metric: SQLite post-migration query planner optimization skipped: %v", err)
 	}
 	s.reportMigrationProgress(MigrationPhaseCompleted, 1, 1, pointSourceCount+rollupSourceCount+tierBuckets+pingBuckets+sharedBuckets)
 	log.Printf("metric: migrated SQLite metric storage to V%d (%d raw points and %d rollups preserved bit-for-bit)", sqliteStorageVersionV4, pointSourceCount, rollupSourceCount)

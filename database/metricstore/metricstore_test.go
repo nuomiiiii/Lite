@@ -303,31 +303,52 @@ func TestCreateMetricDefinitionsUsesExplicitRetentionAndPreservesOverrides(t *te
 	}
 }
 
-func TestCreateMetricDefinitionsRemovesObsoleteMetrics(t *testing.T) {
+func TestCreateMetricDefinitionsPreservesHistoricalMetricsAcrossRestart(t *testing.T) {
 	ctx := context.Background()
-	s, err := metric.Open(ctx, metric.SQLite(":memory:", metric.WithMaxOpenConns(1)))
+	dir := t.TempDir()
+	cfg := metric.SQLiteInDir(dir, metric.WithMaxOpenConns(1))
+	s, err := metric.Open(ctx, cfg)
 	if err != nil {
 		t.Fatalf("open metric store: %v", err)
 	}
-	defer s.Close()
-	if err := s.CreateMetric(ctx, metric.Definition{Name: "memory.total", Type: metric.TypeGauge, RetentionDays: 1}); err != nil {
-		t.Fatalf("create obsolete definition: %v", err)
+	at := time.Now().UTC().Truncate(time.Second)
+	legacyMetrics := []string{"memory.total", "swap.total", "temperature", "disk.total"}
+	for index, name := range legacyMetrics {
+		if err := s.CreateMetric(ctx, metric.Definition{Name: name, Type: metric.TypeGauge, RetentionDays: 1}); err != nil {
+			t.Fatalf("create historical definition %s: %v", name, err)
+		}
+		if err := s.Write(ctx, metric.Point{MetricName: name, EntityID: "node-a", Timestamp: at, Value: float64(index + 1)}); err != nil {
+			t.Fatalf("write historical point %s: %v", name, err)
+		}
 	}
-	if err := s.Write(ctx, metric.Point{MetricName: "memory.total", EntityID: "node-a", Timestamp: time.Now().UTC(), Value: 1024}); err != nil {
-		t.Fatalf("write obsolete point: %v", err)
+	if err := s.Close(); err != nil {
+		t.Fatalf("close metric store before restart: %v", err)
 	}
-	if err := createMetricDefinitions(ctx, s); err != nil {
-		t.Fatalf("refresh built-in definitions: %v", err)
-	}
-	if _, err := s.GetMetric(ctx, "memory.total"); !errors.Is(err, metric.ErrNotFound) {
-		t.Fatalf("obsolete definition error = %v, want ErrNotFound", err)
-	}
-	points, err := s.Query(ctx, metric.Query{MetricName: "memory.total", EntityID: "node-a", Start: time.Now().UTC().Add(-time.Hour), End: time.Now().UTC().Add(time.Hour)})
+
+	s, err = metric.Open(ctx, cfg)
 	if err != nil {
-		t.Fatalf("query obsolete points: %v", err)
+		t.Fatalf("reopen metric store: %v", err)
 	}
-	if len(points) != 0 {
-		t.Fatalf("obsolete points remain: %#v", points)
+	defer s.Close()
+	if err := createMetricDefinitions(ctx, s); err != nil {
+		t.Fatalf("refresh built-in definitions after restart: %v", err)
+	}
+	for index, name := range legacyMetrics {
+		if _, err := s.GetMetric(ctx, name); err != nil {
+			t.Fatalf("historical definition %s missing after restart: %v", name, err)
+		}
+		points, err := s.Query(ctx, metric.Query{
+			MetricName: name,
+			EntityID:   "node-a",
+			Start:      at.Add(-time.Minute),
+			End:        at.Add(time.Minute),
+		})
+		if err != nil {
+			t.Fatalf("query historical points %s: %v", name, err)
+		}
+		if len(points) != 1 || points[0].Value != float64(index+1) {
+			t.Fatalf("historical point %s changed after restart: %#v", name, points)
+		}
 	}
 }
 

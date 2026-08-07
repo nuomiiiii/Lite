@@ -26,6 +26,7 @@ func (s *Store) DashboardSeries(ctx context.Context, query AggregateQuery, now t
 		query.MetricName = sqliteMergedPingLatencyMetric
 		query.Aggregation = pingLossPhysicalAggregation(query.Aggregation)
 	}
+	ctx = withDashboardAxisQueryCache(ctx)
 
 	select {
 	case s.heavyReadGate <- struct{}{}:
@@ -93,6 +94,10 @@ func (s *Store) foldSQLiteV4RawDashboard(ctx context.Context, q querier, query A
 		}
 		hotMinimum[seriesID] = minimum
 	}
+	if err := hotMinRows.Err(); err != nil {
+		_ = hotMinRows.Close()
+		return err
+	}
 	if err := hotMinRows.Close(); err != nil {
 		return err
 	}
@@ -115,6 +120,10 @@ func (s *Store) foldSQLiteV4RawDashboard(ctx context.Context, q querier, query A
 		if minimum, ok := hotMinimum[seriesID]; ok && maximum >= minimum {
 			overlappingSeries[seriesID] = struct{}{}
 		}
+	}
+	if err := blockMaxRows.Err(); err != nil {
+		_ = blockMaxRows.Close()
+		return err
 	}
 	if err := blockMaxRows.Close(); err != nil {
 		return err
@@ -142,6 +151,10 @@ func (s *Store) foldSQLiteV4RawDashboard(ctx context.Context, q querier, query A
 				return err
 			}
 			hotOverrides[key] = struct{}{}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
 		}
 		if err := rows.Close(); err != nil {
 			return err
@@ -182,25 +195,30 @@ func (s *Store) foldSQLiteV4RawDashboard(ctx context.Context, q querier, query A
 			_ = blockRows.Close()
 			return err
 		}
-		points, err := s.decodeSQLitePointBlockCached(codec, count, uint32(checksum), payload, axisID, axisCodec, axisChecksum, axisPayload)
+		seriesItem := seriesByID[seriesID]
+		first, last, err := s.visitSQLiteDashboardPointBlock(ctx, codec, count, uint32(checksum), payload,
+			axisID, axisCodec, axisChecksum, axisPayload, func(timestamp int64, valueBits uint64) error {
+				if timestamp < startNano || timestamp > endNano {
+					return nil
+				}
+				if _, overridden := hotOverrides[sqliteV4PointKey{seriesID: seriesID, tsNano: timestamp}]; overridden {
+					return nil
+				}
+				add(seriesItem, timestamp, math.Float64frombits(valueBits))
+				return nil
+			})
 		if err != nil {
 			_ = blockRows.Close()
 			return fmt.Errorf("metric: decode SQLite V4 dashboard block series=%d start=%d: %w", seriesID, blockStart, err)
 		}
-		if len(points) == 0 || points[0].timestamp != blockStart || points[len(points)-1].timestamp != blockEnd {
+		if first != blockStart || last != blockEnd {
 			_ = blockRows.Close()
 			return fmt.Errorf("metric: SQLite V4 dashboard block boundary mismatch for series=%d start=%d", seriesID, blockStart)
 		}
-		seriesItem := seriesByID[seriesID]
-		for _, point := range points {
-			if point.timestamp < startNano || point.timestamp > endNano {
-				continue
-			}
-			if _, overridden := hotOverrides[sqliteV4PointKey{seriesID: seriesID, tsNano: point.timestamp}]; overridden {
-				continue
-			}
-			add(seriesItem, point.timestamp, math.Float64frombits(point.valueBits))
-		}
+	}
+	if err := blockRows.Err(); err != nil {
+		_ = blockRows.Close()
+		return err
 	}
 	if err := blockRows.Close(); err != nil {
 		return err
@@ -221,6 +239,10 @@ func (s *Store) foldSQLiteV4RawDashboard(ctx context.Context, q querier, query A
 			return err
 		}
 		add(seriesByID[seriesID], timestamp, value)
+	}
+	if err := hotRows.Err(); err != nil {
+		_ = hotRows.Close()
+		return err
 	}
 	return hotRows.Close()
 }

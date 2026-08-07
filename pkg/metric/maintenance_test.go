@@ -67,6 +67,13 @@ func TestSQLiteStorageSizeAndReclaimSpace(t *testing.T) {
 	if after >= before {
 		t.Fatalf("reclaim did not reduce physical storage: before=%d after=%d", before, after)
 	}
+	afterFiles, err := store.SQLiteFiles(ctx)
+	if err != nil {
+		t.Fatalf("SQLiteFiles() after reclaim: %v", err)
+	}
+	if afterFiles.WAL != 0 {
+		t.Fatalf("WAL size after reclaim and optimize = %d, want 0", afterFiles.WAL)
+	}
 	if err := store.Ping(ctx); err != nil {
 		t.Fatalf("store unusable after reclaim: %v", err)
 	}

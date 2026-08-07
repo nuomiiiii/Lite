@@ -621,6 +621,9 @@ func (s *Store) SeriesBatch(ctx context.Context, queries []AggregateQuery, now t
 			return nil, err
 		}
 	}
+	if s.sqliteStorageV4 && dashboardBatchAggregationsSupported(queries) {
+		return s.DashboardSeriesBatch(ctx, queries, now)
+	}
 	if s.cfg.Driver == DriverSQLite {
 		select {
 		case s.heavyReadGate <- struct{}{}:

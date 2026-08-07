@@ -2,6 +2,7 @@ package jsonrpc
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -47,6 +48,27 @@ func TestDashboardModuleCacheCoalescesConcurrentLoads(t *testing.T) {
 		assert.Equal(t, 42, result)
 	}
 	assert.Equal(t, int32(1), calls.Load())
+}
+
+func TestDashboardModuleCacheHonorsFifteenSecondRefresh(t *testing.T) {
+	var cache dashboardModuleCache[int]
+	var calls atomic.Int32
+	now := time.Now().UTC()
+	load := func() (int, error) {
+		return int(calls.Add(1)), nil
+	}
+
+	first, err := cache.get(context.Background(), now, "same", 15*time.Second, load)
+	require.NoError(t, err)
+	second, err := cache.get(context.Background(), now.Add(14*time.Second), "same", 15*time.Second, load)
+	require.NoError(t, err)
+	third, err := cache.get(context.Background(), now.Add(15*time.Second), "same", 15*time.Second, load)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, first)
+	assert.Equal(t, 1, second)
+	assert.Equal(t, 2, third)
+	assert.Equal(t, int32(2), calls.Load())
 }
 
 func TestDashboardNavigationFollowsThirdPartyThemeManifest(t *testing.T) {
@@ -159,6 +181,21 @@ func TestDashboardLatencyMinuteAveragesAndJitterRanking(t *testing.T) {
 	}
 	require.Len(t, ranking, 3)
 	assert.Equal(t, []string{"spike", "stable", "improved"}, []string{ranking[0].Name, ranking[1].Name, ranking[2].Name})
+}
+
+func TestDashboardLatencyRankingsHonorEveryTopLimit(t *testing.T) {
+	for _, limit := range []int{5, 10, 15, 20} {
+		var latency []dashboardLatencyRankItem
+		var jitter []dashboardLatencyJitterRankItem
+		for index := 0; index < 25; index++ {
+			latency = dashboardTopLatency(latency, dashboardLatencyRankItem{Name: fmt.Sprintf("node-%02d", index), Average: float64(index)}, limit)
+			jitter = dashboardTopLatencyJitter(jitter, dashboardLatencyJitterRankItem{Name: fmt.Sprintf("node-%02d", index), Delta: float64(index)}, limit)
+		}
+		require.Len(t, latency, limit)
+		require.Len(t, jitter, limit)
+		assert.Equal(t, float64(24), latency[0].Average)
+		assert.Equal(t, float64(24), jitter[0].Delta)
+	}
 }
 
 func TestSummarizeDashboardPacketLossKeepsWorstOnlineTask(t *testing.T) {
