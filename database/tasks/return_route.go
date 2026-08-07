@@ -870,6 +870,11 @@ func isPublicReturnRouteIP(value string) bool {
 }
 
 func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *compiledReturnRouteRules) (string, float64, bool) {
+	pendingConfidence := 0.5
+	if hiddenHops >= 3 {
+		pendingConfidence = 0.4
+	}
+
 	firstCN2 := -1
 	for index, hop := range hops {
 		if rules.hasSignature("cn2_backbone", hop) {
@@ -886,10 +891,6 @@ func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *
 			return "CN2 GIA", rules.document.Confidence["cn2_gia"], true
 		}
 	}
-	if hiddenHops >= 3 {
-		return returnRouteLineCN2Pending, 0.5, true
-	}
-
 	cn2Count := 0
 	firstTelecomAfterCN2 := -1
 	telecomTransitCount := 0
@@ -912,12 +913,18 @@ func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *
 		return "CN2 GT", rules.document.Confidence["cn2_gt_strong"], true
 	}
 	if firstTelecomAfterCN2 >= 0 {
-		return returnRouteLineCN2Pending, 0.5, true
+		// A single final AS4134 hop is the target access network, not a
+		// domestic 163 transit segment. Require multiple CN2 hops so an
+		// incomplete one-hop observation still remains pending.
+		if firstTelecomAfterCN2 == len(hops)-1 && cn2Count >= 2 {
+			return "CN2 GIA", rules.document.Confidence["cn2_gia"], true
+		}
+		return returnRouteLineCN2Pending, pendingConfidence, true
 	}
 	if cn2Count >= 2 {
 		return "CN2 GIA", rules.document.Confidence["cn2_gia"], true
 	}
-	return returnRouteLineCN2Pending, 0.5, true
+	return returnRouteLineCN2Pending, pendingConfidence, true
 }
 
 func hasUnicomReturnRouteGroup(hops []returnRouteSignature, rules *compiledReturnRouteRules, group string) bool {
