@@ -215,7 +215,14 @@ func embeddedFileContent(root, relativePath string) ([]byte, string, bool) {
 	if err != nil {
 		return nil, "", false
 	}
-	return content, mime.TypeByExtension(filepath.Ext(cleanPath)), true
+	return content, contentTypeForPath(cleanPath), true
+}
+
+func contentTypeForPath(filePath string) string {
+	if strings.EqualFold(filepath.Ext(filePath), ".ico") {
+		return "image/x-icon"
+	}
+	return mime.TypeByExtension(filepath.Ext(filePath))
 }
 
 func validThemeID(themeID string) bool {
@@ -236,7 +243,7 @@ func localThemeFileContent(themeID, relativePath string) ([]byte, string, bool) 
 	if info, err := os.Stat(localPath); err == nil && !info.IsDir() {
 		content, err := os.ReadFile(localPath)
 		if err == nil {
-			return content, mime.TypeByExtension(filepath.Ext(localPath)), true
+			return content, contentTypeForPath(localPath), true
 		}
 	}
 	return nil, "", false
@@ -447,6 +454,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		// 优先：./data/favicon.ico
 		localFavicon := filepath.Join(DataDir, FaviconFile)
 		if _, err := os.Stat(localFavicon); err == nil {
+			c.Header("Content-Type", contentTypeForPath(localFavicon))
 			c.File(localFavicon)
 			return
 		}
