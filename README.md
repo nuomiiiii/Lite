@@ -14,7 +14,7 @@ Komari Lite 是一款轻量、自托管的服务器监控与运维管理工具�
 **当前正式版：[`2.2.1`](https://github.com/nuomiiiii/komari/releases/tag/2.2.1)**
 
 > [!IMPORTANT]
-> 从 `2.2.1` 开始，系统 Web UI 与公开大屏主题已经解耦：Komari Web 只负责管理后台、远程终端等系统页面，主题只影响公开大屏。默认集成的 Nezha 主题可独立更新，并可在已有其他可用主题时删除；主题管理始终要求至少保留一个可用主题。原经典主题已拆分为独立的 [komari-Classic](https://github.com/nuomiiiii/komari-Classic)，不再随 Komari 内置。
+> 从 `2.2.1` 开始，系统 Web UI 与公开大屏主题已经解耦：Komari Web 只负责管理后台、远程终端等系统页面，主题只影响公开大屏。默认集成的 Nezha 主题可独立更新，并可在已有其他可用主题时删除；主题管理始终要求至少保留一个可用主题。原经典主题已拆分为独立的 [komari-Classic](https://github.com/nuomiiiii/komari-Classic)，不再随 Komari Lite 内置。
 
 [快速开始](#快速开始) · [功能概览](#功能概览) · [升级说明](#从旧版本升级) · [Agent](#agent-与远程管理) · [完整更新日志](https://github.com/nuomiiiii/komari/releases)
 
@@ -146,7 +146,7 @@ go build -o komari
 ./komari server -l 0.0.0.0:25774
 ```
 
-正式构建会将 [nuomiiiii/komari-web](https://github.com/nuomiiiii/komari-web) 作为独立系统 UI 构建，并把产物放入 `web/public/systemUI/dist`；公开大屏主题则保存在独立的主题目录中。正式版本必须使用与 Komari 相同版本的 Komari Web 标签，可参考仓库内的 GitHub Actions 构建流程。
+正式构建会将 [nuomiiiii/komari-web](https://github.com/nuomiiiii/komari-web) 作为独立系统 UI 构建，并把产物放入 `web/public/systemUI/dist`；公开大屏主题则保存在独立的主题目录中。正式版本必须使用与 Komari Lite 相同版本的 Komari Web 标签，可参考仓库内的 GitHub Actions 构建流程。
 
 ## 相关链接
 
