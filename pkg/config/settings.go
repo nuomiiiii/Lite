@@ -13,6 +13,7 @@ type Settings struct {
 	Sitename               string `json:"sitename" default:"Komari Lite"`                      // 站点名称，默认 "Komari Lite"
 	Description            string `json:"description" default:"A simple server monitor tool."` // 站点描述
 	AdminDefaultPageSize   int    `json:"admin_default_page_size" default:"10"`                // 后台列表默认每页条数
+	ReduceMotion           bool   `json:"reduce_motion" default:"false"`                       // 减少后台界面动态效果
 	CorsOriginCheckEnabled bool   `json:"cors_origin_check_enabled" default:"true"`            // 是否启用 API CORS 跨域请求校验，默认 true
 	CorsAllowedOrigins     string `json:"cors_allowed_origins" default:""`                     // API 跨域允许列表
 	WsOriginCheckEnabled   bool   `json:"ws_origin_check_enabled" default:"true"`              // 是否校验 WebSocket Origin
@@ -59,6 +60,7 @@ const (
 	SitenameKey               = "sitename"
 	DescriptionKey            = "description"
 	AdminDefaultPageSizeKey   = "admin_default_page_size"
+	ReduceMotionKey           = "reduce_motion"
 	CorsOriginCheckEnabledKey = "cors_origin_check_enabled"
 	CorsAllowedOriginsKey     = "cors_allowed_origins"
 	WsOriginCheckEnabledKey   = "ws_origin_check_enabled"

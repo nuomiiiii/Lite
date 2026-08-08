@@ -18,6 +18,7 @@ func init() {
 	RegisterWithGroupAndMeta("queryReturnRouteEvents", rpc.RoleAdmin, adminQueryReturnRouteEvents, &rpc.MethodMeta{Name: "admin:queryReturnRouteEvents", Summary: "Query return route events with filters and pagination"})
 	RegisterWithGroupAndMeta("addReturnRouteTask", rpc.RoleAdmin, adminAddReturnRouteTask, &rpc.MethodMeta{Name: "admin:addReturnRouteTask", Summary: "Create a return route task"})
 	RegisterWithGroupAndMeta("editReturnRouteTask", rpc.RoleAdmin, adminEditReturnRouteTask, &rpc.MethodMeta{Name: "admin:editReturnRouteTask", Summary: "Edit a return route task"})
+	RegisterWithGroupAndMeta("batchEditReturnRouteTasks", rpc.RoleAdmin, adminBatchEditReturnRouteTasks, &rpc.MethodMeta{Name: "admin:batchEditReturnRouteTasks", Summary: "Edit multiple return route tasks"})
 	RegisterWithGroupAndMeta("deleteReturnRouteTask", rpc.RoleAdmin, adminDeleteReturnRouteTask, &rpc.MethodMeta{Name: "admin:deleteReturnRouteTask", Summary: "Delete return route tasks"})
 	RegisterWithGroupAndMeta("probeReturnRouteNow", rpc.RoleAdmin, adminProbeReturnRouteNow, &rpc.MethodMeta{Name: "admin:probeReturnRouteNow", Summary: "Dispatch a return route probe immediately"})
 	RegisterWithGroupAndMeta("getReturnRouteRules", rpc.RoleAdmin, adminGetReturnRouteRules, &rpc.MethodMeta{Name: "admin:getReturnRouteRules", Summary: "Get the active return route signature rules and reload status"})
@@ -84,6 +85,17 @@ func adminEditReturnRouteTask(_ context.Context, req *rpc.JsonRpcRequest) (any, 
 		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
 	}
 	if err := tasks.EditReturnRouteTask(&task); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return nil, nil
+}
+
+func adminBatchEditReturnRouteTasks(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params tasks.ReturnRouteTaskBatchEdit
+	if err := req.BindParams(&params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	if err := tasks.EditReturnRouteTasksBatch(params); err != nil {
 		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
 	}
 	return nil, nil

@@ -700,6 +700,52 @@ func TestQueryReturnRouteTasksFiltersAndPaginates(t *testing.T) {
 	}
 }
 
+func TestEditReturnRouteTasksBatchPreservesTaskIdentity(t *testing.T) {
+	db, seeded := seedReturnRouteQueryData(t)
+	params := ReturnRouteTaskBatchEdit{
+		IDs:     []uint{seeded[0].Id, seeded[1].Id, seeded[0].Id},
+		Carrier: "telecom", Region: "华北", Target: "202.97.0.1",
+		IPVersion: 4, ExpectedLine: "CN2 GT", Protocol: "icmp",
+		Interval: 300, SwitchConfirm: 4, RecoveryConfirm: 5, Cooldown: 900,
+		Notify: false, NotifyRecovery: true, Enabled: true,
+	}
+
+	missing := params
+	missing.IDs = append(append([]uint{}, params.IDs...), 999999)
+	if err := editReturnRouteTasksBatch(db, missing); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("missing task error = %v; want record not found", err)
+	}
+	var unchanged models.ReturnRouteTask
+	if err := db.First(&unchanged, seeded[0].Id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Target != seeded[0].Target {
+		t.Fatalf("batch edit changed data before validating all ids: target=%q", unchanged.Target)
+	}
+
+	if err := editReturnRouteTasksBatch(db, params); err != nil {
+		t.Fatal(err)
+	}
+	var updated []models.ReturnRouteTask
+	if err := db.Order("id ASC").Find(&updated).Error; err != nil {
+		t.Fatal(err)
+	}
+	if updated[0].Name != seeded[0].Name || updated[0].Client != seeded[0].Client ||
+		updated[1].Name != seeded[1].Name || updated[1].Client != seeded[1].Client {
+		t.Fatalf("batch edit changed task identity: %#v", updated[:2])
+	}
+	for _, task := range updated[:2] {
+		if task.Carrier != "telecom" || task.Region != "华北" || task.Target != "202.97.0.1" ||
+			task.ExpectedLine != "CN2 GT" || task.Interval != 300 || task.SwitchConfirm != 4 ||
+			task.RecoveryConfirm != 5 || task.Cooldown != 900 || task.Notify || !task.NotifyRecovery || !task.Enabled {
+			t.Fatalf("batch edit values = %#v", task)
+		}
+	}
+	if updated[2].Target != seeded[2].Target || updated[2].Carrier != seeded[2].Carrier {
+		t.Fatalf("batch edit changed an unselected task: %#v", updated[2])
+	}
+}
+
 func TestGetReturnRouteSummary(t *testing.T) {
 	db, tasks := seedReturnRouteQueryData(t)
 	now := time.Now().UTC().Truncate(time.Second)
