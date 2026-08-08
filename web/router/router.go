@@ -8,6 +8,7 @@ import (
 	public_api "github.com/komari-monitor/komari/web/api/public"
 	"github.com/komari-monitor/komari/web/api/remote"
 	"github.com/komari-monitor/komari/web/api/terminal"
+	installweb "github.com/komari-monitor/komari/web/install"
 	"github.com/komari-monitor/komari/web/public"
 	jsonRpc "github.com/komari-monitor/komari/web/rpc/jsonrpc"
 )
@@ -32,6 +33,8 @@ func Register(r *gin.Engine) {
 
 // registerPublicRoutes 公开路由。JSON 读接口经 Bind 绑定到 public: 命名空间方法。
 func registerPublicRoutes(r *gin.Engine) {
+	installweb.RegisterCompleted(r)
+
 	// 非 JSON / 特殊流程，保留 REST handler。
 	r.POST("/api/login", public_api.Login)
 	r.GET("/api/logout", public_api.Logout)

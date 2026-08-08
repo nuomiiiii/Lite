@@ -67,6 +67,20 @@ func (c *Controller) Register(r *gin.Engine) {
 	g.POST("/restore", c.restore)
 }
 
+// RegisterCompleted exposes only the terminal installation state on a normal
+// running instance. Mutating installation endpoints remain permanently closed.
+func RegisterCompleted(r *gin.Engine) {
+	g := r.Group(APIPath)
+	g.GET("/status", func(ctx *gin.Context) {
+		api.RespondSuccess(ctx, Status{State: "completed", Required: false})
+	})
+	reject := func(ctx *gin.Context) {
+		api.RespondError(ctx, http.StatusConflict, "installation is already completed")
+	}
+	g.POST("/complete", reject)
+	g.POST("/restore", reject)
+}
+
 func (c *Controller) requireActive(ctx *gin.Context) {
 	if !c.active.Load() {
 		ctx.AbortWithStatus(http.StatusNotFound)

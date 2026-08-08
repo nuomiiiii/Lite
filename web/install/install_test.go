@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -129,5 +130,40 @@ func TestInstallRejectsUnknownDSN(t *testing.T) {
 	var count int64
 	if err := db.Model(&models.User{}).Count(&count).Error; err != nil || count != 0 {
 		t.Fatalf("failed DSN created users: count=%d err=%v", count, err)
+	}
+}
+
+func TestCompletedInstallationRoutesCannotRunAgain(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	RegisterCompleted(r)
+
+	statusRequest := httptest.NewRequest(http.MethodGet, APIPath+"/status", nil)
+	statusResponse := httptest.NewRecorder()
+	r.ServeHTTP(statusResponse, statusRequest)
+	if statusResponse.Code != http.StatusOK {
+		t.Fatalf("completed status = %d: %s", statusResponse.Code, statusResponse.Body.String())
+	}
+	var statusPayload struct {
+		Status string `json:"status"`
+		Data   Status `json:"data"`
+	}
+	if err := json.Unmarshal(statusResponse.Body.Bytes(), &statusPayload); err != nil {
+		t.Fatalf("decode completed status: %v", err)
+	}
+	if statusPayload.Status != "success" || statusPayload.Data.State != "completed" || statusPayload.Data.Required {
+		t.Fatalf("unexpected completed status: %+v", statusPayload)
+	}
+
+	for _, endpoint := range []string{"/complete", "/restore"} {
+		request := httptest.NewRequest(http.MethodPost, APIPath+endpoint, nil)
+		response := httptest.NewRecorder()
+		r.ServeHTTP(response, request)
+		if response.Code != http.StatusConflict {
+			t.Fatalf("repeat request %s status = %d, want %d: %s", endpoint, response.Code, http.StatusConflict, response.Body.String())
+		}
+		if !strings.Contains(response.Body.String(), "installation is already completed") {
+			t.Fatalf("repeat request %s returned unexpected body: %s", endpoint, response.Body.String())
+		}
 	}
 }
