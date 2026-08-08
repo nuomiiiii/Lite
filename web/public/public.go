@@ -38,7 +38,6 @@ const (
 	FaviconFile        = "favicon.ico"
 	DefaultTheme       = "nezha"
 	LegacyDefaultTheme = "default"
-	ClassicTheme       = "komari-classic"
 	LanguageCookieName = "language"
 
 	// 主题内部结构定义
@@ -323,10 +322,8 @@ func installEmbeddedThemeWithReplace(root, themeID string, replace bool) error {
 }
 
 func localThemeFallback() string {
-	for _, preferred := range []string{DefaultTheme, ClassicTheme} {
-		if IsLocalThemeUsable(preferred) {
-			return preferred
-		}
+	if IsLocalThemeUsable(DefaultTheme) {
+		return DefaultTheme
 	}
 	entries, err := os.ReadDir(filepath.Join(DataDir, ThemesDir))
 	if err != nil {

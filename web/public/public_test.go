@@ -290,7 +290,7 @@ func TestEnsureBundledThemesMigratesLegacyDefaultToNezha(t *testing.T) {
 	if !IsLocalThemeUsable(DefaultTheme) {
 		t.Fatal("legacy migration did not install the bundled Nezha theme")
 	}
-	if IsLocalThemeUsable(ClassicTheme) {
+	if IsLocalThemeUsable("komari-classic") {
 		t.Fatal("legacy migration unexpectedly installed the independent Classic theme")
 	}
 }

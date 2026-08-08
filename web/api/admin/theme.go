@@ -123,14 +123,10 @@ func installedThemes() ([]models.Theme, error) {
 	}
 	sort.Slice(themes, func(i, j int) bool {
 		priority := func(short string) int {
-			switch short {
-			case public.DefaultTheme:
+			if short == public.DefaultTheme {
 				return 0
-			case public.ClassicTheme:
-				return 1
-			default:
-				return 2
 			}
+			return 1
 		}
 		left, right := priority(themes[i].Short), priority(themes[j].Short)
 		if left != right {
