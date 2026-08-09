@@ -1,0 +1,1 @@
+import{ab as r}from"./entry-index-C914rmxb.js";const p=e=>{if(!r.isValidElement(e))throw Error(`Expected a single React Element child, but got: ${r.Children.toArray(e).map(t=>typeof t=="object"&&"type"in t&&typeof t.type=="string"?t.type:typeof t).join(", ")}`);return e};export{p as a};
