@@ -97,7 +97,7 @@ func bundledThemeNavigation(themeID string) ThemeNavigation {
 			serverNetworkTemplate: "/server/{uuid}?view=network",
 			pingTaskParameter:     "ping_task",
 		}
-	case ClassicTheme, LegacyDefaultTheme:
+	case LegacyDefaultTheme:
 		return ThemeNavigation{serverDetailTemplate: "/instance/{uuid}"}
 	default:
 		// Existing Komari themes traditionally use /instance/:uuid. Themes with

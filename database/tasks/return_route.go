@@ -57,6 +57,23 @@ type ReturnRouteTaskPage struct {
 	PageSize       int                        `json:"page_size"`
 }
 
+type ReturnRouteTaskBatchEdit struct {
+	IDs             []uint `json:"ids"`
+	Carrier         string `json:"carrier"`
+	Region          string `json:"region"`
+	Target          string `json:"target"`
+	IPVersion       int    `json:"ip_version"`
+	ExpectedLine    string `json:"expected_line"`
+	Protocol        string `json:"protocol"`
+	Interval        int    `json:"interval"`
+	SwitchConfirm   int    `json:"switch_confirm"`
+	RecoveryConfirm int    `json:"recovery_confirm"`
+	Cooldown        int    `json:"cooldown"`
+	Notify          bool   `json:"notify"`
+	NotifyRecovery  bool   `json:"notify_recovery"`
+	Enabled         bool   `json:"enabled"`
+}
+
 type ReturnRouteEventQuery struct {
 	Page         int        `json:"page"`
 	PageSize     int        `json:"page_size"`
@@ -83,6 +100,10 @@ type ReturnRouteEventPage struct {
 }
 
 func normalizeReturnRouteTask(task *models.ReturnRouteTask) error {
+	return normalizeReturnRouteTaskWithDB(dbcore.GetDBInstance(), task)
+}
+
+func normalizeReturnRouteTaskWithDB(db *gorm.DB, task *models.ReturnRouteTask) error {
 	task.Name = strings.TrimSpace(task.Name)
 	task.Client = strings.TrimSpace(task.Client)
 	task.Carrier = strings.ToLower(strings.TrimSpace(task.Carrier))
@@ -125,7 +146,7 @@ func normalizeReturnRouteTask(task *models.ReturnRouteTask) error {
 		return fmt.Errorf("cooldown must be between 0 and 604800 seconds")
 	}
 	var count int64
-	if err := dbcore.GetDBInstance().Model(&models.Client{}).Where("uuid = ?", task.Client).Count(&count).Error; err != nil {
+	if err := db.Model(&models.Client{}).Where("uuid = ?", task.Client).Count(&count).Error; err != nil {
 		return err
 	}
 	if count == 0 {
@@ -184,6 +205,75 @@ func EditReturnRouteTask(task *models.ReturnRouteTask) error {
 	}
 	_ = ReloadReturnRouteSchedule()
 	return nil
+}
+
+func EditReturnRouteTasksBatch(params ReturnRouteTaskBatchEdit) error {
+	if err := editReturnRouteTasksBatch(dbcore.GetDBInstance(), params); err != nil {
+		return err
+	}
+	_ = ReloadReturnRouteSchedule()
+	return nil
+}
+
+func editReturnRouteTasksBatch(db *gorm.DB, params ReturnRouteTaskBatchEdit) error {
+	ids := uniqueReturnRouteTaskIDs(params.IDs)
+	if len(ids) == 0 {
+		return fmt.Errorf("task ids are required")
+	}
+
+	var existing []models.ReturnRouteTask
+	if err := db.Where("id IN ?", ids).Order("id ASC").Find(&existing).Error; err != nil {
+		return err
+	}
+	if len(existing) != len(ids) {
+		return gorm.ErrRecordNotFound
+	}
+
+	for _, current := range existing {
+		candidate := models.ReturnRouteTask{
+			Id: current.Id, Name: current.Name, Client: current.Client,
+			Carrier: params.Carrier, Region: params.Region, Target: params.Target,
+			IPVersion: params.IPVersion, ExpectedLine: params.ExpectedLine,
+			Protocol: params.Protocol, Interval: params.Interval,
+			SwitchConfirm: params.SwitchConfirm, RecoveryConfirm: params.RecoveryConfirm,
+			Cooldown: params.Cooldown, Notify: params.Notify,
+			NotifyRecovery: params.NotifyRecovery, Enabled: params.Enabled,
+		}
+		if err := normalizeReturnRouteTaskWithDB(db, &candidate); err != nil {
+			return err
+		}
+		params.Carrier = candidate.Carrier
+		params.Region = candidate.Region
+		params.Target = candidate.Target
+		params.ExpectedLine = candidate.ExpectedLine
+		params.Protocol = candidate.Protocol
+	}
+
+	updates := map[string]any{
+		"carrier": params.Carrier, "region": params.Region, "target": params.Target,
+		"ip_version": params.IPVersion, "expected_line": params.ExpectedLine,
+		"protocol": params.Protocol, "interval": params.Interval,
+		"switch_confirm": params.SwitchConfirm, "recovery_confirm": params.RecoveryConfirm,
+		"cooldown": params.Cooldown, "notify": params.Notify,
+		"notify_recovery": params.NotifyRecovery, "enabled": params.Enabled,
+	}
+	return db.Model(&models.ReturnRouteTask{}).Where("id IN ?", ids).Updates(updates).Error
+}
+
+func uniqueReturnRouteTaskIDs(ids []uint) []uint {
+	seen := make(map[uint]struct{}, len(ids))
+	result := make([]uint, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		result = append(result, id)
+	}
+	return result
 }
 
 func DeleteReturnRouteTasks(ids []uint) error {

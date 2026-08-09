@@ -1,1 +1,0 @@
-import{r as e}from"./entry-index-fAv-j32Z.js";const p=r=>{if(!e.isValidElement(r))throw Error(`Expected a single React Element child, but got: ${e.Children.toArray(r).map(t=>typeof t=="object"&&"type"in t&&typeof t.type=="string"?t.type:typeof t).join(", ")}`);return r};export{p as a};
