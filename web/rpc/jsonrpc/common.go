@@ -42,17 +42,21 @@ func getPingStatsForNode(uuid string, pingTasks []models.PingTask) map[string]pi
 	if uuid == "" {
 		return map[string]pingStat{}
 	}
-	key := fmt.Sprintf("pingstats:%s", uuid)
-	if v, ok := pingStatsCache.Get(key); ok {
-		if m, ok2 := v.(map[string]pingStat); ok2 {
-			return m
-		}
-	}
 	// 筛选属于该节点的任务
 	assigned := make([]models.PingTask, 0, 4)
 	for _, t := range pingTasks {
 		if t.AppliesToClient(uuid) {
 			assigned = append(assigned, t)
+		}
+	}
+	assignmentIDs := make([]string, 0, len(assigned))
+	for _, task := range assigned {
+		assignmentIDs = append(assignmentIDs, fmt.Sprint(task.Id))
+	}
+	key := fmt.Sprintf("pingstats:%s:%s", uuid, strings.Join(assignmentIDs, ","))
+	if v, ok := pingStatsCache.Get(key); ok {
+		if m, ok2 := v.(map[string]pingStat); ok2 {
+			return m
 		}
 	}
 	if len(assigned) == 0 {

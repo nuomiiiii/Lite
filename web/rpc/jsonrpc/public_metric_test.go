@@ -197,7 +197,7 @@ func TestPublicPingMetricMinusOneIsPreservedWithoutFillEmpty(t *testing.T) {
 func TestPublicPingStatsFromAggregateGroupsUsesTaskNamesAndLossMetric(t *testing.T) {
 	base := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
 	taskMap := map[string]models.PingTask{
-		"1": {Id: 1, Name: "Tokyo ICMP", Type: "icmp", Interval: 60},
+		"1": {Id: 1, Name: "Tokyo ICMP", Clients: models.StringArray{"node-a"}, Type: "icmp", Interval: 60},
 	}
 	groups := publicPingMetricAggregateGroups{
 		Avg: map[string][]metric.AggregatePoint{
@@ -249,6 +249,26 @@ func TestPublicPingStatsFromAggregateGroupsUsesTaskNamesAndLossMetric(t *testing
 	}
 	if math.Abs(got.P99P50Ratio-1.6666666666666667) > 0.000001 {
 		t.Fatalf("unexpected volatility ratio: %#v", got)
+	}
+}
+
+func TestPublicPingStatsFromAggregateGroupsExcludesUnassignedHistory(t *testing.T) {
+	base := time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC)
+	groups := publicPingMetricAggregateGroups{
+		Avg: map[string][]metric.AggregatePoint{
+			"1": {{Bucket: base, Count: 1, Value: 20}},
+			"2": {{Bucket: base, Count: 1, Value: 30}},
+			"3": {{Bucket: base, Count: 1, Value: 40}},
+		},
+	}
+	taskMap := map[string]models.PingTask{
+		"1": {Id: 1, Name: "removed", Clients: models.StringArray{"node-b"}},
+		"2": {Id: 2, Name: "active", Clients: models.StringArray{"node-a"}},
+	}
+
+	stats := publicPingStatsFromAggregateGroups("node-a", groups, taskMap, nil)
+	if len(stats) != 1 || stats[0].TaskID != "2" || stats[0].Name != "active" {
+		t.Fatalf("only the currently assigned task should remain, got %#v", stats)
 	}
 }
 
