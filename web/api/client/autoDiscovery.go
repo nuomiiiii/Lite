@@ -3,8 +3,10 @@ package client
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/clients"
+	"github.com/komari-monitor/komari/database/notification"
 	"github.com/komari-monitor/komari/pkg/config"
 	"github.com/komari-monitor/komari/utils"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/web/api"
 )
 
@@ -35,6 +37,9 @@ func RegisterClient(c *gin.Context) {
 	if err != nil {
 		api.RespondError(c, 500, "Failed to create client: "+err.Error())
 		return
+	}
+	if err := notification.AddDefaultOnClientUUID(uuid); err != nil {
+		logger.ErrorArgs("clients", "Failed to apply default-on load notifications to auto-discovered client:", err)
 	}
 	api.RespondSuccess(c, gin.H{"uuid": uuid, "token": token})
 }

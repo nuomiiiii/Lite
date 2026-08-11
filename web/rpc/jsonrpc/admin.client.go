@@ -11,6 +11,7 @@ import (
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/pkg/rpc"
 	v2 "github.com/komari-monitor/komari/protocol/v2"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/utils/notifier"
 	agent_runtime "github.com/komari-monitor/komari/web/agent"
 	remote_api "github.com/komari-monitor/komari/web/api/remote"
@@ -108,6 +109,9 @@ func adminAddClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.Jso
 	}
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	if err := d_notification.AddDefaultOnClientUUID(uuid); err != nil {
+		logger.ErrorArgs("clients", "Failed to apply default-on load notifications to new client:", err)
 	}
 	if params.Name != "" {
 		actor, ip := auditActor(ctx)

@@ -47,6 +47,7 @@ func reg(name string, h rpc.Handler, summary string) {
 func adminAddLoadNotification(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	var params struct {
 		Clients   []string `json:"clients"`
+		DefaultOn bool     `json:"default_on"`
 		Name      string   `json:"name"`
 		Metric    string   `json:"metric"`
 		Threshold float32  `json:"threshold"`
@@ -54,8 +55,11 @@ func adminAddLoadNotification(_ context.Context, req *rpc.JsonRpcRequest) (any, 
 		Interval  int      `json:"interval"`
 	}
 	req.BindParams(&params)
-	if len(params.Clients) == 0 || params.Metric == "" || params.Threshold == 0 || params.Ratio == 0 || params.Interval == 0 {
-		return nil, rpc.MakeError(rpc.InvalidParams, "clients, metric, threshold, ratio and interval are required", nil)
+	if params.Metric == "" || params.Threshold == 0 || params.Ratio == 0 || params.Interval == 0 {
+		return nil, rpc.MakeError(rpc.InvalidParams, "metric, threshold, ratio and interval are required", nil)
+	}
+	if !params.DefaultOn && len(params.Clients) == 0 {
+		return nil, rpc.MakeError(rpc.InvalidParams, "clients is required when default_on is false", nil)
 	}
 	if params.Interval > 4*60 || params.Interval <= 0 {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Interval must be between 1 and 240 minutes", nil)
@@ -63,7 +67,7 @@ func adminAddLoadNotification(_ context.Context, req *rpc.JsonRpcRequest) (any, 
 	if params.Ratio <= 0 || params.Ratio > 1 {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Ratio must be between 0 and 1", nil)
 	}
-	taskID, err := notification.AddLoadNotification(params.Clients, params.Name, params.Metric, params.Threshold, params.Ratio, params.Interval)
+	taskID, err := notification.AddLoadNotification(params.Clients, params.DefaultOn, params.Name, params.Metric, params.Threshold, params.Ratio, params.Interval)
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}

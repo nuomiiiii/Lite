@@ -543,7 +543,7 @@ func doInitialize() error {
 }
 
 func cleanupOrphanedPingLossNotifications(db *gorm.DB) error {
-	return db.Where(`
+	if err := db.Where(`
 		NOT EXISTS (
 			SELECT 1 FROM clients
 			WHERE clients.uuid = ping_loss_notifications.client
@@ -552,7 +552,37 @@ func cleanupOrphanedPingLossNotifications(db *gorm.DB) error {
 			SELECT 1 FROM ping_tasks
 			WHERE ping_tasks.id = ping_loss_notifications.task_id
 		)`,
-	).Delete(&models.PingLossNotification{}).Error
+	).Delete(&models.PingLossNotification{}).Error; err != nil {
+		return err
+	}
+
+	var pingTasks []models.PingTask
+	if err := db.Select("id", "clients").Find(&pingTasks).Error; err != nil {
+		return fmt.Errorf("list ping tasks for notification reconciliation: %w", err)
+	}
+	assignedClients := make(map[uint]map[string]struct{}, len(pingTasks))
+	for _, task := range pingTasks {
+		clients := make(map[string]struct{}, len(task.Clients))
+		for _, client := range task.Clients {
+			clients[client] = struct{}{}
+		}
+		assignedClients[task.Id] = clients
+	}
+
+	var notifications []models.PingLossNotification
+	if err := db.Select("id", "client", "task_id").Find(&notifications).Error; err != nil {
+		return fmt.Errorf("list ping loss notifications for assignment reconciliation: %w", err)
+	}
+	staleIDs := make([]uint, 0)
+	for _, notification := range notifications {
+		if _, assigned := assignedClients[notification.TaskId][notification.Client]; !assigned {
+			staleIDs = append(staleIDs, notification.Id)
+		}
+	}
+	if len(staleIDs) == 0 {
+		return nil
+	}
+	return db.Where("id IN ?", staleIDs).Delete(&models.PingLossNotification{}).Error
 }
 
 func cleanupOrphanedClientData(db *gorm.DB) error {

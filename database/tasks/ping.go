@@ -97,25 +97,60 @@ func deletePingTaskRows(db *gorm.DB, ids []uint) error {
 
 // EditPingTask 批量更新延迟监测任务配置。
 func EditPingTask(tasks []*models.PingTask) error {
-	db := dbcore.GetDBInstance()
-	for _, task := range tasks {
-		task.Clients = normalizePingClients(task.Clients)
-		// 使用 map 显式更新，避免 GORM struct Updates 跳过 false/0/空切片等零值。
-		updates := map[string]interface{}{
-			"name":        task.Name,
-			"clients":     task.Clients,
-			"all_clients": task.DefaultOn,
-			"type":        task.Type,
-			"target":      task.Target,
-			"interval":    task.Interval,
+	if err := editPingTasks(dbcore.GetDBInstance(), tasks); err != nil {
+		return err
+	}
+	return ReloadPingSchedule()
+}
+
+func editPingTasks(db *gorm.DB, tasks []*models.PingTask) error {
+	if len(tasks) == 0 {
+		return fmt.Errorf("at least one ping task is required")
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, task := range tasks {
+			if task == nil || task.Id == 0 {
+				return fmt.Errorf("ping task ID is required")
+			}
+			var existing models.PingTask
+			if err := tx.Select("id", "clients").Where("id = ?", task.Id).First(&existing).Error; err != nil {
+				return err
+			}
+			task.Clients = normalizePingClients(task.Clients)
+			// 使用 map 显式更新，避免 GORM struct Updates 跳过 false/0/空切片等零值。
+			if err := tx.Model(&models.PingTask{}).Where("id = ?", task.Id).Updates(map[string]interface{}{
+				"name":        task.Name,
+				"clients":     task.Clients,
+				"all_clients": task.DefaultOn,
+				"type":        task.Type,
+				"target":      task.Target,
+				"interval":    task.Interval,
+			}).Error; err != nil {
+				return err
+			}
+			removedClients := removedPingTaskClients(existing.Clients, task.Clients)
+			if len(removedClients) > 0 {
+				if err := tx.Where("task_id = ? AND client IN ?", task.Id, removedClients).Delete(&models.PingLossNotification{}).Error; err != nil {
+					return err
+				}
+			}
 		}
-		result := db.Model(&models.PingTask{}).Where("id = ?", task.Id).Updates(updates)
-		if result.RowsAffected == 0 {
-			return gorm.ErrRecordNotFound
+		return nil
+	})
+}
+
+func removedPingTaskClients(previous, next models.StringArray) []string {
+	remaining := make(map[string]struct{}, len(next))
+	for _, client := range next {
+		remaining[client] = struct{}{}
+	}
+	removed := make([]string, 0)
+	for _, client := range previous {
+		if _, ok := remaining[client]; !ok {
+			removed = append(removed, client)
 		}
 	}
-	ReloadPingSchedule()
-	return nil
+	return removed
 }
 
 // normalizePingClients 保持 clients 字段序列化为 JSON 数组，避免空值变成 null。

@@ -33,7 +33,10 @@ func TestClassifyReturnRoute(t *testing.T) {
 		{models.StringArray{"AS9929", "AS10099"}, returnRouteLineCUGVIP},
 		{models.StringArray{"AS10099", "AS4837"}, returnRouteLineCUGOptimized},
 		{models.StringArray{"AS4837", "AS10099"}, returnRouteLineCUGOptimized},
-		{models.StringArray{"AS10099"}, returnRouteLineCUGVIP},
+		{models.StringArray{"AS10099", "AS17621"}, returnRouteLineCUGPending},
+		{models.StringArray{"AS17621", "AS10099"}, returnRouteLineCUGPending},
+		{models.StringArray{"AS10099", "AS9929", "AS4837"}, returnRouteLineCUGVIP},
+		{models.StringArray{"AS10099"}, returnRouteLineCUGPending},
 		{models.StringArray{"AS9929", "AS4134"}, "9929"},
 		{models.StringArray{"AS4134"}, "163"},
 		{models.StringArray{"AS4837"}, "4837"},
@@ -67,6 +70,9 @@ func TestReturnRouteLinesAllowCrossCarrierExpectations(t *testing.T) {
 	}
 	if indexOfReturnRouteLine(lines, "10099") != len(lines) {
 		t.Fatalf("legacy 10099 must not be exposed as a selectable line: %v", lines)
+	}
+	if indexOfReturnRouteLine(lines, returnRouteLineCUGPending) != len(lines) {
+		t.Fatalf("CUG pending must not be exposed as a selectable line: %v", lines)
 	}
 }
 
@@ -539,33 +545,37 @@ func TestReturnRouteStateRequiresSwitchAndRecoveryConfirmation(t *testing.T) {
 	}
 }
 
-func TestPendingCN2ObservationPreservesConfirmedState(t *testing.T) {
-	now := time.Now().UTC()
-	changedAt := now.Add(-time.Hour)
-	lastNotifiedAt := now.Add(-2 * time.Hour)
-	task := models.ReturnRouteTask{ExpectedLine: "CN2 GIA", Notify: true, Cooldown: 60, SwitchConfirm: 2, RecoveryConfirm: 2}
-	status := models.ReturnRouteStatus{
-		CurrentLine: "CN2 GT", State: "switched", CandidateLine: "CN2 GIA", CandidateCount: 1,
-		LastChangedAt: &changedAt, LastNotifiedAt: &lastNotifiedAt,
-	}
+func TestPendingReturnRouteObservationPreservesConfirmedState(t *testing.T) {
+	for _, pendingLine := range []string{returnRouteLineCN2Pending, returnRouteLineCUGPending} {
+		t.Run(pendingLine, func(t *testing.T) {
+			now := time.Now().UTC()
+			changedAt := now.Add(-time.Hour)
+			lastNotifiedAt := now.Add(-2 * time.Hour)
+			task := models.ReturnRouteTask{ExpectedLine: "CN2 GIA", Notify: true, Cooldown: 60, SwitchConfirm: 2, RecoveryConfirm: 2}
+			status := models.ReturnRouteStatus{
+				CurrentLine: "CN2 GT", State: "switched", CandidateLine: "CN2 GIA", CandidateCount: 1,
+				LastChangedAt: &changedAt, LastNotifiedAt: &lastNotifiedAt,
+			}
 
-	if event := applyReturnRouteObservation(&status, task, returnRouteLineCN2Pending, now); event != nil {
-		t.Fatalf("pending observation created an event: %#v", event)
-	}
-	if status.CurrentLine != "CN2 GT" || status.State != "switched" || status.CandidateLine != returnRouteLineCN2Pending || status.CandidateCount != 0 {
-		t.Fatalf("pending observation changed confirmed state: %#v", status)
-	}
-	if status.LastChangedAt == nil || !status.LastChangedAt.Equal(changedAt) {
-		t.Fatalf("pending observation changed last transition time: %#v", status.LastChangedAt)
-	}
-	if shouldSendReturnRouteRepeatNotificationAfterObservation(task, status, returnRouteLineCN2Pending, now) {
-		t.Fatal("pending observation triggered a repeated switch notification")
-	}
+			if event := applyReturnRouteObservation(&status, task, pendingLine, now); event != nil {
+				t.Fatalf("pending observation created an event: %#v", event)
+			}
+			if status.CurrentLine != "CN2 GT" || status.State != "switched" || status.CandidateLine != pendingLine || status.CandidateCount != 0 {
+				t.Fatalf("pending observation changed confirmed state: %#v", status)
+			}
+			if status.LastChangedAt == nil || !status.LastChangedAt.Equal(changedAt) {
+				t.Fatalf("pending observation changed last transition time: %#v", status.LastChangedAt)
+			}
+			if shouldSendReturnRouteRepeatNotificationAfterObservation(task, status, pendingLine, now) {
+				t.Fatal("pending observation triggered a repeated switch notification")
+			}
 
-	empty := models.ReturnRouteStatus{}
-	applyReturnRouteObservation(&empty, task, returnRouteLineCN2Pending, now)
-	if empty.State != "unknown" || empty.CurrentLine != "" || empty.CandidateCount != 0 {
-		t.Fatalf("pending observation established an unconfirmed baseline: %#v", empty)
+			empty := models.ReturnRouteStatus{}
+			applyReturnRouteObservation(&empty, task, pendingLine, now)
+			if empty.State != "unknown" || empty.CurrentLine != "" || empty.CandidateLine != pendingLine || empty.CandidateCount != 0 {
+				t.Fatalf("pending observation established an unconfirmed baseline: %#v", empty)
+			}
+		})
 	}
 }
 

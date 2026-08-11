@@ -21,6 +21,7 @@ const returnRouteEventRetention = 90 * 24 * time.Hour
 const (
 	returnRouteLineCUGVIP       = "CUG VIP"
 	returnRouteLineCUGOptimized = "CUG 优化"
+	returnRouteLineCUGPending   = "CUG 待确认"
 	returnRouteLineCN2Pending   = "CN2 待确认"
 )
 
@@ -701,7 +702,7 @@ func shouldSendReturnRouteRepeatNotification(task models.ReturnRouteTask, status
 }
 
 func shouldSendReturnRouteRepeatNotificationAfterObservation(task models.ReturnRouteTask, status models.ReturnRouteStatus, line string, now time.Time) bool {
-	return line != returnRouteLineCN2Pending && shouldSendReturnRouteRepeatNotification(task, status, now)
+	return !isPendingReturnRouteLine(line) && shouldSendReturnRouteRepeatNotification(task, status, now)
 }
 
 func returnRouteRepeatNotificationDue(lastNotifiedAt *time.Time, cooldown int, now time.Time) bool {
@@ -759,10 +760,10 @@ func advanceReturnRouteState(status *models.ReturnRouteStatus, task models.Retur
 }
 
 func applyReturnRouteObservation(status *models.ReturnRouteStatus, task models.ReturnRouteTask, line string, now time.Time) *models.ReturnRouteEvent {
-	if line != returnRouteLineCN2Pending {
+	if !isPendingReturnRouteLine(line) {
 		return advanceReturnRouteState(status, task, line, now)
 	}
-	status.CandidateLine = returnRouteLineCN2Pending
+	status.CandidateLine = line
 	status.CandidateCount = 0
 	if status.CurrentLine == "" {
 		status.State = "unknown"
@@ -882,22 +883,19 @@ func classifyReturnRouteSignaturesWithRules(hops []returnRouteSignature, rules *
 	for _, hop := range hops {
 		switch unicomReturnRouteGroup(hop, rules) {
 		case "unicom_10099":
-			switch {
-			case has9929:
+			if has9929 {
 				return returnRouteLineCUGVIP, lowerReturnRouteConfidence(
 					rules.document.Confidence["unicom_10099"],
 					rules.document.Confidence["unicom_9929"],
 				)
-			case has4837:
+			}
+			if has4837 {
 				return returnRouteLineCUGOptimized, lowerReturnRouteConfidence(
 					rules.document.Confidence["unicom_10099"],
 					rules.document.Confidence["unicom_4837"],
 				)
-			default:
-				// Some traceroutes stop at the CUG access network. Keep the former
-				// AS10099 behavior compatible by treating that incomplete path as VIP.
-				return returnRouteLineCUGVIP, rules.document.Confidence["unicom_10099"]
 			}
+			return returnRouteLineCUGPending, pendingReturnRouteConfidence(hiddenHops)
 		case "unicom_9929":
 			if hasCUGAccess {
 				return returnRouteLineCUGVIP, lowerReturnRouteConfidence(
@@ -966,10 +964,7 @@ func isPublicReturnRouteIP(value string) bool {
 }
 
 func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *compiledReturnRouteRules) (string, float64, bool) {
-	pendingConfidence := 0.5
-	if hiddenHops >= 3 {
-		pendingConfidence = 0.4
-	}
+	pendingConfidence := pendingReturnRouteConfidence(hiddenHops)
 
 	firstCN2 := -1
 	for index, hop := range hops {
@@ -1035,6 +1030,17 @@ func classifyCN2ReturnRoute(hops []returnRouteSignature, hiddenHops int, rules *
 		return "CN2 GIA", rules.document.Confidence["cn2_gia"], true
 	}
 	return returnRouteLineCN2Pending, pendingConfidence, true
+}
+
+func pendingReturnRouteConfidence(hiddenHops int) float64 {
+	if hiddenHops >= 3 {
+		return 0.4
+	}
+	return 0.5
+}
+
+func isPendingReturnRouteLine(line string) bool {
+	return line == returnRouteLineCN2Pending || line == returnRouteLineCUGPending
 }
 
 func isTelecom163BackboneCandidate(hop returnRouteSignature, rules *compiledReturnRouteRules) bool {
