@@ -76,6 +76,9 @@ jobs:
           CANDIDATE_HASH="${GITHUB_SHA::7}"
           FAKE_RELEASE_PID=""
 
+          sudo mkdir -p "$ROOT"
+          sudo chown "$(id -u):$(id -g)" "$ROOT"
+
           cleanup() {
             if [ -n "${FAKE_RELEASE_PID}" ]; then
               sudo kill "${FAKE_RELEASE_PID}" >/dev/null 2>&1 || true
