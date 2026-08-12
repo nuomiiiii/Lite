@@ -31,17 +31,17 @@ func (s *Store) migrateSQLiteStorageV3(ctx context.Context, reclaim bool) error 
 			return err
 		}
 	case pointType == "" && rollupType == "table":
-		upstream131, err := inspectSQLiteUpstream131Schema(ctx, s.db, s.tables)
+		upstreamLayout, err := inspectSQLiteUpstreamSchema(ctx, s.db, s.tables)
 		if err != nil {
 			return err
 		}
-		if !upstream131 {
+		if upstreamLayout.name == "" {
 			return fmt.Errorf(
 				"metric: unsupported SQLite storage layout: %s=%q %s=%q",
 				s.tables.points, pointType, s.tables.rollups, rollupType,
 			)
 		}
-		if err := s.migrateSQLiteUpstream131Storage(ctx); err != nil {
+		if err := s.migrateSQLiteUpstream131Storage(ctx, upstreamLayout); err != nil {
 			return err
 		}
 	case pointType == "table" && rollupType == "table":
