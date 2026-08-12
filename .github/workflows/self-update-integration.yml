@@ -140,7 +140,7 @@ jobs:
           wait_version() {
             local port=$1 expected_hash=$2
             for _ in $(seq 1 30); do
-              if curl -fsS "http://127.0.0.1:$port/api/version" 2>/dev/null | jq -e --arg hash "$expected_hash" '.version == "2.2.2" and .hash == $hash' >/dev/null; then
+              if curl -fsS "http://127.0.0.1:$port/api/version" 2>/dev/null | jq -e --arg hash "$expected_hash" '(.data // .) | .version == "2.2.2" and .hash == $hash' >/dev/null; then
                 return 0
               fi
               sleep 1
@@ -253,7 +253,7 @@ jobs:
             sudo cp "$cert_root/ca.crt" /usr/local/share/ca-certificates/komari-self-update-test.crt
             sudo update-ca-certificates >/dev/null
             openssl x509 -in "$cert_root/server.crt" -noout -checkhost komari.test
-            if openssl x509 -in "$cert_root/server.crt" -noout -checkip 127.0.0.1; then
+            if openssl x509 -in "$cert_root/server.crt" -noout -checkip 127.0.0.1 | grep -q 'does match certificate'; then
               echo 'Test certificate unexpectedly contains 127.0.0.1' >&2
               return 1
             fi
@@ -342,7 +342,7 @@ jobs:
           curl --cacert "$ROOT/certificates/ca.crt" \
             --resolve komari.test:18775:127.0.0.1 \
             -fsS https://komari.test:18775/api/version | \
-            jq -e --arg hash "$CANDIDATE_HASH" '.version == "2.2.2" and .hash == $hash'
+            jq -e --arg hash "$CANDIDATE_HASH" '(.data // .) | .version == "2.2.2" and .hash == $hash'
           systemctl is-active --quiet "$HTTPS_SERVICE"
 
           create_case rollback "$ROLLBACK_SERVICE" 28776
