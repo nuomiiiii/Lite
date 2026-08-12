@@ -10,8 +10,14 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout candidate code
         uses: actions/checkout@v4
+
+      - name: Checkout field build source
+        uses: actions/checkout@v4
+        with:
+          ref: 78518cc489fb29d66b963daf7e1461ff1cb62f90
+          path: field-build
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -21,15 +27,10 @@ jobs:
       - name: Install Zig
         uses: ./.github/actions/setup-zig
 
-      - name: Build frontend assets
-        uses: ./.github/actions/build-frontend
-        with:
-          ref: komari-2.1.7
-
       - name: Run updater unit tests
-        run: go test ./pkg/selfupdate ./web/rpc/jsonrpc
+        run: go test ./pkg/selfupdate ./utils/httpsserver ./web/rpc/jsonrpc
 
-      - name: Build old and candidate static binaries
+      - name: Build field and candidate static binaries
         env:
           GOOS: linux
           GOARCH: amd64
@@ -39,33 +40,60 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p self-update-test
-          go build -trimpath -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.1.3 -X github.com/komari-monitor/komari/utils.VersionHash=c0ufuud' -o self-update-test/komari-old .
-          go build -trimpath -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.1.5 -X github.com/komari-monitor/komari/utils.VersionHash=yeycoeq' -o self-update-test/komari-new .
+          (
+            cd field-build
+            go build -trimpath \
+              -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.2.2 -X github.com/komari-monitor/komari/utils.VersionHash=78518cc' \
+              -o ../self-update-test/komari-field .
+          )
+          candidate_hash="${GITHUB_SHA::7}"
+          go build -trimpath \
+            -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.2.2 -X github.com/komari-monitor/komari/utils.VersionHash=${candidate_hash}" \
+            -o self-update-test/komari-candidate .
+          ./self-update-test/komari-field version --json | jq -e '.version == "2.2.2" and .hash == "78518cc"'
+          ./self-update-test/komari-candidate version --json | jq -e --arg hash "$candidate_hash" '.version == "2.2.2" and .hash == $hash'
 
       - name: Smoke test static binary on mainstream distributions
         shell: bash
         run: |
           set -euo pipefail
+          candidate_hash="${GITHUB_SHA::7}"
           for image in ubuntu:20.04 debian:11-slim quay.io/centos/centos:7; do
             echo "Testing $image"
-            output="$(docker run --rm -v "$PWD/self-update-test/komari-new:/komari:ro" "$image" /komari version --json)"
-            jq -e '.version == "2.1.5" and .hash == "yeycoeq"' <<<"$output"
+            output="$(docker run --rm -v "$PWD/self-update-test/komari-candidate:/komari:ro" "$image" /komari version --json)"
+            jq -e --arg hash "$candidate_hash" '.version == "2.2.2" and .hash == $hash' <<<"$output"
           done
 
-      - name: Verify systemd update and automatic rollback
+      - name: Verify field-build update, HTTPS redirect, and terminal rollback
         shell: bash
         run: |
           set -euo pipefail
           ROOT=/tmp/komari-self-update-integration
-          SUCCESS_SERVICE=komari-update-success.service
+          HTTP_SERVICE=komari-update-http.service
+          HTTPS_SERVICE=komari-update-https.service
           ROLLBACK_SERVICE=komari-update-rollback.service
+          TERMINAL_SERVICE=komari-update-terminal.service
+          CANDIDATE_HASH="${GITHUB_SHA::7}"
+          FAKE_RELEASE_PID=""
 
           cleanup() {
-            sudo systemctl stop "$SUCCESS_SERVICE" "$ROLLBACK_SERVICE" >/dev/null 2>&1 || true
-            sudo rm -f "/etc/systemd/system/$SUCCESS_SERVICE" "/etc/systemd/system/$ROLLBACK_SERVICE"
+            if [ -n "${FAKE_RELEASE_PID}" ]; then
+              sudo kill "${FAKE_RELEASE_PID}" >/dev/null 2>&1 || true
+              wait "${FAKE_RELEASE_PID}" >/dev/null 2>&1 || true
+            fi
+            sudo systemctl stop "$HTTP_SERVICE" "$HTTPS_SERVICE" "$ROLLBACK_SERVICE" "$TERMINAL_SERVICE" >/dev/null 2>&1 || true
+            sudo rm -f \
+              "/etc/systemd/system/$HTTP_SERVICE" \
+              "/etc/systemd/system/$HTTPS_SERVICE" \
+              "/etc/systemd/system/$ROLLBACK_SERVICE" \
+              "/etc/systemd/system/$TERMINAL_SERVICE"
             sudo systemctl daemon-reload
+            if sudo test -f "$ROOT/hosts.before"; then
+              sudo cp "$ROOT/hosts.before" /etc/hosts
+            fi
             sudo rm -rf "$ROOT"
-            rm -f /tmp/komari-self-update-success.cookies
+            sudo rm -f /usr/local/share/ca-certificates/komari-self-update-test.crt
+            sudo update-ca-certificates --fresh >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
 
@@ -73,8 +101,8 @@ jobs:
             local name=$1 service=$2 port=$3
             local case_root="$ROOT/$name"
             sudo mkdir -p "$case_root/data" "$case_root/.komari-update/jobs/test"
-            sudo cp self-update-test/komari-old "$case_root/komari"
-            sudo cp self-update-test/komari-new "$case_root/.komari-update/jobs/test/candidate"
+            sudo cp self-update-test/komari-field "$case_root/komari"
+            sudo cp self-update-test/komari-candidate "$case_root/.komari-update/jobs/test/candidate"
             sudo chmod 0755 "$case_root/komari" "$case_root/.komari-update/jobs/test/candidate"
             sudo tee "/etc/systemd/system/$service" >/dev/null <<UNIT
           [Unit]
@@ -89,6 +117,7 @@ jobs:
           User=root
           Environment=KOMARI_DEPLOYMENT=linux
           Environment=KOMARI_SERVICE_NAME=$service
+          Environment=NO_PROXY=github.com,127.0.0.1,::1
 
           [Install]
           WantedBy=multi-user.target
@@ -105,14 +134,21 @@ jobs:
               fi
               sleep 1
             done
+            wait_version "$port" 78518cc
+          }
+
+          wait_version() {
+            local port=$1 expected_hash=$2
             for _ in $(seq 1 30); do
-              curl -fsS "http://127.0.0.1:$port/api/version" >/dev/null && return 0
+              if curl -fsS "http://127.0.0.1:$port/api/version" 2>/dev/null | jq -e --arg hash "$expected_hash" '.version == "2.2.2" and .hash == $hash' >/dev/null; then
+                return 0
+              fi
               sleep 1
             done
             return 1
           }
 
-          schedule_helper() {
+          schedule_helper_with_field_semantics() {
             local name=$1 unit=$2
             local case_root="$ROOT/$name"
             sudo systemd-run \
@@ -124,11 +160,34 @@ jobs:
               _self-update-helper "$case_root/.komari-update/jobs/test/helper.json"
           }
 
+          write_helper_config() {
+            local name=$1 service=$2 health_url=$3 expected_hash=$4 previous_hash=$5 timeout=$6
+            local case_root="$ROOT/$name"
+            sudo tee "$case_root/.komari-update/jobs/test/helper.json" >/dev/null <<JSON
+          {
+            "job_id": "integration-$name",
+            "current_executable": "$case_root/komari",
+            "candidate_executable": "$case_root/.komari-update/jobs/test/candidate",
+            "data_dir": "$case_root/data",
+            "service": "$service",
+            "health_url": "$health_url",
+            "expected_version": "2.2.2",
+            "expected_hash": "$expected_hash",
+            "previous_version": "2.2.2",
+            "previous_hash": "$previous_hash",
+            "update_root": "$case_root/.komari-update",
+            "backup_root": "$case_root/backup/self-update-integration-$name",
+            "health_timeout": $timeout,
+            "stable_window": 1000000000
+          }
+          JSON
+          }
+
           wait_result() {
             local name=$1 expected=$2
             local result="$ROOT/$name/.komari-update/last-result.json"
             for _ in $(seq 1 120); do
-              if sudo test -f "$result" && sudo grep -q '"status": "'"$expected"'"' "$result"; then
+              if sudo test -f "$result" && sudo jq -e --arg status "$expected" '.status == $status' "$result" >/dev/null; then
                 return 0
               fi
               sleep 1
@@ -137,63 +196,174 @@ jobs:
             return 1
           }
 
-          create_case success "$SUCCESS_SERVICE" 28774
-          COOKIE_JAR=/tmp/komari-self-update-success.cookies
-          curl -fsS \
-            -c "$COOKIE_JAR" \
-            -H 'Content-Type: application/json' \
-            --data '{"username":"integration","password":"Integration-test1","twofa_code":""}' \
-            http://127.0.0.1:28774/api/login >/dev/null
-          capability="$(curl -fsS \
-            -b "$COOKIE_JAR" \
-            -H 'Content-Type: application/json' \
-            --data '{"jsonrpc":"2.0","id":1,"method":"admin:getSelfUpdateStatus","params":{}}' \
-            http://127.0.0.1:28774/api/rpc2)"
-          jq -e \
-            --arg service "$SUCCESS_SERVICE" \
-            '.result.deployment == "linux" and .result.supported == true and .result.service == $service' \
-            <<<"$capability"
-          sudo tee "$ROOT/success/.komari-update/jobs/test/helper.json" >/dev/null <<JSON
-          {
-            "job_id": "integration-success",
-            "current_executable": "$ROOT/success/komari",
-            "candidate_executable": "$ROOT/success/.komari-update/jobs/test/candidate",
-            "data_dir": "$ROOT/success/data",
-            "service": "$SUCCESS_SERVICE",
-            "health_url": "http://127.0.0.1:28774/api/version",
-            "expected_version": "2.1.5",
-            "expected_hash": "yeycoeq",
-            "previous_version": "2.1.3",
-            "previous_hash": "c0ufuud",
-            "update_root": "$ROOT/success/.komari-update",
-            "backup_root": "$ROOT/success/backup/self-update-integration-success",
-            "health_timeout": 30000000000,
-            "stable_window": 3000000000
+          login() {
+            local port=$1 cookie=$2
+            curl -fsS \
+              -c "$cookie" \
+              -H 'Content-Type: application/json' \
+              --data '{"username":"integration","password":"Integration-test1","twofa_code":""}' \
+              "http://127.0.0.1:$port/api/login" >/dev/null
           }
-          JSON
-          schedule_helper success komari-self-update-integration-success
-          wait_result success succeeded
-          curl -fsS http://127.0.0.1:28774/api/version | grep -q '2.1.5'
 
-          create_case rollback "$ROLLBACK_SERVICE" 28775
-          sudo tee "$ROOT/rollback/.komari-update/jobs/test/helper.json" >/dev/null <<JSON
+          login_https() {
+            local port=$1 cookie=$2
+            curl --cacert "$ROOT/certificates/ca.crt" \
+              --resolve "komari.test:$port:127.0.0.1" \
+              -fsS -c "$cookie" \
+              -H 'Content-Type: application/json' \
+              --data '{"username":"integration","password":"Integration-test1","twofa_code":""}' \
+              "https://komari.test:$port/api/login" >/dev/null
+          }
+
+          schedule_update_over_http() {
+            local port=$1 cookie=$2
+            curl -fsS -b "$cookie" \
+              -H 'Content-Type: application/json' \
+              --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"admin:startSelfUpdate\",\"params\":{\"version\":\"2.2.2\",\"version_hash\":\"$CANDIDATE_HASH\"}}" \
+              "http://127.0.0.1:$port/api/rpc2" | \
+              jq -e --arg hash "$CANDIDATE_HASH" '.result.status == "scheduled" and .result.target_hash == $hash'
+          }
+
+          schedule_update_over_https() {
+            local port=$1 cookie=$2
+            curl --cacert "$ROOT/certificates/ca.crt" \
+              --resolve "komari.test:$port:127.0.0.1" \
+              -fsS -b "$cookie" \
+              -H 'Content-Type: application/json' \
+              --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"admin:startSelfUpdate\",\"params\":{\"version\":\"2.2.2\",\"version_hash\":\"$CANDIDATE_HASH\"}}" \
+              "https://komari.test:$port/api/rpc2" | \
+              jq -e --arg hash "$CANDIDATE_HASH" '.result.status == "scheduled" and .result.target_hash == $hash'
+          }
+
+          create_test_certificate() {
+            local cert_root="$ROOT/certificates"
+            sudo mkdir -p "$cert_root"
+            sudo openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+              -subj '/CN=Komari self-update test CA' \
+              -keyout "$cert_root/ca.key" -out "$cert_root/ca.crt" >/dev/null 2>&1
+            sudo openssl req -newkey rsa:2048 -nodes \
+              -subj '/CN=komari.test' \
+              -keyout "$cert_root/server.key" -out "$cert_root/server.csr" >/dev/null 2>&1
+            printf 'subjectAltName=DNS:komari.test\nextendedKeyUsage=serverAuth\n' | \
+              sudo tee "$cert_root/server.ext" >/dev/null
+            sudo openssl x509 -req -days 1 \
+              -in "$cert_root/server.csr" \
+              -CA "$cert_root/ca.crt" -CAkey "$cert_root/ca.key" -CAcreateserial \
+              -extfile "$cert_root/server.ext" -out "$cert_root/server.crt" >/dev/null 2>&1
+            sudo cp "$cert_root/ca.crt" /usr/local/share/ca-certificates/komari-self-update-test.crt
+            sudo update-ca-certificates >/dev/null
+            openssl x509 -in "$cert_root/server.crt" -noout -checkhost komari.test
+            if openssl x509 -in "$cert_root/server.crt" -noout -checkip 127.0.0.1; then
+              echo 'Test certificate unexpectedly contains 127.0.0.1' >&2
+              return 1
+            fi
+
+            sudo openssl req -newkey rsa:2048 -nodes \
+              -subj '/CN=github.com' \
+              -keyout "$cert_root/github.key" -out "$cert_root/github.csr" >/dev/null 2>&1
+            printf 'subjectAltName=DNS:github.com\nextendedKeyUsage=serverAuth\n' | \
+              sudo tee "$cert_root/github.ext" >/dev/null
+            sudo openssl x509 -req -days 1 \
+              -in "$cert_root/github.csr" \
+              -CA "$cert_root/ca.crt" -CAkey "$cert_root/ca.key" -CAcreateserial \
+              -extfile "$cert_root/github.ext" -out "$cert_root/github.crt" >/dev/null 2>&1
+            openssl x509 -in "$cert_root/github.crt" -noout -checkhost github.com
+          }
+
+          start_fake_release_server() {
+            local release_root="$ROOT/release"
+            local asset_root="$release_root/nuomiiiii/komari/releases/download/2.2.2"
+            sudo mkdir -p "$asset_root"
+            sudo cp self-update-test/komari-candidate "$asset_root/komari-linux-amd64"
+            local size sha
+            size="$(sudo stat -c '%s' "$asset_root/komari-linux-amd64")"
+            sha="$(sudo sha256sum "$asset_root/komari-linux-amd64" | cut -d' ' -f1)"
+            sudo tee "$asset_root/komari-update.json" >/dev/null <<JSON
           {
-            "job_id": "integration-rollback",
-            "current_executable": "$ROOT/rollback/komari",
-            "candidate_executable": "$ROOT/rollback/.komari-update/jobs/test/candidate",
-            "data_dir": "$ROOT/rollback/data",
-            "service": "$ROLLBACK_SERVICE",
-            "health_url": "http://127.0.0.1:28775/api/version",
-            "expected_version": "9.9.9",
-            "expected_hash": "bad9999",
-            "previous_version": "2.1.3",
-            "previous_hash": "c0ufuud",
-            "update_root": "$ROOT/rollback/.komari-update",
-            "backup_root": "$ROOT/rollback/backup/self-update-integration-rollback",
-            "health_timeout": 8000000000,
-            "stable_window": 2000000000
+            "schema": 1,
+            "version": "2.2.2",
+            "version_hash": "$CANDIDATE_HASH",
+            "assets": [{
+              "name": "komari-linux-amd64",
+              "os": "linux",
+              "arch": "amd64",
+              "size": $size,
+              "sha256": "$sha"
+            }]
           }
           JSON
-          schedule_helper rollback komari-self-update-integration-rollback
+            sudo cp /etc/hosts "$ROOT/hosts.before"
+            echo '127.0.0.1 github.com' | sudo tee -a /etc/hosts >/dev/null
+            export NO_PROXY=github.com,127.0.0.1,::1
+            export no_proxy="$NO_PROXY"
+            (
+              cd "$release_root"
+              exec sudo openssl s_server -quiet -WWW -accept 127.0.0.1:443 \
+                -cert "$ROOT/certificates/github.crt" \
+                -key "$ROOT/certificates/github.key"
+            ) >"$ROOT/fake-release.log" 2>&1 &
+            FAKE_RELEASE_PID=$!
+            for _ in $(seq 1 20); do
+              if curl --cacert "$ROOT/certificates/ca.crt" -fsS \
+                https://github.com/nuomiiiii/komari/releases/download/2.2.2/komari-update.json | \
+                jq -e --arg hash "$CANDIDATE_HASH" '.version_hash == $hash' >/dev/null; then
+                return 0
+              fi
+              sleep 1
+            done
+            cat "$ROOT/fake-release.log" >&2
+            return 1
+          }
+
+          create_test_certificate
+          start_fake_release_server
+
+          create_case http "$HTTP_SERVICE" 28774
+          HTTP_COOKIE="$ROOT/http.cookies"
+          login 28774 "$HTTP_COOKIE"
+          schedule_update_over_http 28774 "$HTTP_COOKIE"
+          wait_result http succeeded
+          wait_version 28774 "$CANDIDATE_HASH"
+          systemctl is-active --quiet "$HTTP_SERVICE"
+
+          create_case https "$HTTPS_SERVICE" 28775
+          HTTPS_COOKIE="$ROOT/https.cookies"
+          login 28775 "$HTTPS_COOKIE"
+          curl -fsS -b "$HTTPS_COOKIE" \
+            -H 'Content-Type: application/json' \
+            --data "{\"https_enabled\":true,\"https_listen\":\"127.0.0.1:18775\",\"https_redirect_http\":true,\"https_certificate_path\":\"$ROOT/certificates/server.crt\",\"https_private_key_path\":\"$ROOT/certificates/server.key\"}" \
+            http://127.0.0.1:28775/api/admin/settings/https >/dev/null
+          redirect_headers="$(curl -sS -D - -o /dev/null http://127.0.0.1:28775/api/version)"
+          grep -q '^HTTP/1.1 307' <<<"$redirect_headers"
+          grep -qi '^Location: https://127.0.0.1:18775/api/version' <<<"$redirect_headers"
+          login_https 18775 "$HTTPS_COOKIE"
+          schedule_update_over_https 18775 "$HTTPS_COOKIE"
+          wait_result https succeeded
+          curl --cacert "$ROOT/certificates/ca.crt" \
+            --resolve komari.test:18775:127.0.0.1 \
+            -fsS https://komari.test:18775/api/version | \
+            jq -e --arg hash "$CANDIDATE_HASH" '.version == "2.2.2" and .hash == $hash'
+          systemctl is-active --quiet "$HTTPS_SERVICE"
+
+          create_case rollback "$ROLLBACK_SERVICE" 28776
+          write_helper_config rollback "$ROLLBACK_SERVICE" \
+            http://127.0.0.1:28776/api/version bad9999 78518cc 8000000000
+          schedule_helper_with_field_semantics rollback komari-self-update-integration-rollback
           wait_result rollback rolled_back
-          curl -fsS http://127.0.0.1:28775/api/version | grep -q '2.1.3'
+          wait_version 28776 78518cc
+          systemctl is-active --quiet "$ROLLBACK_SERVICE"
+
+          create_case terminal "$TERMINAL_SERVICE" 28777
+          write_helper_config terminal "$TERMINAL_SERVICE" \
+            http://127.0.0.1:28777/api/version bad9999 wrong12 5000000000
+          schedule_helper_with_field_semantics terminal komari-self-update-integration-terminal
+          wait_result terminal rollback_failed
+          terminal_result="$ROOT/terminal/.komari-update/last-result.json"
+          before_sha="$(sudo sha256sum "$terminal_result" | cut -d' ' -f1)"
+          sleep 8
+          after_sha="$(sudo sha256sum "$terminal_result" | cut -d' ' -f1)"
+          test "$before_sha" = "$after_sha"
+          test "$(sudo jq -r '.message' "$terminal_result" | grep -o 'rollback failed:' | wc -l)" -eq 1
+          test "$(systemctl show komari-self-update-integration-terminal.service -p NRestarts --value)" -eq 0
+          systemctl is-active --quiet "$TERMINAL_SERVICE"
+          wait_version 28777 78518cc
