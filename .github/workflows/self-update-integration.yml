@@ -247,7 +247,7 @@ jobs:
           JSON
           schedule_helper success komari-self-update-integration-success
           wait_result success succeeded
-          curl -fsS http://127.0.0.1:28774/api/version | jq -e --arg version "$TARGET_VERSION" --arg hash "$TARGET_HASH" '.version == $version and .hash == $hash'
+          curl -fsS http://127.0.0.1:28774/api/version | jq -e --arg version "$TARGET_VERSION" --arg hash "$TARGET_HASH" '(.data // .) | .version == $version and .hash == $hash'
           assert_service_active "$SUCCESS_SERVICE"
 
           create_case rollback "$ROLLBACK_SERVICE" 28775
@@ -271,7 +271,7 @@ jobs:
           JSON
           schedule_helper rollback komari-self-update-integration-rollback
           wait_result rollback rolled_back
-          curl -fsS http://127.0.0.1:28775/api/version | jq -e '.version == "2.2.2" and .hash == "78518cc"'
+          curl -fsS http://127.0.0.1:28775/api/version | jq -e '(.data // .) | .version == "2.2.2" and .hash == "78518cc"'
           assert_service_active "$ROLLBACK_SERVICE"
 
           # Reproduce the field deployment: build 78518cc creates the old
@@ -331,7 +331,7 @@ jobs:
           done
           [ "$(sudo systemctl show "$old_helper_unit" --property=Restart --value)" = "on-failure" ]
           wait_result old-https succeeded
-          curl -kfsS https://127.0.0.1:18328/api/version | jq -e --arg version "$TARGET_VERSION" --arg hash "$TARGET_HASH" '.version == $version and .hash == $hash'
+          curl -kfsS https://127.0.0.1:18328/api/version | jq -e --arg version "$TARGET_VERSION" --arg hash "$TARGET_HASH" '(.data // .) | .version == $version and .hash == $hash'
           assert_service_active "$HTTPS_SERVICE"
 
           create_case rollback-failed "$FAILURE_SERVICE" 28777
