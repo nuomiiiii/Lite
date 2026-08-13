@@ -33,62 +33,13 @@ func TestScheduleUpdateHelperFallsBackWithoutNoBlock(t *testing.T) {
 	if !containsArgument(calls[0], "--no-block") {
 		t.Fatal("first systemd-run call did not use --no-block")
 	}
+	for _, call := range calls {
+		if containsArgument(call, "--property=Restart=on-failure") || containsArgument(call, "--property=RestartSec=3s") {
+			t.Fatalf("systemd-run call enabled an unbounded helper restart: %v", call)
+		}
+	}
 	if containsArgument(calls[1], "--no-block") {
 		t.Fatal("compatible systemd-run retry still used --no-block")
-	}
-}
-
-func TestScheduleUpdateHelperFallsBackForCentOS7RestartProperties(t *testing.T) {
-	var calls [][]string
-	run := func(_ context.Context, name string, arguments ...string) ([]byte, error) {
-		if name != "systemd-run" {
-			t.Fatalf("command = %q, want systemd-run", name)
-		}
-		calls = append(calls, append([]string(nil), arguments...))
-		if len(calls) == 1 {
-			return []byte("Unknown assignment Restart=on-failure. Failed to create bus message: No such device or address"), errors.New("exit status 1")
-		}
-		return []byte("Running as unit: komari-self-update-test.service"), nil
-	}
-
-	if output, err := scheduleUpdateHelper(context.Background(), "test", "/tmp/candidate", "/tmp/helper.json", run); err != nil {
-		t.Fatalf("scheduleUpdateHelper() output = %q, error = %v", output, err)
-	}
-	if len(calls) != 2 {
-		t.Fatalf("systemd-run calls = %d, want 2", len(calls))
-	}
-	if !containsArgument(calls[1], "--no-block") {
-		t.Fatal("CentOS 7 compatibility retry unexpectedly removed --no-block")
-	}
-	if containsArgument(calls[1], "--property=Restart=on-failure") || containsArgument(calls[1], "--property=RestartSec=3s") {
-		t.Fatal("CentOS 7 compatibility retry still used unsupported restart properties")
-	}
-}
-
-func TestScheduleUpdateHelperCombinesLegacyFallbacks(t *testing.T) {
-	var calls [][]string
-	run := func(_ context.Context, _ string, arguments ...string) ([]byte, error) {
-		calls = append(calls, append([]string(nil), arguments...))
-		switch len(calls) {
-		case 1:
-			return []byte("systemd-run: unrecognized option '--no-block'"), errors.New("exit status 1")
-		case 2:
-			return []byte("Unknown assignment Restart=on-failure"), errors.New("exit status 1")
-		default:
-			return []byte("Running as unit: komari-self-update-test.service"), nil
-		}
-	}
-
-	if output, err := scheduleUpdateHelper(context.Background(), "test", "/tmp/candidate", "/tmp/helper.json", run); err != nil {
-		t.Fatalf("scheduleUpdateHelper() output = %q, error = %v", output, err)
-	}
-	if len(calls) != 3 {
-		t.Fatalf("systemd-run calls = %d, want 3", len(calls))
-	}
-	if containsArgument(calls[2], "--no-block") ||
-		containsArgument(calls[2], "--property=Restart=on-failure") ||
-		containsArgument(calls[2], "--property=RestartSec=3s") {
-		t.Fatalf("final compatibility retry retained unsupported options: %v", calls[2])
 	}
 }
 
@@ -137,12 +88,15 @@ func TestManifestSelectsCurrentPlatformAndValidatesChecksum(t *testing.T) {
 			SHA256: strings.Repeat("a", 64),
 		}},
 	}
-	asset, err := manifest.validate("2.0.5", "AB12CD3")
+	asset, err := manifest.validate("2.0.5", "ab12cd3")
 	if err != nil {
 		t.Fatalf("validate() error = %v", err)
 	}
 	if asset.Name != assetName {
 		t.Fatalf("asset name = %q, want %q", asset.Name, assetName)
+	}
+	if _, err := manifest.validate("2.0.5", "AB12CD3"); err == nil {
+		t.Fatal("manifest accepted a case-mismatched build identifier")
 	}
 }
 
@@ -174,6 +128,11 @@ func TestValidateHelperConfigAppliesMigrationDefaults(t *testing.T) {
 
 func TestTransactionKeepsSnapshotAfterSuccessfulUpdate(t *testing.T) {
 	tx, root := newTestTransaction(t)
+	var commands []string
+	tx.systemctl = func(arguments ...string) error {
+		commands = append(commands, strings.Join(arguments, " "))
+		return nil
+	}
 	tx.waitHealthy = func(version, hash string, _, _ time.Duration) error {
 		if version != "2.0.5" || hash != "new1234" {
 			t.Fatalf("unexpected health target %s (%s)", version, hash)
@@ -191,10 +150,18 @@ func TestTransactionKeepsSnapshotAfterSuccessfulUpdate(t *testing.T) {
 	if err != nil || result == nil || result.Status != "succeeded" {
 		t.Fatalf("last result = %#v, err = %v", result, err)
 	}
+	if len(commands) == 0 || commands[len(commands)-1] != "start komari.service" {
+		t.Fatalf("successful update did not leave the service started: %v", commands)
+	}
 }
 
 func TestTransactionRestoresBinaryAndDataAfterFailedHealthCheck(t *testing.T) {
 	tx, root := newTestTransaction(t)
+	var commands []string
+	tx.systemctl = func(arguments ...string) error {
+		commands = append(commands, strings.Join(arguments, " "))
+		return nil
+	}
 	tx.waitHealthy = func(version, _ string, _, _ time.Duration) error {
 		if version == "2.0.5" {
 			if err := os.WriteFile(filepath.Join(tx.config.DataDir, "state"), []byte("migrated"), 0600); err != nil {
@@ -213,6 +180,9 @@ func TestTransactionRestoresBinaryAndDataAfterFailedHealthCheck(t *testing.T) {
 	result, err := ReadLastResult(root)
 	if err != nil || result == nil || result.Status != "rolled_back" {
 		t.Fatalf("last result = %#v, err = %v", result, err)
+	}
+	if len(commands) == 0 || commands[len(commands)-1] != "start komari.service" {
+		t.Fatalf("successful rollback did not leave the service started: %v", commands)
 	}
 }
 
@@ -244,6 +214,7 @@ func newTestTransaction(t *testing.T) (transaction, string) {
 		ExpectedHash:        "new1234",
 		PreviousVersion:     "2.0.4",
 		PreviousHash:        "old1234",
+		HealthURL:           "http://127.0.0.1:25774/api/version",
 		UpdateRoot:          filepath.Join(root, updateRootName),
 		BackupRoot:          filepath.Join(root, "backup", "self-update-test"),
 		HealthTimeout:       time.Second,

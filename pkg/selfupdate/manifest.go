@@ -75,7 +75,7 @@ func (manifest *Manifest) validate(version, versionHash string) (*ManifestAsset,
 	if manifest.Schema != 1 {
 		return nil, fmt.Errorf("unsupported update manifest schema %d", manifest.Schema)
 	}
-	if manifest.Version != version || !strings.EqualFold(manifest.VersionHash, versionHash) {
+	if manifest.Version != version || manifest.VersionHash != versionHash {
 		return nil, errors.New("release metadata does not match the requested update")
 	}
 	name := fmt.Sprintf("komari-%s-%s", runtime.GOOS, runtime.GOARCH)

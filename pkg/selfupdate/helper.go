@@ -2,11 +2,14 @@ package selfupdate
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,6 +72,9 @@ func validateHelperConfig(config *HelperConfig) error {
 	if config.StableWindow <= 0 {
 		config.StableWindow = defaultStableWindow
 	}
+	if _, err := parseLoopbackHealthURL(config.HealthURL, "http"); err != nil {
+		return fmt.Errorf("invalid health URL: %w", err)
+	}
 	return nil
 }
 
@@ -86,10 +92,10 @@ func (tx transaction) run() error {
 	if previous, err := ReadLastResult(filepath.Dir(tx.config.CurrentExecutable)); err == nil && previous != nil && previous.JobID == tx.config.JobID {
 		result = *previous
 	}
-	if result.Status == "succeeded" || result.Status == "rolled_back" || result.Status == "failed" {
+	if result.Status == "succeeded" || result.Status == "rolled_back" || result.Status == "failed" || result.Status == "rollback_failed" {
 		return nil
 	}
-	if result.Status == "rolling_back" || result.Status == "rollback_failed" {
+	if result.Status == "rolling_back" {
 		return tx.finishRollback(result, backupExecutable, backupData)
 	}
 
@@ -157,11 +163,14 @@ func (tx transaction) run() error {
 
 func (tx transaction) finishRollback(result UpdateResult, backupExecutable, backupData string) error {
 	if err := tx.rollback(backupExecutable, backupData); err != nil {
+		startErr := tx.systemctl("start", tx.config.Service)
 		result.Status = "rollback_failed"
-		result.Message = strings.TrimSpace(result.Message + "; rollback failed: " + err.Error())
+		result.Message = rollbackFailureMessage(result.Message, err, startErr)
 		result.UpdatedAt = time.Now().UTC()
 		tx.writeResult(result)
-		return errors.New(result.Message)
+		// rollback_failed is terminal. Returning success also prevents helpers
+		// launched by older Restart=on-failure units from looping forever.
+		return nil
 	}
 	result.Status = "rolled_back"
 	result.CurrentVersion = tx.config.PreviousVersion
@@ -169,6 +178,21 @@ func (tx transaction) finishRollback(result UpdateResult, backupExecutable, back
 	result.UpdatedAt = time.Now().UTC()
 	tx.writeResult(result)
 	return nil
+}
+
+func rollbackFailureMessage(previous string, rollbackErr, startErr error) string {
+	base := strings.TrimSpace(previous)
+	if index := strings.Index(strings.ToLower(base), "rollback failed:"); index >= 0 {
+		base = strings.TrimSpace(strings.TrimRight(base[:index], ";"))
+	}
+	detail := "rollback failed: " + rollbackErr.Error()
+	if startErr != nil {
+		detail += "; unable to ensure service is running: " + startErr.Error()
+	}
+	if base == "" {
+		return detail
+	}
+	return base + "; " + detail
 }
 
 func (tx transaction) rollback(backupExecutable, backupData string) error {
@@ -225,12 +249,21 @@ func runSystemctl(arguments ...string) error {
 }
 
 func waitForHealthy(version, versionHash string, timeout, stableWindow time.Duration) error {
+	healthURL := currentHelperHealthURL()
+	client, err := newLoopbackHealthClient(healthURL, nil)
+	if err != nil {
+		return err
+	}
+	return waitForHealthyWithClient(client, healthURL, version, versionHash, timeout, stableWindow, time.Second)
+}
+
+func waitForHealthyWithClient(client *http.Client, healthURL, version, versionHash string, timeout, stableWindow, pollInterval time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var stableSince time.Time
-	client := &http.Client{Timeout: 3 * time.Second}
+	var lastErr error
 	for time.Now().Before(deadline) {
 		matched := false
-		resp, err := client.Get(currentHelperHealthURL())
+		resp, err := client.Get(healthURL)
 		if err == nil {
 			var envelope struct {
 				Data candidateVersion `json:"data"`
@@ -243,8 +276,10 @@ func waitForHealthy(version, versionHash string, timeout, stableWindow time.Dura
 				if observed.Version == "" {
 					observed = envelope.candidateVersion
 				}
-				matched = observed.Version == version && strings.EqualFold(observed.Hash, versionHash)
+				matched = observed.Version == version && observed.Hash == versionHash
 			}
+		} else {
+			lastErr = err
 		}
 		if matched {
 			if stableSince.IsZero() {
@@ -256,9 +291,74 @@ func waitForHealthy(version, versionHash string, timeout, stableWindow time.Dura
 		} else {
 			stableSince = time.Time{}
 		}
-		time.Sleep(time.Second)
+		delay := min(pollInterval, time.Until(deadline))
+		if delay > 0 {
+			time.Sleep(delay)
+		}
+	}
+	if lastErr != nil {
+		return fmt.Errorf("health check timed out: %w", lastErr)
 	}
 	return errors.New("health check timed out")
+}
+
+func newLoopbackHealthClient(healthURL string, roots *x509.CertPool) (*http.Client, error) {
+	initial, err := parseLoopbackHealthURL(healthURL, "http")
+	if err != nil {
+		return nil, err
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	tlsConfig := &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+	// The HTTPS endpoint is constrained to loopback below. Verify the chain
+	// normally, but omit the hostname because certificates target public names.
+	tlsConfig.InsecureSkipVerify = true
+	tlsConfig.VerifyConnection = func(state tls.ConnectionState) error {
+		if len(state.PeerCertificates) == 0 {
+			return errors.New("loopback HTTPS endpoint did not provide a certificate")
+		}
+		intermediates := x509.NewCertPool()
+		for _, certificate := range state.PeerCertificates[1:] {
+			intermediates.AddCert(certificate)
+		}
+		_, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{
+			Roots:         roots,
+			Intermediates: intermediates,
+			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		})
+		return err
+	}
+	transport.TLSClientConfig = tlsConfig
+	return &http.Client{
+		Timeout:   3 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(request *http.Request, via []*http.Request) error {
+			if len(via) != 1 || via[0].URL.String() != initial.String() {
+				return errors.New("health check allows exactly one HTTP-to-HTTPS redirect")
+			}
+			_, err := parseLoopbackHealthURL(request.URL.String(), "https")
+			return err
+		},
+	}, nil
+}
+
+func parseLoopbackHealthURL(rawURL, scheme string) (*url.URL, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if parsed.Scheme != scheme || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "/api/version" {
+		return nil, errors.New("health check URL must use the approved scheme and /api/version path")
+	}
+	if parsed.Port() == "" || !isAllowedHealthLoopback(parsed.Hostname()) {
+		return nil, errors.New("health check URL must target 127.0.0.1 or ::1 with an explicit port")
+	}
+	return parsed, nil
+}
+
+func isAllowedHealthLoopback(host string) bool {
+	host = strings.Trim(host, "[]")
+	return host == "127.0.0.1" || host == "::1"
 }
 
 var helperHealthURL string

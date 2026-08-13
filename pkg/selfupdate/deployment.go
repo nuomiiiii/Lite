@@ -241,6 +241,9 @@ func localHealthURL() (string, error) {
 	case "::", "[::]":
 		host = "::1"
 	}
+	if !isAllowedHealthLoopback(host) {
+		return "", fmt.Errorf("listen address %q cannot be reached through an approved loopback health check", listen)
+	}
 	return "http://" + net.JoinHostPort(host, port) + "/api/version", nil
 }
 

@@ -174,12 +174,9 @@ func scheduleUpdateHelper(ctx context.Context, jobID, candidate, configPath stri
 	arguments := []string{
 		"--unit=komari-self-update-" + jobID,
 		"--no-block",
-		"--property=Restart=on-failure",
-		"--property=RestartSec=3s",
 		candidate, "_self-update-helper", configPath,
 	}
 	noBlockEnabled := true
-	restartPropertiesEnabled := true
 	for {
 		output, err := run(ctx, "systemd-run", arguments...)
 		if err == nil {
@@ -191,11 +188,6 @@ func scheduleUpdateHelper(ctx context.Context, jobID, candidate, configPath stri
 			noBlockEnabled = false
 			arguments = removeSystemdRunArguments(arguments, func(argument string) bool {
 				return argument == "--no-block"
-			})
-		case restartPropertiesEnabled && restartPropertiesUnsupported(output):
-			restartPropertiesEnabled = false
-			arguments = removeSystemdRunArguments(arguments, func(argument string) bool {
-				return strings.HasPrefix(argument, "--property=Restart")
 			})
 		default:
 			return output, err
@@ -213,19 +205,6 @@ func noBlockUnsupported(output []byte) bool {
 		strings.Contains(message, "invalid option")
 }
 
-func restartPropertiesUnsupported(output []byte) bool {
-	message := strings.ToLower(string(output))
-	if !strings.Contains(message, "restart=on-failure") && !strings.Contains(message, "restartsec=3s") {
-		return false
-	}
-	return strings.Contains(message, "unknown assignment") ||
-		strings.Contains(message, "unsupported assignment") ||
-		strings.Contains(message, "invalid assignment") ||
-		strings.Contains(message, "unknown property") ||
-		strings.Contains(message, "unsupported property") ||
-		strings.Contains(message, "invalid property")
-}
-
 func removeSystemdRunArguments(arguments []string, remove func(string) bool) []string {
 	compatible := make([]string, 0, len(arguments))
 	for _, argument := range arguments {
@@ -238,7 +217,7 @@ func removeSystemdRunArguments(arguments []string, remove func(string) bool) []s
 
 func isUpdateInProgress(status string) bool {
 	switch status {
-	case "scheduled", "running", "stopped", "backup_complete", "binary_replaced", "rolling_back", "rollback_failed":
+	case "scheduled", "running", "stopped", "backup_complete", "binary_replaced", "rolling_back":
 		return true
 	default:
 		return false
@@ -256,7 +235,7 @@ func verifyCandidate(ctx context.Context, candidatePath, version, versionHash st
 	if err := json.Unmarshal(output, &metadata); err != nil {
 		return fmt.Errorf("candidate returned invalid version metadata: %w", err)
 	}
-	if metadata.Version != version || !strings.EqualFold(metadata.Hash, versionHash) {
+	if metadata.Version != version || metadata.Hash != versionHash {
 		return errors.New("candidate version metadata does not match the release manifest")
 	}
 	return nil
