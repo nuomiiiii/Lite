@@ -1551,6 +1551,55 @@ func DeleteAllPingRecords(ctx context.Context) error {
 	return nil
 }
 
+// PingAssignment identifies one client's history for one ping task.
+type PingAssignment struct {
+	Client string
+	TaskID uint
+}
+
+// DeletePingRecordsByAssignments deletes only the requested client/task series.
+func DeletePingRecordsByAssignments(ctx context.Context, assignments []PingAssignment) error {
+	if len(assignments) == 0 {
+		return nil
+	}
+	unique := make(map[PingAssignment]struct{}, len(assignments))
+	for _, assignment := range assignments {
+		if assignment.Client == "" || assignment.TaskID == 0 {
+			return fmt.Errorf("ping assignment client and task ID are required")
+		}
+		unique[assignment] = struct{}{}
+	}
+	if err := storeOperations.Acquire(ctx); err != nil {
+		return fmt.Errorf("wait for metric store operations before deleting ping assignments: %w", err)
+	}
+	defer storeOperations.Release()
+	storeMu.RLock()
+	defer storeMu.RUnlock()
+	s := store
+	if s == nil {
+		return fmt.Errorf("metric store not enabled")
+	}
+	for assignment := range unique {
+		if err := deletePingAssignmentRecords(ctx, s, assignment.Client, fmt.Sprintf("%d", assignment.TaskID)); err != nil {
+			return fmt.Errorf("failed to delete ping records for client %s task %d: %w", assignment.Client, assignment.TaskID, err)
+		}
+	}
+	return nil
+}
+
+func deletePingAssignmentRecords(ctx context.Context, s *metric.Store, client, taskTag string) error {
+	for _, metricName := range pingMetricNames {
+		if _, err := s.DeleteSeries(ctx, metric.Query{
+			MetricName: metricName,
+			EntityID:   client,
+			Tags:       map[string]string{"task_id": taskTag},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // DeletePingRecordsByTask 删除指定任务（task_id）的全部 ping 记录。
 func DeletePingRecordsByTask(ctx context.Context, taskIDs []uint) error {
 	if err := storeOperations.Acquire(ctx); err != nil {

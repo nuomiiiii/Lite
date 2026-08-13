@@ -377,6 +377,11 @@ func publicGetPingRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch ping records: "+err.Error(), nil)
 	}
+	pingTasks, err := tasks.GetAllPingTasks()
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch ping tasks: "+err.Error(), nil)
+	}
+	recs = filterPingRecordsByCurrentAssignments(recs, pingTasksByStringID(pingTasks))
 
 	clientStats := make(map[string]struct {
 		total, loss, min, max int
@@ -417,10 +422,6 @@ func publicGetPingRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 	}
 
 	if params.UUID != "" || taskId != -1 {
-		pingTasks, err := tasks.GetAllPingTasks()
-		if err != nil {
-			return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch ping tasks: "+err.Error(), nil)
-		}
 		tasksList := make([]map[string]any, 0, len(pingTasks))
 		for _, t := range pingTasks {
 			if taskId != -1 && t.Id != uint(taskId) {

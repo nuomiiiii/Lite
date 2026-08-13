@@ -59,6 +59,43 @@ var (
 	bodyClosePattern     = regexp.MustCompile(`(?i)</body\s*>`)
 )
 
+func renderPublicManifest(source []byte, sitename, description string) []byte {
+	manifest := map[string]any{
+		"start_url":        "/",
+		"scope":            "/",
+		"display":          "standalone",
+		"background_color": "#ffffff",
+		"theme_color":      "#2563eb",
+	}
+	if len(source) > 0 {
+		var themeManifest map[string]any
+		if json.Unmarshal(source, &themeManifest) == nil && themeManifest != nil {
+			manifest = themeManifest
+		}
+	}
+
+	sitename = strings.TrimSpace(sitename)
+	if sitename == "" {
+		sitename = "Komari Lite"
+	}
+	description = strings.TrimSpace(description)
+	if description == "" {
+		description = "A simple server monitor tool."
+	}
+	manifest["name"] = sitename
+	manifest["short_name"] = sitename
+	manifest["description"] = description
+	manifest["icons"] = []map[string]string{{
+		"src":     "/favicon.ico",
+		"sizes":   "any",
+		"type":    "image/x-icon",
+		"purpose": "any",
+	}}
+
+	content, _ := json.Marshal(manifest)
+	return content
+}
+
 func injectThemeChangeReload(html string) string {
 	if strings.Contains(html, themeChangeReloadScript) {
 		return html
@@ -492,12 +529,47 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		c.Status(http.StatusNotFound)
 	})
 
+	serveManifest := func(c *gin.Context) {
+		cfg := getConfig()
+		themeManifestPath := path.Join(DistDir, "manifest.json")
+		content, _, exists := getPublicFileContent(cfg[config.ThemeKey].(string), themeManifestPath)
+		if !exists {
+			content = nil
+		}
+		setNoStoreHeaders(c)
+		c.Data(
+			http.StatusOK,
+			"application/manifest+json; charset=utf-8",
+			renderPublicManifest(
+				content,
+				cfg[config.SitenameKey].(string),
+				cfg[config.DescriptionKey].(string),
+			),
+		)
+	}
+	r.GET("/manifest.json", serveManifest)
+	r.GET("/manifest.webmanifest", serveManifest)
+
 	// System application assets are immutable and independent from public themes.
 	r.GET("/system-assets/*path", func(c *gin.Context) {
 		filePath := path.Join(DistDir, c.Param("path"))
 		content, mimeType, exists := embeddedFileContent("systemUI", filePath)
 		if !exists {
 			c.Status(http.StatusNotFound)
+			return
+		}
+		if filePath == path.Join(DistDir, "manifest.json") {
+			cfg := getConfig()
+			setNoStoreHeaders(c)
+			c.Data(
+				http.StatusOK,
+				"application/manifest+json; charset=utf-8",
+				renderPublicManifest(
+					content,
+					cfg[config.SitenameKey].(string),
+					cfg[config.DescriptionKey].(string),
+				),
+			)
 			return
 		}
 		setStaticCacheHeaders(c, c.Request.URL.Path)

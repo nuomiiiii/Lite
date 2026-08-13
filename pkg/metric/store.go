@@ -1472,6 +1472,75 @@ func (s *Store) MetricTagValues(ctx context.Context, metricName, tagName string)
 	return result, rows.Err()
 }
 
+// EntityTagValue identifies one metric series by its entity and one tag value.
+type EntityTagValue struct {
+	EntityID string
+	TagValue string
+}
+
+// MetricEntityTagValues returns distinct entity/tag pairs for one metric.
+func (s *Store) MetricEntityTagValues(ctx context.Context, metricName, tagName string) ([]EntityTagValue, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(metricName) == "" || strings.TrimSpace(tagName) == "" {
+		return nil, fmt.Errorf("%w: metric and tag names are required", ErrInvalidArgument)
+	}
+	for _, r := range tagName {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_' {
+			return nil, fmt.Errorf("%w: invalid tag name", ErrInvalidArgument)
+		}
+	}
+
+	var expression string
+	switch s.cfg.Driver {
+	case DriverSQLite:
+		expression = fmt.Sprintf("json_extract(tags, '$.%s')", tagName)
+	case DriverMySQL:
+		expression = fmt.Sprintf("JSON_UNQUOTE(JSON_EXTRACT(tags, '$.%s'))", tagName)
+	case DriverPostgreSQL:
+		expression = fmt.Sprintf("tags ->> '%s'", tagName)
+	default:
+		return nil, fmt.Errorf("%w: unsupported driver %q", ErrInvalidArgument, s.cfg.Driver)
+	}
+
+	placeholder := s.dialect.placeholder(1)
+	var sqlText string
+	var args []any
+	if s.sqliteStorageV3 {
+		sqlText = fmt.Sprintf(`SELECT DISTINCT entity_id, %s AS tag_value FROM %s
+			WHERE metric_name = %s AND entity_id <> '' AND %s IS NOT NULL AND %s <> ''
+			ORDER BY entity_id ASC, tag_value ASC`, expression, s.tables.series, placeholder, expression, expression)
+		args = []any{metricName}
+	} else {
+		secondPlaceholder := s.dialect.placeholder(2)
+		sqlText = fmt.Sprintf(`SELECT DISTINCT entity_id, tag_value FROM (
+			SELECT entity_id, %s AS tag_value FROM %s WHERE metric_name = %s
+			UNION
+			SELECT entity_id, %s AS tag_value FROM %s WHERE metric_name = %s
+		) AS metric_entity_tags
+		WHERE entity_id <> '' AND tag_value IS NOT NULL AND tag_value <> ''
+		ORDER BY entity_id ASC, tag_value ASC`,
+			expression, s.tables.points, placeholder,
+			expression, s.tables.rollups, secondPlaceholder)
+		args = []any{metricName, metricName}
+	}
+	rows, err := s.reader().QueryContext(ctx, sqlText, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []EntityTagValue
+	for rows.Next() {
+		var pair EntityTagValue
+		if err := rows.Scan(&pair.EntityID, &pair.TagValue); err != nil {
+			return nil, err
+		}
+		result = append(result, pair)
+	}
+	return result, rows.Err()
+}
+
 // Latest loads the newest points for a metric and entity.
 //
 // Latest 查询某指标和实体的最新采样点。
