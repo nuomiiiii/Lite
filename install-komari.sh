@@ -438,40 +438,124 @@ upgrade_komari() {
     # 选择发布通道
     select_channel
 
+    wait_for_service_active() {
+        local attempt=1
+        while [ "$attempt" -le 10 ]; do
+            if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
+                sleep 2
+                systemctl is-active --quiet "${SERVICE_NAME}.service" && return 0
+            fi
+            sleep 1
+            attempt=$((attempt + 1))
+        done
+        return 1
+    }
+
     log_step "停止 Komari 服务..."
-    systemctl stop ${SERVICE_NAME}.service
+    if ! systemctl stop "${SERVICE_NAME}.service"; then
+        if systemctl start "${SERVICE_NAME}.service" && wait_for_service_active; then
+            ui_msgbox "错误" "停止 Komari 服务失败，升级已取消并已确认原服务正常运行。"
+        else
+            ui_msgbox "错误" "停止 Komari 服务失败，升级已取消，但原服务状态异常，请检查服务日志。"
+        fi
+        return 1
+    fi
 
     log_step "备份当前二进制文件..."
-    cp "$BINARY_PATH" "${BINARY_PATH}.backup.$(date +%Y%m%d_%H%M%S)"
+    local backup_path="${BINARY_PATH}.backup.$(date +%Y%m%d_%H%M%S)"
+    if [ -e "$backup_path" ]; then
+        backup_path="${backup_path}.$$"
+    fi
+    if ! cp "$BINARY_PATH" "$backup_path"; then
+        log_error "备份当前二进制文件失败，升级已取消"
+        if systemctl start "${SERVICE_NAME}.service" && wait_for_service_active; then
+            ui_msgbox "错误" "备份当前版本失败，升级已取消并已重新启动原服务。"
+        else
+            ui_msgbox "错误" "备份当前版本失败，升级已取消，但原服务未能重新启动，请检查服务日志。"
+        fi
+        return 1
+    fi
 
-    local arch=$(detect_arch)
-    local download_url=$(get_download_url "$arch")
-    if [ $? -ne 0 ]; then
+    local download_path
+    download_path=$(mktemp "${BINARY_PATH}.download.XXXXXX")
+    if [ $? -ne 0 ] || [ -z "$download_path" ]; then
+        log_error "创建下载临时文件失败，升级已取消"
+        if systemctl start "${SERVICE_NAME}.service" && wait_for_service_active; then
+            ui_msgbox "错误" "无法创建下载临时文件，升级已取消并已重新启动原服务。"
+        else
+            ui_msgbox "错误" "无法创建下载临时文件，升级已取消，但原服务未能重新启动，请检查服务日志。"
+        fi
+        return 1
+    fi
+
+    restore_upgrade_backup() {
+        rm -f "$download_path"
+        if ! cp "$backup_path" "$BINARY_PATH"; then
+            log_error "恢复原二进制文件失败: $backup_path"
+            return 1
+        fi
+        chmod +x "$BINARY_PATH" || return 1
+        systemctl start "${SERVICE_NAME}.service" || return 1
+        wait_for_service_active
+    }
+
+    local arch
+    arch=$(detect_arch)
+    if [ $? -ne 0 ] || [ -z "$arch" ]; then
+        log_error "检测系统架构失败，正在从本次备份恢复"
+        if restore_upgrade_backup; then
+            ui_msgbox "错误" "检测系统架构失败，已从本次备份恢复。"
+        else
+            ui_msgbox "错误" "检测系统架构失败，且原版本恢复后未能正常运行，请检查服务日志。"
+        fi
+        return 1
+    fi
+    local download_url
+    download_url=$(get_download_url "$arch")
+    if [ $? -ne 0 ] || [ -z "$download_url" ]; then
         log_error "获取下载链接失败，正在从备份恢复"
-        mv "${BINARY_PATH}.backup."* "$BINARY_PATH"
-        systemctl start ${SERVICE_NAME}.service
-        ui_msgbox "错误" "获取下载链接失败，已从备份恢复。"
+        if restore_upgrade_backup; then
+            ui_msgbox "错误" "获取下载链接失败，已从本次备份恢复。"
+        else
+            ui_msgbox "错误" "获取下载链接失败，且原版本恢复后未能正常运行，请检查服务日志。"
+        fi
         return 1
     fi
 
     log_step "下载最新版本..."
-    if ! curl -fL -o "$BINARY_PATH" "$download_url"; then
+    if ! curl -fL -o "$download_path" "$download_url"; then
         log_error "下载失败，正在从备份恢复"
-        mv "${BINARY_PATH}.backup."* "$BINARY_PATH"
-        systemctl start ${SERVICE_NAME}.service
-        ui_msgbox "错误" "下载失败，已从备份恢复。"
+        if restore_upgrade_backup; then
+            ui_msgbox "错误" "下载失败，已从本次备份恢复。"
+        else
+            ui_msgbox "错误" "下载失败，且原版本恢复后未能正常运行，请检查服务日志。"
+        fi
         return 1
     fi
 
-    chmod +x "$BINARY_PATH"
+    if ! chmod +x "$download_path" || ! mv -f "$download_path" "$BINARY_PATH"; then
+        log_error "安装新版本失败，正在从本次备份恢复"
+        if restore_upgrade_backup; then
+            ui_msgbox "错误" "安装新版本失败，已从本次备份恢复。"
+        else
+            ui_msgbox "错误" "安装新版本失败，且原版本恢复后未能正常运行，请检查服务日志。"
+        fi
+        return 1
+    fi
 
     log_step "重启 Komari 服务..."
-    systemctl start ${SERVICE_NAME}.service
+    systemctl start "${SERVICE_NAME}.service"
 
-    if systemctl is-active --quiet ${SERVICE_NAME}.service; then
+    if wait_for_service_active; then
         ui_msgbox "升级完成" "Komari 升级成功 (通道: $CHANNEL)。"
     else
-        ui_msgbox "错误" "服务在升级后未能启动，请检查日志。"
+        log_error "新版本服务未能启动，正在从本次备份恢复"
+        if restore_upgrade_backup; then
+            ui_msgbox "错误" "新版本未能启动，已恢复并重新启动原版本。"
+        else
+            ui_msgbox "错误" "新版本未能启动，且原版本恢复后仍未正常运行，请检查服务日志。"
+        fi
+        return 1
     fi
 }
 
@@ -626,6 +710,8 @@ main_menu() {
 }
 
 # Main execution
-check_root
-detect_tui
-main_menu
+if [ "${KOMARI_INSTALLER_LIBRARY_ONLY:-0}" != "1" ]; then
+    check_root
+    detect_tui
+    main_menu
+fi

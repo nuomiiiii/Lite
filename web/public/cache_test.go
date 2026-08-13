@@ -28,6 +28,7 @@ func TestStaticCacheHeaders(t *testing.T) {
 	}{
 		{"/sw.js", "no-store, no-cache, must-revalidate"},
 		{"/service-worker.js", "no-store, no-cache, must-revalidate"},
+		{"/manifest.json", "no-store, no-cache, must-revalidate"},
 		{"/manifest.webmanifest", "no-store, no-cache, must-revalidate"},
 		{"/assets/entry-main-abcdef.js", "public, max-age=31536000, immutable"},
 		{"/assets/logo.png", ""},

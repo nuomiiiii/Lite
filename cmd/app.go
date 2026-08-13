@@ -43,6 +43,7 @@ import (
 	"github.com/komari-monitor/komari/web/security"
 	storageupdateweb "github.com/komari-monitor/komari/web/storageupdate"
 	upgradeweb "github.com/komari-monitor/komari/web/update"
+	"github.com/komari-monitor/komari/web/upload"
 )
 
 // cleanupFunc 是一个关闭阶段执行的清理函数。
@@ -565,6 +566,9 @@ func (a *App) registerReloadHandlers(cors *security.CorsController) {
 
 // BuildRouter 构建 Gin 引擎、中间件与全部路由，并登记热重载处理器。
 func (a *App) BuildRouter() error {
+	if err := upload.DefaultStore.CleanupAll(); err != nil {
+		logger.Errorf("upload", "Failed to clean interrupted uploads: %v", err)
+	}
 	r := gin.New()
 	r.Use(logger.GinLogger())
 	r.Use(logger.GinRecovery())

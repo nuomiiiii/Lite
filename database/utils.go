@@ -6,10 +6,10 @@ import (
 	logger "github.com/komari-monitor/komari/utils/log"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/dbcore"
+	"github.com/komari-monitor/komari/database/managedconfig"
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/pkg/config"
@@ -90,31 +90,11 @@ func GetPublicInfo() (map[string]interface{}, error) {
 							}
 							// missing
 							if _, exists := tc_data[item.Key]; !exists {
-								var def any = item.Default
-								// select
-								if item.Type == "select" {
-									if def == nil || def == "" {
-										if item.Options != "" {
-											opts := strings.Split(item.Options, ",")
-											if len(opts) > 0 {
-												def = strings.TrimSpace(opts[0])
-											}
-										}
-									}
-								}
-								// number->0, string->"", switch->false
-								if def == nil {
-									switch item.Type {
-									case "number":
-										def = 0
-									case "switch":
-										def = false
-									default:
-										def = ""
-									}
-								}
-								tc_data[item.Key] = def
+								tc_data[item.Key] = managedconfig.DefaultValue(item)
 							}
+						}
+						if err := managedconfig.ResolveForOutput(db, tc_data, themeDecl.Configuration.Data); err != nil {
+							return nil, err
 						}
 					}
 				}

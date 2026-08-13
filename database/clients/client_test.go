@@ -88,6 +88,7 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 				&models.TrafficReportNotification{},
 				&models.TrafficDailyLedger{},
 				&models.LoadNotification{},
+				&models.LoadNotificationState{},
 				&models.Task{},
 				&models.TaskResult{},
 			))
@@ -119,6 +120,11 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 				{Name: "only-a", Clients: models.StringArray{"client-a"}, Metric: "cpu", Interval: 15},
 			}
 			require.NoError(t, db.Create(&loadRules).Error)
+			require.NoError(t, db.Create([]models.LoadNotificationState{
+				{NotificationID: loadRules[0].Id, Client: "client-a", AlertActive: true},
+				{NotificationID: loadRules[0].Id, Client: "client-b", AlertActive: true},
+				{NotificationID: loadRules[1].Id, Client: "client-a", AlertActive: true},
+			}).Error)
 			commandTasks := []models.Task{
 				{TaskId: "shared", Clients: models.StringArray{"client-a", "client-b"}, Command: "uptime"},
 				{TaskId: "only-a", Clients: models.StringArray{"client-a"}, Command: "uptime"},
@@ -143,6 +149,7 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 			assertRowCount(t, db, &models.OfflineNotification{}, "client = ?", 0, "client-a")
 			assertRowCount(t, db, &models.TrafficReportNotification{}, "client = ?", 0, "client-a")
 			assertRowCount(t, db, &models.TrafficDailyLedger{}, "client = ?", 0, "client-a")
+			assertRowCount(t, db, &models.LoadNotificationState{}, "client = ?", 0, "client-a")
 			assertRowCount(t, db, &models.TaskResult{}, "client = ?", 0, "client-a")
 			for _, table := range []string{"records", "records_long_term", "gpu_records", "ping_records"} {
 				var count int64
@@ -157,6 +164,7 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 			require.NoError(t, db.Order("id ASC").Find(&remainingLoadRules).Error)
 			require.Len(t, remainingLoadRules, 1)
 			assert.Equal(t, models.StringArray{"client-b"}, remainingLoadRules[0].Clients)
+			assertRowCount(t, db, &models.LoadNotificationState{}, "notification_id = ? AND client = ?", 1, loadRules[0].Id, "client-b")
 			var remainingTasks []models.Task
 			require.NoError(t, db.Order("task_id ASC").Find(&remainingTasks).Error)
 			require.Len(t, remainingTasks, 1)

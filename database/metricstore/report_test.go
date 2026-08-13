@@ -248,6 +248,48 @@ func TestWriteReportStoresRawMetricsAndResetAwareTraffic(t *testing.T) {
 	assertMetricValues(t, s, MetricTrafficDown, report.UUID, now.Add(-time.Second), now.Add(time.Second), []float64{20})
 }
 
+func TestWriteReportRebasesTrafficAfterAgentRestart(t *testing.T) {
+	ctx := context.Background()
+	s := useReportTestStore(t, nil)
+	base := time.Now().UTC().Truncate(time.Minute).Add(5 * time.Second)
+	report := v1.Report{
+		UUID:      "restarted-node",
+		UpdatedAt: base,
+		Uptime:    1000,
+		Network:   v1.NetworkReport{TotalUp: 100, TotalDown: 200},
+	}
+	if _, err := WriteReport(ctx, report); err != nil {
+		t.Fatalf("write first report: %v", err)
+	}
+
+	report.UpdatedAt = base.Add(3 * time.Second)
+	report.Uptime = 1003
+	report.Network.TotalUp = 150
+	report.Network.TotalDown = 260
+	if _, err := WriteReport(ctx, report); err != nil {
+		t.Fatalf("write continuous report: %v", err)
+	}
+
+	report.UpdatedAt = base.Add(6 * time.Second)
+	report.Uptime = 1
+	report.Network.TotalUp = 155
+	report.Network.TotalDown = 265
+	if _, err := WriteReport(ctx, report); err != nil {
+		t.Fatalf("write report after agent restart: %v", err)
+	}
+
+	report.UpdatedAt = base.Add(9 * time.Second)
+	report.Uptime = 4
+	report.Network.TotalUp = 180
+	report.Network.TotalDown = 300
+	if _, err := WriteReport(ctx, report); err != nil {
+		t.Fatalf("write report after new baseline: %v", err)
+	}
+
+	assertMetricValues(t, s, MetricTrafficUp, report.UUID, base.Add(-time.Second), base.Add(time.Minute), []float64{0, 50, 0, 25})
+	assertMetricValues(t, s, MetricTrafficDown, report.UUID, base.Add(-time.Second), base.Add(time.Minute), []float64{0, 60, 0, 35})
+}
+
 func TestWriteReportSkipsMetricsWithoutAgentData(t *testing.T) {
 	ctx := context.Background()
 	s := useReportTestStore(t, nil)

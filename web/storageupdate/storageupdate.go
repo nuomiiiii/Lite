@@ -192,13 +192,43 @@ func (c *Controller) onProgress(progress metric.MigrationProgress) {
 	if progress.Deferred > c.status.Deferred {
 		c.status.Deferred = progress.Deferred
 	}
-	if progress.Total > 0 {
-		c.status.Progress = float64(progress.Current) / float64(progress.Total) * 100
-	} else {
-		c.status.Progress = 0
+	mapped := migrationProgressPercent(progress)
+	if mapped > c.status.Progress {
+		c.status.Progress = mapped
 	}
 	if !c.startedAt.IsZero() {
 		c.status.ElapsedMS = time.Since(c.startedAt).Milliseconds()
+	}
+}
+
+func migrationProgressPercent(progress metric.MigrationProgress) float64 {
+	fraction := func() float64 {
+		if progress.Total <= 0 {
+			return 0
+		}
+		value := float64(progress.Current) / float64(progress.Total)
+		if value < 0 {
+			return 0
+		}
+		if value > 1 {
+			return 1
+		}
+		return value
+	}
+
+	switch progress.Phase {
+	case metric.MigrationPhaseCompleted:
+		return 100
+	case metric.MigrationPhaseReclaiming:
+		return 95 + fraction()*4
+	case metric.MigrationPhaseCommitting:
+		return 90 + fraction()*5
+	case metric.MigrationPhaseValidating:
+		return 80 + fraction()*10
+	case metric.MigrationPhasePreparing:
+		return 0
+	default:
+		return fraction() * 80
 	}
 }
 

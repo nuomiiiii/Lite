@@ -25,6 +25,25 @@ type LoadNotification struct {
 	LastNotified *time.Time  `json:"last_notified"`                                               // 上次通知时间
 }
 
+// LoadNotificationState stores the latest evaluation and silence preference
+// for one load notification rule and one assigned client.
+type LoadNotificationState struct {
+	NotificationID  uint             `json:"notification_id" gorm:"primaryKey;not null;index"`
+	Notification    LoadNotification `json:"notification,omitempty" gorm:"foreignKey:NotificationID;references:Id;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
+	Client          string           `json:"client" gorm:"type:varchar(36);primaryKey;not null;index"`
+	ClientInfo      Client           `json:"client_info,omitempty" gorm:"foreignKey:Client;references:UUID;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
+	AlertActive     bool             `json:"alert_active" gorm:"type:boolean;not null;default:false;index"`
+	ActiveSince     *time.Time       `json:"active_since"`
+	LastEvaluatedAt time.Time        `json:"last_evaluated_at" gorm:"not null;index"`
+	LatestValue     float64          `json:"latest_value" gorm:"not null;default:0"`
+	MatchedSamples  int              `json:"matched_samples" gorm:"not null;default:0"`
+	TotalSamples    int              `json:"total_samples" gorm:"not null;default:0"`
+	SilencedUntil   *time.Time       `json:"silenced_until"`
+	SilencedForever bool             `json:"silenced_forever" gorm:"type:boolean;not null;default:false"`
+	CreatedAt       time.Time        `json:"created_at"`
+	UpdatedAt       time.Time        `json:"updated_at"`
+}
+
 // TrafficReportNotification 定义了流量定时报告的数据库模型
 type TrafficReportNotification struct {
 	Client         string `json:"client" gorm:"type:varchar(36);not null;index;unique;constraint:OnDelete:CASCADE,OnUpdate:CASCADE;foreignKey:client;references:UUID"`

@@ -2,7 +2,6 @@ package notifier
 
 import (
 	"fmt"
-	logger "github.com/komari-monitor/komari/utils/log"
 	"reflect"
 	"sync"
 	"time"
@@ -13,7 +12,10 @@ import (
 	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
 	"github.com/komari-monitor/komari/database/records"
 	"github.com/komari-monitor/komari/pkg/corn"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/utils/messageSender"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // LoadNotificationService 管理定时器和任务
@@ -59,16 +61,15 @@ func (m *LoadNotificationService) Reload(loadNotifications []models.LoadNotifica
 
 // executeLoadNotificationTask 执行单个LoadNotificationTask
 func executeLoadNotificationTask(task models.LoadNotification) {
-	// 检查是否在冷却期内
-	if shouldSkipNotification(task) {
-		return
+	if err := evaluateLoadNotificationTask(task, time.Now().UTC(), true); err != nil {
+		logger.Errorf("notifier", "Failed to evaluate load notification %d: %v", task.Id, err)
 	}
+}
 
-	now := time.Now().UTC()
+func evaluateLoadNotificationTask(task models.LoadNotification, now time.Time, sendNotification bool) error {
 	windowStart := now.Add(-time.Duration(task.Interval) * time.Minute)
-	overloadClients := make([]string, 0)
+	evaluations := make([]loadClientEvaluation, 0, len(task.Clients))
 	for _, clientUUID := range task.Clients {
-		// 获取客户端在时间窗口内的记录
 		records, err := getRecordsForClient(clientUUID, windowStart, now, task.Metric)
 		if err != nil {
 			continue
@@ -82,15 +83,119 @@ func executeLoadNotificationTask(task models.LoadNotification) {
 			}
 			client = &loaded
 		}
-
-		// 检查指标是否达到阈值
-		if checkMetricThreshold(records, task, client) {
-			overloadClients = append(overloadClients, clientUUID)
-		}
-
+		active, latestValue, matchedSamples := evaluateMetricThreshold(records, task, client)
+		evaluations = append(evaluations, loadClientEvaluation{
+			client: clientUUID, active: active, latestValue: latestValue,
+			matchedSamples: matchedSamples, totalSamples: len(records),
+		})
 	}
-	sendLoadNotification(overloadClients, task)
-	updateLastNotified(task.Id, now)
+	notifyClients, current, err := persistLoadClientEvaluations(task, evaluations, now)
+	if err != nil {
+		return err
+	}
+	if !current {
+		return nil
+	}
+	if sendNotification && !shouldSkipNotification(task) && len(notifyClients) > 0 {
+		sendLoadNotification(notifyClients, task)
+		updateLastNotified(task.Id, now)
+	}
+	return nil
+}
+
+type loadClientEvaluation struct {
+	client         string
+	active         bool
+	latestValue    float64
+	matchedSamples int
+	totalSamples   int
+}
+
+func persistLoadClientEvaluations(task models.LoadNotification, evaluations []loadClientEvaluation, now time.Time) ([]string, bool, error) {
+	return persistLoadClientEvaluationsWithDB(dbcore.GetDBInstance(), task, evaluations, now)
+}
+
+func persistLoadClientEvaluationsWithDB(db *gorm.DB, task models.LoadNotification, evaluations []loadClientEvaluation, now time.Time) ([]string, bool, error) {
+	notifyClients := make([]string, 0, len(evaluations))
+	current := false
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var stored models.LoadNotification
+		if err := tx.Where("id = ?", task.Id).First(&stored).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				return nil
+			}
+			return err
+		}
+		if stored.Name != task.Name || stored.DefaultOn != task.DefaultOn ||
+			!reflect.DeepEqual(stored.Clients, task.Clients) ||
+			stored.Metric != task.Metric || stored.Threshold != task.Threshold ||
+			stored.Ratio != task.Ratio || stored.Interval != task.Interval {
+			return nil
+		}
+		current = true
+		assigned := make(map[string]struct{}, len(stored.Clients))
+		for _, client := range stored.Clients {
+			assigned[client] = struct{}{}
+		}
+		if err := deleteUnassignedEvaluationStates(tx, task.Id, stored.Clients); err != nil {
+			return err
+		}
+		var existing []models.LoadNotificationState
+		if err := tx.Where("notification_id = ?", task.Id).Find(&existing).Error; err != nil {
+			return err
+		}
+		byClient := make(map[string]models.LoadNotificationState, len(existing))
+		for _, state := range existing {
+			byClient[state.Client] = state
+		}
+		for _, evaluation := range evaluations {
+			if _, ok := assigned[evaluation.client]; !ok {
+				continue
+			}
+			previous := byClient[evaluation.client]
+			state := models.LoadNotificationState{
+				NotificationID: task.Id, Client: evaluation.client,
+				AlertActive: evaluation.active, LastEvaluatedAt: now.UTC(),
+				LatestValue: evaluation.latestValue, MatchedSamples: evaluation.matchedSamples,
+				TotalSamples: evaluation.totalSamples, SilencedUntil: previous.SilencedUntil,
+				SilencedForever: previous.SilencedForever,
+			}
+			if evaluation.active {
+				if previous.AlertActive && previous.ActiveSince != nil {
+					state.ActiveSince = previous.ActiveSince
+				} else {
+					started := now.UTC()
+					state.ActiveSince = &started
+				}
+			}
+			if err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "notification_id"}, {Name: "client"}},
+				DoUpdates: clause.AssignmentColumns([]string{
+					"alert_active", "active_since", "last_evaluated_at", "latest_value",
+					"matched_samples", "total_samples", "updated_at",
+				}),
+			}).Create(&state).Error; err != nil {
+				return err
+			}
+			if evaluation.active && !loadAlertStateSilenced(state, now) {
+				notifyClients = append(notifyClients, evaluation.client)
+			}
+		}
+		return nil
+	})
+	return notifyClients, current, err
+}
+
+func deleteUnassignedEvaluationStates(db *gorm.DB, taskID uint, clients models.StringArray) error {
+	query := db.Where("notification_id = ?", taskID)
+	if len(clients) > 0 {
+		query = query.Where("client NOT IN ?", []string(clients))
+	}
+	return query.Delete(&models.LoadNotificationState{}).Error
+}
+
+func loadAlertStateSilenced(state models.LoadNotificationState, now time.Time) bool {
+	return state.SilencedForever || (state.SilencedUntil != nil && state.SilencedUntil.After(now))
 }
 
 // shouldSkipNotification 检查是否应该跳过通知（冷却期检查）
@@ -113,8 +218,13 @@ func getRecordsForClient(clientUUID string, start, end time.Time, metric string)
 
 // checkMetricThreshold 检查指标是否达到阈值
 func checkMetricThreshold(records []models.Record, task models.LoadNotification, client *models.Client) bool {
+	active, _, _ := evaluateMetricThreshold(records, task, client)
+	return active
+}
+
+func evaluateMetricThreshold(records []models.Record, task models.LoadNotification, client *models.Client) (bool, float64, int) {
 	if len(records) == 0 {
-		return false
+		return false, 0, 0
 	}
 
 	// 计算需要达标的最小记录数
@@ -131,8 +241,8 @@ func checkMetricThreshold(records []models.Record, task models.LoadNotification,
 			exceededCount++
 		}
 	}
-
-	return exceededCount >= minRequiredRecords
+	latestValue := float64(getMetricValue(records[len(records)-1], task.Metric, client))
+	return exceededCount >= minRequiredRecords, latestValue, exceededCount
 }
 
 // getMetricValue 根据指标名称获取记录中的对应值
@@ -234,5 +344,17 @@ func updateLastNotified(taskId uint, notifyTime time.Time) {
 
 // ReloadLoadNotificationSchedule 加载或重载时间表
 func ReloadLoadNotificationSchedule(loadNotifications []models.LoadNotification) error {
-	return LoadNotificationManager.Reload(loadNotifications)
+	if err := LoadNotificationManager.Reload(loadNotifications); err != nil {
+		return err
+	}
+	tasks := append([]models.LoadNotification(nil), loadNotifications...)
+	go func() {
+		now := time.Now().UTC()
+		for _, task := range tasks {
+			if err := evaluateLoadNotificationTask(task, now, false); err != nil {
+				logger.Errorf("notifier", "Failed to reconcile load notification %d: %v", task.Id, err)
+			}
+		}
+	}()
+	return nil
 }

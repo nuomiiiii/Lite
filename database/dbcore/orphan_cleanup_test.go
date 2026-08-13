@@ -126,6 +126,7 @@ func TestCleanupOrphanedClientDataRepairsAllAssociations(t *testing.T) {
 		&models.TrafficReportNotification{},
 		&models.TrafficDailyLedger{},
 		&models.LoadNotification{},
+		&models.LoadNotificationState{},
 		&models.Task{},
 		&models.TaskResult{},
 	))
@@ -134,7 +135,10 @@ func TestCleanupOrphanedClientDataRepairsAllAssociations(t *testing.T) {
 		require.NoError(t, db.Exec("INSERT INTO "+table+" (client, task_id) VALUES (?, ?), (?, ?)",
 			"client-a", 1, "deleted-client", 999).Error)
 	}
-	require.NoError(t, db.Create(&models.Client{UUID: "client-a", Token: "token-a"}).Error)
+	require.NoError(t, db.Create([]models.Client{
+		{UUID: "client-a", Token: "token-a"},
+		{UUID: "client-b", Token: "token-b"},
+	}).Error)
 	pingTask := models.PingTask{
 		Name: "DNS", Clients: models.StringArray{"client-a", "deleted-client"},
 		Type: "icmp", Target: "1.1.1.1", Interval: 10,
@@ -155,6 +159,14 @@ func TestCleanupOrphanedClientDataRepairsAllAssociations(t *testing.T) {
 		{Name: "orphan", Clients: models.StringArray{"deleted-client"}, Metric: "cpu", Interval: 15},
 	}
 	require.NoError(t, db.Create(&loadRules).Error)
+	require.NoError(t, db.Create([]models.LoadNotificationState{
+		{NotificationID: loadRules[0].Id, Client: "client-a", AlertActive: true},
+		{NotificationID: loadRules[0].Id, Client: "deleted-client", AlertActive: true},
+		{NotificationID: loadRules[1].Id, Client: "deleted-client", AlertActive: true},
+	}).Error)
+	require.NoError(t, db.Create(&models.LoadNotificationState{
+		NotificationID: loadRules[0].Id, Client: "client-b", AlertActive: true,
+	}).Error)
 	commandTasks := []models.Task{
 		{TaskId: "shared", Clients: models.StringArray{"client-a", "deleted-client"}, Command: "uptime"},
 		{TaskId: "orphan", Clients: models.StringArray{"deleted-client"}, Command: "uptime"},
@@ -175,6 +187,11 @@ func TestCleanupOrphanedClientDataRepairsAllAssociations(t *testing.T) {
 	require.NoError(t, db.Find(&loadNotifications).Error)
 	require.Len(t, loadNotifications, 1)
 	assert.Equal(t, models.StringArray{"client-a"}, loadNotifications[0].Clients)
+	var loadStates []models.LoadNotificationState
+	require.NoError(t, db.Find(&loadStates).Error)
+	require.Len(t, loadStates, 1)
+	assert.Equal(t, loadRules[0].Id, loadStates[0].NotificationID)
+	assert.Equal(t, "client-a", loadStates[0].Client)
 	var tasks []models.Task
 	require.NoError(t, db.Find(&tasks).Error)
 	require.Len(t, tasks, 1)

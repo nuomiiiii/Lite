@@ -2,6 +2,8 @@ package notification
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
@@ -27,12 +29,26 @@ func AddLoadNotification(clients []string, defaultOn bool, name string, metric s
 	return notification.Id, ReloadLoadNotificationSchedule()
 }
 func DeleteLoadNotification(id []uint) error {
-	db := dbcore.GetDBInstance()
-	result := db.Where("id IN ?", id).Delete(&models.LoadNotification{})
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
+	if err := deleteLoadNotifications(dbcore.GetDBInstance(), id); err != nil {
+		return err
 	}
 	return ReloadLoadNotificationSchedule()
+}
+
+func deleteLoadNotifications(db *gorm.DB, id []uint) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("notification_id IN ?", id).Delete(&models.LoadNotificationState{}).Error; err != nil {
+			return err
+		}
+		result := tx.Where("id IN ?", id).Delete(&models.LoadNotification{})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
 }
 
 func EditLoadNotification(notifications []*models.LoadNotification) error {
@@ -56,7 +72,7 @@ func editLoadNotifications(db *gorm.DB, notifications []*models.LoadNotification
 				return fmt.Errorf("clients is required when default_on is false")
 			}
 			var existing models.LoadNotification
-			if err := tx.Select("id").Where("id = ?", notification.Id).First(&existing).Error; err != nil {
+			if err := tx.Select("id", "clients").Where("id = ?", notification.Id).First(&existing).Error; err != nil {
 				return err
 			}
 			if err := tx.Model(&models.LoadNotification{}).Where("id = ?", notification.Id).Updates(map[string]any{
@@ -70,9 +86,111 @@ func editLoadNotifications(db *gorm.DB, notifications []*models.LoadNotification
 			}).Error; err != nil {
 				return err
 			}
+			if err := deleteUnassignedLoadNotificationStates(tx, notification.Id, clients); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
+}
+
+func deleteUnassignedLoadNotificationStates(db *gorm.DB, notificationID uint, clients models.StringArray) error {
+	query := db.Where("notification_id = ?", notificationID)
+	if len(clients) > 0 {
+		query = query.Where("client NOT IN ?", []string(clients))
+	}
+	return query.Delete(&models.LoadNotificationState{}).Error
+}
+
+type CurrentLoadAlert struct {
+	NotificationID   uint       `json:"notification_id"`
+	NotificationName string     `json:"notification_name"`
+	Client           string     `json:"client"`
+	ClientName       string     `json:"client_name"`
+	Metric           string     `json:"metric"`
+	Threshold        float32    `json:"threshold"`
+	Ratio            float32    `json:"ratio"`
+	Interval         int        `json:"interval"`
+	ActiveSince      *time.Time `json:"active_since"`
+	LastEvaluatedAt  time.Time  `json:"last_evaluated_at"`
+	LatestValue      float64    `json:"latest_value"`
+	MatchedSamples   int        `json:"matched_samples"`
+	TotalSamples     int        `json:"total_samples"`
+	Silenced         bool       `json:"silenced"`
+	SilencedUntil    *time.Time `json:"silenced_until"`
+	SilencedForever  bool       `json:"silenced_forever"`
+}
+
+func ListCurrentLoadAlerts(now time.Time) ([]CurrentLoadAlert, error) {
+	return listCurrentLoadAlerts(dbcore.GetDBInstance(), now)
+}
+
+func listCurrentLoadAlerts(db *gorm.DB, now time.Time) ([]CurrentLoadAlert, error) {
+	var states []models.LoadNotificationState
+	if err := db.Preload("Notification").Preload("ClientInfo").
+		Where("alert_active = ?", true).
+		Order("active_since DESC").Order("notification_id ASC").Order("client ASC").
+		Find(&states).Error; err != nil {
+		return nil, err
+	}
+	alerts := make([]CurrentLoadAlert, 0, len(states))
+	for _, state := range states {
+		silencedUntil := state.SilencedUntil
+		silenced := state.SilencedForever || (silencedUntil != nil && silencedUntil.After(now))
+		if !silenced && !state.SilencedForever {
+			silencedUntil = nil
+		}
+		alerts = append(alerts, CurrentLoadAlert{
+			NotificationID: state.NotificationID, NotificationName: state.Notification.Name,
+			Client: state.Client, ClientName: state.ClientInfo.Name,
+			Metric: state.Notification.Metric, Threshold: state.Notification.Threshold,
+			Ratio: state.Notification.Ratio, Interval: state.Notification.Interval,
+			ActiveSince: state.ActiveSince, LastEvaluatedAt: state.LastEvaluatedAt,
+			LatestValue: state.LatestValue, MatchedSamples: state.MatchedSamples,
+			TotalSamples: state.TotalSamples, Silenced: silenced,
+			SilencedUntil: silencedUntil, SilencedForever: state.SilencedForever,
+		})
+	}
+	return alerts, nil
+}
+
+func SetLoadAlertSilence(notificationID uint, client, mode string, now time.Time) error {
+	return setLoadAlertSilence(dbcore.GetDBInstance(), notificationID, client, mode, now)
+}
+
+func setLoadAlertSilence(db *gorm.DB, notificationID uint, client, mode string, now time.Time) error {
+	client = strings.TrimSpace(client)
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if notificationID == 0 || client == "" {
+		return fmt.Errorf("notification_id and client are required")
+	}
+	updates := map[string]any{"silenced_until": nil, "silenced_forever": false}
+	switch mode {
+	case "off":
+	case "24h":
+		until := now.UTC().Add(24 * time.Hour)
+		updates["silenced_until"] = until
+	case "3d":
+		until := now.UTC().Add(3 * 24 * time.Hour)
+		updates["silenced_until"] = until
+	case "7d":
+		until := now.UTC().Add(7 * 24 * time.Hour)
+		updates["silenced_until"] = until
+	case "forever":
+		updates["silenced_forever"] = true
+	default:
+		return fmt.Errorf("unsupported silence mode")
+	}
+	result := db.Model(&models.LoadNotificationState{}).
+		Where("notification_id = ? AND client = ? AND alert_active = ?", notificationID, client, true).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func GetAllLoadNotifications() ([]models.LoadNotification, error) {

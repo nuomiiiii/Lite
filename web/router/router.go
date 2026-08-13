@@ -92,7 +92,14 @@ func registerAdminRoutes(r *gin.Engine) {
 
 	// --- 二进制/流/重定向类，保留 REST handler ---
 	g.GET("/download/backup", admin.DownloadBackup)
-	g.POST("/upload/backup", admin.UploadBackup)
+	uploadHandler := admin.NewArchiveUploadHandler()
+	uploadGroup := g.Group("/upload")
+	{
+		uploadGroup.POST("/init", uploadHandler.Init)
+		uploadGroup.POST("/chunk", uploadHandler.Chunk)
+		uploadGroup.POST("/merge", uploadHandler.Merge)
+		uploadGroup.POST("/cancel", uploadHandler.Cancel)
+	}
 	g.GET("/test/geoip", jsonRpc.Bind("admin:testGeoip", jsonRpc.WithQuery("ip")))
 	g.POST("/test/sendMessage", jsonRpc.Bind("admin:testSendMessage"))
 	g.POST("/update/mmdb", admin.UpdateMmdbGeoIP)
@@ -103,10 +110,9 @@ func registerAdminRoutes(r *gin.Engine) {
 	g.POST("/settings/https", admin.UpdateHTTPSSettings)
 	g.POST("/settings/https/reload", admin.ReloadHTTPSCertificate)
 
-	// theme 含文件上传，保留 REST handler。
+	// theme 含文件操作，保留 REST handler。
 	theme := g.Group("/theme")
 	{
-		theme.PUT("/upload", admin.UploadTheme)
 		theme.GET("/list", admin.ListThemes)
 		theme.POST("/delete", admin.DeleteTheme)
 		theme.GET("/set", admin.SetTheme)
@@ -238,6 +244,8 @@ func registerAdminRoutes(r *gin.Engine) {
 			loadAlert.POST("/add", jsonRpc.Bind("admin:addLoadNotification"))
 			loadAlert.POST("/delete", jsonRpc.Bind("admin:deleteLoadNotification"))
 			loadAlert.POST("/edit", jsonRpc.Bind("admin:editLoadNotification"))
+			loadAlert.GET("/current", jsonRpc.Bind("admin:listCurrentLoadAlerts"))
+			loadAlert.POST("/silence", jsonRpc.Bind("admin:setLoadAlertSilence"))
 		}
 		trafficReport := notificationGroup.Group("/traffic-report")
 		{

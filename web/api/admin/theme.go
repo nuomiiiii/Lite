@@ -27,7 +27,6 @@ import (
 const (
 	maxThemeArchiveFiles  = 10000
 	maxThemeArchiveSize   = 128 << 20
-	maxThemeUploadSize    = maxThemeArchiveSize + (1 << 20)
 	maxThemeFileSize      = 128 << 20
 	maxThemeExtractedSize = 512 << 20
 	maxThemeManifestSize  = 1 << 20
@@ -68,37 +67,6 @@ func temporaryThemeArchive(data []byte, prefix string) (string, error) {
 		os.Remove(name)
 		return "", err
 	}
-	return name, nil
-}
-
-func temporaryThemeArchiveFromReader(reader io.Reader, prefix string) (string, error) {
-	file, err := os.CreateTemp("", prefix+"-*.zip")
-	if err != nil {
-		return "", err
-	}
-	name := file.Name()
-	remove := true
-	defer func() {
-		_ = file.Close()
-		if remove {
-			_ = os.Remove(name)
-		}
-	}()
-
-	written, err := io.Copy(file, io.LimitReader(reader, maxThemeArchiveSize+1))
-	if err != nil {
-		return "", err
-	}
-	if written > maxThemeArchiveSize {
-		return "", fmt.Errorf("%w: 主题压缩包超过 %d 字节限制", errThemeArchiveTooLarge, maxThemeArchiveSize)
-	}
-	if written == 0 {
-		return "", errors.New("主题压缩包为空")
-	}
-	if err := file.Close(); err != nil {
-		return "", err
-	}
-	remove = false
 	return name, nil
 }
 
@@ -150,56 +118,6 @@ func themeDeletionFallback(themes []models.Theme, target string) (bool, string) 
 		}
 	}
 	return found, fallback
-}
-
-// UploadTheme 上传主题
-func UploadTheme(c *gin.Context) {
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxThemeUploadSize)
-	var reader io.ReadCloser
-	if strings.HasPrefix(c.ContentType(), "multipart/form-data") {
-		fileHeader, err := c.FormFile("file")
-		if err != nil {
-			status := http.StatusBadRequest
-			var maxBytesError *http.MaxBytesError
-			if errors.As(err, &maxBytesError) {
-				status = http.StatusRequestEntityTooLarge
-			}
-			api.RespondError(c, status, "请选择有效大小的主题文件")
-			return
-		}
-		if fileHeader.Size > maxThemeArchiveSize {
-			api.RespondError(c, http.StatusRequestEntityTooLarge, "主题压缩包过大")
-			return
-		}
-		reader, err = fileHeader.Open()
-		if err != nil {
-			api.RespondError(c, http.StatusBadRequest, "读取主题文件失败: "+err.Error())
-			return
-		}
-	} else {
-		reader = c.Request.Body
-	}
-	defer reader.Close()
-
-	tempFile, err := temporaryThemeArchiveFromReader(reader, "uploaded-theme")
-	if err != nil {
-		status := http.StatusBadRequest
-		if errors.Is(err, errThemeArchiveTooLarge) {
-			status = http.StatusRequestEntityTooLarge
-		}
-		api.RespondError(c, status, "保存文件失败: "+err.Error())
-		return
-	}
-	defer os.Remove(tempFile)
-
-	// 解压ZIP文件并验证
-	themeInfo, err := extractAndValidateTheme(tempFile)
-	if err != nil {
-		api.RespondError(c, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	api.RespondSuccessMessage(c, "主题上传成功", themeInfo)
 }
 
 // ListThemes 列出所有主题
@@ -359,7 +277,7 @@ func extractAndValidateTheme(zipPath string) (models.Theme, error) {
 	}
 
 	// 验证必填字段
-	if themeInfo.Name == "" || themeInfo.Short == "" {
+	if !models.IsLocalizedText(themeInfo.Name) || themeInfo.Short == "" {
 		return themeInfo, fmt.Errorf("主题配置缺少必填字段（name、short）")
 	}
 
@@ -904,7 +822,7 @@ func peekThemeFromZip(zipPath string) (models.Theme, error) {
 		return themeInfo, fmt.Errorf("主题配置格式错误: %v", err)
 	}
 
-	if themeInfo.Name == "" || themeInfo.Short == "" {
+	if !models.IsLocalizedText(themeInfo.Name) || themeInfo.Short == "" {
 		return themeInfo, fmt.Errorf("主题配置缺少必填字段（name、short）")
 	}
 

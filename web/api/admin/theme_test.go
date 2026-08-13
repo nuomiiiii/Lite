@@ -3,14 +3,10 @@ package admin
 import (
 	"archive/zip"
 	"bytes"
-	"mime/multipart"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/models"
 )
 
@@ -75,42 +71,6 @@ func themeArchive(t *testing.T, files map[string]string) []byte {
 		t.Fatal(err)
 	}
 	return buffer.Bytes()
-}
-
-func TestUploadThemeAcceptsMultipartForm(t *testing.T) {
-	t.Chdir(t.TempDir())
-	archive := themeArchive(t, map[string]string{
-		"komari-theme.json": `{"name":"Uploaded","short":"uploaded","configuration":{"type":"managed","data":[]}}`,
-		"dist/index.html":   `<html><body>uploaded theme</body></html>`,
-	})
-
-	var body bytes.Buffer
-	form := multipart.NewWriter(&body)
-	file, err := form.CreateFormFile("file", "uploaded.zip")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := file.Write(archive); err != nil {
-		t.Fatal(err)
-	}
-	if err := form.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
-	router.PUT("/upload", UploadTheme)
-	request := httptest.NewRequest(http.MethodPut, "/upload", &body)
-	request.Header.Set("Content-Type", form.FormDataContentType())
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("upload status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if _, err := os.Stat(filepath.Join("data", "theme", "uploaded", "dist", "index.html")); err != nil {
-		t.Fatalf("uploaded theme was not installed: %v", err)
-	}
 }
 
 func TestFailedThemeUpdatePreservesExistingTheme(t *testing.T) {

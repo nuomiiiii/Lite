@@ -497,6 +497,7 @@ func doInitialize() error {
 		&models.Log{},
 		&models.Clipboard{},
 		&models.LoadNotification{},
+		&models.LoadNotificationState{},
 		&models.OfflineNotification{},
 		&models.TrafficReportNotification{},
 		&models.TrafficDailyLedger{},
@@ -607,6 +608,7 @@ func cleanupOrphanedClientData(db *gorm.DB) error {
 			}
 		}
 		for label, model := range map[string]any{
+			"load notification states":        &models.LoadNotificationState{},
 			"offline notifications":           &models.OfflineNotification{},
 			"traffic report notifications":    &models.TrafficReportNotification{},
 			"traffic daily ledger":            &models.TrafficDailyLedger{},
@@ -656,6 +658,9 @@ func cleanupOrphanedClientData(db *gorm.DB) error {
 		var loadNotifications []models.LoadNotification
 		if err := tx.Select("id", "clients").Find(&loadNotifications).Error; err != nil {
 			return fmt.Errorf("list load notifications for orphan cleanup: %w", err)
+		}
+		if err := cleanupOrphanedLoadNotificationStates(tx, loadNotifications); err != nil {
+			return err
 		}
 		for _, notification := range loadNotifications {
 			remaining, changed := keepKnownClients(notification.Clients, validClients)
@@ -715,6 +720,34 @@ func cleanupOrphanedClientData(db *gorm.DB) error {
 		}
 		return nil
 	})
+}
+
+func cleanupOrphanedLoadNotificationStates(db *gorm.DB, notifications []models.LoadNotification) error {
+	if !db.Migrator().HasTable(&models.LoadNotificationState{}) {
+		return nil
+	}
+	assigned := make(map[uint]map[string]struct{}, len(notifications))
+	for _, notification := range notifications {
+		clients := make(map[string]struct{}, len(notification.Clients))
+		for _, client := range notification.Clients {
+			clients[client] = struct{}{}
+		}
+		assigned[notification.Id] = clients
+	}
+	var states []models.LoadNotificationState
+	if err := db.Select("notification_id", "client").Find(&states).Error; err != nil {
+		return fmt.Errorf("list load notification states for reconciliation: %w", err)
+	}
+	for _, state := range states {
+		if _, ok := assigned[state.NotificationID][state.Client]; ok {
+			continue
+		}
+		if err := db.Where("notification_id = ? AND client = ?", state.NotificationID, state.Client).
+			Delete(&models.LoadNotificationState{}).Error; err != nil {
+			return fmt.Errorf("delete orphaned load notification state: %w", err)
+		}
+	}
+	return nil
 }
 
 func keepKnownClients(clients models.StringArray, valid map[string]struct{}) (models.StringArray, bool) {

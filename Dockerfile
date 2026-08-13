@@ -19,9 +19,7 @@ RUN set -eux; \
     curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cloudflared_arch}" -o /usr/local/bin/cloudflared; \
     chmod +x /usr/local/bin/cloudflared
 
-COPY komari-${TARGETOS}-${TARGETARCH} /app/komari
-
-RUN chmod +x /app/komari
+COPY --chmod=755 komari-${TARGETOS}-${TARGETARCH} /app/komari
 
 ENV GIN_MODE=release
 ENV KOMARI_LISTEN=0.0.0.0:25774

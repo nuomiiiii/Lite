@@ -60,15 +60,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          snapshot_tag="${{ inputs.existing_tag }}"
-          if [ -n "${snapshot_tag}" ]; then
-            [[ "${snapshot_tag}" =~ ^Snapshot-[0-9]{10}$ ]] || {
-              echo "Invalid existing snapshot tag: ${snapshot_tag}" >&2
+          existing_tag="${{ inputs.existing_tag }}"
+          if [ -n "${existing_tag}" ]; then
+            [[ "${existing_tag}" =~ ^Snapshot-[0-9]{10}$ ]] || {
+              echo "Invalid existing snapshot tag: ${existing_tag}" >&2
               exit 1
             }
-          else
-            snapshot_tag="Snapshot-$(date -u -d '+8 hours' +%y%m%d%H%M)"
           fi
+          snapshot_tag="Snapshot-$(date -u -d '+8 hours' +%y%m%d%H%M)"
           echo "snapshot_tag=${snapshot_tag}" >> "${GITHUB_OUTPUT}"
           echo "app_version=${snapshot_tag}" >> "${GITHUB_OUTPUT}"
           echo "Snapshot tag: ${snapshot_tag}"
@@ -280,6 +279,7 @@ jobs:
       - name: Create release and upload assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXISTING_TAG: ${{ inputs.existing_tag }}
           SNAPSHOT_TAG: ${{ needs.prepare.outputs.snapshot_tag }}
           APP_VERSION: ${{ needs.prepare.outputs.app_version }}
         shell: bash
@@ -293,7 +293,32 @@ jobs:
           release_notes="${release_notes//__VERSION_HASH__/${version_hash}}"
           release_notes="${release_notes//__APP_VERSION__/${APP_VERSION}}"
 
-          if gh release view "${SNAPSHOT_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+          if [ -n "${EXISTING_TAG}" ]; then
+            release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${EXISTING_TAG}" --jq .id)"
+            if gh api "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" >/dev/null 2>&1; then
+              gh api --method PATCH \
+                "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" \
+                -f sha="${GITHUB_SHA}" \
+                -F force=true
+            else
+              gh api --method POST \
+                "repos/${GITHUB_REPOSITORY}/git/refs" \
+                -f ref="refs/tags/${SNAPSHOT_TAG}" \
+                -f sha="${GITHUB_SHA}"
+            fi
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+              -f tag_name="${SNAPSHOT_TAG}" \
+              -f target_commitish="${GITHUB_SHA}" \
+              -f name="${SNAPSHOT_TAG}" \
+              -f body="${release_notes}" \
+              -F draft=false \
+              -F prerelease=true
+            if [ "${EXISTING_TAG}" != "${SNAPSHOT_TAG}" ]; then
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/git/refs/tags/${EXISTING_TAG}"
+            fi
+          elif gh release view "${SNAPSHOT_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh api --method PATCH \
               "repos/${GITHUB_REPOSITORY}/git/refs/tags/${SNAPSHOT_TAG}" \
               -f sha="${GITHUB_SHA}" \
