@@ -195,7 +195,6 @@ jobs:
 
           wait_result() {
             local name=$1 expected=$2
-            local unit=$3
             local result="$ROOT/$name/.komari-update/last-result.json"
             for _ in $(seq 1 120); do
               if sudo test -f "$result" && sudo grep -q '"status": "'"$expected"'"' "$result"; then
@@ -204,11 +203,6 @@ jobs:
               sleep 1
             done
             sudo cat "$result" || true
-            sudo systemctl show "$unit" \
-              --property=ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,NRestarts \
-              --no-pager || true
-            sudo systemctl status "$unit" --no-pager || true
-            sudo journalctl -u "$unit" --no-pager -n 200 || true
             return 1
           }
 
@@ -252,7 +246,7 @@ jobs:
           }
           JSON
           schedule_helper success komari-self-update-integration-success
-          wait_result success succeeded komari-self-update-integration-success.service
+          wait_result success succeeded
           curl -fsS http://127.0.0.1:28774/api/version | jq -e --arg version "$TARGET_VERSION" --arg hash "$TARGET_HASH" '(.data // .) | .version == $version and .hash == $hash'
           assert_service_active "$SUCCESS_SERVICE"
 
@@ -276,7 +270,7 @@ jobs:
           }
           JSON
           schedule_helper rollback komari-self-update-integration-rollback
-          wait_result rollback rolled_back komari-self-update-integration-rollback.service
+          wait_result rollback rolled_back
           curl -fsS http://127.0.0.1:28775/api/version | jq -e '(.data // .) | .version == "2.2.2" and .hash == "78518cc"'
           assert_service_active "$ROLLBACK_SERVICE"
 
@@ -336,7 +330,7 @@ jobs:
             sleep 0.2
           done
           [ "$(sudo systemctl show "$old_helper_unit" --property=Restart --value)" = "on-failure" ]
-          wait_result old-https succeeded "$old_helper_unit"
+          wait_result old-https succeeded
           curl -kfsS https://127.0.0.1:18328/api/version | jq -e --arg version "$TARGET_VERSION" --arg hash "$TARGET_HASH" '(.data // .) | .version == $version and .hash == $hash'
           assert_service_active "$HTTPS_SERVICE"
 
@@ -375,7 +369,7 @@ jobs:
           }
           write_failure_config
           schedule_helper rollback-failed komari-self-update-integration-rollback-failed
-          wait_result rollback-failed rollback_failed komari-self-update-integration-rollback-failed.service
+          wait_result rollback-failed rollback_failed
           assert_service_active "$FAILURE_SERVICE"
           failure_message="$(sudo jq -r .message "$FAILURE_ROOT/.komari-update/last-result.json")"
           [ "$(grep -o 'rollback failed:' <<<"$failure_message" | wc -l)" -eq 1 ]
