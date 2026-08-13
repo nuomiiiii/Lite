@@ -2,6 +2,7 @@ package jsonrpc
 
 import (
 	"context"
+	"time"
 
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
@@ -20,6 +21,8 @@ func init() {
 	reg("deleteLoadNotification", adminDeleteLoadNotification, "Delete load notifications by ids")
 	reg("editLoadNotification", adminEditLoadNotification, "Edit load notifications")
 	reg("getAllLoadNotifications", adminGetAllLoadNotifications, "List all load notifications")
+	reg("listCurrentLoadAlerts", adminListCurrentLoadAlerts, "List active load alerts")
+	reg("setLoadAlertSilence", adminSetLoadAlertSilence, "Silence or unsilence an active load alert")
 	// offline notifications
 	reg("listOfflineNotifications", adminListOfflineNotifications, "List offline notifications")
 	reg("editOfflineNotification", adminEditOfflineNotification, "Edit offline notifications")
@@ -107,6 +110,29 @@ func adminGetAllLoadNotifications(_ context.Context, _ *rpc.JsonRpcRequest) (any
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
 	return list, nil
+}
+
+func adminListCurrentLoadAlerts(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	list, err := notification.ListCurrentLoadAlerts(time.Now().UTC())
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	return list, nil
+}
+
+func adminSetLoadAlertSilence(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		NotificationID uint   `json:"notification_id"`
+		Client         string `json:"client"`
+		Mode           string `json:"mode"`
+	}
+	if err := req.BindParams(&params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid request data", nil)
+	}
+	if err := notification.SetLoadAlertSilence(params.NotificationID, params.Client, params.Mode, time.Now().UTC()); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return nil, nil
 }
 
 func adminListOfflineNotifications(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {

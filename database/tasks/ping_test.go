@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -144,19 +143,10 @@ func TestEditPingTasksRemovesAlertsForUnassignedClients(t *testing.T) {
 		{Client: "client-c", TaskId: tasks[0].Id, Enable: true, WindowSeconds: 60, LossThreshold: 5, MinimumSamples: 1, CooldownSeconds: 300},
 		{Client: "client-b", TaskId: tasks[1].Id, Enable: true, WindowSeconds: 60, LossThreshold: 5, MinimumSamples: 1, CooldownSeconds: 300},
 	}).Error)
-	require.NoError(t, db.Exec("CREATE TABLE ping_records (client TEXT NOT NULL, task_id INTEGER NOT NULL)").Error)
-	require.NoError(t, db.Exec("INSERT INTO ping_records (client, task_id) VALUES (?, ?), (?, ?), (?, ?), (?, ?)",
-		"client-a", tasks[0].Id,
-		"client-b", tasks[0].Id,
-		"client-c", tasks[0].Id,
-		"client-b", tasks[1].Id,
-	).Error)
 
 	updated := tasks[0]
 	updated.Clients = models.StringArray{"client-a", "client-c"}
-	removed, err := editPingTasks(db, []*models.PingTask{&updated})
-	require.NoError(t, err)
-	assert.Equal(t, []metricstore.PingAssignment{{Client: "client-b", TaskID: tasks[0].Id}}, removed)
+	require.NoError(t, editPingTasks(db, []*models.PingTask{&updated}))
 
 	var gotTask models.PingTask
 	require.NoError(t, db.First(&gotTask, tasks[0].Id).Error)
@@ -180,10 +170,4 @@ func TestEditPingTasksRemovesAlertsForUnassignedClients(t *testing.T) {
 		{taskID: remaining[1].TaskId, client: remaining[1].Client},
 		{taskID: remaining[2].TaskId, client: remaining[2].Client},
 	})
-	var removedLegacyCount int64
-	require.NoError(t, db.Table("ping_records").Where("client = ? AND task_id = ?", "client-b", tasks[0].Id).Count(&removedLegacyCount).Error)
-	assert.Zero(t, removedLegacyCount)
-	var retainedLegacyCount int64
-	require.NoError(t, db.Table("ping_records").Count(&retainedLegacyCount).Error)
-	assert.Equal(t, int64(3), retainedLegacyCount)
 }

@@ -3,7 +3,6 @@ package metricstore
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -29,7 +28,7 @@ func TestCleanupOrphanedDataRemovesDeletedEntitiesAndPingTasks(t *testing.T) {
 
 	result, err := CleanupOrphanedData(ctx,
 		map[string]struct{}{"client-a": {}},
-		map[uint]map[string]struct{}{1: {"client-a": {}}},
+		map[uint]struct{}{1: {}},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, OrphanCleanupResult{Entities: 1, PingTasks: 1}, result)
@@ -40,86 +39,6 @@ func TestCleanupOrphanedDataRemovesDeletedEntitiesAndPingTasks(t *testing.T) {
 	taskIDs, err := s.MetricTagValues(ctx, MetricPingLatency, "task_id")
 	require.NoError(t, err)
 	assert.Equal(t, []string{"1"}, taskIDs)
-}
-
-func TestCleanupOrphanedDataRemovesOnlyStalePingAssignments(t *testing.T) {
-	ctx := context.Background()
-	s := useReportTestStore(t, nil)
-	now := time.Now().UTC()
-	require.NoError(t, s.WriteBatch(ctx, []metric.Point{
-		{MetricName: MetricPingLatency, EntityID: "client-a", Timestamp: now, Value: 10, Tags: map[string]string{"task_id": "1"}},
-		{MetricName: MetricPingLatency, EntityID: "client-b", Timestamp: now, Value: 20, Tags: map[string]string{"task_id": "1"}},
-		{MetricName: MetricPingLatency, EntityID: "client-c", Timestamp: now, Value: 30, Tags: map[string]string{"task_id": "1"}},
-		{MetricName: MetricPingLatency, EntityID: "client-b", Timestamp: now, Value: 40, Tags: map[string]string{"task_id": "2"}},
-	}))
-
-	validEntities := map[string]struct{}{"client-a": {}, "client-b": {}, "client-c": {}}
-	validAssignments := map[uint]map[string]struct{}{
-		1: {"client-a": {}, "client-c": {}},
-		2: {"client-b": {}},
-	}
-	result, err := CleanupOrphanedData(ctx, validEntities, validAssignments)
-	require.NoError(t, err)
-	assert.Equal(t, OrphanCleanupResult{PingAssignments: 1}, result)
-
-	assertPingSeriesPoints(t, s, "client-a", 1, now, 1)
-	assertPingSeriesPoints(t, s, "client-b", 1, now, 0)
-	assertPingSeriesPoints(t, s, "client-c", 1, now, 1)
-	assertPingSeriesPoints(t, s, "client-b", 2, now, 1)
-
-	result, err = CleanupOrphanedData(ctx, validEntities, validAssignments)
-	require.NoError(t, err)
-	assert.Equal(t, OrphanCleanupResult{}, result)
-	assertPingSeriesPoints(t, s, "client-a", 1, now, 1)
-	assertPingSeriesPoints(t, s, "client-c", 1, now, 1)
-	assertPingSeriesPoints(t, s, "client-b", 2, now, 1)
-}
-
-func TestDeletePingRecordsByAssignmentsIsPreciselyScoped(t *testing.T) {
-	ctx := context.Background()
-	s := useReportTestStore(t, nil)
-	now := time.Now().UTC()
-	require.NoError(t, s.WriteBatch(ctx, []metric.Point{
-		{MetricName: MetricPingLatency, EntityID: "client-a", Timestamp: now, Value: 10, Tags: map[string]string{"task_id": "1"}},
-		{MetricName: MetricPingLatency, EntityID: "client-b", Timestamp: now, Value: 20, Tags: map[string]string{"task_id": "1"}},
-		{MetricName: MetricPingLatency, EntityID: "client-c", Timestamp: now, Value: 30, Tags: map[string]string{"task_id": "1"}},
-		{MetricName: MetricPingLatency, EntityID: "client-b", Timestamp: now, Value: 40, Tags: map[string]string{"task_id": "2"}},
-	}))
-
-	require.NoError(t, DeletePingRecordsByAssignments(ctx, []PingAssignment{{Client: "client-b", TaskID: 1}}))
-	assertPingSeriesPoints(t, s, "client-a", 1, now, 1)
-	assertPingSeriesPoints(t, s, "client-b", 1, now, 0)
-	assertPingSeriesPoints(t, s, "client-c", 1, now, 1)
-	assertPingSeriesPoints(t, s, "client-b", 2, now, 1)
-}
-
-func TestDeletePingRecordsByTaskKeepsOtherTasks(t *testing.T) {
-	ctx := context.Background()
-	s := useReportTestStore(t, nil)
-	now := time.Now().UTC()
-	require.NoError(t, s.WriteBatch(ctx, []metric.Point{
-		{MetricName: MetricPingLatency, EntityID: "client-a", Timestamp: now, Value: 10, Tags: map[string]string{"task_id": "1"}},
-		{MetricName: MetricPingLatency, EntityID: "client-b", Timestamp: now, Value: 20, Tags: map[string]string{"task_id": "1"}},
-		{MetricName: MetricPingLatency, EntityID: "client-b", Timestamp: now, Value: 40, Tags: map[string]string{"task_id": "2"}},
-	}))
-
-	require.NoError(t, DeletePingRecordsByTask(ctx, []uint{1}))
-	assertPingSeriesPoints(t, s, "client-a", 1, now, 0)
-	assertPingSeriesPoints(t, s, "client-b", 1, now, 0)
-	assertPingSeriesPoints(t, s, "client-b", 2, now, 1)
-}
-
-func assertPingSeriesPoints(t *testing.T, s *metric.Store, client string, taskID uint, now time.Time, want int) {
-	t.Helper()
-	points, err := s.Query(context.Background(), metric.Query{
-		MetricName: MetricPingLatency,
-		EntityID:   client,
-		Tags:       map[string]string{"task_id": fmt.Sprintf("%d", taskID)},
-		Start:      now.Add(-time.Second),
-		End:        now.Add(time.Second),
-	})
-	require.NoError(t, err)
-	assert.Len(t, points, want)
 }
 
 func TestBlockedTargetsCannotRecreateDeletedMetrics(t *testing.T) {

@@ -18,7 +18,7 @@ func newLoadNotificationTestDB(t *testing.T) *gorm.DB {
 	dsn := fmt.Sprintf("file:load-notification-%d?mode=memory&cache=shared", time.Now().UnixNano())
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.LoadNotification{}))
+	require.NoError(t, db.AutoMigrate(&models.Client{}, &models.LoadNotification{}, &models.LoadNotificationState{}))
 	return db
 }
 
@@ -61,4 +61,90 @@ func TestEditLoadNotificationsPersistsDisabledDefaultOn(t *testing.T) {
 	require.NoError(t, db.First(&got, rule.Id).Error)
 	assert.False(t, got.DefaultOn)
 	assert.Equal(t, models.StringArray{"client-a"}, got.Clients)
+}
+
+func TestEditLoadNotificationsRemovesOnlyUnassignedStates(t *testing.T) {
+	db := newLoadNotificationTestDB(t)
+	require.NoError(t, db.Create([]models.Client{
+		{UUID: "client-a", Token: "token-a", Name: "A"},
+		{UUID: "client-b", Token: "token-b", Name: "B"},
+	}).Error)
+	rule := models.LoadNotification{
+		Name: "Disk", Clients: models.StringArray{"client-a", "client-b"},
+		Metric: "disk", Threshold: 80, Ratio: 0.8, Interval: 15,
+	}
+	require.NoError(t, db.Create(&rule).Error)
+	require.NoError(t, db.Create([]models.LoadNotificationState{
+		{NotificationID: rule.Id, Client: "client-a", AlertActive: true, LastEvaluatedAt: time.Now().UTC()},
+		{NotificationID: rule.Id, Client: "client-b", AlertActive: true, LastEvaluatedAt: time.Now().UTC()},
+	}).Error)
+
+	rule.Clients = models.StringArray{"client-a"}
+	require.NoError(t, editLoadNotifications(db, []*models.LoadNotification{&rule}))
+
+	var states []models.LoadNotificationState
+	require.NoError(t, db.Find(&states).Error)
+	require.Len(t, states, 1)
+	assert.Equal(t, "client-a", states[0].Client)
+}
+
+func TestLoadAlertSilenceDurationsAndUnsilence(t *testing.T) {
+	db := newLoadNotificationTestDB(t)
+	require.NoError(t, db.Create(&models.Client{UUID: "client-b", Token: "token-b", Name: "B"}).Error)
+	rule := models.LoadNotification{Name: "Disk", Clients: models.StringArray{"client-b"}, Metric: "disk", Threshold: 80, Ratio: 0.8, Interval: 15}
+	require.NoError(t, db.Create(&rule).Error)
+	now := time.Date(2026, 8, 13, 1, 2, 3, 0, time.UTC)
+	require.NoError(t, db.Create(&models.LoadNotificationState{
+		NotificationID: rule.Id, Client: "client-b", AlertActive: true, LastEvaluatedAt: now,
+	}).Error)
+
+	require.NoError(t, setLoadAlertSilence(db, rule.Id, "client-b", "24h", now))
+	alerts, err := listCurrentLoadAlerts(db, now)
+	require.NoError(t, err)
+	require.Len(t, alerts, 1)
+	assert.True(t, alerts[0].Silenced)
+	require.NotNil(t, alerts[0].SilencedUntil)
+	assert.Equal(t, now.Add(24*time.Hour), *alerts[0].SilencedUntil)
+
+	alerts, err = listCurrentLoadAlerts(db, now.Add(24*time.Hour))
+	require.NoError(t, err)
+	assert.False(t, alerts[0].Silenced)
+	assert.Nil(t, alerts[0].SilencedUntil)
+
+	require.NoError(t, setLoadAlertSilence(db, rule.Id, "client-b", "forever", now))
+	alerts, err = listCurrentLoadAlerts(db, now.AddDate(1, 0, 0))
+	require.NoError(t, err)
+	assert.True(t, alerts[0].Silenced)
+	assert.True(t, alerts[0].SilencedForever)
+
+	require.NoError(t, setLoadAlertSilence(db, rule.Id, "client-b", "off", now))
+	alerts, err = listCurrentLoadAlerts(db, now)
+	require.NoError(t, err)
+	assert.False(t, alerts[0].Silenced)
+	assert.False(t, alerts[0].SilencedForever)
+}
+
+func TestLoadAlertSilenceRejectsInactiveTarget(t *testing.T) {
+	db := newLoadNotificationTestDB(t)
+	require.NoError(t, db.Create(&models.Client{UUID: "client-b", Token: "token-b"}).Error)
+	rule := models.LoadNotification{Name: "Disk", Clients: models.StringArray{"client-b"}, Metric: "disk", Interval: 15}
+	require.NoError(t, db.Create(&rule).Error)
+	require.NoError(t, db.Create(&models.LoadNotificationState{
+		NotificationID: rule.Id, Client: "client-b", AlertActive: false, LastEvaluatedAt: time.Now().UTC(),
+	}).Error)
+	assert.Error(t, setLoadAlertSilence(db, rule.Id, "client-b", "24h", time.Now().UTC()))
+}
+
+func TestDeleteLoadNotificationDeletesStates(t *testing.T) {
+	db := newLoadNotificationTestDB(t)
+	require.NoError(t, db.Create(&models.Client{UUID: "client-a", Token: "token-a"}).Error)
+	rule := models.LoadNotification{Name: "CPU", Clients: models.StringArray{"client-a"}, Metric: "cpu", Interval: 15}
+	require.NoError(t, db.Create(&rule).Error)
+	require.NoError(t, db.Create(&models.LoadNotificationState{
+		NotificationID: rule.Id, Client: "client-a", LastEvaluatedAt: time.Now().UTC(),
+	}).Error)
+	require.NoError(t, deleteLoadNotifications(db, []uint{rule.Id}))
+	var stateCount int64
+	require.NoError(t, db.Model(&models.LoadNotificationState{}).Count(&stateCount).Error)
+	assert.Zero(t, stateCount)
 }

@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -98,26 +97,17 @@ func deletePingTaskRows(db *gorm.DB, ids []uint) error {
 
 // EditPingTask 批量更新延迟监测任务配置。
 func EditPingTask(tasks []*models.PingTask) error {
-	taskIDs := editedPingTaskIDs(tasks)
-	metricstore.BlockPingTaskWrites(taskIDs)
-	defer metricstore.UnblockPingTaskWrites(taskIDs)
-
-	removedAssignments, err := editPingTasks(dbcore.GetDBInstance(), tasks)
-	if err != nil {
+	if err := editPingTasks(dbcore.GetDBInstance(), tasks); err != nil {
 		return err
 	}
-	reloadErr := ReloadPingSchedule()
-	cleanupErr := metricstore.DeletePingRecordsByAssignments(context.Background(), removedAssignments)
-	return errors.Join(reloadErr, cleanupErr)
+	return ReloadPingSchedule()
 }
 
-func editPingTasks(db *gorm.DB, tasks []*models.PingTask) ([]metricstore.PingAssignment, error) {
+func editPingTasks(db *gorm.DB, tasks []*models.PingTask) error {
 	if len(tasks) == 0 {
-		return nil, fmt.Errorf("at least one ping task is required")
+		return fmt.Errorf("at least one ping task is required")
 	}
-	removedAssignments := make([]metricstore.PingAssignment, 0)
-	err := db.Transaction(func(tx *gorm.DB) error {
-		hasLegacyPingRecords := tx.Migrator().HasTable("ping_records")
+	return db.Transaction(func(tx *gorm.DB) error {
 		for _, task := range tasks {
 			if task == nil || task.Id == 0 {
 				return fmt.Errorf("ping task ID is required")
@@ -143,38 +133,10 @@ func editPingTasks(db *gorm.DB, tasks []*models.PingTask) ([]metricstore.PingAss
 				if err := tx.Where("task_id = ? AND client IN ?", task.Id, removedClients).Delete(&models.PingLossNotification{}).Error; err != nil {
 					return err
 				}
-				if hasLegacyPingRecords {
-					if err := tx.Exec("DELETE FROM ping_records WHERE task_id = ? AND client IN ?", task.Id, removedClients).Error; err != nil {
-						return fmt.Errorf("delete legacy ping records for task %d: %w", task.Id, err)
-					}
-				}
-				for _, client := range removedClients {
-					removedAssignments = append(removedAssignments, metricstore.PingAssignment{Client: client, TaskID: task.Id})
-				}
 			}
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return removedAssignments, nil
-}
-
-func editedPingTaskIDs(tasks []*models.PingTask) []uint {
-	seen := make(map[uint]struct{}, len(tasks))
-	ids := make([]uint, 0, len(tasks))
-	for _, task := range tasks {
-		if task == nil || task.Id == 0 {
-			continue
-		}
-		if _, ok := seen[task.Id]; ok {
-			continue
-		}
-		seen[task.Id] = struct{}{}
-		ids = append(ids, task.Id)
-	}
-	return ids
 }
 
 func removedPingTaskClients(previous, next models.StringArray) []string {

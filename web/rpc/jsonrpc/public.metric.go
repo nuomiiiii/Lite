@@ -199,18 +199,6 @@ func publicQueryMetrics(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc
 	for _, def := range defs {
 		defMap[def.Name] = def
 	}
-	pingTaskMap := map[string]models.PingTask{}
-	for _, metricKey := range metricKeys {
-		if !isPingMetricKey(metricKey) {
-			continue
-		}
-		pingTaskList, err := tasks.GetAllPingTasks()
-		if err != nil {
-			return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch ping tasks: "+err.Error(), nil)
-		}
-		pingTaskMap = pingTasksByStringID(pingTaskList)
-		break
-	}
 
 	type publicMetricBatchPlan struct {
 		item          publicMetricSeries
@@ -316,9 +304,6 @@ func publicQueryMetrics(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc
 			}
 		}
 		for _, split := range splitPublicMetricSeries(item) {
-			if !pingMetricSeriesMatchesCurrentAssignment(split, pingTaskMap) {
-				continue
-			}
 			if item.FillEmpty {
 				split = adaptiveFillPublicMetricSeries(split, start, end)
 			}
@@ -372,7 +357,10 @@ func publicGetPingMetricStats(ctx context.Context, req *rpc.JsonRpcRequest) (any
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch ping tasks: "+err.Error(), nil)
 	}
-	taskMap := pingTasksByStringID(taskList)
+	taskMap := make(map[string]models.PingTask, len(taskList))
+	for _, task := range taskList {
+		taskMap[strconv.FormatUint(uint64(task.Id), 10)] = task
+	}
 	taskFilter := normalizePingMetricTaskIDs(params.TaskID, params.TaskIDs)
 
 	maxPoints := params.MaxPoints
@@ -788,10 +776,6 @@ func publicPingStatsFromAggregateGroups(entityID string, groups publicPingMetric
 		if len(taskFilter) > 0 && !taskFilter[taskID] {
 			continue
 		}
-		task, ok := taskMap[taskID]
-		if !ok || !task.AppliesToClient(entityID) {
-			continue
-		}
 
 		total := aggregatePointCount(groups.Avg[taskID])
 		if total == 0 {
@@ -829,9 +813,11 @@ func publicPingStatsFromAggregateGroups(entityID string, groups publicPingMetric
 			P99:             p99,
 			StdDev:          stddev,
 		}
-		stat.Name = task.Name
-		stat.Type = task.Type
-		stat.Interval = task.Interval
+		if task, ok := taskMap[taskID]; ok {
+			stat.Name = task.Name
+			stat.Type = task.Type
+			stat.Interval = task.Interval
+		}
 		if p50 != nil && p99 != nil && *p50 > 0 && *p99 >= *p50 {
 			adjustedBase := math.Max(math.Min(*p50, 50.0), 10.0)
 			stat.P99P50Ratio = (*p99 - *p50) / adjustedBase

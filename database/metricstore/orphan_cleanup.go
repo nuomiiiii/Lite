@@ -9,14 +9,13 @@ import (
 )
 
 type OrphanCleanupResult struct {
-	Entities        int
-	PingTasks       int
-	PingAssignments int
+	Entities  int
+	PingTasks int
 }
 
-// CleanupOrphanedData removes history that is no longer addressable through
-// the current clients, ping tasks, and client/task assignments.
-func CleanupOrphanedData(ctx context.Context, validEntities map[string]struct{}, validPingAssignments map[uint]map[string]struct{}) (OrphanCleanupResult, error) {
+// CleanupOrphanedData removes metric history whose client or ping task no
+// longer exists in the main database. It runs before report batching starts.
+func CleanupOrphanedData(ctx context.Context, validEntities map[string]struct{}, validPingTasks map[uint]struct{}) (OrphanCleanupResult, error) {
 	if err := storeOperations.Acquire(ctx); err != nil {
 		return OrphanCleanupResult{}, fmt.Errorf("wait for metric store operations before orphan cleanup: %w", err)
 	}
@@ -45,24 +44,19 @@ func CleanupOrphanedData(ctx context.Context, validEntities map[string]struct{},
 	}
 
 	orphanTaskTags := make(map[string]struct{})
-	orphanAssignments := make(map[metric.EntityTagValue]struct{})
 	for _, metricName := range pingMetricNames {
-		pairs, err := activeStore.MetricEntityTagValues(ctx, metricName, "task_id")
+		values, err := activeStore.MetricTagValues(ctx, metricName, "task_id")
 		if err != nil {
-			return result, fmt.Errorf("list %s client/task pairs: %w", metricName, err)
+			return result, fmt.Errorf("list %s task tags: %w", metricName, err)
 		}
-		for _, pair := range pairs {
-			taskID, parseErr := strconv.ParseUint(pair.TagValue, 10, strconv.IntSize)
+		for _, value := range values {
+			taskID, parseErr := strconv.ParseUint(value, 10, strconv.IntSize)
 			if parseErr == nil {
-				assignedClients, taskExists := validPingAssignments[uint(taskID)]
-				if taskExists {
-					if _, assigned := assignedClients[pair.EntityID]; !assigned {
-						orphanAssignments[pair] = struct{}{}
-					}
+				if _, exists := validPingTasks[uint(taskID)]; exists {
 					continue
 				}
 			}
-			orphanTaskTags[pair.TagValue] = struct{}{}
+			orphanTaskTags[value] = struct{}{}
 		}
 	}
 	for taskTag := range orphanTaskTags {
@@ -75,15 +69,6 @@ func CleanupOrphanedData(ctx context.Context, validEntities map[string]struct{},
 			}
 		}
 		result.PingTasks++
-	}
-	for assignment := range orphanAssignments {
-		if _, deletedWithTask := orphanTaskTags[assignment.TagValue]; deletedWithTask {
-			continue
-		}
-		if err := deletePingAssignmentRecords(ctx, activeStore, assignment.EntityID, assignment.TagValue); err != nil {
-			return result, fmt.Errorf("delete orphaned ping assignment client %s task %s: %w", assignment.EntityID, assignment.TagValue, err)
-		}
-		result.PingAssignments++
 	}
 	return result, nil
 }

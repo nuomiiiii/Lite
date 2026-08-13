@@ -76,6 +76,7 @@ func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
 		}
 
 		for label, model := range map[string]any{
+			"load notification states":        &models.LoadNotificationState{},
 			"offline notifications":           &models.OfflineNotification{},
 			"traffic report notifications":    &models.TrafficReportNotification{},
 			"traffic daily ledger":            &models.TrafficDailyLedger{},

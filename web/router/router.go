@@ -238,6 +238,8 @@ func registerAdminRoutes(r *gin.Engine) {
 			loadAlert.POST("/add", jsonRpc.Bind("admin:addLoadNotification"))
 			loadAlert.POST("/delete", jsonRpc.Bind("admin:deleteLoadNotification"))
 			loadAlert.POST("/edit", jsonRpc.Bind("admin:editLoadNotification"))
+			loadAlert.GET("/current", jsonRpc.Bind("admin:listCurrentLoadAlerts"))
+			loadAlert.POST("/silence", jsonRpc.Bind("admin:setLoadAlertSilence"))
 		}
 		trafficReport := notificationGroup.Group("/traffic-report")
 		{

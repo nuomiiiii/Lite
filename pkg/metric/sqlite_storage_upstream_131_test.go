@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"math"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -83,43 +82,6 @@ func TestSQLiteStorageMigratesUpstream131RollupsToV4(t *testing.T) {
 	}
 }
 
-func TestSQLiteStorageMigratesUpstream14RollupsToV4(t *testing.T) {
-	ctx := context.Background()
-	dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
-	base := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
-	seedUpstreamSQLiteStore(t, dsn, base, false, "metric_label_sets")
-
-	summary, err := InspectSQLiteMigration(ctx, SQLite(dsn))
-	if err != nil {
-		t.Fatalf("inspect upstream 1.4.x database: %v", err)
-	}
-	if !summary.Required || summary.Layout != "upstream-1.4.x" || summary.SourceRows != 2 {
-		t.Fatalf("upstream 1.4.x should enter the migration page: %#v", summary)
-	}
-
-	store, err := Open(ctx, SQLite(dsn))
-	if err != nil {
-		t.Fatalf("upgrade upstream 1.4.x database: %v", err)
-	}
-	defer store.Close()
-
-	rows, err := store.scanRollupRowsBetween(ctx, "compat.131", "upstream-node", map[string]string{"task_id": "7"},
-		time.Minute.Nanoseconds(), base.UnixNano(), base.UnixNano(), true)
-	if err != nil {
-		t.Fatalf("read migrated upstream 1.4.x rollup: %v", err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("migrated upstream 1.4.x rollup rows=%d want=1", len(rows))
-	}
-	bucket := rows[0].bucketData
-	if bucket.count != 2 || bucket.sum != 30 || bucket.sumSq != 500 || bucket.min != 10 || bucket.max != 20 {
-		t.Fatalf("migrated upstream 1.4.x rollup summary changed: %#v", bucket)
-	}
-	if got := bucket.digest.Quantile(0.5); got < 10 || got > 20 {
-		t.Fatalf("migrated upstream 1.4.x digest is invalid: p50=%v", got)
-	}
-}
-
 func TestSQLiteStorageUpstream131OverflowRollsBack(t *testing.T) {
 	ctx := context.Background()
 	dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
@@ -156,68 +118,6 @@ func TestSQLiteStorageUpstream131OverflowRollsBack(t *testing.T) {
 	}
 }
 
-func TestSQLiteStorageUpstream14OverflowRollsBack(t *testing.T) {
-	ctx := context.Background()
-	dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
-	base := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
-	seedUpstreamSQLiteStore(t, dsn, base, true, "metric_label_sets")
-
-	store, err := Open(ctx, SQLite(dsn))
-	if err == nil {
-		_ = store.Close()
-		t.Fatal("upstream 1.4.x migration unexpectedly accepted an overflowing timestamp")
-	}
-
-	db, openErr := sql.Open("sqlite3", dsn)
-	if openErr != nil {
-		t.Fatal(openErr)
-	}
-	defer db.Close()
-	layout, inspectErr := inspectSQLiteUpstreamSchema(ctx, db, tables{
-		definitions: "metric_definitions",
-		series:      "metric_series",
-		labels:      "metric_labels",
-		resolutions: "metric_resolutions",
-		rollups:     "metric_rollups",
-	})
-	if inspectErr != nil || layout.name != "upstream-1.4.x" {
-		t.Fatalf("failed migration did not preserve the upstream 1.4.x schema: layout=%#v err=%v", layout, inspectErr)
-	}
-	var staging int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '%_upstream_131_source'`).Scan(&staging); err != nil {
-		t.Fatal(err)
-	}
-	if staging != 0 {
-		t.Fatalf("failed upstream 1.4.x migration left %d staging objects", staging)
-	}
-}
-
-func TestSQLiteStorageRejectsAmbiguousUpstreamLayouts(t *testing.T) {
-	ctx := context.Background()
-	dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
-	base := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
-	seedUpstreamSQLiteStore(t, dsn, base, false, "metric_label_sets")
-
-	db, err := sql.Open("sqlite3", dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`CREATE TABLE metric_labels (
-		id INTEGER PRIMARY KEY AUTOINCREMENT, labels_hash VARCHAR(64) NOT NULL, labels TEXT NOT NULL,
-		UNIQUE(labels_hash))`); err != nil {
-		db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = InspectSQLiteMigration(ctx, SQLite(dsn))
-	if err == nil || !strings.Contains(err.Error(), "ambiguous upstream SQLite layouts") {
-		t.Fatalf("ambiguous upstream schemas were not rejected: %v", err)
-	}
-}
-
 func TestDecodeUpstream131DigestRebuildsConstantBucket(t *testing.T) {
 	digest, err := decodeUpstream131Digest(upstream131RollupRow{
 		count: 8,
@@ -244,10 +144,6 @@ func TestDecodeUpstream131DigestRejectsMissingVariableBucket(t *testing.T) {
 }
 
 func seedUpstream131SQLiteStore(t *testing.T, dsn string, base time.Time, overflow bool) {
-	seedUpstreamSQLiteStore(t, dsn, base, overflow, "metric_labels")
-}
-
-func seedUpstreamSQLiteStore(t *testing.T, dsn string, base time.Time, overflow bool, labelTable string) {
 	t.Helper()
 	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
@@ -261,7 +157,7 @@ func seedUpstreamSQLiteStore(t *testing.T, dsn string, base time.Time, overflow 
 		 unit VARCHAR(64) NOT NULL DEFAULT '', description TEXT NOT NULL,
 		 retention_days INTEGER NOT NULL DEFAULT 0, metadata TEXT NOT NULL,
 		 created_at_milli BIGINT NOT NULL, updated_at_milli BIGINT NOT NULL)`,
-		`CREATE TABLE ` + labelTable + ` (
+		`CREATE TABLE metric_labels (
 		 id INTEGER PRIMARY KEY AUTOINCREMENT, labels_hash VARCHAR(64) NOT NULL, labels TEXT NOT NULL,
 		 UNIQUE(labels_hash))`,
 		`CREATE TABLE metric_series (
@@ -281,7 +177,7 @@ func seedUpstreamSQLiteStore(t *testing.T, dsn string, base time.Time, overflow 
 		 UNIQUE(series_id, resolution_id, label_id, bucket_milli),
 		 FOREIGN KEY (series_id) REFERENCES metric_series(id) ON DELETE CASCADE,
 		 FOREIGN KEY (resolution_id) REFERENCES metric_resolutions(id) ON DELETE CASCADE,
-		 FOREIGN KEY (label_id) REFERENCES ` + labelTable + `(id) ON DELETE CASCADE)`,
+		 FOREIGN KEY (label_id) REFERENCES metric_labels(id) ON DELETE CASCADE)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
@@ -315,7 +211,7 @@ func seedUpstreamSQLiteStore(t *testing.T, dsn string, base time.Time, overflow 
 			t.Fatal(err)
 		}
 		labelID := 31 + index
-		if _, err := db.Exec(`INSERT INTO `+labelTable+` (id, labels_hash, labels) VALUES (?, ?, ?)`, labelID, labelHash, labelJSON); err != nil {
+		if _, err := db.Exec(`INSERT INTO metric_labels (id, labels_hash, labels) VALUES (?, ?, ?)`, labelID, labelHash, labelJSON); err != nil {
 			t.Fatal(err)
 		}
 		value := float64((index + 1) * 10)

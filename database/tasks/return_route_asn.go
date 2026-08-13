@@ -33,6 +33,10 @@ var (
 	returnRouteASNHTTPClient = &http.Client{Timeout: 2 * time.Second}
 )
 
+func lookupASNs(ips []string) map[string]int {
+	return lookupASNsWithRules(ips, currentReturnRouteRules())
+}
+
 func lookupASNsWithRules(ips []string, rules *compiledReturnRouteRules) map[string]int {
 	unique := map[string]struct{}{}
 	for _, ip := range ips {
@@ -56,6 +60,10 @@ func lookupASNsWithRules(ips []string, rules *compiledReturnRouteRules) map[stri
 	}
 	wg.Wait()
 	return result
+}
+
+func lookupASN(ctx context.Context, value string) int {
+	return lookupASNWithRules(ctx, value, currentReturnRouteRules())
 }
 
 func lookupASNWithRules(ctx context.Context, value string, rules *compiledReturnRouteRules) int {

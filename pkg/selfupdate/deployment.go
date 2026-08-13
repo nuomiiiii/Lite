@@ -241,11 +241,7 @@ func localHealthURL() (string, error) {
 	case "::", "[::]":
 		host = "::1"
 	}
-	healthURL := "http://" + net.JoinHostPort(host, port) + "/api/version"
-	if _, err := validateInitialHealthURL(healthURL); err != nil {
-		return "", fmt.Errorf("unsupported local health address %q: %w", listen, err)
-	}
-	return healthURL, nil
+	return "http://" + net.JoinHostPort(host, port) + "/api/version", nil
 }
 
 func isMountPoint(path string) bool {

@@ -182,11 +182,6 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 		if err != nil {
 			return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch ping records", err.Error())
 		}
-		pingTasks, err := tasks.GetAllPingTasks()
-		if err != nil {
-			return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch ping tasks", err.Error())
-		}
-		recs = filterPingRecordsByCurrentAssignments(recs, pingTasksByStringID(pingTasks))
 		// hidden filter
 		if !isAdmin {
 			filtered := recs[:0]
@@ -273,6 +268,10 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 		}
 
 		// tasks summary (always included for ping type; do not expose target field)
+		pingTasks, err := tasks.GetAllPingTasks()
+		if err != nil {
+			return nil, rpc.MakeError(rpc.InternalError, "Failed to fetch ping tasks", err.Error())
+		}
 		toList := make([]map[string]any, 0, len(pingTasks))
 		for _, t := range pingTasks {
 			if taskId != -1 && t.Id != uint(taskId) {

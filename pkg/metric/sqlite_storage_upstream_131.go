@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
-	"strings"
 )
 
 const upstream131CopyBatchSize = 5000
@@ -24,76 +23,39 @@ var upstream131RollupColumns = []string{
 	"last_ts_milli", "digest", "created_at_milli",
 }
 
-type upstreamSQLiteLayout struct {
-	name   string
-	labels string
-}
-
-func upstream14LabelTable(t tables) string {
-	return strings.TrimSuffix(t.labels, "labels") + "label_sets"
-}
-
 // inspectSQLiteUpstream131Schema recognizes the normalized, rollup-only
 // SQLite layout shipped by upstream 1.3.1. It checks every required table and
 // column so an unrelated partial schema is never selected for conversion.
 func inspectSQLiteUpstream131Schema(ctx context.Context, db *sql.DB, t tables) (bool, error) {
-	layout, err := inspectSQLiteUpstreamSchema(ctx, db, t)
-	return layout.name == "upstream-1.3.1", err
-}
-
-// inspectSQLiteUpstreamSchema recognizes upstream's normalized, rollup-only
-// SQLite layouts. Upstream 1.4 renamed metric_labels to metric_label_sets;
-// every other table and column remained compatible with the 1.3.1 converter.
-func inspectSQLiteUpstreamSchema(ctx context.Context, db *sql.DB, t tables) (upstreamSQLiteLayout, error) {
-	candidates := []upstreamSQLiteLayout{
-		{name: "upstream-1.3.1", labels: t.labels},
-		{name: "upstream-1.4.x", labels: upstream14LabelTable(t)},
+	required := []struct {
+		name    string
+		columns []string
+	}{
+		{t.definitions, upstream131DefinitionColumns},
+		{t.series, upstream131SeriesColumns},
+		{t.labels, upstream131LabelColumns},
+		{t.resolutions, upstream131ResolutionColumns},
+		{t.rollups, upstream131RollupColumns},
 	}
-	var matched upstreamSQLiteLayout
-	for _, candidate := range candidates {
-		required := []struct {
-			name    string
-			columns []string
-		}{
-			{t.definitions, upstream131DefinitionColumns},
-			{t.series, upstream131SeriesColumns},
-			{candidate.labels, upstream131LabelColumns},
-			{t.resolutions, upstream131ResolutionColumns},
-			{t.rollups, upstream131RollupColumns},
+	for _, item := range required {
+		kind, err := sqliteObjectTypeDB(ctx, db, item.name)
+		if err != nil {
+			return false, err
 		}
-		complete := true
-		for _, item := range required {
-			kind, err := sqliteObjectTypeDB(ctx, db, item.name)
-			if err != nil {
-				return upstreamSQLiteLayout{}, err
-			}
-			if kind != "table" {
-				complete = false
-				break
-			}
-			columns, err := sqliteColumns(ctx, db, item.name)
-			if err != nil {
-				return upstreamSQLiteLayout{}, fmt.Errorf("metric: inspect %s table %s: %w", candidate.name, item.name, err)
-			}
-			for _, column := range item.columns {
-				if !columns[column] {
-					complete = false
-					break
-				}
-			}
-			if !complete {
-				break
+		if kind != "table" {
+			return false, nil
+		}
+		columns, err := sqliteColumns(ctx, db, item.name)
+		if err != nil {
+			return false, fmt.Errorf("metric: inspect upstream 1.3.1 table %s: %w", item.name, err)
+		}
+		for _, column := range item.columns {
+			if !columns[column] {
+				return false, nil
 			}
 		}
-		if !complete {
-			continue
-		}
-		if matched.name != "" {
-			return upstreamSQLiteLayout{}, fmt.Errorf("metric: ambiguous upstream SQLite layouts: %s and %s", matched.name, candidate.name)
-		}
-		matched = candidate
 	}
-	return matched, nil
+	return true, nil
 }
 
 type upstream131SourceTables struct {
@@ -118,13 +80,13 @@ func (s *Store) upstream131SourceTables() upstream131SourceTables {
 // rollup-only schema into the fork's V3 staging layout. V4 encoding then runs
 // through the existing validated path. Every rename and copy below is in one
 // SQLite transaction, so an error leaves the original 1.3.1 tables intact.
-func (s *Store) migrateSQLiteUpstream131Storage(ctx context.Context, layout upstreamSQLiteLayout) error {
-	matched, err := inspectSQLiteUpstreamSchema(ctx, s.db, s.tables)
+func (s *Store) migrateSQLiteUpstream131Storage(ctx context.Context) error {
+	matched, err := inspectSQLiteUpstream131Schema(ctx, s.db, s.tables)
 	if err != nil {
 		return err
 	}
-	if matched.name == "" || matched != layout {
-		return fmt.Errorf("metric: SQLite database is not a complete %s metric store", layout.name)
+	if !matched {
+		return fmt.Errorf("metric: SQLite database is not a complete upstream 1.3.1 metric store")
 	}
 
 	source := s.upstream131SourceTables()
@@ -147,7 +109,7 @@ func (s *Store) migrateSQLiteUpstream131Storage(ctx context.Context, layout upst
 	renames := [][2]string{
 		{s.tables.rollups, source.rollups},
 		{s.tables.series, source.series},
-		{layout.labels, source.labels},
+		{s.tables.labels, source.labels},
 		{s.tables.resolutions, source.resolutions},
 		{s.tables.definitions, source.definitions},
 	}

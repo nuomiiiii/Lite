@@ -1114,6 +1114,15 @@ func lowerReturnRouteConfidence(left, right float64) float64 {
 	return right
 }
 
+func hasASNGroupBefore(hops []returnRouteSignature, index int, rules *compiledReturnRouteRules, group string) bool {
+	for i := 0; i < index; i++ {
+		if rules.hasSignature(group, hops[i]) {
+			return true
+		}
+	}
+	return false
+}
+
 func hasCN2BackboneAfter(hops []returnRouteSignature, index int, rules *compiledReturnRouteRules) bool {
 	for i := index + 1; i < len(hops); i++ {
 		if rules.hasSignature("cn2_backbone", hops[i]) {

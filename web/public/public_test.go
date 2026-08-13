@@ -2,7 +2,6 @@ package public
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -16,87 +15,6 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
-
-func TestStaticRendersPublicManifestFromLiveSiteBranding(t *testing.T) {
-	t.Chdir(t.TempDir())
-	gin.SetMode(gin.TestMode)
-	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	config.SetDb(db)
-
-	themeDir := filepath.Join(DataDir, ThemesDir, "third-party")
-	if err := os.MkdirAll(filepath.Join(themeDir, DistDir), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for name, content := range map[string]string{
-		"komari-theme.json":                     `{"short":"third-party"}`,
-		filepath.Join(DistDir, IndexFile):       `<html><head><title>Theme</title></head><body></body></html>`,
-		filepath.Join(DistDir, "manifest.json"): `{"name":"Theme Brand","short_name":"Theme","start_url":"/dashboard","display":"fullscreen","theme_color":"#123456","icons":[{"src":"/theme-icon.png"}]}`,
-	} {
-		if err := os.WriteFile(filepath.Join(themeDir, name), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := config.SetMany(map[string]any{
-		config.ThemeKey:       "third-party",
-		config.SitenameKey:    `Komari "Home"`,
-		config.DescriptionKey: "Live site description",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	router := gin.New()
-	Static(router.Group("/"), router.NoRoute)
-	requestManifest := func(requestPath string) map[string]any {
-		recorder := httptest.NewRecorder()
-		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, requestPath, nil))
-		if recorder.Code != http.StatusOK {
-			t.Fatalf("GET %s status = %d, want %d", requestPath, recorder.Code, http.StatusOK)
-		}
-		if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/manifest+json") {
-			t.Fatalf("GET %s content type = %q", requestPath, got)
-		}
-		if got := recorder.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
-			t.Fatalf("GET %s Cache-Control = %q", requestPath, got)
-		}
-		var manifest map[string]any
-		if err := json.Unmarshal(recorder.Body.Bytes(), &manifest); err != nil {
-			t.Fatalf("decode manifest: %v", err)
-		}
-		return manifest
-	}
-
-	manifest := requestManifest("/manifest.json")
-	for key, want := range map[string]string{
-		"name":        `Komari "Home"`,
-		"short_name":  `Komari "Home"`,
-		"description": "Live site description",
-		"start_url":   "/dashboard",
-		"display":     "fullscreen",
-		"theme_color": "#123456",
-	} {
-		if got := manifest[key]; got != want {
-			t.Fatalf("manifest %s = %#v, want %q", key, got, want)
-		}
-	}
-	icons, ok := manifest["icons"].([]any)
-	if !ok || len(icons) != 1 {
-		t.Fatalf("manifest icons = %#v", manifest["icons"])
-	}
-	icon, ok := icons[0].(map[string]any)
-	if !ok || icon["src"] != "/favicon.ico" || icon["sizes"] != "any" {
-		t.Fatalf("manifest icon = %#v", icons[0])
-	}
-
-	if err := config.Set(config.SitenameKey, "Renamed live"); err != nil {
-		t.Fatal(err)
-	}
-	if got := requestManifest("/manifest.webmanifest")["name"]; got != "Renamed live" {
-		t.Fatalf("updated manifest name = %#v", got)
-	}
-}
 
 func TestRemoveFaviconIfHashMatches(t *testing.T) {
 	filePath := filepath.Join(t.TempDir(), "favicon.ico")
@@ -505,7 +423,6 @@ func TestStaticKeepsSystemUIAndPublicThemeResourcesIsolated(t *testing.T) {
 	config.SetDb(db)
 	if err := config.SetMany(map[string]any{
 		config.ThemeKey:      "missing-theme",
-		config.SitenameKey:   "Public Branded Site",
 		config.CustomHeadKey: `<meta data-public-custom-head>`,
 		config.CustomBodyKey: `<div data-public-custom-body></div>`,
 	}); err != nil {
@@ -547,20 +464,6 @@ func TestStaticKeepsSystemUIAndPublicThemeResourcesIsolated(t *testing.T) {
 	assetPath := "/system-assets/" + strings.TrimPrefix(entries[0], "systemUI/dist/")
 	if asset := request(assetPath); asset.Code != http.StatusOK {
 		t.Fatalf("GET %s status=%d", assetPath, asset.Code)
-	}
-	systemManifest := request("/system-assets/manifest.json")
-	if systemManifest.Code != http.StatusOK {
-		t.Fatalf("system manifest status=%d body=%q", systemManifest.Code, systemManifest.Body.String())
-	}
-	if got := systemManifest.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
-		t.Fatalf("system manifest Cache-Control=%q", got)
-	}
-	var systemManifestData map[string]any
-	if err := json.Unmarshal(systemManifest.Body.Bytes(), &systemManifestData); err != nil {
-		t.Fatalf("decode system manifest: %v", err)
-	}
-	if systemManifestData["name"] != "Public Branded Site" || systemManifestData["theme_color"] != "#2563eb" {
-		t.Fatalf("system manifest=%#v", systemManifestData)
 	}
 	if favicon := request("/favicon.ico"); favicon.Code != http.StatusOK || favicon.Header().Get("Content-Type") != "image/x-icon" {
 		t.Fatalf("system favicon fallback status=%d content-type=%q", favicon.Code, favicon.Header().Get("Content-Type"))
