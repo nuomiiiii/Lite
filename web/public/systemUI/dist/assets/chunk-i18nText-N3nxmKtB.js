@@ -1,0 +1,1 @@
+function l(e,s){if(e==null)return;if(typeof e=="string")return e;const r=Object.entries(e).filter(([,n])=>typeof n=="string"&&n.trim()!=="");if(r.length===0)return;const t=n=>n.trim().replace(/_/g,"-").toLowerCase(),o=t(s||""),c=o.split("-")[0],a=[o,c,"en","en-us"].filter(Boolean);for(const n of a){const i=r.find(([f])=>t(f)===n);if(i)return i[1]}return r[0][1]}export{l as r};

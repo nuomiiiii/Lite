@@ -2,6 +2,24 @@ package models
 
 import "testing"
 
+func TestIsLocalizedText(t *testing.T) {
+	for name, test := range map[string]struct {
+		value any
+		want  bool
+	}{
+		"legacy string":   {value: "Theme", want: true},
+		"localized":       {value: map[string]any{"zh_CN": "主题", "en": "Theme"}, want: true},
+		"localized empty": {value: map[string]any{"en": "  "}},
+		"wrong type":      {value: []string{"Theme"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := IsLocalizedText(test.value); got != test.want {
+				t.Fatalf("IsLocalizedText() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestThemeValidateConfiguration(t *testing.T) {
 	tests := map[string]struct {
 		theme   Theme

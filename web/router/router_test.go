@@ -17,3 +17,32 @@ func TestRegisterDoesNotExposeHTTPSCertificateUpload(t *testing.T) {
 		}
 	}
 }
+
+func TestRegisterUsesOnlyChunkedArchiveUploadRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	Register(engine)
+
+	routes := make(map[string]bool)
+	for _, route := range engine.Routes() {
+		routes[route.Method+" "+route.Path] = true
+	}
+	for _, route := range []string{
+		"POST /api/admin/upload/init",
+		"POST /api/admin/upload/chunk",
+		"POST /api/admin/upload/merge",
+		"POST /api/admin/upload/cancel",
+	} {
+		if !routes[route] {
+			t.Fatalf("chunked upload route is missing: %s", route)
+		}
+	}
+	for _, route := range []string{
+		"POST /api/admin/upload/backup",
+		"PUT /api/admin/theme/upload",
+	} {
+		if routes[route] {
+			t.Fatalf("retired direct upload route is still registered: %s", route)
+		}
+	}
+}

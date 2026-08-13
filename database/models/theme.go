@@ -15,11 +15,11 @@ const (
 
 // Theme represents a komari theme information
 type Theme struct {
-	Name          string        `json:"name"`          // 主题名称
+	Name          any           `json:"name"`          // 主题名称，支持字符串或多语言对象
 	Short         string        `json:"short"`         // 短名称，用作文件夹名
-	Description   string        `json:"description"`   // 主题描述
+	Description   any           `json:"description"`   // 主题描述，支持字符串或多语言对象
 	Version       string        `json:"version"`       // 版本号
-	Author        string        `json:"author"`        // 作者
+	Author        any           `json:"author"`        // 作者，支持字符串或多语言对象
 	URL           string        `json:"url"`           // 主题URL
 	Preview       string        `json:"preview"`       // 预览图片相对路径
 	Configuration Configuration `json:"configuration"` // 声明配置项
@@ -36,10 +36,32 @@ type ManagedThemeConfigurationItem struct {
 	Key      string `json:"key"`
 	Name     any    `json:"name"`
 	Required bool   `json:"required"`
-	Type     string `json:"type"` // string number select switch title
+	Type     string `json:"type"` // string number select switch title richtext nodes pingtasks
 	Options  string `json:"options"`
 	Default  any    `json:"default"`
 	Help     any    `json:"help"`
+}
+
+// IsLocalizedText reports whether a manifest text field contains at least one
+// non-empty string in either the legacy scalar or localized-object form.
+func IsLocalizedText(value any) bool {
+	switch text := value.(type) {
+	case string:
+		return strings.TrimSpace(text) != ""
+	case map[string]any:
+		for _, item := range text {
+			if itemText, ok := item.(string); ok && strings.TrimSpace(itemText) != "" {
+				return true
+			}
+		}
+	case map[string]string:
+		for _, item := range text {
+			if strings.TrimSpace(item) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type ThemeConfiguration struct {

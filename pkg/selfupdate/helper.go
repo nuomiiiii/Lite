@@ -2,15 +2,11 @@ package selfupdate
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,13 +16,10 @@ import (
 	"time"
 )
 
-var errRollbackFailed = errors.New("self-update rollback failed")
-var errUnsafeHealthURL = errors.New("unsafe self-update health check URL")
-
 type transaction struct {
 	config      HelperConfig
 	systemctl   func(...string) error
-	waitHealthy func(string, string, string, time.Duration, time.Duration) error
+	waitHealthy func(string, string, time.Duration, time.Duration) error
 }
 
 func RunHelper(configPath string) error {
@@ -44,6 +37,7 @@ func RunHelper(configPath string) error {
 	if err := validateHelperConfig(&config); err != nil {
 		return err
 	}
+	helperHealthURL = config.HealthURL
 	if config.StartDelay > 0 {
 		time.Sleep(config.StartDelay)
 	}
@@ -52,15 +46,6 @@ func RunHelper(configPath string) error {
 	if err == nil {
 		_ = os.RemoveAll(filepath.Dir(configPath))
 		pruneRollbackSnapshots(filepath.Dir(config.BackupRoot), config.BackupRoot, 2)
-	}
-	return helperExitError(err)
-}
-
-func helperExitError(err error) error {
-	if errors.Is(err, errRollbackFailed) {
-		// rollback_failed is a recorded terminal state. Exit successfully so an
-		// older launcher using Restart=on-failure cannot replay the rollback.
-		return nil
 	}
 	return err
 }
@@ -71,9 +56,6 @@ func validateHelperConfig(config *HelperConfig) error {
 	}
 	if config.JobID == "" || !versionPattern.MatchString(config.ExpectedVersion) || !hashPattern.MatchString(config.ExpectedHash) {
 		return errors.New("invalid helper configuration")
-	}
-	if _, err := validateInitialHealthURL(config.HealthURL); err != nil {
-		return err
 	}
 	if !pathWithin(config.DataDir, filepath.Dir(config.CurrentExecutable)) || filepath.Base(config.DataDir) != "data" {
 		return errors.New("unsafe data directory in helper configuration")
@@ -107,10 +89,7 @@ func (tx transaction) run() error {
 	if result.Status == "succeeded" || result.Status == "rolled_back" || result.Status == "failed" {
 		return nil
 	}
-	if result.Status == "rollback_failed" {
-		return errRollbackFailed
-	}
-	if result.Status == "rolling_back" {
+	if result.Status == "rolling_back" || result.Status == "rollback_failed" {
 		return tx.finishRollback(result, backupExecutable, backupData)
 	}
 
@@ -157,7 +136,7 @@ func (tx transaction) run() error {
 	var updateErr error
 	if err := tx.systemctl("start", tx.config.Service); err != nil {
 		updateErr = fmt.Errorf("start updated service: %w", err)
-	} else if err := tx.waitHealthy(tx.config.HealthURL, tx.config.ExpectedVersion, tx.config.ExpectedHash, tx.config.HealthTimeout, tx.config.StableWindow); err != nil {
+	} else if err := tx.waitHealthy(tx.config.ExpectedVersion, tx.config.ExpectedHash, tx.config.HealthTimeout, tx.config.StableWindow); err != nil {
 		updateErr = fmt.Errorf("updated service health check: %w", err)
 	} else {
 		result.Status = "succeeded"
@@ -179,10 +158,10 @@ func (tx transaction) run() error {
 func (tx transaction) finishRollback(result UpdateResult, backupExecutable, backupData string) error {
 	if err := tx.rollback(backupExecutable, backupData); err != nil {
 		result.Status = "rollback_failed"
-		result.Message = rollbackFailureMessage(result.Message, err)
+		result.Message = strings.TrimSpace(result.Message + "; rollback failed: " + err.Error())
 		result.UpdatedAt = time.Now().UTC()
 		tx.writeResult(result)
-		return fmt.Errorf("%w: %s", errRollbackFailed, result.Message)
+		return errors.New(result.Message)
 	}
 	result.Status = "rolled_back"
 	result.CurrentVersion = tx.config.PreviousVersion
@@ -190,14 +169,6 @@ func (tx transaction) finishRollback(result UpdateResult, backupExecutable, back
 	result.UpdatedAt = time.Now().UTC()
 	tx.writeResult(result)
 	return nil
-}
-
-func rollbackFailureMessage(updateMessage string, rollbackErr error) string {
-	updateMessage = strings.TrimSpace(updateMessage)
-	if updateMessage == "" {
-		return "rollback failed: " + rollbackErr.Error()
-	}
-	return updateMessage + "; rollback failed: " + rollbackErr.Error()
 }
 
 func (tx transaction) rollback(backupExecutable, backupData string) error {
@@ -225,7 +196,7 @@ func (tx transaction) rollback(backupExecutable, backupData string) error {
 	if err := tx.systemctl("start", tx.config.Service); err != nil {
 		return fmt.Errorf("restart previous service: %w", err)
 	}
-	if err := tx.waitHealthy(tx.config.HealthURL, tx.config.PreviousVersion, tx.config.PreviousHash, tx.config.HealthTimeout, 3*time.Second); err != nil {
+	if err := tx.waitHealthy(tx.config.PreviousVersion, tx.config.PreviousHash, tx.config.HealthTimeout, 3*time.Second); err != nil {
 		return fmt.Errorf("previous service health check: %w", err)
 	}
 	return nil
@@ -253,17 +224,27 @@ func runSystemctl(arguments ...string) error {
 	return nil
 }
 
-func waitForHealthy(healthURL, version, versionHash string, timeout, stableWindow time.Duration) error {
+func waitForHealthy(version, versionHash string, timeout, stableWindow time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	var stableSince time.Time
-	client, err := newLoopbackHealthClient(healthURL)
-	if err != nil {
-		return err
-	}
+	client := &http.Client{Timeout: 3 * time.Second}
 	for time.Now().Before(deadline) {
-		matched, checkErr := checkHealthy(client, healthURL, version, versionHash)
-		if errors.Is(checkErr, errUnsafeHealthURL) {
-			return checkErr
+		matched := false
+		resp, err := client.Get(currentHelperHealthURL())
+		if err == nil {
+			var envelope struct {
+				Data candidateVersion `json:"data"`
+				candidateVersion
+			}
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			resp.Body.Close()
+			if readErr == nil && resp.StatusCode == http.StatusOK && json.Unmarshal(body, &envelope) == nil {
+				observed := envelope.Data
+				if observed.Version == "" {
+					observed = envelope.candidateVersion
+				}
+				matched = observed.Version == version && strings.EqualFold(observed.Hash, versionHash)
+			}
 		}
 		if matched {
 			if stableSince.IsZero() {
@@ -280,127 +261,10 @@ func waitForHealthy(healthURL, version, versionHash string, timeout, stableWindo
 	return errors.New("health check timed out")
 }
 
-func newLoopbackHealthClient(healthURL string) (*http.Client, error) {
-	return newLoopbackHealthClientWithRoots(healthURL, nil)
-}
+var helperHealthURL string
 
-func newLoopbackHealthClientWithRoots(healthURL string, roots *x509.CertPool) (*http.Client, error) {
-	if _, err := validateInitialHealthURL(healthURL); err != nil {
-		return nil, err
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = nil
-	transport.TLSClientConfig = &tls.Config{
-		// This client can only reach literal loopback addresses, enforced for
-		// both the initial URL and every redirect below.
-		InsecureSkipVerify: true, //nolint:gosec
-		VerifyConnection: func(state tls.ConnectionState) error {
-			if len(state.PeerCertificates) == 0 {
-				return errors.New("loopback HTTPS server did not provide a certificate")
-			}
-			intermediates := x509.NewCertPool()
-			for _, certificate := range state.PeerCertificates[1:] {
-				intermediates.AddCert(certificate)
-			}
-			_, err := state.PeerCertificates[0].Verify(x509.VerifyOptions{
-				Roots:         roots,
-				Intermediates: intermediates,
-				KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-			})
-			return err
-		},
-	}
-	return &http.Client{
-		Transport: transport,
-		Timeout:   3 * time.Second,
-		CheckRedirect: func(request *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("too many health check redirects")
-			}
-			parsed, err := validateLoopbackHealthURL(request.URL.String())
-			if err != nil {
-				return err
-			}
-			if len(via) > 0 && via[len(via)-1].URL.Scheme == "https" && parsed.Scheme != "https" {
-				return errors.New("health check redirect must not downgrade HTTPS")
-			}
-			return nil
-		},
-	}, nil
-}
-
-func validateInitialHealthURL(rawURL string) (*url.URL, error) {
-	parsed, err := validateHealthURL(rawURL)
-	if err != nil {
-		return nil, err
-	}
-	ip := net.ParseIP(parsed.Hostname())
-	if parsed.Scheme == "https" && (ip == nil || !ip.IsLoopback()) {
-		return nil, fmt.Errorf("%w: HTTPS URL must use a literal loopback address", errUnsafeHealthURL)
-	}
-	return parsed, nil
-}
-
-func validateLoopbackHealthURL(rawURL string) (*url.URL, error) {
-	parsed, err := validateHealthURL(rawURL)
-	if err != nil {
-		return nil, err
-	}
-	ip := net.ParseIP(parsed.Hostname())
-	if ip == nil || !ip.IsLoopback() {
-		return nil, fmt.Errorf("%w: URL must use a literal loopback address", errUnsafeHealthURL)
-	}
-	return parsed, nil
-}
-
-func validateHealthURL(rawURL string) (*url.URL, error) {
-	parsed, err := url.ParseRequestURI(strings.TrimSpace(rawURL))
-	if err != nil {
-		return nil, fmt.Errorf("%w: invalid URL: %v", errUnsafeHealthURL, err)
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, fmt.Errorf("%w: URL must use HTTP or HTTPS", errUnsafeHealthURL)
-	}
-	if parsed.User != nil {
-		return nil, fmt.Errorf("%w: URL must not contain user information", errUnsafeHealthURL)
-	}
-	if parsed.Hostname() == "" {
-		return nil, fmt.Errorf("%w: URL must include a host", errUnsafeHealthURL)
-	}
-	if parsed.Port() == "" {
-		return nil, fmt.Errorf("%w: URL must include a port", errUnsafeHealthURL)
-	}
-	if parsed.EscapedPath() != "/api/version" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return nil, fmt.Errorf("%w: URL must target /api/version", errUnsafeHealthURL)
-	}
-	return parsed, nil
-}
-
-func checkHealthy(client *http.Client, healthURL, version, versionHash string) (bool, error) {
-	resp, err := client.Get(healthURL)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false, nil
-	}
-	var envelope struct {
-		Data candidateVersion `json:"data"`
-		candidateVersion
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return false, err
-	}
-	if err := json.Unmarshal(body, &envelope); err != nil {
-		return false, err
-	}
-	observed := envelope.Data
-	if observed.Version == "" {
-		observed = envelope.candidateVersion
-	}
-	return observed.Version == version && observed.Hash == versionHash, nil
+func currentHelperHealthURL() string {
+	return helperHealthURL
 }
 
 func copyDirAtomic(source, destination string) error {

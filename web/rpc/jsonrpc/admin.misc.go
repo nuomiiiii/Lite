@@ -267,6 +267,18 @@ func mergedMetricConfig(cfg map[string]interface{}) (*metricstore.MetricStoreCon
 	return merged, nil
 }
 
+func toBool(v any, fallback bool) bool {
+	switch val := v.(type) {
+	case bool:
+		return val
+	case string:
+		if parsed, err := strconv.ParseBool(val); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
 // toInt 将 JSON 解码得到的任意值（通常是 float64 或 string）转换为 int，失败时返回 fallback。
 func toInt(v any, fallback int) int {
 

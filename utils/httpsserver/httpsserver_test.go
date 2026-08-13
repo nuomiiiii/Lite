@@ -277,6 +277,74 @@ func TestHTTPRedirectUsesPublic443AndHonorsForwardedHTTPS(t *testing.T) {
 	}
 }
 
+func TestHTTPRedirectPreservesUploadMethodAndBody(t *testing.T) {
+	manager := &Manager{}
+	manager.settings = Settings{Enabled: true, Listen: ":35938", RedirectHTTP: true}
+	manager.status = Status{Running: true, Ready: true}
+	handler := manager.HTTPRedirectHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("redirected upload unexpectedly reached the HTTP handler")
+	}))
+
+	body := "chunk-payload"
+	request := httptest.NewRequest(http.MethodPost, "http://monitor.example/api/admin/upload/chunk?upload_id=id&chunk_index=0", strings.NewReader(body))
+	request.Host = "monitor.example"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("redirect status = %d, want %d", response.Code, http.StatusTemporaryRedirect)
+	}
+	if got := response.Header().Get("Location"); got != "https://monitor.example/api/admin/upload/chunk?upload_id=id&chunk_index=0" {
+		t.Fatalf("redirect location = %q", got)
+	}
+	if request.Method != http.MethodPost {
+		t.Fatalf("request method changed before redirect: %s", request.Method)
+	}
+	payload, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatalf("read redirected upload body: %v", err)
+	}
+	if string(payload) != body {
+		t.Fatalf("upload body = %q, want %q", payload, body)
+	}
+}
+
+func TestTemporaryRedirectClientRetainsUploadMethodAndBody(t *testing.T) {
+	body := "chunk-payload"
+	secureServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("redirected method = %s, want POST", r.Method)
+		}
+		payload, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read redirected body: %v", err)
+		}
+		if string(payload) != body {
+			t.Errorf("redirected body = %q, want %q", payload, body)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer secureServer.Close()
+
+	plainServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectWithoutCache(w, r, secureServer.URL+r.URL.RequestURI())
+	}))
+	defer plainServer.Close()
+
+	request, err := http.NewRequest(http.MethodPost, plainServer.URL+"/api/admin/upload/chunk?upload_id=id&chunk_index=0", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("create upload request: %v", err)
+	}
+	response, err := secureServer.Client().Do(request)
+	if err != nil {
+		t.Fatalf("follow upload redirect: %v", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("final upload status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+}
+
 func TestHTTPSSecurityHeadersFollowStrictMode(t *testing.T) {
 	manager := NewManager()
 	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

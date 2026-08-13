@@ -85,16 +85,16 @@ func InspectSQLiteMigration(ctx context.Context, cfg Config) (SQLiteMigrationSum
 		return SQLiteMigrationSummary{Layout: "empty"}, nil
 	}
 	if pointKind == "" && rollupKind == "table" {
-		upstreamLayout, inspectErr := inspectSQLiteUpstreamSchema(ctx, db, t)
+		upstream131, inspectErr := inspectSQLiteUpstream131Schema(ctx, db, t)
 		if inspectErr != nil {
 			return SQLiteMigrationSummary{}, inspectErr
 		}
-		if upstreamLayout.name != "" {
+		if upstream131 {
 			rows, countErr := sumSQLiteRows(ctx, db, t.rollups)
 			if countErr != nil {
 				return SQLiteMigrationSummary{}, countErr
 			}
-			return SQLiteMigrationSummary{Required: true, Layout: upstreamLayout.name, SourceRows: rows}, nil
+			return SQLiteMigrationSummary{Required: true, Layout: "upstream-1.3.1", SourceRows: rows}, nil
 		}
 	}
 	if pointKind != rollupKind || (pointKind != "table" && pointKind != "view") {

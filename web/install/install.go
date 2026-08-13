@@ -21,6 +21,7 @@ import (
 	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/web/api"
 	"github.com/komari-monitor/komari/web/backup"
+	"github.com/komari-monitor/komari/web/upload"
 	"gorm.io/gorm"
 )
 
@@ -43,16 +44,22 @@ type completeRequest struct {
 }
 
 type Controller struct {
-	db     *gorm.DB
-	active atomic.Bool
-	mu     sync.Mutex
-	state  string
-	done   chan struct{}
+	db          *gorm.DB
+	uploadStore *upload.Store
+	active      atomic.Bool
+	mu          sync.Mutex
+	state       string
+	done        chan struct{}
 }
 
 func NewController(db *gorm.DB) *Controller {
-	return &Controller{db: db, state: "ready", done: make(chan struct{})}
+	return &Controller{db: db, uploadStore: upload.DefaultStore, state: "ready", done: make(chan struct{})}
 }
+
+var (
+	scheduleInstallRestart = func(delay time.Duration, task func()) { time.AfterFunc(delay, task) }
+	exitInstallProcess     = os.Exit
+)
 
 func (c *Controller) Activate() { c.active.Store(true) }
 
@@ -64,7 +71,19 @@ func (c *Controller) Register(r *gin.Engine) {
 	g := r.Group(APIPath, c.requireActive)
 	g.GET("/status", c.status)
 	g.POST("/complete", c.complete)
-	g.POST("/restore", c.restore)
+	uploadHandler := upload.NewHandler(
+		c.uploadStore,
+		func(*gin.Context) string { return "install" },
+		map[upload.Purpose]upload.Finalizer{upload.PurposeBackup: c.finalizeBackupUpload},
+		map[upload.Purpose]int64{upload.PurposeBackup: backup.MaxArchiveSize},
+	)
+	uploadGroup := g.Group("/upload")
+	{
+		uploadGroup.POST("/init", uploadHandler.Init)
+		uploadGroup.POST("/chunk", uploadHandler.Chunk)
+		uploadGroup.POST("/merge", uploadHandler.Merge)
+		uploadGroup.POST("/cancel", uploadHandler.Cancel)
+	}
 }
 
 // RegisterCompleted exposes only the terminal installation state on a normal
@@ -78,7 +97,16 @@ func RegisterCompleted(r *gin.Engine) {
 		api.RespondError(ctx, http.StatusConflict, "installation is already completed")
 	}
 	g.POST("/complete", reject)
+	// Keep the retired direct-upload path explicitly closed on installed
+	// instances so older clients receive an unambiguous terminal response.
 	g.POST("/restore", reject)
+	uploadGroup := g.Group("/upload")
+	{
+		uploadGroup.POST("/init", reject)
+		uploadGroup.POST("/chunk", reject)
+		uploadGroup.POST("/merge", reject)
+		uploadGroup.POST("/cancel", reject)
+	}
 }
 
 func (c *Controller) requireActive(ctx *gin.Context) {
@@ -96,25 +124,20 @@ func (c *Controller) status(ctx *gin.Context) {
 	api.RespondSuccess(ctx, Status{State: state, Required: state != "completed"})
 }
 
-// restore stages a verified backup before the guide creates any new data.
-func (c *Controller) restore(ctx *gin.Context) {
-	file, header, err := ctx.Request.FormFile("backup")
+func (c *Controller) finalizeBackupUpload(session upload.Session) (upload.Result, error) {
+	archive, err := os.Open(session.ArchivePath)
 	if err != nil {
-		api.RespondError(ctx, http.StatusBadRequest, fmt.Sprintf("get uploaded backup: %v", err))
-		return
+		return upload.Result{}, fmt.Errorf("open merged backup: %w", err)
 	}
-	defer file.Close()
-	if err := backup.SaveUploadedBackup(file, header.Filename); err != nil {
-		api.RespondError(ctx, http.StatusBadRequest, err.Error())
-		return
+	defer archive.Close()
+	if err := backup.SaveUploadedBackup(archive, session.Metadata.Filename); err != nil {
+		return upload.Result{}, err
 	}
-
-	api.RespondSuccessMessage(ctx, "backup uploaded; restarting to restore", gin.H{})
-	go func() {
+	scheduleInstallRestart(2*time.Second, func() {
 		logger.InfoArgs("install", "Backup uploaded, restarting service to restore it on startup...")
-		time.Sleep(2 * time.Second)
-		os.Exit(0)
-	}()
+		exitInstallProcess(0)
+	})
+	return upload.Result{Message: "backup uploaded; restarting to restore", Data: gin.H{}}, nil
 }
 
 func (c *Controller) complete(ctx *gin.Context) {
