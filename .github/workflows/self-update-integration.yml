@@ -282,7 +282,7 @@ jobs:
 
           # Reproduce the field deployment: build 78518cc creates the old
           # Restart=on-failure unit, while the released binary runs the helper.
-          create_case old-https "$HTTPS_SERVICE" 28776
+          create_case old-https "$HTTPS_SERVICE" 25774
           HTTPS_ROOT="$ROOT/old-https"
           sudo mkdir -p "$HTTPS_ROOT/data/tls"
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -311,12 +311,12 @@ jobs:
           curl -fsS -c "$HTTPS_COOKIE" \
             -H 'Content-Type: application/json' \
             --data '{"username":"integration","password":"Integration-test1","twofa_code":""}' \
-            http://127.0.0.1:28776/api/login >/dev/null
+            http://127.0.0.1:25774/api/login >/dev/null
           curl -fsS -b "$HTTPS_COOKIE" \
             -H 'Content-Type: application/json' \
             --data "{\"https_enabled\":true,\"https_listen\":\"127.0.0.1:18328\",\"https_redirect_http\":true,\"https_certificate_path\":\"$HTTPS_ROOT/data/tls/server.crt\",\"https_private_key_path\":\"$HTTPS_ROOT/data/tls/server.key\"}" \
-            http://127.0.0.1:28776/api/admin/settings/https >/dev/null
-          redirect_headers="$(curl -sS -D - -o /dev/null --max-redirs 0 http://127.0.0.1:28776/api/version || true)"
+            http://127.0.0.1:25774/api/admin/settings/https >/dev/null
+          redirect_headers="$(curl -sS -D - -o /dev/null --max-redirs 0 http://127.0.0.1:25774/api/version || true)"
           grep -q '^HTTP/.* 307' <<<"$redirect_headers"
           grep -qi '^location: https://127.0.0.1:18328/api/version' <<<"$redirect_headers"
           if curl --cacert /tmp/komari-self-update-ca.crt -fsS https://127.0.0.1:18328/api/version >/dev/null 2>&1; then
