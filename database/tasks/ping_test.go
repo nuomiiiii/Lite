@@ -9,6 +9,7 @@ import (
 
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -66,6 +67,20 @@ func TestUpdatePingTaskOrderAcceptsEmptyBatchWithoutDatabase(t *testing.T) {
 	require.NoError(t, updatePingTaskOrder(nil, nil))
 }
 
+func TestSavePingRecordRejectsLateReportForRemovedAssignment(t *testing.T) {
+	task := models.PingTask{
+		Id: 7, Clients: models.StringArray{"client-a"}, Interval: 60,
+	}
+	require.NoError(t, utils.ReloadPingSchedule([]models.PingTask{task}))
+	t.Cleanup(func() { require.NoError(t, utils.ReloadPingSchedule(nil)) })
+
+	err := SavePingRecord(models.PingRecord{
+		Client: "client-b", TaskId: task.Id, Time: time.Now().UTC(), Value: 12,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not assigned")
+}
+
 func TestDeletePingTaskRowsCleansMatchingPingLossNotifications(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "delete-ping-task-cleanup.db")+"?_foreign_keys=off"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -78,6 +93,7 @@ func TestDeletePingTaskRowsCleansMatchingPingLossNotifications(t *testing.T) {
 		&models.Client{},
 		&models.PingTask{},
 		&models.PingLossNotification{},
+		&models.MetricCleanupJob{},
 	))
 	require.NoError(t, db.Create(&models.Client{
 		UUID: "client-a", Token: "token-a", Name: "Server A",
@@ -112,6 +128,11 @@ func TestDeletePingTaskRowsCleansMatchingPingLossNotifications(t *testing.T) {
 	assert.Zero(t, legacyCount)
 	require.NoError(t, db.Table("ping_records").Where("task_id = ?", tasks[1].Id).Count(&legacyCount).Error)
 	assert.Equal(t, int64(1), legacyCount)
+	var cleanupJobs []models.MetricCleanupJob
+	require.NoError(t, db.Find(&cleanupJobs).Error)
+	require.Len(t, cleanupJobs, 1)
+	assert.Equal(t, models.MetricCleanupPingTask, cleanupJobs[0].Kind)
+	assert.Equal(t, tasks[0].Id, cleanupJobs[0].TaskID)
 }
 
 func TestEditPingTasksRemovesAlertsForUnassignedClients(t *testing.T) {
@@ -126,6 +147,7 @@ func TestEditPingTasksRemovesAlertsForUnassignedClients(t *testing.T) {
 		&models.Client{},
 		&models.PingTask{},
 		&models.PingLossNotification{},
+		&models.MetricCleanupJob{},
 	))
 	require.NoError(t, db.Create([]models.Client{
 		{UUID: "client-a", Token: "token-a", Name: "Server A"},
@@ -157,6 +179,9 @@ func TestEditPingTasksRemovesAlertsForUnassignedClients(t *testing.T) {
 	removed, err := editPingTasks(db, []*models.PingTask{&updated})
 	require.NoError(t, err)
 	assert.Equal(t, []metricstore.PingAssignment{{Client: "client-b", TaskID: tasks[0].Id}}, removed)
+	require.Len(t, removed, 1)
+	assert.True(t, metricstore.PingAssignmentWritesBlocked(removed[0]))
+	t.Cleanup(func() { metricstore.UnblockPingAssignmentWrites(removed) })
 
 	var gotTask models.PingTask
 	require.NoError(t, db.First(&gotTask, tasks[0].Id).Error)
@@ -186,4 +211,10 @@ func TestEditPingTasksRemovesAlertsForUnassignedClients(t *testing.T) {
 	var retainedLegacyCount int64
 	require.NoError(t, db.Table("ping_records").Count(&retainedLegacyCount).Error)
 	assert.Equal(t, int64(3), retainedLegacyCount)
+	var cleanupJobs []models.MetricCleanupJob
+	require.NoError(t, db.Find(&cleanupJobs).Error)
+	require.Len(t, cleanupJobs, 1)
+	assert.Equal(t, models.MetricCleanupPingAssignment, cleanupJobs[0].Kind)
+	assert.Equal(t, "client-b", cleanupJobs[0].Client)
+	assert.Equal(t, tasks[0].Id, cleanupJobs[0].TaskID)
 }

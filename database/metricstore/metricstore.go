@@ -839,14 +839,15 @@ func createMetricDefinitionsWithDefaultRetention(ctx context.Context, s *metric.
 
 // WritePingRecord 将 ping 记录写入 metric store
 func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
-	if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) {
+	assignment := PingAssignment{Client: rec.Client, TaskID: rec.TaskId}
+	if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) || PingAssignmentWritesBlocked(assignment) {
 		return ErrMetricWriteBlocked
 	}
 	if err := storeOperations.AcquireShared(ctx); err != nil {
 		return fmt.Errorf("wait for metric store operation before writing ping record: %w", err)
 	}
 	defer storeOperations.ReleaseShared()
-	if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) {
+	if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) || PingAssignmentWritesBlocked(assignment) {
 		return ErrMetricWriteBlocked
 	}
 	s := GetStore()

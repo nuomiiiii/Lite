@@ -29,15 +29,15 @@ func DeleteClient(clientUuid string) error {
 		}
 	}()
 
-	if err := metricstore.DeleteEntity(context.Background(), clientUuid); err != nil {
-		return err
-	}
 	db := dbcore.GetDBInstance()
 	pingTasksChanged, err := deleteClient(db, clientUuid)
 	if err != nil {
 		return err
 	}
 	deleted = true
+	if err := metricstore.ProcessPendingCleanupJobs(context.Background(), db); err != nil {
+		logger.Errorf("metricstore", "Client %s was deleted; metric cleanup remains queued: %v", clientUuid, err)
+	}
 	trafficledger.InvalidateCalibratedCycleCache()
 	if pingTasksChanged {
 		if err := tasks.ReloadPingSchedule(); err != nil {
@@ -56,6 +56,9 @@ func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
 		}
 		if clientCount == 0 {
 			return gorm.ErrRecordNotFound
+		}
+		if err := metricstore.EnqueueEntityCleanup(tx, clientUuid); err != nil {
+			return fmt.Errorf("queue client metric cleanup: %w", err)
 		}
 		if tx.Migrator().HasTable("return_route_tasks") {
 			var routeTaskIDs []uint

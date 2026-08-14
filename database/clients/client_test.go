@@ -89,6 +89,7 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 				&models.TrafficDailyLedger{},
 				&models.LoadNotification{},
 				&models.LoadNotificationState{},
+				&models.MetricCleanupJob{},
 				&models.Task{},
 				&models.TaskResult{},
 			))
@@ -171,6 +172,7 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 			assert.Equal(t, "shared", remainingTasks[0].TaskId)
 			assert.Equal(t, models.StringArray{"client-b"}, remainingTasks[0].Clients)
 			assertRowCount(t, db, &models.TaskResult{}, "client = ?", 1, "client-b")
+			assertRowCount(t, db, &models.MetricCleanupJob{}, "kind = ? AND entity_id = ?", 1, models.MetricCleanupEntity, "client-a")
 		})
 	}
 }
@@ -190,7 +192,7 @@ func TestDeleteClientRollsBackRelatedRowsWhenClientDeleteFails(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.Client{}, &models.PingTask{}, &models.PingLossNotification{},
 		&models.OfflineNotification{}, &models.TrafficReportNotification{},
-		&models.LoadNotification{}, &models.Task{}, &models.TaskResult{},
+		&models.LoadNotification{}, &models.Task{}, &models.TaskResult{}, &models.MetricCleanupJob{},
 	))
 	require.NoError(t, db.Create(&models.Client{UUID: "client-a", Token: "token-a"}).Error)
 	require.NoError(t, db.Create(&models.OfflineNotification{Client: "client-a", Enable: true}).Error)
@@ -201,6 +203,7 @@ func TestDeleteClientRollsBackRelatedRowsWhenClientDeleteFails(t *testing.T) {
 	require.Error(t, err)
 	assertRowCount(t, db, &models.Client{}, "uuid = ?", 1, "client-a")
 	assertRowCount(t, db, &models.OfflineNotification{}, "client = ?", 1, "client-a")
+	assertRowCount(t, db, &models.MetricCleanupJob{}, "entity_id = ?", 0, "client-a")
 }
 
 func TestNormalizeTrafficResetDay(t *testing.T) {

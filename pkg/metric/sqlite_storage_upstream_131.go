@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math"
+	"strings"
 )
 
 const upstream131CopyBatchSize = 5000
@@ -26,36 +27,61 @@ var upstream131RollupColumns = []string{
 // inspectSQLiteUpstream131Schema recognizes the normalized, rollup-only
 // SQLite layout shipped by upstream 1.3.1. It checks every required table and
 // column so an unrelated partial schema is never selected for conversion.
-func inspectSQLiteUpstream131Schema(ctx context.Context, db *sql.DB, t tables) (bool, error) {
+func resolveSQLiteUpstream131Tables(ctx context.Context, db *sql.DB, t tables) (tables, bool, error) {
+	resolved := t
+	labelCandidates := []string{t.labels}
+	if strings.HasSuffix(t.labels, "labels") {
+		labelCandidates = append(labelCandidates, strings.TrimSuffix(t.labels, "labels")+"label_sets")
+	}
+	resolved.labels = ""
+	for _, candidate := range labelCandidates {
+		kind, err := sqliteObjectTypeDB(ctx, db, candidate)
+		if err != nil {
+			return tables{}, false, err
+		}
+		if kind == "table" {
+			resolved.labels = candidate
+			break
+		}
+	}
+	if resolved.labels == "" {
+		return tables{}, false, nil
+	}
+
 	required := []struct {
 		name    string
 		columns []string
 	}{
-		{t.definitions, upstream131DefinitionColumns},
-		{t.series, upstream131SeriesColumns},
-		{t.labels, upstream131LabelColumns},
-		{t.resolutions, upstream131ResolutionColumns},
-		{t.rollups, upstream131RollupColumns},
+		{resolved.definitions, upstream131DefinitionColumns},
+		{resolved.series, upstream131SeriesColumns},
+		{resolved.labels, upstream131LabelColumns},
+		{resolved.resolutions, upstream131ResolutionColumns},
+		{resolved.rollups, upstream131RollupColumns},
 	}
 	for _, item := range required {
 		kind, err := sqliteObjectTypeDB(ctx, db, item.name)
 		if err != nil {
-			return false, err
+			return tables{}, false, err
 		}
 		if kind != "table" {
-			return false, nil
+			return tables{}, false, nil
 		}
 		columns, err := sqliteColumns(ctx, db, item.name)
 		if err != nil {
-			return false, fmt.Errorf("metric: inspect upstream 1.3.1 table %s: %w", item.name, err)
+			return tables{}, false, fmt.Errorf("metric: inspect upstream normalized table %s: %w", item.name, err)
 		}
 		for _, column := range item.columns {
 			if !columns[column] {
-				return false, nil
+				return tables{}, false, nil
 			}
 		}
 	}
-	return true, nil
+	return resolved, true, nil
+}
+
+func inspectSQLiteUpstream131Schema(ctx context.Context, db *sql.DB, t tables) (bool, error) {
+	_, matched, err := resolveSQLiteUpstream131Tables(ctx, db, t)
+	return matched, err
 }
 
 type upstream131SourceTables struct {
@@ -81,7 +107,7 @@ func (s *Store) upstream131SourceTables() upstream131SourceTables {
 // through the existing validated path. Every rename and copy below is in one
 // SQLite transaction, so an error leaves the original 1.3.1 tables intact.
 func (s *Store) migrateSQLiteUpstream131Storage(ctx context.Context) error {
-	matched, err := inspectSQLiteUpstream131Schema(ctx, s.db, s.tables)
+	upstreamTables, matched, err := resolveSQLiteUpstream131Tables(ctx, s.db, s.tables)
 	if err != nil {
 		return err
 	}
@@ -107,11 +133,11 @@ func (s *Store) migrateSQLiteUpstream131Storage(ctx context.Context) error {
 	defer func() { _ = tx.Rollback() }()
 
 	renames := [][2]string{
-		{s.tables.rollups, source.rollups},
-		{s.tables.series, source.series},
-		{s.tables.labels, source.labels},
-		{s.tables.resolutions, source.resolutions},
-		{s.tables.definitions, source.definitions},
+		{upstreamTables.rollups, source.rollups},
+		{upstreamTables.series, source.series},
+		{upstreamTables.labels, source.labels},
+		{upstreamTables.resolutions, source.resolutions},
+		{upstreamTables.definitions, source.definitions},
 	}
 	for _, pair := range renames {
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE `+pair[0]+` RENAME TO `+pair[1]); err != nil {

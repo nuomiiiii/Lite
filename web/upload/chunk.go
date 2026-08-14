@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/web/backup"
 )
 
@@ -39,6 +40,7 @@ var (
 	ErrOwnerMismatch  = errors.New("upload does not belong to this requester")
 	ErrTooManyUploads = errors.New("too many uploads are already in progress")
 	ErrStorageLimit   = errors.New("temporary upload storage limit reached")
+	ErrFinalizing     = errors.New("upload is already being finalized")
 )
 
 type Metadata struct {
@@ -64,6 +66,7 @@ type Store struct {
 	SessionTTL          time.Duration
 	Now                 func() time.Time
 	mu                  sync.Mutex
+	finalizing          map[string]struct{}
 }
 
 var DefaultStore = &Store{
@@ -139,6 +142,9 @@ func (s *Store) Init(owner string, purpose Purpose, filename string, size, purpo
 func (s *Store) SaveChunk(owner, uploadID string, index int64, source io.Reader) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.isFinalizingLocked(uploadID) {
+		return ErrFinalizing
+	}
 
 	session, err := s.loadLocked(owner, uploadID)
 	if err != nil {
@@ -179,18 +185,56 @@ func (s *Store) SaveChunk(owner, uploadID string, index int64, source io.Reader)
 	return writeMetadata(session.Directory, session.Metadata)
 }
 
-// MergeAndFinalize holds the store lock through finalization so cancel and
-// duplicate merge requests cannot remove or apply the same archive midway.
-func (s *Store) MergeAndFinalize(owner, uploadID string, finalize Finalizer) (Result, error) {
+// MergeAndFinalize reserves only this upload while its finalizer runs. Other
+// sessions can continue uploading; duplicate merge, chunk, and cancel calls
+// for the same session are rejected until finalization finishes.
+func (s *Store) MergeAndFinalize(owner, uploadID string, finalize Finalizer) (result Result, resultErr error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	if s.isFinalizingLocked(uploadID) {
+		s.mu.Unlock()
+		return Result{}, ErrFinalizing
+	}
 	session, err := s.mergeLocked(owner, uploadID)
 	if err != nil {
-		_ = s.cancelLocked(owner, uploadID)
+		s.mu.Unlock()
 		return Result{}, err
 	}
-	defer os.RemoveAll(session.Directory)
+	if s.finalizing == nil {
+		s.finalizing = make(map[string]struct{})
+	}
+	s.finalizing[uploadID] = struct{}{}
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		delete(s.finalizing, uploadID)
+		if resultErr != nil {
+			var retryErrors []error
+			if err := os.Remove(session.ArchivePath); err != nil && !os.IsNotExist(err) {
+				retryErrors = append(retryErrors, fmt.Errorf("remove failed merged archive: %w", err))
+			}
+			session.Metadata.UpdatedAt = s.now().UTC()
+			if err := writeMetadata(session.Directory, session.Metadata); err != nil {
+				retryErrors = append(retryErrors, fmt.Errorf("refresh failed upload session: %w", err))
+			}
+			s.mu.Unlock()
+			resultErr = errors.Join(append([]error{resultErr}, retryErrors...)...)
+			return
+		}
+		removeErr := os.RemoveAll(session.Directory)
+		s.mu.Unlock()
+		if removeErr == nil {
+			return
+		}
+		if resultErr != nil {
+			resultErr = errors.Join(resultErr, removeErr)
+			return
+		}
+		// The finalizer has already committed its side effect. A temporary-file
+		// cleanup failure must not make clients retry a successful operation.
+		logger.Errorf("upload", "Completed upload %s but could not remove its temporary directory: %v", uploadID, removeErr)
+	}()
+
 	return finalize(session)
 }
 
@@ -198,6 +242,10 @@ func (s *Store) mergeLocked(owner, uploadID string) (Session, error) {
 	session, err := s.loadLocked(owner, uploadID)
 	if err != nil {
 		return Session{}, err
+	}
+	session.Metadata.UpdatedAt = s.now().UTC()
+	if err := writeMetadata(session.Directory, session.Metadata); err != nil {
+		return Session{}, fmt.Errorf("refresh upload session: %w", err)
 	}
 	temporary, err := os.CreateTemp(session.Directory, ".merged-*.zip")
 	if err != nil {
@@ -242,6 +290,9 @@ func (s *Store) mergeLocked(owner, uploadID string) (Session, error) {
 		return Session{}, fmt.Errorf("close merged archive: %w", err)
 	}
 	archivePath := filepath.Join(session.Directory, "archive.zip")
+	if err := os.Remove(archivePath); err != nil && !os.IsNotExist(err) {
+		return Session{}, fmt.Errorf("replace merged archive: %w", err)
+	}
 	if err := os.Rename(temporaryPath, archivePath); err != nil {
 		return Session{}, fmt.Errorf("publish merged archive: %w", err)
 	}
@@ -252,7 +303,15 @@ func (s *Store) mergeLocked(owner, uploadID string) (Session, error) {
 func (s *Store) Cancel(owner, uploadID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.isFinalizingLocked(uploadID) {
+		return ErrFinalizing
+	}
 	return s.cancelLocked(owner, uploadID)
+}
+
+func (s *Store) isFinalizingLocked(uploadID string) bool {
+	_, ok := s.finalizing[uploadID]
+	return ok
 }
 
 func (s *Store) cancelLocked(owner, uploadID string) error {
@@ -313,6 +372,9 @@ func (s *Store) cleanupExpiredLocked() error {
 	cutoff := s.now().Add(-s.sessionTTL())
 	for _, entry := range entries {
 		if !entry.IsDir() || !validUploadID(entry.Name()) {
+			continue
+		}
+		if s.isFinalizingLocked(entry.Name()) {
 			continue
 		}
 		directory := filepath.Join(s.Root, entry.Name())

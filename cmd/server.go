@@ -90,7 +90,6 @@ func RunServer() {
 	stages := []stage{
 		{"init-stores", app.InitStores},
 		{"init-providers", app.InitProviders},
-		{"start-background", app.StartBackground},
 		{"build-router", app.BuildRouter},
 	}
 	for _, s := range stages {

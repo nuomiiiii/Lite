@@ -72,10 +72,11 @@ func editLoadNotifications(db *gorm.DB, notifications []*models.LoadNotification
 				return fmt.Errorf("clients is required when default_on is false")
 			}
 			var existing models.LoadNotification
-			if err := tx.Select("id", "clients").Where("id = ?", notification.Id).First(&existing).Error; err != nil {
+			if err := tx.Select("id", "clients", "metric", "threshold", "ratio", "interval", "last_notified").Where("id = ?", notification.Id).First(&existing).Error; err != nil {
 				return err
 			}
-			if err := tx.Model(&models.LoadNotification{}).Where("id = ?", notification.Id).Updates(map[string]any{
+			semanticsChanged := models.LoadNotificationRuleFingerprint(existing) != models.LoadNotificationRuleFingerprint(*notification)
+			updates := map[string]any{
 				"name":        notification.Name,
 				"clients":     clients,
 				"all_clients": notification.DefaultOn,
@@ -83,10 +84,18 @@ func editLoadNotifications(db *gorm.DB, notifications []*models.LoadNotification
 				"threshold":   notification.Threshold,
 				"ratio":       notification.Ratio,
 				"interval":    notification.Interval,
-			}).Error; err != nil {
+			}
+			if semanticsChanged {
+				updates["last_notified"] = nil
+			}
+			if err := tx.Model(&models.LoadNotification{}).Where("id = ?", notification.Id).Updates(updates).Error; err != nil {
 				return err
 			}
-			if err := deleteUnassignedLoadNotificationStates(tx, notification.Id, clients); err != nil {
+			if semanticsChanged {
+				if err := tx.Where("notification_id = ?", notification.Id).Delete(&models.LoadNotificationState{}).Error; err != nil {
+					return err
+				}
+			} else if err := deleteUnassignedLoadNotificationStates(tx, notification.Id, clients); err != nil {
 				return err
 			}
 		}
@@ -135,6 +144,9 @@ func listCurrentLoadAlerts(db *gorm.DB, now time.Time) ([]CurrentLoadAlert, erro
 	}
 	alerts := make([]CurrentLoadAlert, 0, len(states))
 	for _, state := range states {
+		if !loadAlertStateCurrent(state, now) {
+			continue
+		}
 		silencedUntil := state.SilencedUntil
 		silenced := state.SilencedForever || (silencedUntil != nil && silencedUntil.After(now))
 		if !silenced && !state.SilencedForever {
@@ -164,6 +176,13 @@ func setLoadAlertSilence(db *gorm.DB, notificationID uint, client, mode string, 
 	if notificationID == 0 || client == "" {
 		return fmt.Errorf("notification_id and client are required")
 	}
+	var state models.LoadNotificationState
+	if err := db.Preload("Notification").Where("notification_id = ? AND client = ?", notificationID, client).First(&state).Error; err != nil {
+		return err
+	}
+	if !loadAlertStateCurrent(state, now) {
+		return gorm.ErrRecordNotFound
+	}
 	updates := map[string]any{"silenced_until": nil, "silenced_forever": false}
 	switch mode {
 	case "off":
@@ -191,6 +210,20 @@ func setLoadAlertSilence(db *gorm.DB, notificationID uint, client, mode string, 
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+func loadAlertStateCurrent(state models.LoadNotificationState, now time.Time) bool {
+	if !state.AlertActive || state.Notification.Id == 0 || state.Notification.Interval <= 0 || state.LastEvaluatedAt.IsZero() {
+		return false
+	}
+	if state.RuleFingerprint != models.LoadNotificationRuleFingerprint(state.Notification) {
+		return false
+	}
+	freshFor := 2 * time.Duration(state.Notification.Interval) * time.Minute
+	if freshFor < 2*time.Minute {
+		freshFor = 2 * time.Minute
+	}
+	return state.LastEvaluatedAt.Add(freshFor).After(now.UTC())
 }
 
 func GetAllLoadNotifications() ([]models.LoadNotification, error) {

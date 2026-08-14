@@ -2,6 +2,8 @@ package dbcore
 
 import (
 	"archive/zip"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -183,18 +185,267 @@ func validateRestoredSQLite(path, label string) error {
 // restoreStagedBackup extracts and validates the entire archive before it
 // replaces data/. Directory renames keep the previous data intact if the new
 // package cannot be prepared or published.
-func restoreStagedBackup(dataDir string) error {
+type stagedRestore struct {
+	dataDir         string
+	previousDir     string
+	stageDir        string
+	preRestorePath  string
+	pendingMarker   string
+	committedMarker string
+	finished        bool
+	mu              sync.Mutex
+}
+
+const (
+	restorePendingMarkerName   = ".komari-restore-pending.json"
+	restoreCommittedMarkerName = ".komari-restore-committed"
+)
+
+type restoreJournal struct {
+	DataDir     string `json:"data_dir"`
+	PreviousDir string `json:"previous_dir"`
+	StageDir    string `json:"stage_dir"`
+}
+
+func restoreMarkerPaths(dataDir string) (string, string, string, error) {
+	absDataDir, err := filepath.Abs(dataDir)
+	if err != nil {
+		return "", "", "", fmt.Errorf("resolve restore data directory: %w", err)
+	}
+	parent := filepath.Dir(absDataDir)
+	return absDataDir,
+		filepath.Join(parent, restorePendingMarkerName),
+		filepath.Join(parent, restoreCommittedMarkerName),
+		nil
+}
+
+func writeRestoreMarker(path string, content []byte) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".komari-restore-marker-*")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if _, err := temp.Write(content); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempPath, path)
+}
+
+func resolveRestoreJournalPath(parent, name, prefix string) (string, error) {
+	if name == "" || filepath.Base(name) != name || !strings.HasPrefix(name, prefix) {
+		return "", fmt.Errorf("invalid restore journal path %q", name)
+	}
+	return filepath.Join(parent, name), nil
+}
+
+func readRestoreJournal(path, dataDir string) (restoreJournal, string, string, error) {
+	var journal restoreJournal
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return journal, "", "", err
+	}
+	if err := json.Unmarshal(content, &journal); err != nil {
+		return journal, "", "", fmt.Errorf("decode interrupted restore journal: %w", err)
+	}
+	if journal.DataDir != filepath.Base(dataDir) {
+		return journal, "", "", fmt.Errorf("restore journal data directory %q does not match %q", journal.DataDir, filepath.Base(dataDir))
+	}
+	parent := filepath.Dir(dataDir)
+	previousDir, err := resolveRestoreJournalPath(parent, journal.PreviousDir, ".komari-restore-old-")
+	if err != nil {
+		return journal, "", "", err
+	}
+	stageDir, err := resolveRestoreJournalPath(parent, journal.StageDir, ".komari-restore-")
+	if err != nil || strings.HasPrefix(journal.StageDir, ".komari-restore-old-") {
+		if err == nil {
+			err = fmt.Errorf("invalid restore stage path %q", journal.StageDir)
+		}
+		return journal, "", "", err
+	}
+	return journal, previousDir, stageDir, nil
+}
+
+func removeRestoreMarkers(pendingMarker, committedMarker string) {
+	for _, marker := range []string{pendingMarker, committedMarker} {
+		if err := os.Remove(marker); err != nil && !os.IsNotExist(err) {
+			logger.Errorf("dbcore", "[restore] failed to remove transaction marker %s: %v", marker, err)
+		}
+	}
+}
+
+func retireInterruptedRestoreArchive(dataDir string) {
+	archivePath := filepath.Join(dataDir, "backup.zip")
+	failedPath := filepath.Join(dataDir, "backup.interrupted-"+time.Now().UTC().Format("20060102-150405.000000000")+".zip")
+	if err := os.Rename(archivePath, failedPath); err != nil && !os.IsNotExist(err) {
+		logger.Errorf("dbcore", "[restore] previous data restored but interrupted package could not be renamed: %v", err)
+	}
+}
+
+func recoverInterruptedRestore(dataDir string) error {
+	absDataDir, pendingMarker, committedMarker, err := restoreMarkerPaths(dataDir)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(pendingMarker); err != nil {
+		if os.IsNotExist(err) {
+			if removeErr := os.Remove(committedMarker); removeErr != nil && !os.IsNotExist(removeErr) {
+				return fmt.Errorf("remove completed restore marker: %w", removeErr)
+			}
+			return nil
+		}
+		return fmt.Errorf("inspect interrupted restore marker: %w", err)
+	}
+
+	_, previousDir, stageDir, err := readRestoreJournal(pendingMarker, absDataDir)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(committedMarker); err == nil {
+		if err := os.RemoveAll(previousDir); err != nil {
+			return fmt.Errorf("finish committed restore cleanup: %w", err)
+		}
+		if err := os.RemoveAll(stageDir); err != nil {
+			return fmt.Errorf("remove committed restore staging directory: %w", err)
+		}
+		removeRestoreMarkers(pendingMarker, committedMarker)
+		logger.Infof("dbcore", "[restore] completed cleanup for a restore committed before interruption")
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect committed restore marker: %w", err)
+	}
+
+	if _, err := os.Stat(previousDir); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect previous restore directory: %w", err)
+		}
+		if _, err := os.Stat(absDataDir); err != nil {
+			return fmt.Errorf("restore transaction is incomplete and neither active nor previous data is available: %w", err)
+		}
+		if err := os.RemoveAll(stageDir); err != nil {
+			return fmt.Errorf("remove unpublished restore staging directory: %w", err)
+		}
+		removeRestoreMarkers(pendingMarker, committedMarker)
+		return nil
+	}
+
+	failedDir, err := os.MkdirTemp(filepath.Dir(absDataDir), ".komari-restore-interrupted-*")
+	if err != nil {
+		return fmt.Errorf("reserve interrupted restore path: %w", err)
+	}
+	if err := os.RemoveAll(failedDir); err != nil {
+		return fmt.Errorf("prepare interrupted restore path: %w", err)
+	}
+	activeMoved := false
+	if _, err := os.Stat(absDataDir); err == nil {
+		if err := os.Rename(absDataDir, failedDir); err != nil {
+			return fmt.Errorf("move interrupted restored data aside: %w", err)
+		}
+		activeMoved = true
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect interrupted restored data: %w", err)
+	}
+	if err := os.Rename(previousDir, absDataDir); err != nil {
+		if activeMoved {
+			_ = os.Rename(failedDir, absDataDir)
+		}
+		return fmt.Errorf("recover previous data after interrupted restore: %w", err)
+	}
+	retireInterruptedRestoreArchive(absDataDir)
+	if activeMoved {
+		if err := os.RemoveAll(failedDir); err != nil {
+			logger.Errorf("dbcore", "[restore] previous data recovered but interrupted data could not be removed: %v", err)
+		}
+	}
+	if err := os.RemoveAll(stageDir); err != nil {
+		logger.Errorf("dbcore", "[restore] previous data recovered but staging directory could not be removed: %v", err)
+	}
+	removeRestoreMarkers(pendingMarker, committedMarker)
+	logger.Infof("dbcore", "[restore] interrupted startup detected; previous data recovered")
+	return nil
+}
+
+func (r *stagedRestore) Commit() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.finished {
+		return nil
+	}
+	if err := writeRestoreMarker(r.committedMarker, []byte("committed\n")); err != nil {
+		return fmt.Errorf("persist committed restore state: %w", err)
+	}
+	r.finished = true
+	if err := os.RemoveAll(r.previousDir); err != nil {
+		logger.Errorf("dbcore", "[restore] backup was verified and committed, but the previous staging directory could not be removed: %v", err)
+		return nil
+	}
+	removeRestoreMarkers(r.pendingMarker, r.committedMarker)
+	logger.Infof("dbcore", "[restore] backup verified and committed; previous data saved to %s", r.preRestorePath)
+	return nil
+}
+
+func (r *stagedRestore) Rollback() error {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.finished {
+		return nil
+	}
+	failedDir, err := os.MkdirTemp(filepath.Dir(r.dataDir), ".komari-restore-failed-*")
+	if err != nil {
+		return fmt.Errorf("reserve failed restore path: %w", err)
+	}
+	if err := os.RemoveAll(failedDir); err != nil {
+		return fmt.Errorf("prepare failed restore path: %w", err)
+	}
+	if err := os.Rename(r.dataDir, failedDir); err != nil {
+		return fmt.Errorf("move failed restored data aside: %w", err)
+	}
+	if err := os.Rename(r.previousDir, r.dataDir); err != nil {
+		_ = os.Rename(failedDir, r.dataDir)
+		return fmt.Errorf("restore previous data directory: %w", err)
+	}
+	failedArchive := filepath.Join(r.dataDir, "backup.failed-"+time.Now().UTC().Format("20060102-150405")+".zip")
+	if err := os.Rename(filepath.Join(r.dataDir, "backup.zip"), failedArchive); err != nil && !os.IsNotExist(err) {
+		logger.Errorf("dbcore", "[restore] previous data restored but failed package could not be renamed: %v", err)
+	}
+	if err := os.RemoveAll(failedDir); err != nil {
+		logger.Errorf("dbcore", "[restore] previous data restored but failed staging directory could not be removed: %v", err)
+	}
+	removeRestoreMarkers(r.pendingMarker, r.committedMarker)
+	r.finished = true
+	logger.Infof("dbcore", "[restore] startup validation failed; previous data restored")
+	return nil
+}
+
+func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
+	if err := recoverInterruptedRestore(dataDir); err != nil {
+		return nil, fmt.Errorf("recover interrupted restore: %w", err)
+	}
 	backupZipPath := filepath.Join(dataDir, "backup.zip")
 	if _, err := os.Stat(backupZipPath); err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return nil, nil
 		}
-		return fmt.Errorf("inspect staged backup: %w", err)
+		return nil, fmt.Errorf("inspect staged backup: %w", err)
 	}
 
 	stageDir, err := os.MkdirTemp(filepath.Dir(dataDir), ".komari-restore-*")
 	if err != nil {
-		return fmt.Errorf("create restore staging directory: %w", err)
+		return nil, fmt.Errorf("create restore staging directory: %w", err)
 	}
 	stagePublished := false
 	defer func() {
@@ -203,63 +454,86 @@ func restoreStagedBackup(dataDir string) error {
 		}
 	}()
 	if err := unzipToDir(backupZipPath, stageDir); err != nil {
-		return fmt.Errorf("extract backup into staging directory: %w", err)
+		return nil, fmt.Errorf("extract backup into staging directory: %w", err)
 	}
 	if err := validateRestoredSQLite(filepath.Join(stageDir, "komari.db"), "komari.db"); err != nil {
-		return err
+		return nil, err
 	}
 	metricsPath := filepath.Join(stageDir, "metrics.db")
 	if _, err := os.Stat(metricsPath); err == nil {
 		if err := validateRestoredSQLite(metricsPath, "metrics.db"); err != nil {
-			return err
+			return nil, err
 		}
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect restored metrics.db: %w", err)
+		return nil, fmt.Errorf("inspect restored metrics.db: %w", err)
 	}
 	_ = os.Remove(filepath.Join(stageDir, "komari-backup-markup"))
 	if err := os.MkdirAll(filepath.Join(stageDir, "theme"), 0o755); err != nil {
-		return fmt.Errorf("prepare restored theme directory: %w", err)
+		return nil, fmt.Errorf("prepare restored theme directory: %w", err)
 	}
 
 	backupDir := filepath.Join(filepath.Dir(dataDir), "backup")
 	if err := os.MkdirAll(backupDir, 0o755); err != nil {
-		return fmt.Errorf("create pre-restore backup directory: %w", err)
+		return nil, fmt.Errorf("create pre-restore backup directory: %w", err)
 	}
 	timestamp := time.Now().UTC().Format("20060102-150405")
 	preRestorePath := filepath.Join(backupDir, fmt.Sprintf("pre-restore-%s.zip", timestamp))
 	if err := zipDirectoryExcluding(dataDir, preRestorePath, map[string]struct{}{backupZipPath: {}}); err != nil {
-		return fmt.Errorf("preserve current data before restore: %w", err)
+		return nil, fmt.Errorf("preserve current data before restore: %w", err)
 	}
 
 	oldDir, err := os.MkdirTemp(filepath.Dir(dataDir), ".komari-restore-old-*")
 	if err != nil {
-		return fmt.Errorf("reserve previous data path: %w", err)
+		return nil, fmt.Errorf("reserve previous data path: %w", err)
 	}
 	if err := os.RemoveAll(oldDir); err != nil {
-		return fmt.Errorf("prepare previous data path: %w", err)
+		return nil, fmt.Errorf("prepare previous data path: %w", err)
+	}
+	absDataDir, pendingMarker, committedMarker, err := restoreMarkerPaths(dataDir)
+	if err != nil {
+		return nil, err
+	}
+	journal := restoreJournal{
+		DataDir:     filepath.Base(absDataDir),
+		PreviousDir: filepath.Base(oldDir),
+		StageDir:    filepath.Base(stageDir),
+	}
+	journalData, err := json.Marshal(journal)
+	if err != nil {
+		return nil, fmt.Errorf("encode restore transaction journal: %w", err)
+	}
+	if err := writeRestoreMarker(pendingMarker, journalData); err != nil {
+		return nil, fmt.Errorf("persist restore transaction journal: %w", err)
 	}
 	if err := os.Rename(dataDir, oldDir); err != nil {
-		return fmt.Errorf("move current data aside: %w", err)
+		removeRestoreMarkers(pendingMarker, committedMarker)
+		return nil, fmt.Errorf("move current data aside: %w", err)
 	}
 	if err := os.Rename(stageDir, dataDir); err != nil {
 		rollbackErr := os.Rename(oldDir, dataDir)
 		if rollbackErr != nil {
-			return fmt.Errorf("publish restored data: %v; restore previous data: %w", err, rollbackErr)
+			return nil, fmt.Errorf("publish restored data: %v; restore previous data: %w", err, rollbackErr)
 		}
-		return fmt.Errorf("publish restored data: %w", err)
+		removeRestoreMarkers(pendingMarker, committedMarker)
+		return nil, fmt.Errorf("publish restored data: %w", err)
 	}
 	stagePublished = true
-	if err := os.RemoveAll(oldDir); err != nil {
-		logger.Errorf("dbcore", "[restore] restored data is active, but old staging directory could not be removed: %v", err)
-	}
-	logger.Infof("dbcore", "[restore] backup restored atomically; previous data saved to %s", preRestorePath)
-	return nil
+	logger.Infof("dbcore", "[restore] backup published for startup validation; previous data remains available")
+	return &stagedRestore{
+		dataDir:         dataDir,
+		previousDir:     oldDir,
+		stageDir:        stageDir,
+		preRestorePath:  preRestorePath,
+		pendingMarker:   pendingMarker,
+		committedMarker: committedMarker,
+	}, nil
 }
 
 var (
-	instance *gorm.DB
-	once     sync.Once
-	initErr  error
+	instance       *gorm.DB
+	once           sync.Once
+	initErr        error
+	pendingRestore *stagedRestore
 )
 
 // SystemVersionKey 是记录“上次启动所用版本标识”的配置键（存于 configs 表）。
@@ -398,23 +672,62 @@ func GetDBInstance() *gorm.DB {
 
 // Close 关闭底层数据库连接，供关闭流程调用。
 func Close() error {
-	if instance == nil {
+	var closeErr error
+	if instance != nil {
+		sqlDB, err := instance.DB()
+		if err != nil {
+			closeErr = err
+		} else {
+			closeErr = sqlDB.Close()
+		}
+	}
+	rollbackErr := RollbackPendingRestore()
+	return errors.Join(closeErr, rollbackErr)
+}
+
+func CommitPendingRestore() error {
+	if pendingRestore == nil {
 		return nil
 	}
-	sqlDB, err := instance.DB()
-	if err != nil {
+	if err := pendingRestore.Commit(); err != nil {
 		return err
 	}
-	return sqlDB.Close()
+	pendingRestore = nil
+	return nil
+}
+
+func RollbackPendingRestore() error {
+	if pendingRestore == nil {
+		return nil
+	}
+	err := pendingRestore.Rollback()
+	if err == nil {
+		pendingRestore = nil
+	}
+	return err
 }
 
 func doInitialize() error {
 	var err error
 
-	// 在数据库连接创建前完整校验并原子恢复，失败时保留原 data/ 不动。
-	if err := restoreStagedBackup(filepath.Join(".", "data")); err != nil {
+	// Publish the staged package, but keep the previous directory until every
+	// startup migration, including metric storage, has completed successfully.
+	pendingRestore, err = restoreStagedBackup(filepath.Join(".", "data"))
+	if err != nil {
 		return fmt.Errorf("restore staged backup: %w", err)
 	}
+	initialized := false
+	defer func() {
+		if initialized || pendingRestore == nil {
+			return
+		}
+		if instance != nil {
+			if sqlDB, closeErr := instance.DB(); closeErr == nil {
+				_ = sqlDB.Close()
+			}
+		}
+		_ = RollbackPendingRestore()
+	}()
 
 	// 记录“打开数据库之前”komari.db 是否已存在，用于区分全新安装与旧版升级。
 	// 必须在（可能的）恢复逻辑之后、gorm.Open 之前采集：恢复会解压出旧库，
@@ -498,6 +811,7 @@ func doInitialize() error {
 		&models.Clipboard{},
 		&models.LoadNotification{},
 		&models.LoadNotificationState{},
+		&models.MetricCleanupJob{},
 		&models.OfflineNotification{},
 		&models.TrafficReportNotification{},
 		&models.TrafficDailyLedger{},
@@ -540,6 +854,7 @@ func doInitialize() error {
 		return fmt.Errorf("failed to clean orphaned client data: %w", err)
 	}
 
+	initialized = true
 	return nil
 }
 

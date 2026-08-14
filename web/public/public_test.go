@@ -197,6 +197,7 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 	htmlStr := `<html><head>
 <title>Theme title</title>
 <meta name="apple-mobile-web-app-title" content="Theme application" />
+<link rel="shortcut icon" href="relative-favicon.ico" />
 <link rel="icon" type="image/png" href="/theme-icon.png" />
 <link rel="apple-touch-icon" href="/theme-touch-icon.png" />
 </head><body></body></html>`
@@ -216,6 +217,28 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 		if strings.Contains(got, stale) {
 			t.Fatalf("renderApplicationIdentity() retained stale metadata %q: %q", stale, got)
 		}
+	}
+	if strings.Count(got, `<link rel="icon" href="/favicon.ico" />`) != 1 {
+		t.Fatalf("renderApplicationIdentity() did not normalize favicon declarations: %q", got)
+	}
+	if strings.Contains(got, "relative-favicon.ico") {
+		t.Fatalf("renderApplicationIdentity() retained a route-relative favicon: %q", got)
+	}
+}
+
+func TestRenderSystemApplicationIdentityLeavesRuntimeTitleOwnershipToReact(t *testing.T) {
+	got := renderSystemApplicationIdentity(
+		`<html><head><title>Komari Lite</title><link rel="shortcut icon" href="favicon.ico" /></head><body></body></html>`,
+		"My Komari",
+	)
+	if !strings.Contains(got, `<title>My Komari</title>`) {
+		t.Fatalf("system document did not receive its initial title: %q", got)
+	}
+	if strings.Contains(got, documentTitleSyncMarker) || strings.Contains(got, "MutationObserver") {
+		t.Fatalf("system document retained the public title synchronizer: %q", got)
+	}
+	if !strings.Contains(got, `<link rel="icon" href="/favicon.ico" />`) || strings.Contains(got, `href="favicon.ico"`) {
+		t.Fatalf("system document did not receive a route-safe favicon: %q", got)
 	}
 }
 
@@ -265,9 +288,13 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		if hasCustomHead != tt.wantCustom || hasCustomBody != tt.wantCustom {
 			t.Fatalf("GET %s custom HTML = (head: %t, body: %t), want both %t", tt.path, hasCustomHead, hasCustomBody, tt.wantCustom)
 		}
+		expectedTitle := "My Komari"
+		if isAdminApplicationPath(tt.path) {
+			expectedTitle = adminApplicationTitle
+		}
 		for _, want := range []string{
-			`<title>My Komari</title>`,
-			`<meta name="apple-mobile-web-app-title" content="My Komari" />`,
+			`<title>` + expectedTitle + `</title>`,
+			`<meta name="apple-mobile-web-app-title" content="` + expectedTitle + `" />`,
 			`<link rel="icon" href="/favicon.ico" />`,
 			`<link rel="apple-touch-icon" href="/favicon.ico" />`,
 		} {
@@ -275,8 +302,31 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 				t.Fatalf("GET %s body does not contain %q", tt.path, want)
 			}
 		}
+		if !isPrivateApplicationPath(tt.path) {
+			if !strings.Contains(body, documentTitleSyncMarker) {
+				t.Fatalf("GET %s public document has no title synchronizer", tt.path)
+			}
+		} else if strings.Contains(body, documentTitleSyncMarker) {
+			t.Fatalf("GET %s private system document contains the public title synchronizer", tt.path)
+		}
 		if got := recorder.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
 			t.Fatalf("GET %s Cache-Control = %q", tt.path, got)
+		}
+	}
+}
+
+func TestAdminApplicationPath(t *testing.T) {
+	tests := map[string]bool{
+		"/admin":         true,
+		"/admin/servers": true,
+		"/administrator": false,
+		"/terminal":      false,
+		"/install":       false,
+		"/manage":        false,
+	}
+	for requestPath, want := range tests {
+		if got := isAdminApplicationPath(requestPath); got != want {
+			t.Fatalf("isAdminApplicationPath(%q) = %t, want %t", requestPath, got, want)
 		}
 	}
 }

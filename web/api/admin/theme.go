@@ -20,8 +20,11 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/pkg/config"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"github.com/komari-monitor/komari/web/api"
 	"github.com/komari-monitor/komari/web/public"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -166,37 +169,52 @@ func DeleteTheme(c *gin.Context) {
 	}
 
 	currentTheme, _ := config.GetAs[string](config.ThemeKey, public.DefaultTheme)
-	if currentTheme == req.Short {
-		if err := config.Set(config.ThemeKey, fallback); err != nil {
-			api.RespondError(c, http.StatusInternalServerError, "切换备用主题失败: "+err.Error())
-			return
-		}
-	}
-
-	themeDir := filepath.Join("./data/theme", req.Short)
-	tombstone, err := os.MkdirTemp("./data/theme", ".deleted-"+req.Short+"-")
-	if err != nil {
-		if currentTheme == req.Short {
-			_ = config.Set(config.ThemeKey, currentTheme)
-		}
-		api.RespondError(c, http.StatusInternalServerError, "准备删除主题失败: "+err.Error())
-		return
-	}
-	_ = os.Remove(tombstone)
-	if err := os.Rename(themeDir, tombstone); err != nil {
-		if currentTheme == req.Short {
-			_ = config.Set(config.ThemeKey, currentTheme)
-		}
+	if err := deleteInstalledTheme(dbcore.GetDBInstance(), req.Short, currentTheme, fallback); err != nil {
 		api.RespondError(c, http.StatusInternalServerError, "删除主题失败: "+err.Error())
 		return
 	}
-	if err := os.RemoveAll(tombstone); err != nil {
-		api.RespondError(c, http.StatusInternalServerError, "清理已删除主题失败: "+err.Error())
-		return
-	}
-	_ = dbcore.GetDBInstance().Where("short = ?", req.Short).Delete(&models.ThemeConfiguration{}).Error
 
 	api.RespondSuccessMessage(c, "主题删除成功", gin.H{"theme": fallback})
+}
+
+func deleteInstalledTheme(db *gorm.DB, short, currentTheme, fallback string) error {
+	themeDir := filepath.Join("./data/theme", short)
+	tombstone, err := os.MkdirTemp("./data/theme", ".deleted-"+short+"-")
+	if err != nil {
+		return fmt.Errorf("prepare theme tombstone: %w", err)
+	}
+	_ = os.Remove(tombstone)
+	if err := os.Rename(themeDir, tombstone); err != nil {
+		return fmt.Errorf("move theme to tombstone: %w", err)
+	}
+	dbErr := db.Transaction(func(tx *gorm.DB) error {
+		if currentTheme == short {
+			value, err := json.Marshal(fallback)
+			if err != nil {
+				return err
+			}
+			item := config.ConfigItem{Key: config.ThemeKey, Value: string(value)}
+			if err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "key"}}, DoUpdates: clause.AssignmentColumns([]string{"value"}),
+			}).Create(&item).Error; err != nil {
+				return fmt.Errorf("switch to fallback theme: %w", err)
+			}
+		}
+		if err := tx.Where("short = ?", short).Delete(&models.ThemeConfiguration{}).Error; err != nil {
+			return fmt.Errorf("delete theme configuration: %w", err)
+		}
+		return nil
+	})
+	if dbErr != nil {
+		if restoreErr := os.Rename(tombstone, themeDir); restoreErr != nil {
+			return errors.Join(dbErr, fmt.Errorf("restore theme directory after database rollback: %w", restoreErr))
+		}
+		return dbErr
+	}
+	if err := os.RemoveAll(tombstone); err != nil {
+		logger.Errorf("theme", "Theme %s was deleted but its hidden tombstone could not be removed: %v", short, err)
+	}
+	return nil
 }
 
 // SetTheme 设置主题

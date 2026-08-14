@@ -75,8 +75,10 @@ func finalizeBackupUpload(session upload.Session) (upload.Result, error) {
 
 	scheduleAdminRestart(2*time.Second, func() {
 		logger.InfoArgs("admin-api", "Backup uploaded, restarting service in 2 seconds to apply on startup...")
-		restoreLock.Release()
 		exitAdminProcess(0)
+		// os.Exit never returns. This release is reached only by test doubles or
+		// a custom exit hook that declined to terminate the process.
+		restoreLock.Release()
 	})
 	return upload.Result{
 		Message: "Backup uploaded successfully. The service will restart and apply the backup.",

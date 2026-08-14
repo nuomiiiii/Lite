@@ -1,6 +1,12 @@
 package models
 
-import "time"
+import (
+	"crypto/sha256"
+	"fmt"
+	"math"
+	"strings"
+	"time"
+)
 
 // Notification 定义了通知相关的数据库模型
 type OfflineNotification struct {
@@ -25,6 +31,18 @@ type LoadNotification struct {
 	LastNotified *time.Time  `json:"last_notified"`                                               // 上次通知时间
 }
 
+// LoadNotificationRuleFingerprint identifies the fields that define one load
+// alert incident. Presentation and assignment changes deliberately do not
+// alter it, while a metric, threshold, ratio, or interval change starts a new
+// incident and must not inherit the previous silence state.
+func LoadNotificationRuleFingerprint(rule LoadNotification) string {
+	payload := fmt.Sprintf("%s:%08x:%08x:%d",
+		strings.ToLower(strings.TrimSpace(rule.Metric)),
+		math.Float32bits(rule.Threshold), math.Float32bits(rule.Ratio), rule.Interval)
+	sum := sha256.Sum256([]byte(payload))
+	return fmt.Sprintf("%x", sum)
+}
+
 // LoadNotificationState stores the latest evaluation and silence preference
 // for one load notification rule and one assigned client.
 type LoadNotificationState struct {
@@ -32,12 +50,15 @@ type LoadNotificationState struct {
 	Notification    LoadNotification `json:"notification,omitempty" gorm:"foreignKey:NotificationID;references:Id;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
 	Client          string           `json:"client" gorm:"type:varchar(36);primaryKey;not null;index"`
 	ClientInfo      Client           `json:"client_info,omitempty" gorm:"foreignKey:Client;references:UUID;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
+	RuleFingerprint string           `json:"rule_fingerprint" gorm:"type:varchar(64);not null;default:''"`
 	AlertActive     bool             `json:"alert_active" gorm:"type:boolean;not null;default:false;index"`
 	ActiveSince     *time.Time       `json:"active_since"`
 	LastEvaluatedAt time.Time        `json:"last_evaluated_at" gorm:"not null;index"`
 	LatestValue     float64          `json:"latest_value" gorm:"not null;default:0"`
 	MatchedSamples  int              `json:"matched_samples" gorm:"not null;default:0"`
 	TotalSamples    int              `json:"total_samples" gorm:"not null;default:0"`
+	LastNotified    *time.Time       `json:"last_notified"`
+	RecoveryPending bool             `json:"recovery_pending" gorm:"type:boolean;not null;default:false;index"`
 	SilencedUntil   *time.Time       `json:"silenced_until"`
 	SilencedForever bool             `json:"silenced_forever" gorm:"type:boolean;not null;default:false"`
 	CreatedAt       time.Time        `json:"created_at"`

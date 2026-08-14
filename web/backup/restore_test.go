@@ -2,6 +2,7 @@ package backup
 
 import (
 	"archive/zip"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,6 +32,79 @@ func writeTestArchive(t *testing.T, entries map[string]string) string {
 		t.Fatal(err)
 	}
 	return archivePath
+}
+
+func TestReplaceStagedBackupUsesCompleteFilesOnWindowsStyleReplacement(t *testing.T) {
+	dir := t.TempDir()
+	finalPath := filepath.Join(dir, "backup.zip")
+	stagedPath := filepath.Join(dir, ".backup-upload.zip")
+	if err := os.WriteFile(finalPath, []byte("previous-complete-archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stagedPath, []byte("new-complete-archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	rename := func(oldPath, newPath string) error {
+		calls++
+		if calls == 1 {
+			return os.ErrExist
+		}
+		return os.Rename(oldPath, newPath)
+	}
+	if err := replaceStagedBackup(stagedPath, finalPath, rename); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(finalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new-complete-archive" {
+		t.Fatalf("final backup = %q", got)
+	}
+}
+
+func TestReplaceStagedBackupRestoresPreviousFileWhenInstallFails(t *testing.T) {
+	dir := t.TempDir()
+	finalPath := filepath.Join(dir, "backup.zip")
+	stagedPath := filepath.Join(dir, ".backup-upload.zip")
+	if err := os.WriteFile(finalPath, []byte("previous-complete-archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stagedPath, []byte("new-complete-archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	rename := func(oldPath, newPath string) error {
+		calls++
+		switch calls {
+		case 1:
+			return os.ErrExist
+		case 3:
+			return errors.New("replacement blocked")
+		default:
+			return os.Rename(oldPath, newPath)
+		}
+	}
+	if err := replaceStagedBackup(stagedPath, finalPath, rename); err == nil {
+		t.Fatal("replacement failure was not returned")
+	}
+	got, err := os.ReadFile(finalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "previous-complete-archive" {
+		t.Fatalf("restored backup = %q", got)
+	}
+	staged, err := os.ReadFile(stagedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(staged) != "new-complete-archive" {
+		t.Fatalf("staged backup = %q", staged)
+	}
 }
 
 func TestValidateArchiveAcceptsFullAndConfigurationPackages(t *testing.T) {

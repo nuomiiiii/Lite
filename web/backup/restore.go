@@ -68,6 +68,10 @@ func (l *RestoreLock) SaveUploadedBackup(file io.Reader, filename string) error 
 		tempFile.Close()
 		return fmt.Errorf("backup archive exceeds the %d byte limit", MaxArchiveSize)
 	}
+	if err := tempFile.Sync(); err != nil {
+		tempFile.Close()
+		return fmt.Errorf("sync uploaded backup: %w", err)
+	}
 	if err := tempFile.Close(); err != nil {
 		return fmt.Errorf("close uploaded backup: %w", err)
 	}
@@ -76,27 +80,46 @@ func (l *RestoreLock) SaveUploadedBackup(file io.Reader, filename string) error 
 	}
 
 	finalPath := filepath.Join(".", "data", "backup.zip")
-	if err := os.Remove(finalPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove previous backup: %w", err)
-	}
-	if err := os.Rename(tempPath, finalPath); err == nil {
+	return replaceStagedBackup(tempPath, finalPath, os.Rename)
+}
+
+type renameFileFunc func(oldPath, newPath string) error
+
+// replaceStagedBackup keeps both the staged and previous archive complete.
+// Unix can replace the destination directly; Windows needs the existing file
+// moved aside first, with an immediate rollback if the second rename fails.
+func replaceStagedBackup(stagedPath, finalPath string, renameFile renameFileFunc) error {
+	if err := renameFile(stagedPath, finalPath); err == nil {
 		return nil
+	} else if _, statErr := os.Stat(finalPath); statErr != nil {
+		if os.IsNotExist(statErr) {
+			return fmt.Errorf("install staged backup: %w", err)
+		}
+		return fmt.Errorf("inspect previous backup: %w", statErr)
 	}
-	source, err := os.Open(tempPath)
+
+	previousFile, err := os.CreateTemp(filepath.Dir(finalPath), ".backup-previous-*.zip")
 	if err != nil {
-		return fmt.Errorf("prepare backup file: %w", err)
+		return fmt.Errorf("reserve previous backup path: %w", err)
 	}
-	defer source.Close()
-	destination, err := os.Create(finalPath)
-	if err != nil {
-		return fmt.Errorf("create backup file: %w", err)
+	previousPath := previousFile.Name()
+	if err := previousFile.Close(); err != nil {
+		os.Remove(previousPath)
+		return fmt.Errorf("close previous backup placeholder: %w", err)
 	}
-	if _, err := io.Copy(destination, source); err != nil {
-		destination.Close()
-		return fmt.Errorf("write backup file: %w", err)
+	if err := os.Remove(previousPath); err != nil {
+		return fmt.Errorf("prepare previous backup path: %w", err)
 	}
-	if err := destination.Close(); err != nil {
-		return fmt.Errorf("close backup file: %w", err)
+	defer os.Remove(previousPath)
+
+	if err := renameFile(finalPath, previousPath); err != nil {
+		return fmt.Errorf("preserve previous backup: %w", err)
+	}
+	if err := renameFile(stagedPath, finalPath); err != nil {
+		if restoreErr := renameFile(previousPath, finalPath); restoreErr != nil {
+			return fmt.Errorf("install staged backup: %v; restore previous backup: %w", err, restoreErr)
+		}
+		return fmt.Errorf("install staged backup: %w", err)
 	}
 	return nil
 }
