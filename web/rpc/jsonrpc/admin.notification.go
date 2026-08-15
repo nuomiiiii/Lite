@@ -7,6 +7,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/database/notification"
+	"github.com/komari-monitor/komari/database/notificationdefaults"
 	"github.com/komari-monitor/komari/pkg/rpc"
 	"github.com/komari-monitor/komari/utils/notifier"
 	"gorm.io/gorm/clause"
@@ -28,11 +29,15 @@ func init() {
 	reg("editOfflineNotification", adminEditOfflineNotification, "Edit offline notifications")
 	reg("enableOfflineNotification", adminEnableOfflineNotification, "Enable offline notifications for clients")
 	reg("disableOfflineNotification", adminDisableOfflineNotification, "Disable offline notifications for clients")
+	reg("getOfflineNotificationDefault", adminGetOfflineNotificationDefault, "Get the default offline notification for new clients")
+	reg("setOfflineNotificationDefault", adminSetOfflineNotificationDefault, "Set the default offline notification for new clients")
 	// traffic report notifications
 	reg("listTrafficReportNotifications", adminListTrafficReport, "List traffic report notifications")
 	reg("editTrafficReportNotifications", adminEditTrafficReport, "Edit traffic report notifications")
 	reg("enableTrafficReportNotifications", adminEnableTrafficReport, "Enable traffic report notifications")
 	reg("disableTrafficReportNotifications", adminDisableTrafficReport, "Disable traffic report notifications")
+	reg("getTrafficReportDefault", adminGetTrafficReportDefault, "Get the default traffic report for new clients")
+	reg("setTrafficReportDefault", adminSetTrafficReportDefault, "Set the default traffic report for new clients")
 	reg("sendDailyTrafficReport", adminSendDailyTrafficReport, "Send the daily traffic report immediately")
 	// ping loss notifications
 	reg("listPingLossNotifications", adminListPingLossNotifications, "List ping loss notifications")
@@ -40,6 +45,8 @@ func init() {
 	reg("editPingLossNotifications", adminEditPingLossNotifications, "Edit ping loss notifications")
 	reg("upsertPingLossNotifications", adminUpsertPingLossNotifications, "Create or edit ping loss notifications in a batch")
 	reg("deletePingLossNotifications", adminDeletePingLossNotifications, "Delete ping loss notifications")
+	reg("getPingLossNotificationDefault", adminGetPingLossNotificationDefault, "Get the default ping loss notification for new clients")
+	reg("setPingLossNotificationDefault", adminSetPingLossNotificationDefault, "Set the default ping loss notification for new clients")
 }
 
 // reg 是 admin 命名空间方法的注册便捷封装。
@@ -207,6 +214,25 @@ func adminDisableOfflineNotification(_ context.Context, req *rpc.JsonRpcRequest)
 	return nil, nil
 }
 
+func adminGetOfflineNotificationDefault(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	value, err := notificationdefaults.GetOfflineNotificationDefaultConfig()
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	return value, nil
+}
+
+func adminSetOfflineNotificationDefault(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var value notificationdefaults.OfflineNotificationDefaultConfig
+	if err := req.BindParams(&value); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid request body: "+err.Error(), nil)
+	}
+	if err := notificationdefaults.SetOfflineNotificationDefaultConfig(value); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return value, nil
+}
+
 func adminListTrafficReport(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	list, err := notification.ListTrafficReportNotifications()
 	if err != nil {
@@ -252,6 +278,25 @@ func adminDisableTrafficReport(_ context.Context, req *rpc.JsonRpcRequest) (any,
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to disable traffic report notifications: "+err.Error(), nil)
 	}
 	return nil, nil
+}
+
+func adminGetTrafficReportDefault(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	value, err := notificationdefaults.GetTrafficReportDefaultConfig()
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	return value, nil
+}
+
+func adminSetTrafficReportDefault(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var value notificationdefaults.TrafficReportDefaultConfig
+	if err := req.BindParams(&value); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid request body: "+err.Error(), nil)
+	}
+	if err := notificationdefaults.SetTrafficReportDefaultConfig(value); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return value, nil
 }
 
 func adminSendDailyTrafficReport(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
@@ -319,4 +364,23 @@ func adminDeletePingLossNotifications(_ context.Context, req *rpc.JsonRpcRequest
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
 	return nil, nil
+}
+
+func adminGetPingLossNotificationDefault(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	value, err := notificationdefaults.GetPingLossNotificationDefaultConfig()
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	return value, nil
+}
+
+func adminSetPingLossNotificationDefault(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var value notificationdefaults.PingLossNotificationDefaultConfig
+	if err := req.BindParams(&value); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid request body: "+err.Error(), nil)
+	}
+	if err := notificationdefaults.SetPingLossNotificationDefaultConfig(value); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return value, nil
 }

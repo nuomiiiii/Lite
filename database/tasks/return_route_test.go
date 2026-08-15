@@ -440,6 +440,18 @@ func TestRemote9929PrefixOverridesConflictingASN(t *testing.T) {
 	if line, confidence := classifyReturnRouteSignaturesWithRules(hops, rules); line != "9929" || confidence < 0.9 {
 		t.Fatalf("remote 210.14.0.0/16 rule classified as %q, %.2f; want 9929", line, confidence)
 	}
+
+	hops = []returnRouteSignature{
+		{ip: "162.255.48.233", asn: 10099},
+		{ip: "210.78.28.165"},
+		{ip: "210.78.30.158"},
+		{ip: "219.158.18.238", asn: 4837},
+		{ip: "58.22.110.178", asn: 4837},
+		{ip: "36.248.48.210", asn: 4837},
+	}
+	if line, confidence := classifyReturnRouteSignaturesWithRules(hops, rules); line != returnRouteLineCUGVIP || confidence < 0.9 {
+		t.Fatalf("210.78.0.0/19 CUG route classified as %q, %.2f; want %q", line, confidence, returnRouteLineCUGVIP)
+	}
 }
 
 func TestASNProvidersUseOrderedFallback(t *testing.T) {

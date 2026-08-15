@@ -12,6 +12,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/notificationdefaults"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/utils"
@@ -311,6 +312,9 @@ func CreateClient() (clientUUID, token string, err error) {
 	if err := tasks.AddDefaultOnClientUUID(clientUUID); err != nil {
 		logger.ErrorArgs("clients", "Failed to apply default-on ping tasks to new client:", err)
 	}
+	if err := notificationdefaults.ApplyDefaultsToNewClient(clientUUID); err != nil {
+		logger.ErrorArgs("clients", "Failed to apply notification defaults to new client:", err)
+	}
 	return clientUUID, token, nil
 }
 
@@ -329,6 +333,9 @@ func CreateClientWithName(name string) (clientUUID, token string, err error) {
 	}
 	if err := tasks.AddDefaultOnClientUUID(clientUUID); err != nil {
 		logger.ErrorArgs("clients", "Failed to apply default-on ping tasks to new client:", err)
+	}
+	if err := notificationdefaults.ApplyDefaultsToNewClient(clientUUID); err != nil {
+		logger.ErrorArgs("clients", "Failed to apply notification defaults to new client:", err)
 	}
 	return clientUUID, token, nil
 }
