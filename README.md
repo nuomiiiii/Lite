@@ -1,8 +1,6 @@
 <div align="center">
 
-<h1>
-  <img src="docs/assets/branding/komari-banner.svg" alt="Komari Lite" width="920">
-</h1>
+<img src="docs/assets/branding/komari-banner.svg" alt="Komari Lite" width="920">
 
 [![Release](https://img.shields.io/github/v/release/nuomiiiii/komari?label=release)](https://github.com/nuomiiiii/komari/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-online-0F766E)](https://nuomiiiii.github.io/komari-document/)
