@@ -387,6 +387,10 @@ func extractAndValidateTheme(zipPath string) (models.Theme, error) {
 		_ = os.RemoveAll(backupDir)
 	}
 
+	go func(short, preview string) {
+		_ = public.EnsureThemePreviewCard(short, preview)
+	}(themeInfo.Short, themeInfo.Preview)
+
 	return themeInfo, nil
 }
 

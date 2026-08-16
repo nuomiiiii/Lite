@@ -637,13 +637,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		themeID := c.Param("id")
 		// c.Param("path") 包含了开头的 /，getFileContent 会处理
 		filePath := c.Param("path")
-
-		content, mimeType, exists := localThemeFileContent(themeID, filePath)
-		if exists {
-			c.Data(http.StatusOK, mimeType, content)
-			return
-		}
-		c.Status(http.StatusNotFound)
+		serveThemeFile(c, themeID, filePath)
 	})
 
 	// 3. SPA 路由 (noRoute)

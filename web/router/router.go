@@ -124,6 +124,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		theme.PUT("/market/sources/:id", admin.UpdateThemeMarketSource)
 		theme.DELETE("/market/sources/:id", admin.DeleteThemeMarketSource)
 		theme.GET("/market/catalog", admin.ListThemeMarketCatalog)
+		theme.GET("/market/preview", admin.ServeThemeMarketPreview)
 		theme.POST("/market/install", admin.InstallThemeFromMarket)
 	}
 

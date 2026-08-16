@@ -9,6 +9,7 @@ import (
 
 	"github.com/komari-monitor/komari/database/clients"
 	"github.com/komari-monitor/komari/database/models"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -123,59 +124,104 @@ func buildDashboardCached(ctx context.Context, now time.Time, sections dashboard
 		}
 	}
 
+	g, gctx := errgroup.WithContext(ctx)
+	var servers dashboardServerSummary
+	var resources dashboardResourceSummary
+	var storage dashboardStorageModule
+	var route dashboardReturnRouteSummary
+	var alerts dashboardAlertSummaries
+
 	if sections&dashboardSectionServers != 0 {
-		result.Servers, err = dashboardServersModuleCache.get(ctx, now, "servers", cacheTTL,
-			func() (dashboardServerSummary, error) { return buildDashboardServers(clientList), nil })
-		if err != nil {
-			return dashboardResponse{}, err
-		}
+		g.Go(func() error {
+			value, loadErr := dashboardServersModuleCache.get(gctx, now, "servers", cacheTTL,
+				func() (dashboardServerSummary, error) { return buildDashboardServers(clientList), nil })
+			if loadErr != nil {
+				return loadErr
+			}
+			servers = value
+			return nil
+		})
 	}
 	if sections&dashboardSectionResources != 0 {
-		key := strconv.Itoa(rankingLimit)
-		result.Resources, err = dashboardResourcesModuleCache.get(ctx, now, key, cacheTTL,
-			func() (dashboardResourceSummary, error) {
-				return buildDashboardResources(clientList, rankingLimit), nil
-			})
-		if err != nil {
-			return dashboardResponse{}, err
-		}
+		g.Go(func() error {
+			key := strconv.Itoa(rankingLimit)
+			value, loadErr := dashboardResourcesModuleCache.get(gctx, now, key, cacheTTL,
+				func() (dashboardResourceSummary, error) {
+					return buildDashboardResources(clientList, rankingLimit), nil
+				})
+			if loadErr != nil {
+				return loadErr
+			}
+			resources = value
+			return nil
+		})
 	}
 	if sections&dashboardSectionStorage != 0 {
-		storage, loadErr := dashboardStorageModuleCache.get(ctx, now, "storage", cacheTTL,
-			func() (dashboardStorageModule, error) {
-				main := mainDatabaseStatus()
-				monitoring := monitoringDatabaseStatus(ctx)
-				legacySize := int64(0)
-				if main.Size != nil {
-					legacySize = *main.Size
-				}
-				return dashboardStorageModule{
-					database: databaseStatusResponse{
-						Type: main.Driver, Size: legacySize, Main: main, Monitoring: monitoring,
-						LocalTotal: localDatabaseTotal(main, monitoring),
-					},
-					storage: buildDashboardStorage(ctx, main, monitoring),
-				}, nil
-			})
-		if loadErr != nil {
-			return dashboardResponse{}, loadErr
-		}
+		g.Go(func() error {
+			value, loadErr := dashboardStorageModuleCache.get(gctx, now, "storage", cacheTTL,
+				func() (dashboardStorageModule, error) {
+					main := mainDatabaseStatus()
+					monitoring := monitoringDatabaseStatus(gctx)
+					legacySize := int64(0)
+					if main.Size != nil {
+						legacySize = *main.Size
+					}
+					return dashboardStorageModule{
+						database: databaseStatusResponse{
+							Type: main.Driver, Size: legacySize, Main: main, Monitoring: monitoring,
+							LocalTotal: localDatabaseTotal(main, monitoring),
+						},
+						storage: buildDashboardStorage(gctx, main, monitoring),
+					}, nil
+				})
+			if loadErr != nil {
+				return loadErr
+			}
+			storage = value
+			return nil
+		})
+	}
+	if sections&dashboardSectionReturnRoute != 0 {
+		g.Go(func() error {
+			value, loadErr := dashboardRouteModuleCache.get(gctx, now, "return_route", cacheTTL,
+				func() (dashboardReturnRouteSummary, error) { return buildDashboardReturnRoute(), nil })
+			if loadErr != nil {
+				return loadErr
+			}
+			route = value
+			return nil
+		})
+	}
+	if sections&dashboardSectionAlerts != 0 {
+		g.Go(func() error {
+			value, loadErr := dashboardAlertsModuleCache.get(gctx, now, "alerts", cacheTTL,
+				func() (dashboardAlertSummaries, error) { return buildDashboardAlerts(clientList, now), nil })
+			if loadErr != nil {
+				return loadErr
+			}
+			alerts = value
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return dashboardResponse{}, err
+	}
+
+	if sections&dashboardSectionServers != 0 {
+		result.Servers = servers
+	}
+	if sections&dashboardSectionResources != 0 {
+		result.Resources = resources
+	}
+	if sections&dashboardSectionStorage != 0 {
 		result.Database = storage.database
 		result.Storage = storage.storage
 	}
 	if sections&dashboardSectionReturnRoute != 0 {
-		result.ReturnRoute, err = dashboardRouteModuleCache.get(ctx, now, "return_route", cacheTTL,
-			func() (dashboardReturnRouteSummary, error) { return buildDashboardReturnRoute(), nil })
-		if err != nil {
-			return dashboardResponse{}, err
-		}
+		result.ReturnRoute = route
 	}
 	if sections&dashboardSectionAlerts != 0 {
-		result.Alerts, err = dashboardAlertsModuleCache.get(ctx, now, "alerts", cacheTTL,
-			func() (dashboardAlertSummaries, error) { return buildDashboardAlerts(clientList, now), nil })
-		if err != nil {
-			return dashboardResponse{}, err
-		}
+		result.Alerts = alerts
 	}
 	return result, nil
 }
@@ -202,42 +248,85 @@ func buildDashboardChartsCached(ctx context.Context, now time.Time, sections das
 		}
 		return result
 	}
+
+	g, gctx := errgroup.WithContext(ctx)
 	key := strconv.Itoa(rankingLimit)
+	var traffic dashboardTrafficSummary
+	var latency dashboardLatencySummary
+	var jitter []dashboardLatencyJitterRankItem
+	var jitterError string
+	var packetLoss dashboardPacketLossSummary
+
 	if sections&dashboardChartTraffic != 0 {
-		result.Traffic, err = dashboardTrafficModuleCache.get(ctx, now, key, cacheTTL,
-			func() (dashboardTrafficSummary, error) {
-				return loadDashboardTraffic(ctx, clientList, now, rankingLimit)
-			})
-		if err != nil {
-			result.Traffic = dashboardTrafficSummary{Error: err.Error()}
-		}
+		g.Go(func() error {
+			value, loadErr := dashboardTrafficModuleCache.get(gctx, now, key, cacheTTL,
+				func() (dashboardTrafficSummary, error) {
+					return loadDashboardTraffic(gctx, clientList, now, rankingLimit)
+				})
+			if loadErr != nil {
+				traffic = dashboardTrafficSummary{Error: loadErr.Error()}
+				return nil
+			}
+			traffic = value
+			return nil
+		})
 	}
 	if sections&dashboardChartLatency != 0 {
-		result.Latency, err = dashboardLatencyModuleCache.get(ctx, now, key, cacheTTL,
-			func() (dashboardLatencySummary, error) {
-				return loadDashboardLatency(ctx, clientList, now, rankingLimit)
-			})
-		if err != nil {
-			result.Latency.Error = err.Error()
-		}
+		g.Go(func() error {
+			value, loadErr := dashboardLatencyModuleCache.get(gctx, now, key, cacheTTL,
+				func() (dashboardLatencySummary, error) {
+					return loadDashboardLatency(gctx, clientList, now, rankingLimit)
+				})
+			if loadErr != nil {
+				latency.Error = loadErr.Error()
+				return nil
+			}
+			latency = value
+			return nil
+		})
 	}
 	if sections&dashboardChartLatencyJitter != 0 {
-		result.Latency.JitterRanking, err = dashboardJitterModuleCache.get(ctx, now, key, cacheTTL,
-			func() ([]dashboardLatencyJitterRankItem, error) {
-				return loadDashboardLatencyJitter(ctx, clientList, now, rankingLimit)
-			})
-		if err != nil {
-			result.Latency.JitterError = err.Error()
-		}
+		g.Go(func() error {
+			value, loadErr := dashboardJitterModuleCache.get(gctx, now, key, cacheTTL,
+				func() ([]dashboardLatencyJitterRankItem, error) {
+					return loadDashboardLatencyJitter(gctx, clientList, now, rankingLimit)
+				})
+			if loadErr != nil {
+				jitterError = loadErr.Error()
+				return nil
+			}
+			jitter = value
+			return nil
+		})
 	}
 	if sections&dashboardChartPacketLoss != 0 {
-		result.PacketLoss, err = dashboardPacketLossModuleCache.get(ctx, now, key, cacheTTL,
-			func() (dashboardPacketLossSummary, error) {
-				return loadDashboardPacketLoss(ctx, clientList, now, rankingLimit)
-			})
-		if err != nil {
-			result.PacketLoss.Error = err.Error()
-		}
+		g.Go(func() error {
+			value, loadErr := dashboardPacketLossModuleCache.get(gctx, now, key, cacheTTL,
+				func() (dashboardPacketLossSummary, error) {
+					return loadDashboardPacketLoss(gctx, clientList, now, rankingLimit)
+				})
+			if loadErr != nil {
+				packetLoss = dashboardPacketLossSummary{Error: loadErr.Error()}
+				return nil
+			}
+			packetLoss = value
+			return nil
+		})
+	}
+	_ = g.Wait()
+
+	if sections&dashboardChartTraffic != 0 {
+		result.Traffic = traffic
+	}
+	if sections&dashboardChartLatency != 0 {
+		result.Latency = latency
+	}
+	if sections&dashboardChartLatencyJitter != 0 {
+		result.Latency.JitterRanking = jitter
+		result.Latency.JitterError = jitterError
+	}
+	if sections&dashboardChartPacketLoss != 0 {
+		result.PacketLoss = packetLoss
 	}
 	return result
 }
