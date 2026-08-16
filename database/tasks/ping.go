@@ -9,6 +9,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/notificationdefaults"
 	"github.com/komari-monitor/komari/utils"
 	logger "github.com/komari-monitor/komari/utils/log"
 	"gorm.io/gorm"
@@ -16,7 +17,15 @@ import (
 
 // AddPingTask 创建延迟监测任务。defaultOn 表示新加入的服务器是否自动开启此监测。
 func AddPingTask(clients []string, defaultOn bool, name string, target, task_type string, interval int) (uint, error) {
-	db := dbcore.GetDBInstance()
+	taskID, err := addPingTask(dbcore.GetDBInstance(), clients, defaultOn, name, target, task_type, interval)
+	if err != nil {
+		return 0, err
+	}
+	ReloadPingSchedule()
+	return taskID, nil
+}
+
+func addPingTask(db *gorm.DB, clients []string, defaultOn bool, name string, target, task_type string, interval int) (uint, error) {
 	normalizedClients := normalizePingClients(models.StringArray(clients))
 	task := models.PingTask{
 		Clients:   normalizedClients,
@@ -26,7 +35,11 @@ func AddPingTask(clients []string, defaultOn bool, name string, target, task_typ
 		Target:    target,
 		Interval:  interval,
 	}
-	err := db.Transaction(func(tx *gorm.DB) error {
+	pingLossDefault, err := notificationdefaults.GetPingLossNotificationDefaultConfig()
+	if err != nil {
+		return 0, err
+	}
+	err = db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&task).Error; err != nil {
 			return err
 		}
@@ -39,13 +52,11 @@ func AddPingTask(clients []string, defaultOn bool, name string, target, task_typ
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
-
-		return nil
+		return notificationdefaults.ApplyLoadedPingLossDefaultsToTaskClients(tx, pingLossDefault, task.Id, normalizedClients)
 	})
 	if err != nil {
 		return 0, err
 	}
-	ReloadPingSchedule()
 	return task.Id, nil
 }
 
@@ -120,6 +131,11 @@ func editPingTasks(db *gorm.DB, tasks []*models.PingTask) ([]metricstore.PingAss
 		return nil, fmt.Errorf("at least one ping task is required")
 	}
 	removedAssignments := make([]metricstore.PingAssignment, 0)
+	type pendingPingLossDefault struct {
+		taskID  uint
+		clients []string
+	}
+	pendingDefaults := make([]pendingPingLossDefault, 0)
 	err := db.Transaction(func(tx *gorm.DB) error {
 		hasLegacyPingRecords := tx.Migrator().HasTable("ping_records")
 		for _, task := range tasks {
@@ -143,6 +159,10 @@ func editPingTasks(db *gorm.DB, tasks []*models.PingTask) ([]metricstore.PingAss
 				return err
 			}
 			removedClients := removedPingTaskClients(existing.Clients, task.Clients)
+			addedClients := addedPingTaskClients(existing.Clients, task.Clients)
+			if len(addedClients) > 0 {
+				pendingDefaults = append(pendingDefaults, pendingPingLossDefault{taskID: task.Id, clients: addedClients})
+			}
 			if len(removedClients) > 0 {
 				if err := tx.Where("task_id = ? AND client IN ?", task.Id, removedClients).Delete(&models.PingLossNotification{}).Error; err != nil {
 					return err
@@ -166,6 +186,17 @@ func editPingTasks(db *gorm.DB, tasks []*models.PingTask) ([]metricstore.PingAss
 	if err != nil {
 		return nil, err
 	}
+	if len(pendingDefaults) > 0 {
+		pingLossDefault, defaultErr := notificationdefaults.GetPingLossNotificationDefaultConfig()
+		if defaultErr != nil {
+			return nil, defaultErr
+		}
+		for _, pending := range pendingDefaults {
+			if err := notificationdefaults.ApplyLoadedPingLossDefaultsToTaskClients(db, pingLossDefault, pending.taskID, pending.clients); err != nil {
+				return nil, err
+			}
+		}
+	}
 	// Keep just-removed client/task series closed across cleanup retries. The
 	// broader task guard held by EditPingTask is released when that edit
 	// returns, but a failed metric-store deletion must not let new points enter
@@ -188,6 +219,32 @@ func editedPingTaskIDs(tasks []*models.PingTask) []uint {
 		ids = append(ids, task.Id)
 	}
 	return ids
+}
+
+func addedPingTaskClients(previous, next models.StringArray) []string {
+	existing := make(map[string]struct{}, len(previous))
+	for _, client := range previous {
+		if client == "" {
+			continue
+		}
+		existing[client] = struct{}{}
+	}
+	added := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, client := range next {
+		if client == "" {
+			continue
+		}
+		if _, ok := existing[client]; ok {
+			continue
+		}
+		if _, ok := seen[client]; ok {
+			continue
+		}
+		seen[client] = struct{}{}
+		added = append(added, client)
+	}
+	return added
 }
 
 func removedPingTaskClients(previous, next models.StringArray) []string {

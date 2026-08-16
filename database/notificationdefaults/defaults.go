@@ -174,23 +174,8 @@ func applyDefaultsToNewClient(db *gorm.DB, clientUUID string) (bool, error) {
 				if !task.AppliesToClient(clientUUID) {
 					continue
 				}
-				candidate := models.PingLossNotification{
-					Client:          clientUUID,
-					TaskId:          task.Id,
-					Enable:          true,
-					WindowSeconds:   pingLossConfig.WindowSeconds,
-					LossThreshold:   pingLossConfig.LossThreshold,
-					MinimumSamples:  pingLossConfig.MinimumSamples,
-					CooldownSeconds: pingLossConfig.CooldownSeconds,
-				}
-				if err := tx.Clauses(clause.OnConflict{
-					Columns:   []clause.Column{{Name: "client"}, {Name: "task_id"}},
-					DoNothing: true,
-				}).Select(
-					"client", "task_id", "enable", "window_seconds", "loss_threshold",
-					"minimum_samples", "cooldown_seconds",
-				).Create(&candidate).Error; err != nil {
-					return fmt.Errorf("apply ping loss notification default: %w", err)
+				if err := applyPingLossDefaultToClients(tx, pingLossConfig, task.Id, []string{clientUUID}); err != nil {
+					return err
 				}
 			}
 		}
@@ -219,4 +204,57 @@ func applyDefaultsToNewClient(db *gorm.DB, clientUUID string) (bool, error) {
 		return nil
 	})
 	return trafficReportApplied, err
+}
+
+// ApplyPingLossDefaultsToTaskClients 把已保存的延迟监测告警默认配置套到新的任务/服务器组合上，已有告警行保持不变。
+func ApplyPingLossDefaultsToTaskClients(db *gorm.DB, taskID uint, clients []string) error {
+	if db == nil || taskID == 0 || len(clients) == 0 {
+		return nil
+	}
+	cfg, err := GetPingLossNotificationDefaultConfig()
+	if err != nil {
+		return fmt.Errorf("load ping loss notification default: %w", err)
+	}
+	return ApplyLoadedPingLossDefaultsToTaskClients(db, cfg, taskID, clients)
+}
+
+// ApplyLoadedPingLossDefaultsToTaskClients 使用已经读好的默认配置写入新的任务/服务器组合。
+// 调用方必须在事务外完成 GetPingLossNotificationDefaultConfig，避免 SQLite 单连接卡死。
+func ApplyLoadedPingLossDefaultsToTaskClients(db *gorm.DB, cfg PingLossNotificationDefaultConfig, taskID uint, clients []string) error {
+	return applyPingLossDefaultToClients(db, cfg, taskID, clients)
+}
+
+func applyPingLossDefaultToClients(tx *gorm.DB, cfg PingLossNotificationDefaultConfig, taskID uint, clients []string) error {
+	if tx == nil || !cfg.Enabled || taskID == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(clients))
+	for _, clientUUID := range clients {
+		if clientUUID == "" {
+			continue
+		}
+		if _, ok := seen[clientUUID]; ok {
+			continue
+		}
+		seen[clientUUID] = struct{}{}
+		candidate := models.PingLossNotification{
+			Client:          clientUUID,
+			TaskId:          taskID,
+			Enable:          true,
+			WindowSeconds:   cfg.WindowSeconds,
+			LossThreshold:   cfg.LossThreshold,
+			MinimumSamples:  cfg.MinimumSamples,
+			CooldownSeconds: cfg.CooldownSeconds,
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "client"}, {Name: "task_id"}},
+			DoNothing: true,
+		}).Select(
+			"client", "task_id", "enable", "window_seconds", "loss_threshold",
+			"minimum_samples", "cooldown_seconds",
+		).Create(&candidate).Error; err != nil {
+			return fmt.Errorf("apply ping loss notification default: %w", err)
+		}
+	}
+	return nil
 }

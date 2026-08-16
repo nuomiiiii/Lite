@@ -9,6 +9,8 @@ import (
 
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/notificationdefaults"
+	"github.com/komari-monitor/komari/pkg/config"
 	"github.com/komari-monitor/komari/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -217,4 +219,74 @@ func TestEditPingTasksRemovesAlertsForUnassignedClients(t *testing.T) {
 	assert.Equal(t, models.MetricCleanupPingAssignment, cleanupJobs[0].Kind)
 	assert.Equal(t, "client-b", cleanupJobs[0].Client)
 	assert.Equal(t, tasks[0].Id, cleanupJobs[0].TaskID)
+}
+
+func TestAddPingTaskAppliesPingLossDefaultsToAssignedServers(t *testing.T) {
+	db := newPingLossDefaultTestDB(t, "add-ping-task-defaults")
+	require.NoError(t, notificationdefaults.SetPingLossNotificationDefaultConfig(notificationdefaults.PingLossNotificationDefaultConfig{
+		Enabled: true, WindowSeconds: 60, LossThreshold: 30, MinimumSamples: 6, CooldownSeconds: 60,
+	}))
+
+	taskID, err := addPingTask(db, []string{"client-a"}, false, "test", "1.1.1.1", "icmp", 10)
+	require.NoError(t, err)
+
+	var rules []models.PingLossNotification
+	require.NoError(t, db.Where("task_id = ?", taskID).Find(&rules).Error)
+	require.Len(t, rules, 1)
+	assert.Equal(t, "client-a", rules[0].Client)
+	assert.True(t, rules[0].Enable)
+	assert.Equal(t, 60, rules[0].WindowSeconds)
+	assert.Equal(t, 30.0, rules[0].LossThreshold)
+	assert.Equal(t, 6, rules[0].MinimumSamples)
+	assert.Equal(t, 60, rules[0].CooldownSeconds)
+}
+
+func TestEditPingTasksAppliesPingLossDefaultsToNewlyAssignedServers(t *testing.T) {
+	db := newPingLossDefaultTestDB(t, "edit-ping-task-defaults")
+	task := models.PingTask{
+		Name: "test", Clients: models.StringArray{"client-a"}, Type: "icmp", Target: "1.1.1.1", Interval: 10,
+	}
+	require.NoError(t, db.Create(&task).Error)
+	require.NoError(t, db.Create(&models.PingLossNotification{
+		Client: "client-a", TaskId: task.Id, Enable: true, WindowSeconds: 120, LossThreshold: 5, MinimumSamples: 2, CooldownSeconds: 180,
+	}).Error)
+	require.NoError(t, notificationdefaults.SetPingLossNotificationDefaultConfig(notificationdefaults.PingLossNotificationDefaultConfig{
+		Enabled: true, WindowSeconds: 60, LossThreshold: 30, MinimumSamples: 6, CooldownSeconds: 60,
+	}))
+
+	updated := task
+	updated.Clients = models.StringArray{"client-a", "client-b"}
+	_, err := editPingTasks(db, []*models.PingTask{&updated})
+	require.NoError(t, err)
+
+	var rules []models.PingLossNotification
+	require.NoError(t, db.Order("client ASC").Where("task_id = ?", task.Id).Find(&rules).Error)
+	require.Len(t, rules, 2)
+	assert.Equal(t, "client-a", rules[0].Client)
+	assert.Equal(t, 120, rules[0].WindowSeconds)
+	assert.Equal(t, 5.0, rules[0].LossThreshold)
+	assert.Equal(t, "client-b", rules[1].Client)
+	assert.True(t, rules[1].Enable)
+	assert.Equal(t, 30.0, rules[1].LossThreshold)
+	assert.Equal(t, 6, rules[1].MinimumSamples)
+}
+
+func newPingLossDefaultTestDB(t *testing.T, name string) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:"+name+"?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.Client{},
+		&models.PingTask{},
+		&models.PingLossNotification{},
+		&models.MetricCleanupJob{},
+	))
+	config.SetDb(db)
+	require.NoError(t, db.Create([]models.Client{
+		{UUID: "client-a", Token: "token-a", Name: "Server A"},
+		{UUID: "client-b", Token: "token-b", Name: "Server B"},
+	}).Error)
+	return db
 }

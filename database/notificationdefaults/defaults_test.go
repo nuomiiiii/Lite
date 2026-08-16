@@ -181,3 +181,39 @@ func TestApplyDefaultsToNewClientTargetsAssignedTasksOnly(t *testing.T) {
 	require.NoError(t, db.Model(&models.TrafficReportNotification{}).Where("client = ?", "client-b").Count(&count).Error)
 	assert.Zero(t, count)
 }
+
+func TestApplyPingLossDefaultsToTaskClientsCreatesMissingRulesOnly(t *testing.T) {
+	db := setupNotificationDefaultsTestDB(t, "notification-default-ping-task")
+	task := models.PingTask{
+		Name: "test", Clients: models.StringArray{"client-a", "client-b"}, Type: "icmp", Target: "1.1.1.1", Interval: 10,
+	}
+	require.NoError(t, db.Create(&task).Error)
+	require.NoError(t, db.Create(&models.PingLossNotification{
+		Client: "client-a", TaskId: task.Id, Enable: true, WindowSeconds: 120, LossThreshold: 5, MinimumSamples: 2, CooldownSeconds: 180,
+	}).Error)
+	require.NoError(t, SetPingLossNotificationDefaultConfig(PingLossNotificationDefaultConfig{
+		Enabled: true, WindowSeconds: 60, LossThreshold: 30, MinimumSamples: 6, CooldownSeconds: 60,
+	}))
+
+	require.NoError(t, ApplyPingLossDefaultsToTaskClients(db, task.Id, []string{"client-a", "client-b"}))
+
+	var rules []models.PingLossNotification
+	require.NoError(t, db.Order("client ASC").Where("task_id = ?", task.Id).Find(&rules).Error)
+	require.Len(t, rules, 2)
+	assert.Equal(t, "client-a", rules[0].Client)
+	assert.Equal(t, 120, rules[0].WindowSeconds)
+	assert.Equal(t, 5.0, rules[0].LossThreshold)
+	assert.Equal(t, "client-b", rules[1].Client)
+	assert.True(t, rules[1].Enable)
+	assert.Equal(t, 60, rules[1].WindowSeconds)
+	assert.Equal(t, 30.0, rules[1].LossThreshold)
+	assert.Equal(t, 6, rules[1].MinimumSamples)
+	assert.Equal(t, 60, rules[1].CooldownSeconds)
+
+	require.NoError(t, SetPingLossNotificationDefaultConfig(PingLossNotificationDefaultConfig{
+		Enabled: false, WindowSeconds: 60, LossThreshold: 30, MinimumSamples: 6, CooldownSeconds: 60,
+	}))
+	require.NoError(t, ApplyPingLossDefaultsToTaskClients(db, task.Id, []string{"client-c"}))
+	require.NoError(t, db.Where("task_id = ?", task.Id).Find(&rules).Error)
+	require.Len(t, rules, 2)
+}
