@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,18 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestDashboardQueryLimitStaysSerialOnOneCPU(t *testing.T) {
+	previous := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(previous) })
+	assert.Equal(t, 1, dashboardQueryLimit())
+
+	runtime.GOMAXPROCS(2)
+	assert.Equal(t, 2, dashboardQueryLimit())
+
+	runtime.GOMAXPROCS(8)
+	assert.Equal(t, 3, dashboardQueryLimit())
+}
 
 func TestDashboardModuleCacheCoalescesConcurrentLoads(t *testing.T) {
 	var cache dashboardModuleCache[int]

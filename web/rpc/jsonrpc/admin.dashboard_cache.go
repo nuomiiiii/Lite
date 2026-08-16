@@ -3,6 +3,7 @@ package jsonrpc
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -14,6 +15,21 @@ import (
 )
 
 const dashboardCacheMaxEntries = 4
+
+// dashboardQueryLimit matches the SQLite heavy-read profile: one historical
+// query on a single core, at most three on larger hosts. GB5 ~600 VPS boxes
+// stay sequential so dashboard fan-out cannot fight agent ingest for the CPU.
+func dashboardQueryLimit() int {
+	cpus := runtime.GOMAXPROCS(0)
+	switch {
+	case cpus <= 1:
+		return 1
+	case cpus == 2:
+		return 2
+	default:
+		return 3
+	}
+}
 
 type dashboardCacheEntry[T any] struct {
 	value T
@@ -125,6 +141,7 @@ func buildDashboardCached(ctx context.Context, now time.Time, sections dashboard
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(dashboardQueryLimit())
 	var servers dashboardServerSummary
 	var resources dashboardResourceSummary
 	var storage dashboardStorageModule
@@ -250,6 +267,7 @@ func buildDashboardChartsCached(ctx context.Context, now time.Time, sections das
 	}
 
 	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(dashboardQueryLimit())
 	key := strconv.Itoa(rankingLimit)
 	var traffic dashboardTrafficSummary
 	var latency dashboardLatencySummary
