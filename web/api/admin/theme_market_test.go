@@ -54,6 +54,15 @@ func TestValidateThemeMarketThemeChecksum(t *testing.T) {
 	}
 }
 
+func TestThemeMarketPreviewRejectsPrivateURL(t *testing.T) {
+	if err := validateThemeMarketURLSyntax("http://127.0.0.1/preview.png"); err != nil {
+		t.Fatalf("syntax should allow loopback URL before private-IP check: %v", err)
+	}
+	if !isPrivateIP("127.0.0.1") {
+		t.Fatal("127.0.0.1 should be treated as a private preview host")
+	}
+}
+
 func TestThemeMarketI18nTextAndSourceOnlyEntry(t *testing.T) {
 	theme := ThemeMarketTheme{
 		Name:    map[string]any{"zh-CN": "测试", "en": "Test"},

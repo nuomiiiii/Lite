@@ -12,6 +12,7 @@ import (
 	"github.com/komari-monitor/komari/database/dbcore"
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
+	"github.com/komari-monitor/komari/database/notificationdefaults"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/database/trafficledger"
 	"github.com/komari-monitor/komari/utils"
@@ -29,15 +30,15 @@ func DeleteClient(clientUuid string) error {
 		}
 	}()
 
-	if err := metricstore.DeleteEntity(context.Background(), clientUuid); err != nil {
-		return err
-	}
 	db := dbcore.GetDBInstance()
 	pingTasksChanged, err := deleteClient(db, clientUuid)
 	if err != nil {
 		return err
 	}
 	deleted = true
+	if err := metricstore.ProcessPendingCleanupJobs(context.Background(), db); err != nil {
+		logger.Errorf("metricstore", "Client %s was deleted; metric cleanup remains queued: %v", clientUuid, err)
+	}
 	trafficledger.InvalidateCalibratedCycleCache()
 	if pingTasksChanged {
 		if err := tasks.ReloadPingSchedule(); err != nil {
@@ -56,6 +57,9 @@ func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
 		}
 		if clientCount == 0 {
 			return gorm.ErrRecordNotFound
+		}
+		if err := metricstore.EnqueueEntityCleanup(tx, clientUuid); err != nil {
+			return fmt.Errorf("queue client metric cleanup: %w", err)
 		}
 		if tx.Migrator().HasTable("return_route_tasks") {
 			var routeTaskIDs []uint
@@ -308,6 +312,9 @@ func CreateClient() (clientUUID, token string, err error) {
 	if err := tasks.AddDefaultOnClientUUID(clientUUID); err != nil {
 		logger.ErrorArgs("clients", "Failed to apply default-on ping tasks to new client:", err)
 	}
+	if err := notificationdefaults.ApplyDefaultsToNewClient(clientUUID); err != nil {
+		logger.ErrorArgs("clients", "Failed to apply notification defaults to new client:", err)
+	}
 	return clientUUID, token, nil
 }
 
@@ -326,6 +333,9 @@ func CreateClientWithName(name string) (clientUUID, token string, err error) {
 	}
 	if err := tasks.AddDefaultOnClientUUID(clientUUID); err != nil {
 		logger.ErrorArgs("clients", "Failed to apply default-on ping tasks to new client:", err)
+	}
+	if err := notificationdefaults.ApplyDefaultsToNewClient(clientUUID); err != nil {
+		logger.ErrorArgs("clients", "Failed to apply notification defaults to new client:", err)
 	}
 	return clientUUID, token, nil
 }

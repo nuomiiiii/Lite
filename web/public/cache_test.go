@@ -42,3 +42,13 @@ func TestStaticCacheHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestThemeStaticCacheHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	setThemeStaticCacheHeaders(context, "/themes/glass/preview.png")
+	if got := recorder.Header().Get("Cache-Control"); got != "public, max-age=86400" {
+		t.Fatalf("theme image Cache-Control=%q", got)
+	}
+}

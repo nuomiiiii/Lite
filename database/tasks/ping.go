@@ -2,7 +2,6 @@ package tasks
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/komari-monitor/komari/database/metricstore"
 	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/utils"
+	logger "github.com/komari-monitor/komari/utils/log"
 	"gorm.io/gorm"
 )
 
@@ -60,22 +60,24 @@ func DeletePingTask(id []uint) error {
 			metricstore.UnblockPingTaskWrites(id)
 		}
 	}()
-	// The metric store is independent from the main database, so clean it first
-	// to avoid leaving history that can no longer be addressed through the task.
-	if err := DeletePingRecords(id); err != nil {
-		return err
-	}
-
 	db := dbcore.GetDBInstance()
 	if err := deletePingTaskRows(db, id); err != nil {
 		return err
 	}
 	deleted = true
+	if err := metricstore.ProcessPendingCleanupJobs(context.Background(), db); err != nil {
+		logger.Errorf("metricstore", "Ping tasks were deleted; metric cleanup remains queued: %v", err)
+	}
 	return ReloadPingSchedule()
 }
 
 func deletePingTaskRows(db *gorm.DB, ids []uint) error {
 	return db.Transaction(func(tx *gorm.DB) error {
+		for _, id := range ids {
+			if err := metricstore.EnqueuePingTaskCleanup(tx, id); err != nil {
+				return fmt.Errorf("queue ping task %d metric cleanup: %w", id, err)
+			}
+		}
 		if tx.Migrator().HasTable("ping_records") {
 			if err := tx.Exec("DELETE FROM ping_records WHERE task_id IN ?", ids).Error; err != nil {
 				return fmt.Errorf("delete legacy ping records: %w", err)
@@ -102,13 +104,15 @@ func EditPingTask(tasks []*models.PingTask) error {
 	metricstore.BlockPingTaskWrites(taskIDs)
 	defer metricstore.UnblockPingTaskWrites(taskIDs)
 
-	removedAssignments, err := editPingTasks(dbcore.GetDBInstance(), tasks)
+	_, err := editPingTasks(dbcore.GetDBInstance(), tasks)
 	if err != nil {
 		return err
 	}
 	reloadErr := ReloadPingSchedule()
-	cleanupErr := metricstore.DeletePingRecordsByAssignments(context.Background(), removedAssignments)
-	return errors.Join(reloadErr, cleanupErr)
+	if cleanupErr := metricstore.ProcessPendingCleanupJobs(context.Background(), dbcore.GetDBInstance()); cleanupErr != nil {
+		logger.Errorf("metricstore", "Ping assignments were removed; metric cleanup remains queued: %v", cleanupErr)
+	}
+	return reloadErr
 }
 
 func editPingTasks(db *gorm.DB, tasks []*models.PingTask) ([]metricstore.PingAssignment, error) {
@@ -149,7 +153,11 @@ func editPingTasks(db *gorm.DB, tasks []*models.PingTask) ([]metricstore.PingAss
 					}
 				}
 				for _, client := range removedClients {
-					removedAssignments = append(removedAssignments, metricstore.PingAssignment{Client: client, TaskID: task.Id})
+					assignment := metricstore.PingAssignment{Client: client, TaskID: task.Id}
+					if err := metricstore.EnqueuePingAssignmentCleanup(tx, assignment); err != nil {
+						return fmt.Errorf("queue ping assignment metric cleanup: %w", err)
+					}
+					removedAssignments = append(removedAssignments, assignment)
 				}
 			}
 		}
@@ -158,6 +166,11 @@ func editPingTasks(db *gorm.DB, tasks []*models.PingTask) ([]metricstore.PingAss
 	if err != nil {
 		return nil, err
 	}
+	// Keep just-removed client/task series closed across cleanup retries. The
+	// broader task guard held by EditPingTask is released when that edit
+	// returns, but a failed metric-store deletion must not let new points enter
+	// the same series and then be erased by a later retry.
+	metricstore.BlockPingAssignmentWrites(removedAssignments)
 	return removedAssignments, nil
 }
 

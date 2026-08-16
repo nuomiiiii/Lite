@@ -9,11 +9,13 @@ var ErrMetricWriteBlocked = errors.New("metric writes are blocked for a deleted 
 
 var deletionGuards = struct {
 	sync.RWMutex
-	entities  map[string]struct{}
-	pingTasks map[uint]struct{}
+	entities        map[string]struct{}
+	pingTasks       map[uint]struct{}
+	pingAssignments map[PingAssignment]struct{}
 }{
-	entities:  make(map[string]struct{}),
-	pingTasks: make(map[uint]struct{}),
+	entities:        make(map[string]struct{}),
+	pingTasks:       make(map[uint]struct{}),
+	pingAssignments: make(map[PingAssignment]struct{}),
 }
 
 func BlockEntityWrites(entityID string) {
@@ -57,6 +59,31 @@ func UnblockPingTaskWrites(taskIDs []uint) {
 func PingTaskWritesBlocked(taskID uint) bool {
 	deletionGuards.RLock()
 	_, blocked := deletionGuards.pingTasks[taskID]
+	deletionGuards.RUnlock()
+	return blocked
+}
+
+func BlockPingAssignmentWrites(assignments []PingAssignment) {
+	deletionGuards.Lock()
+	for _, assignment := range assignments {
+		if assignment.Client != "" && assignment.TaskID != 0 {
+			deletionGuards.pingAssignments[assignment] = struct{}{}
+		}
+	}
+	deletionGuards.Unlock()
+}
+
+func UnblockPingAssignmentWrites(assignments []PingAssignment) {
+	deletionGuards.Lock()
+	for _, assignment := range assignments {
+		delete(deletionGuards.pingAssignments, assignment)
+	}
+	deletionGuards.Unlock()
+}
+
+func PingAssignmentWritesBlocked(assignment PingAssignment) bool {
+	deletionGuards.RLock()
+	_, blocked := deletionGuards.pingAssignments[assignment]
 	deletionGuards.RUnlock()
 	return blocked
 }

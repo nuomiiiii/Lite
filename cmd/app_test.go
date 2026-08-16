@@ -2,18 +2,62 @@ package cmd
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/komari-monitor/komari/database/metricstore"
+	"github.com/komari-monitor/komari/database/models"
 	"github.com/komari-monitor/komari/pkg/config"
 	installweb "github.com/komari-monitor/komari/web/install"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
+
+func TestListenAndFinalizeStartupDoesNotCommitWhenPortIsOccupied(t *testing.T) {
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve occupied port: %v", err)
+	}
+	defer occupied.Close()
+
+	commitCalled := false
+	backgroundCalled := false
+	listener, err := listenAndFinalizeStartup(
+		occupied.Addr().String(),
+		func() error { commitCalled = true; return nil },
+		func() error { backgroundCalled = true; return nil },
+	)
+	if err == nil {
+		if listener != nil {
+			listener.Close()
+		}
+		t.Fatal("expected occupied listener to fail")
+	}
+	if commitCalled || backgroundCalled {
+		t.Fatalf("startup finalized after bind failure: commit=%t background=%t", commitCalled, backgroundCalled)
+	}
+}
+
+func TestListenAndFinalizeStartupCommitsOnlyAfterBinding(t *testing.T) {
+	order := make([]string, 0, 2)
+	listener, err := listenAndFinalizeStartup(
+		"127.0.0.1:0",
+		func() error { order = append(order, "commit"); return nil },
+		func() error { order = append(order, "background"); return nil },
+	)
+	if err != nil {
+		t.Fatalf("listen and finalize startup: %v", err)
+	}
+	defer listener.Close()
+	if got := strings.Join(order, ","); got != "commit,background" {
+		t.Fatalf("startup order = %q, want commit,background", got)
+	}
+}
 
 func TestFirstRunInstallRedirect(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -82,6 +126,30 @@ func TestNormalizeMetricStorageSettingsOverridesLegacyValues(t *testing.T) {
 	retention, err := config.GetAs[int]("metric_retention_days")
 	if err != nil || retention != 37 {
 		t.Fatalf("retention = %d, err %v; want preserved value 37", retention, err)
+	}
+}
+
+func TestStartupMetricCleanupFailureIsRetainedForRetry(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:startup-metric-cleanup?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open cleanup database: %v", err)
+	}
+	if err := db.AutoMigrate(&models.MetricCleanupJob{}); err != nil {
+		t.Fatalf("migrate cleanup queue: %v", err)
+	}
+	job := models.MetricCleanupJob{Kind: "unsupported"}
+	if err := db.Create(&job).Error; err != nil {
+		t.Fatalf("seed cleanup job: %v", err)
+	}
+
+	processPendingMetricCleanupAtStartup(db)
+
+	var retained models.MetricCleanupJob
+	if err := db.First(&retained, job.ID).Error; err != nil {
+		t.Fatalf("failed cleanup job was not retained: %v", err)
+	}
+	if retained.Attempts != 1 || !strings.Contains(retained.LastError, "unsupported metric cleanup kind") {
+		t.Fatalf("retained cleanup job = %#v, want one recorded failed attempt", retained)
 	}
 }
 

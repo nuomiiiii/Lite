@@ -1,7 +1,9 @@
 package notifier
 
 import (
+	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"sync"
 	"time"
@@ -20,12 +22,14 @@ import (
 
 // LoadNotificationService 管理定时器和任务
 type LoadNotificationService struct {
-	mu    sync.Mutex
-	tasks map[int][]models.LoadNotification
+	mu        sync.Mutex
+	tasks     map[int][]models.LoadNotification
+	executing map[uint]struct{}
 }
 
 var LoadNotificationManager = &LoadNotificationService{
-	tasks: make(map[int][]models.LoadNotification),
+	tasks:     make(map[int][]models.LoadNotification),
+	executing: make(map[uint]struct{}),
 }
 
 // Reload 重载时间表
@@ -61,9 +65,33 @@ func (m *LoadNotificationService) Reload(loadNotifications []models.LoadNotifica
 
 // executeLoadNotificationTask 执行单个LoadNotificationTask
 func executeLoadNotificationTask(task models.LoadNotification) {
+	if !LoadNotificationManager.beginExecution(task.Id) {
+		return
+	}
+	defer LoadNotificationManager.endExecution(task.Id)
+
 	if err := evaluateLoadNotificationTask(task, time.Now().UTC(), true); err != nil {
 		logger.Errorf("notifier", "Failed to evaluate load notification %d: %v", task.Id, err)
 	}
+}
+
+func (m *LoadNotificationService) beginExecution(taskID uint) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.executing == nil {
+		m.executing = make(map[uint]struct{})
+	}
+	if _, running := m.executing[taskID]; running {
+		return false
+	}
+	m.executing[taskID] = struct{}{}
+	return true
+}
+
+func (m *LoadNotificationService) endExecution(taskID uint) {
+	m.mu.Lock()
+	delete(m.executing, taskID)
+	m.mu.Unlock()
 }
 
 func evaluateLoadNotificationTask(task models.LoadNotification, now time.Time, sendNotification bool) error {
@@ -72,6 +100,7 @@ func evaluateLoadNotificationTask(task models.LoadNotification, now time.Time, s
 	for _, clientUUID := range task.Clients {
 		records, err := getRecordsForClient(clientUUID, windowStart, now, task.Metric)
 		if err != nil {
+			logger.Errorf("notifier", "Failed to read %s records for %s in load notification %d: %v", task.Metric, clientUUID, task.Id, err)
 			continue
 		}
 		var client *models.Client
@@ -96,11 +125,25 @@ func evaluateLoadNotificationTask(task models.LoadNotification, now time.Time, s
 	if !current {
 		return nil
 	}
-	if sendNotification && !shouldSkipNotification(task) && len(notifyClients) > 0 {
-		sendLoadNotification(notifyClients, task)
-		updateLastNotified(task.Id, now)
+	if !sendNotification {
+		return nil
 	}
-	return nil
+	recoveryClients, err := pendingLoadRecoveryClientsWithDB(dbcore.GetDBInstance(), task.Id)
+	if err != nil {
+		return fmt.Errorf("list pending load recoveries %d: %w", task.Id, err)
+	}
+	var sendErrors []error
+	if len(recoveryClients) > 0 {
+		if err := sendLoadRecoveryNotification(recoveryClients, task, now); err != nil {
+			sendErrors = append(sendErrors, fmt.Errorf("send load recovery %d: %w", task.Id, err))
+		}
+	}
+	if len(notifyClients) > 0 {
+		if err := sendLoadNotification(notifyClients, task, now); err != nil {
+			sendErrors = append(sendErrors, fmt.Errorf("send load notification %d: %w", task.Id, err))
+		}
+	}
+	return errors.Join(sendErrors...)
 }
 
 type loadClientEvaluation struct {
@@ -153,31 +196,43 @@ func persistLoadClientEvaluationsWithDB(db *gorm.DB, task models.LoadNotificatio
 				continue
 			}
 			previous := byClient[evaluation.client]
+			fingerprint := models.LoadNotificationRuleFingerprint(stored)
+			if previous.RuleFingerprint != fingerprint {
+				previous = models.LoadNotificationState{}
+			}
 			state := models.LoadNotificationState{
 				NotificationID: task.Id, Client: evaluation.client,
-				AlertActive: evaluation.active, LastEvaluatedAt: now.UTC(),
+				RuleFingerprint: fingerprint,
+				AlertActive:     evaluation.active, LastEvaluatedAt: now.UTC(),
 				LatestValue: evaluation.latestValue, MatchedSamples: evaluation.matchedSamples,
-				TotalSamples: evaluation.totalSamples, SilencedUntil: previous.SilencedUntil,
+				TotalSamples: evaluation.totalSamples, LastNotified: previous.LastNotified,
+				RecoveryPending: previous.RecoveryPending, SilencedUntil: previous.SilencedUntil,
 				SilencedForever: previous.SilencedForever,
 			}
 			if evaluation.active {
+				state.RecoveryPending = false
 				if previous.AlertActive && previous.ActiveSince != nil {
 					state.ActiveSince = previous.ActiveSince
 				} else {
 					started := now.UTC()
 					state.ActiveSince = &started
 				}
+			} else if previous.AlertActive && previous.LastNotified != nil && !loadAlertStateSilenced(previous, now) {
+				state.RecoveryPending = true
+			} else if !previous.RecoveryPending {
+				state.LastNotified = nil
 			}
 			if err := tx.Clauses(clause.OnConflict{
 				Columns: []clause.Column{{Name: "notification_id"}, {Name: "client"}},
 				DoUpdates: clause.AssignmentColumns([]string{
-					"alert_active", "active_since", "last_evaluated_at", "latest_value",
-					"matched_samples", "total_samples", "updated_at",
+					"rule_fingerprint", "alert_active", "active_since", "last_evaluated_at",
+					"latest_value", "matched_samples", "total_samples", "last_notified",
+					"recovery_pending", "silenced_until", "silenced_forever", "updated_at",
 				}),
 			}).Create(&state).Error; err != nil {
 				return err
 			}
-			if evaluation.active && !loadAlertStateSilenced(state, now) {
+			if evaluation.active && !loadAlertStateSilenced(state, now) && !shouldSkipLoadClientNotification(previous.LastNotified, stored.Interval, now) {
 				notifyClients = append(notifyClients, evaluation.client)
 			}
 		}
@@ -198,17 +253,21 @@ func loadAlertStateSilenced(state models.LoadNotificationState, now time.Time) b
 	return state.SilencedForever || (state.SilencedUntil != nil && state.SilencedUntil.After(now))
 }
 
-// shouldSkipNotification 检查是否应该跳过通知（冷却期检查）
-func shouldSkipNotification(task models.LoadNotification) bool {
-	if task.LastNotified == nil || task.LastNotified.IsZero() {
+func shouldSkipLoadClientNotification(lastNotified *time.Time, interval int, now time.Time) bool {
+	if lastNotified == nil || lastNotified.IsZero() {
 		return false
 	}
-
-	// 计算冷却期（使用 interval 作为冷却期）
-	cooldownPeriod := time.Duration(task.Interval) * time.Minute
-	timeSinceLastNotified := time.Since(*task.LastNotified)
-
+	cooldownPeriod := time.Duration(interval) * time.Minute
+	timeSinceLastNotified := now.UTC().Sub(lastNotified.UTC())
 	return timeSinceLastNotified < cooldownPeriod
+}
+
+func pendingLoadRecoveryClientsWithDB(db *gorm.DB, taskID uint) ([]string, error) {
+	var clients []string
+	err := db.Model(&models.LoadNotificationState{}).
+		Where("notification_id = ? AND recovery_pending = ?", taskID, true).
+		Order("client ASC").Pluck("client", &clients).Error
+	return clients, err
 }
 
 // getRecordsForClient 获取指定客户端在时间窗口内的记录
@@ -228,7 +287,7 @@ func evaluateMetricThreshold(records []models.Record, task models.LoadNotificati
 	}
 
 	// 计算需要达标的最小记录数
-	minRequiredRecords := int(float32(len(records)) * task.Ratio)
+	minRequiredRecords := int(math.Ceil(float64(len(records)) * float64(task.Ratio)))
 	if minRequiredRecords == 0 {
 		minRequiredRecords = 1
 	}
@@ -312,34 +371,80 @@ func bytesPerSecondToMbps(bytesPerSecond int64) float32 {
 }
 
 // sendLoadNotification 发送负载通知
-func sendLoadNotification(clientUUIDs []string, task models.LoadNotification) {
-	ex_clients := []models.Client{}
+func sendLoadNotification(clientUUIDs []string, task models.LoadNotification, now time.Time) error {
+	return sendLoadNotificationWith(dbcore.GetDBInstance(), clientUUIDs, task, now, clients.GetClientByUUID, messageSender.SendEvent)
+}
+
+func sendLoadNotificationWith(db *gorm.DB, clientUUIDs []string, task models.LoadNotification, now time.Time, lookup func(string) (models.Client, error), send func(models.EventMessage) error) error {
+	return sendLoadClientNotificationsWith(db, clientUUIDs, task, now, false, lookup, send)
+}
+
+func sendLoadRecoveryNotification(clientUUIDs []string, task models.LoadNotification, now time.Time) error {
+	return sendLoadRecoveryNotificationWith(dbcore.GetDBInstance(), clientUUIDs, task, now, clients.GetClientByUUID, messageSender.SendEvent)
+}
+
+func sendLoadRecoveryNotificationWith(db *gorm.DB, clientUUIDs []string, task models.LoadNotification, now time.Time, lookup func(string) (models.Client, error), send func(models.EventMessage) error) error {
+	return sendLoadClientNotificationsWith(db, clientUUIDs, task, now, true, lookup, send)
+}
+
+func sendLoadClientNotificationsWith(db *gorm.DB, clientUUIDs []string, task models.LoadNotification, now time.Time, recovery bool, lookup func(string) (models.Client, error), send func(models.EventMessage) error) error {
+	var sendErrors []error
+	alertSent := false
 	for _, clientUUID := range clientUUIDs {
-		cl, err := clients.GetClientByUUID(clientUUID)
-		if err == nil {
-			ex_clients = append(ex_clients, cl)
+		client, err := lookup(clientUUID)
+		if err != nil {
+			sendErrors = append(sendErrors, fmt.Errorf("load client %s: %w", clientUUID, err))
+			continue
+		}
+		emoji, message := "⚠️", task.Name
+		if recovery {
+			emoji, message = "✅", task.Name+" 已恢复"
+		}
+		if err := send(models.EventMessage{
+			Event: messageevent.Alert, Clients: []models.Client{client}, Time: now.UTC(), Emoji: emoji, Message: message,
+		}); err != nil {
+			sendErrors = append(sendErrors, fmt.Errorf("send client %s: %w", clientUUID, err))
+			continue
+		}
+		updates := map[string]any{"last_notified": now.UTC()}
+		query := db.Model(&models.LoadNotificationState{}).
+			Where("notification_id = ? AND client = ?", task.Id, clientUUID)
+		if recovery {
+			updates["last_notified"] = nil
+			updates["recovery_pending"] = false
+			query = query.Where("recovery_pending = ?", true)
+		} else {
+			query = query.Where("alert_active = ?", true)
+		}
+		result := query.Updates(updates)
+		if result.Error != nil {
+			sendErrors = append(sendErrors, fmt.Errorf("record client %s delivery: %w", clientUUID, result.Error))
+			continue
+		}
+		if result.RowsAffected == 0 {
+			sendErrors = append(sendErrors, fmt.Errorf("record client %s delivery: %w", clientUUID, gorm.ErrRecordNotFound))
+			continue
+		}
+		alertSent = alertSent || !recovery
+	}
+	if alertSent {
+		if err := updateLastNotifiedWithDB(db, task.Id, now); err != nil {
+			sendErrors = append(sendErrors, err)
 		}
 	}
-	if len(ex_clients) == 0 {
-		return
-	}
-	go func() {
-		messageSender.SendEvent(models.EventMessage{
-			Event:   messageevent.Alert,
-			Clients: ex_clients,
-			Time:    time.Now().UTC(),
-			Emoji:   "⚠️",
-			Message: task.Name,
-		})
-	}()
+	return errors.Join(sendErrors...)
 }
 
 // updateLastNotified 更新最后通知时间
-func updateLastNotified(taskId uint, notifyTime time.Time) {
-	db := dbcore.GetDBInstance()
-	if err := db.Model(&models.LoadNotification{}).Where("id = ?", taskId).Update("last_notified", notifyTime.UTC()).Error; err != nil {
-		logger.Errorf("notifier", "Failed to update last_notified for task %d: %v", taskId, err)
+func updateLastNotifiedWithDB(db *gorm.DB, taskID uint, notifyTime time.Time) error {
+	result := db.Model(&models.LoadNotification{}).Where("id = ?", taskID).Update("last_notified", notifyTime.UTC())
+	if result.Error != nil {
+		return result.Error
 	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 // ReloadLoadNotificationSchedule 加载或重载时间表

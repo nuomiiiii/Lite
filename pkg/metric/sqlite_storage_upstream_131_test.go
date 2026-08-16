@@ -19,7 +19,7 @@ func TestSQLiteStorageMigratesUpstream131RollupsToV4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect upstream 1.3.1 database: %v", err)
 	}
-	if !summary.Required || summary.Layout != "upstream-1.3.1" || summary.SourceRows != 2 {
+	if !summary.Required || summary.Layout != "upstream-1.3.1-1.4.x" || summary.SourceRows != 2 {
 		t.Fatalf("upstream 1.3.1 should enter the migration page: %#v", summary)
 	}
 
@@ -79,6 +79,47 @@ func TestSQLiteStorageMigratesUpstream131RollupsToV4(t *testing.T) {
 	}
 	if summary.Required || summary.Layout != "current" {
 		t.Fatalf("upstream 1.3.1 migration should not repeat: %#v", summary)
+	}
+}
+
+func TestSQLiteStorageMigratesUpstream14LabelSets(t *testing.T) {
+	ctx := context.Background()
+	dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
+	base := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
+	seedUpstream131SQLiteStore(t, dsn, base, false)
+
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE metric_labels RENAME TO metric_label_sets`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := InspectSQLiteMigration(ctx, SQLite(dsn))
+	if err != nil {
+		t.Fatalf("inspect upstream 1.4 database: %v", err)
+	}
+	if !summary.Required || summary.Layout != "upstream-1.3.1-1.4.x" || summary.SourceRows != 2 {
+		t.Fatalf("upstream 1.4 should enter the migration page: %#v", summary)
+	}
+
+	store, err := Open(ctx, SQLite(dsn))
+	if err != nil {
+		t.Fatalf("upgrade upstream 1.4 database: %v", err)
+	}
+	defer store.Close()
+	rows, err := store.scanRollupRowsBetween(ctx, "compat.131", "upstream-node", map[string]string{"task_id": "7"},
+		time.Minute.Nanoseconds(), base.UnixNano(), base.UnixNano(), true)
+	if err != nil {
+		t.Fatalf("read migrated upstream 1.4 rollup: %v", err)
+	}
+	if len(rows) != 1 || rows[0].bucketData.count != 2 || rows[0].bucketData.sum != 30 {
+		t.Fatalf("migrated upstream 1.4 rollup changed: %#v", rows)
 	}
 }
 

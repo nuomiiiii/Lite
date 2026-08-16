@@ -124,6 +124,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		theme.PUT("/market/sources/:id", admin.UpdateThemeMarketSource)
 		theme.DELETE("/market/sources/:id", admin.DeleteThemeMarketSource)
 		theme.GET("/market/catalog", admin.ListThemeMarketCatalog)
+		theme.GET("/market/preview", admin.ServeThemeMarketPreview)
 		theme.POST("/market/install", admin.InstallThemeFromMarket)
 	}
 
@@ -238,6 +239,8 @@ func registerAdminRoutes(r *gin.Engine) {
 		notificationGroup.POST("/offline/edit", jsonRpc.Bind("admin:editOfflineNotification"))
 		notificationGroup.POST("/offline/enable", jsonRpc.Bind("admin:enableOfflineNotification"))
 		notificationGroup.POST("/offline/disable", jsonRpc.Bind("admin:disableOfflineNotification"))
+		notificationGroup.GET("/offline/default", jsonRpc.Bind("admin:getOfflineNotificationDefault"))
+		notificationGroup.POST("/offline/default", jsonRpc.Bind("admin:setOfflineNotificationDefault"))
 		loadAlert := notificationGroup.Group("/load")
 		{
 			loadAlert.GET("/", jsonRpc.Bind("admin:getAllLoadNotifications"))
@@ -253,6 +256,8 @@ func registerAdminRoutes(r *gin.Engine) {
 			trafficReport.POST("/edit", jsonRpc.Bind("admin:editTrafficReportNotifications"))
 			trafficReport.POST("/enable", jsonRpc.Bind("admin:enableTrafficReportNotifications"))
 			trafficReport.POST("/disable", jsonRpc.Bind("admin:disableTrafficReportNotifications"))
+			trafficReport.GET("/default", jsonRpc.Bind("admin:getTrafficReportDefault"))
+			trafficReport.POST("/default", jsonRpc.Bind("admin:setTrafficReportDefault"))
 			trafficReport.POST("/send-daily", jsonRpc.Bind("admin:sendDailyTrafficReport"))
 		}
 		pingLoss := notificationGroup.Group("/ping-loss")
@@ -262,6 +267,8 @@ func registerAdminRoutes(r *gin.Engine) {
 			pingLoss.POST("/edit", jsonRpc.Bind("admin:editPingLossNotifications"))
 			pingLoss.POST("/batch", jsonRpc.Bind("admin:upsertPingLossNotifications"))
 			pingLoss.POST("/delete", jsonRpc.Bind("admin:deletePingLossNotifications"))
+			pingLoss.GET("/default", jsonRpc.Bind("admin:getPingLossNotificationDefault"))
+			pingLoss.POST("/default", jsonRpc.Bind("admin:setPingLossNotificationDefault"))
 		}
 	}
 

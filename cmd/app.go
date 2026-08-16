@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -44,6 +45,7 @@ import (
 	storageupdateweb "github.com/komari-monitor/komari/web/storageupdate"
 	upgradeweb "github.com/komari-monitor/komari/web/update"
 	"github.com/komari-monitor/komari/web/upload"
+	"gorm.io/gorm"
 )
 
 // cleanupFunc 是一个关闭阶段执行的清理函数。
@@ -171,6 +173,7 @@ func (a *App) InitStores() error {
 
 		return fmt.Errorf("metrics startup migration failed: %w", err)
 	}
+	processPendingMetricCleanupAtStartup(dbcore.GetDBInstance())
 	var registeredClients []models.Client
 	if err := dbcore.GetDBInstance().Select("uuid").Find(&registeredClients).Error; err != nil {
 		return fmt.Errorf("failed to list clients for metrics orphan cleanup: %w", err)
@@ -202,6 +205,23 @@ func (a *App) InitStores() error {
 	a.addCleanup("metric-report-batcher", func(ctx context.Context) error {
 		return metricstore.StopReportBatcher(ctx)
 	})
+	return nil
+}
+
+func processPendingMetricCleanupAtStartup(db *gorm.DB) {
+	if err := metricstore.ProcessPendingCleanupJobs(context.Background(), db); err != nil {
+		logger.Errorf("metricstore", "Pending metric cleanup failed during startup and will be retried in the background: %v", err)
+	}
+}
+
+// CommitRestore marks a staged backup as fully usable only after the main
+// database, metric store, providers, and router all initialized. Background
+// tasks start afterwards so a candidate restore cannot emit notifications or
+// perform scheduled writes before it becomes durable.
+func (a *App) CommitRestore() error {
+	if err := dbcore.CommitPendingRestore(); err != nil {
+		return fmt.Errorf("commit verified backup restore: %w", err)
+	}
 	return nil
 }
 
@@ -493,6 +513,12 @@ func (a *App) RunMetricStorageUpgrade(summary metric.SQLiteMigrationSummary) (bo
 
 // StartBackground 启动后台工作：定时任务。
 func (a *App) StartBackground() error {
+	stopMetricCleanup := metricstore.StartPendingCleanupWorker(dbcore.GetDBInstance())
+	a.addCleanup("metric-cleanup", func(context.Context) error {
+		stopMetricCleanup()
+		return nil
+	})
+
 	stopReturnRouteRules := tasks.StartReturnRouteRuleWatcher()
 	a.addCleanup("return-route-rules", func(context.Context) error {
 		stopReturnRouteRules()
@@ -598,6 +624,20 @@ func (a *App) BuildRouter() error {
 
 // Run 启动 HTTP 服务并阻塞直到收到中断信号或服务异常退出。
 func (a *App) Run() error {
+	a.server = &http.Server{
+		Addr:    flags.Listen,
+		Handler: httpsserver.Default.HTTPRedirectHandler(a.engine),
+	}
+	listener, err := listenAndFinalizeStartup(
+		flags.Listen,
+		a.CommitRestore,
+		a.StartBackground,
+	)
+	if err != nil {
+		a.onFatal(err)
+		return err
+	}
+
 	httpsSettings, err := httpsserver.LoadSettings()
 	if err != nil {
 		logger.Errorf("https", "Failed to load built-in HTTPS settings: %v", err)
@@ -610,15 +650,10 @@ func (a *App) Run() error {
 		return httpsserver.Default.Shutdown(ctx)
 	})
 
-	a.server = &http.Server{
-		Addr:    flags.Listen,
-		Handler: httpsserver.Default.HTTPRedirectHandler(a.engine),
-	}
-
 	serverErr := make(chan error, 1)
 	logger.Infof("server", "Starting server on %s ...", flags.Listen)
 	go func() {
-		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := a.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
 		}
 	}()
@@ -633,6 +668,31 @@ func (a *App) Run() error {
 	case <-quit:
 		return a.Shutdown()
 	}
+}
+
+func listenAndFinalizeStartup(
+	address string,
+	commitRestore func() error,
+	startBackground func() error,
+) (net.Listener, error) {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, fmt.Errorf("listen: %w", err)
+	}
+	closeOnError := true
+	defer func() {
+		if closeOnError {
+			_ = listener.Close()
+		}
+	}()
+	if err := commitRestore(); err != nil {
+		return nil, fmt.Errorf("commit verified backup restore: %w", err)
+	}
+	if err := startBackground(); err != nil {
+		return nil, fmt.Errorf("start background work: %w", err)
+	}
+	closeOnError = false
+	return listener, nil
 }
 
 // Shutdown 优雅关闭：先停止接收新请求，再反序执行已登记的清理函数。

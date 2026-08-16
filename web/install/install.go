@@ -125,17 +125,30 @@ func (c *Controller) status(ctx *gin.Context) {
 }
 
 func (c *Controller) finalizeBackupUpload(session upload.Session) (upload.Result, error) {
+	restoreLock, err := backup.AcquireRestoreLock()
+	if err != nil {
+		return upload.Result{}, err
+	}
 	archive, err := os.Open(session.ArchivePath)
 	if err != nil {
+		restoreLock.Release()
 		return upload.Result{}, fmt.Errorf("open merged backup: %w", err)
 	}
-	defer archive.Close()
-	if err := backup.SaveUploadedBackup(archive, session.Metadata.Filename); err != nil {
+	if err := restoreLock.SaveUploadedBackup(archive, session.Metadata.Filename); err != nil {
+		_ = archive.Close()
+		restoreLock.Release()
 		return upload.Result{}, err
+	}
+	if err := archive.Close(); err != nil {
+		restoreLock.Release()
+		return upload.Result{}, fmt.Errorf("close merged backup: %w", err)
 	}
 	scheduleInstallRestart(2*time.Second, func() {
 		logger.InfoArgs("install", "Backup uploaded, restarting service to restore it on startup...")
 		exitInstallProcess(0)
+		// os.Exit never returns. This release is reached only by test doubles or
+		// a custom exit hook that declined to terminate the process.
+		restoreLock.Release()
 	})
 	return upload.Result{Message: "backup uploaded; restarting to restore", Data: gin.H{}}, nil
 }
