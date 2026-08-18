@@ -164,6 +164,7 @@ func WebSocketV2RPC(c *gin.Context) {
 	}
 	conn := connection.NewSafeConn(unsafeConn)
 	defer conn.Close()
+	attachAgentWebSocketKeepalive(conn)
 
 	uuid, ok := clientUUIDFromContext(c)
 	if !ok {
@@ -185,7 +186,7 @@ func WebSocketV2RPC(c *gin.Context) {
 	}
 
 	for {
-		conn.SetReadDeadline(time.Now().Add(readWait))
+		refreshAgentWebSocketReadDeadline(conn)
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {

@@ -24,16 +24,34 @@ func NewSafeConn(conn *websocket.Conn) *SafeConn {
 func (sc *SafeConn) WriteMessage(messageType int, data []byte) error {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	_ = sc.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	return sc.conn.WriteMessage(messageType, data)
 }
 
 func (sc *SafeConn) WriteJSON(v interface{}) error {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	_ = sc.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	return sc.conn.WriteJSON(v)
 }
 
+func (sc *SafeConn) WriteControl(messageType int, data []byte, deadline time.Time) error {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.conn.WriteControl(messageType, data, deadline)
+}
+
+func (sc *SafeConn) SetPingHandler(handler func(appData string) error) {
+	sc.conn.SetPingHandler(handler)
+}
+
 func (sc *SafeConn) Close() error {
+	if sc == nil || sc.conn == nil {
+		return nil
+	}
+	if netConn := sc.conn.NetConn(); netConn != nil {
+		_ = netConn.SetDeadline(time.Now())
+	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	return sc.conn.Close()
