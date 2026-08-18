@@ -22,13 +22,6 @@ func EnableWebSocketCompression(upgrader *websocket.Upgrader) {
 	upgrader.EnableCompression = true
 }
 
-func RequireSameOriginWebSocket(upgrader *websocket.Upgrader) {
-	upgrader.CheckOrigin = func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		return origin != "" && security.OriginMatchesRequest(origin, r)
-	}
-}
-
 // RequireRemoteBrowserOrigin keeps normal same-origin enforcement while
 // accepting opaque origins used by some installed mobile web apps. The remote
 // endpoint additionally requires an administrator cookie and a single-use,
