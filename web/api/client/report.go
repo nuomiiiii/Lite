@@ -21,9 +21,6 @@ import (
 )
 
 const (
-	// 如果超过这个时间没有收到任何消息，则认为连接已死
-	// 因为目前server没有存agent的信息上报间隔。只有写一个默认的
-	readWait        = 11 * time.Second
 	postPresenceTTL = 35 * time.Second
 )
 
@@ -147,6 +144,7 @@ func WebSocketReport(c *gin.Context) {
 	}
 	conn := connection.NewSafeConn(unsafeConn)
 	defer conn.Close()
+	attachAgentWebSocketKeepalive(conn)
 
 	_, message, err := conn.ReadMessage()
 	if err != nil {
@@ -179,7 +177,7 @@ func WebSocketReport(c *gin.Context) {
 	processMessage(conn, message, uuid)
 
 	for {
-		conn.SetReadDeadline(time.Now().Add(readWait))
+		refreshAgentWebSocketReadDeadline(conn)
 
 		_, message, err := conn.ReadMessage()
 		if err != nil {
