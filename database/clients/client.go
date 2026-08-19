@@ -201,7 +201,10 @@ func deleteLegacyClientRows(tx *gorm.DB, clientUUID string) error {
 }
 
 func SaveClientInfo(update map[string]interface{}) error {
-	db := dbcore.GetDBInstance()
+	return saveClientInfo(dbcore.GetDBInstance(), update)
+}
+
+func saveClientInfo(db *gorm.DB, update map[string]interface{}) error {
 	clientUUID, ok := update["uuid"].(string)
 	if !ok || clientUUID == "" {
 		return fmt.Errorf("invalid client UUID")
@@ -290,11 +293,120 @@ func SaveClientInfo(update map[string]interface{}) error {
 		return err
 	}
 
-	err := db.Model(&models.Client{}).Where("uuid = ?", clientUUID).Updates(update).Error
-	if err != nil {
+	detectedRegion, _ := update["region"].(string)
+	detectedRegion = strings.TrimSpace(detectedRegion)
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		var current models.Client
+		if err := tx.Select("uuid", "region", "region_override").Where("uuid = ?", clientUUID).First(&current).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&models.Client{}).Where("uuid = ?", clientUUID).Updates(update).Error; err != nil {
+			return err
+		}
+
+		// Region is empty until the Agent's first successful basic-info report.
+		// Reorder only on that transition so later reports never fight manual order.
+		if current.Region != "" || detectedRegion == "" {
+			return nil
+		}
+		effectiveRegion := detectedRegion
+		if current.RegionOverride != "" {
+			effectiveRegion = current.RegionOverride
+		}
+		return placeClientAfterRegionPeers(tx, clientUUID, effectiveRegion)
+	})
+}
+
+type clientOrderState struct {
+	UUID           string
+	Region         string
+	RegionOverride string
+	Group          string
+	Weight         int
+	CreatedAt      time.Time
+}
+
+func (client clientOrderState) effectiveRegion() string {
+	if client.RegionOverride != "" {
+		return client.RegionOverride
+	}
+	return client.Region
+}
+
+func placeClientAfterRegionPeers(tx *gorm.DB, clientUUID, region string) error {
+	var ordered []clientOrderState
+	if err := tx.Model(&models.Client{}).
+		Order("weight ASC").Order("created_at ASC").Order("uuid ASC").
+		Find(&ordered).Error; err != nil {
 		return err
 	}
+	reordered, changed, err := orderClientAfterRegionPeers(ordered, clientUUID, region)
+	if err != nil || !changed {
+		return err
+	}
+	for weight := range reordered {
+		if reordered[weight].Weight == weight {
+			continue
+		}
+		if err := tx.Model(&models.Client{}).
+			Where("uuid = ?", reordered[weight].UUID).
+			Update("weight", weight).Error; err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func orderClientAfterRegionPeers(ordered []clientOrderState, clientUUID, region string) ([]clientOrderState, bool, error) {
+	clientIndex := -1
+	for index := range ordered {
+		if ordered[index].UUID == clientUUID {
+			clientIndex = index
+			break
+		}
+	}
+	if clientIndex < 0 {
+		return nil, false, gorm.ErrRecordNotFound
+	}
+
+	moving := ordered[clientIndex]
+	withoutClient := append([]clientOrderState{}, ordered[:clientIndex]...)
+	withoutClient = append(withoutClient, ordered[clientIndex+1:]...)
+	insertAt := -1
+	for index := range withoutClient {
+		if withoutClient[index].Group == moving.Group && withoutClient[index].effectiveRegion() == region {
+			insertAt = index + 1
+		}
+	}
+	if insertAt < 0 {
+		return ordered, false, nil
+	}
+
+	reordered := make([]clientOrderState, 0, len(ordered))
+	reordered = append(reordered, withoutClient[:insertAt]...)
+	reordered = append(reordered, moving)
+	reordered = append(reordered, withoutClient[insertAt:]...)
+	changed := false
+	for weight := range reordered {
+		if reordered[weight].UUID != ordered[weight].UUID || reordered[weight].Weight != weight {
+			changed = true
+		}
+	}
+	return reordered, changed, nil
+}
+
+// UpdateClientOrder applies an administrator-provided order atomically.
+func UpdateClientOrder(order map[string]int) error {
+	return dbcore.GetDBInstance().Transaction(func(tx *gorm.DB) error {
+		for clientUUID, weight := range order {
+			if err := tx.Model(&models.Client{}).Where("uuid = ?", clientUUID).Update("weight", weight).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // CreateClient 创建新客户端
