@@ -53,6 +53,117 @@ func TestNewClientDefaultsTrafficLimitTypeToSum(t *testing.T) {
 	assert.Equal(t, now, client.UpdatedAt)
 }
 
+func TestSaveClientInfoPlacesNewClientAfterSameRegionWithinGroup(t *testing.T) {
+	db := newClientTestDB(t, "auto-order-same-region")
+	now := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create([]models.Client{
+		{UUID: "hk-1", Token: "token-hk-1", Region: "🇭🇰", Group: "edge", Weight: 0, CreatedAt: now},
+		{UUID: "jp-1", Token: "token-jp-1", Region: "🇯🇵", Group: "edge", Weight: 1, CreatedAt: now.Add(time.Minute)},
+		{UUID: "hk-other", Token: "token-hk-other", Region: "🇭🇰", Group: "other", Weight: 2, CreatedAt: now.Add(2 * time.Minute)},
+		{UUID: "hk-new", Token: "token-hk-new", Group: "edge", Weight: 3, CreatedAt: now.Add(3 * time.Minute)},
+		{UUID: "sg-1", Token: "token-sg-1", Region: "🇸🇬", Group: "edge", Weight: 4, CreatedAt: now.Add(4 * time.Minute)},
+	}).Error)
+
+	require.NoError(t, saveClientInfo(db, map[string]interface{}{
+		"uuid": "hk-new", "region": "🇭🇰",
+	}))
+
+	assertClientOrder(t, db, []string{"hk-1", "hk-new", "jp-1", "hk-other", "sg-1"})
+}
+
+func TestSaveClientInfoUsesRegionOverrideForInitialPlacement(t *testing.T) {
+	db := newClientTestDB(t, "auto-order-region-override")
+	now := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create([]models.Client{
+		{UUID: "hk-1", Token: "token-hk-1", Region: "🇭🇰", Weight: 0, CreatedAt: now},
+		{UUID: "sg-1", Token: "token-sg-1", Region: "🇸🇬", Weight: 1, CreatedAt: now.Add(time.Minute)},
+		{UUID: "new", Token: "token-new", RegionOverride: "🇭🇰", Weight: 2, CreatedAt: now.Add(2 * time.Minute)},
+	}).Error)
+
+	require.NoError(t, saveClientInfo(db, map[string]interface{}{
+		"uuid": "new", "region": "🇸🇬",
+	}))
+
+	assertClientOrder(t, db, []string{"hk-1", "new", "sg-1"})
+}
+
+func TestSaveClientInfoDoesNotReorderAfterInitialRegion(t *testing.T) {
+	db := newClientTestDB(t, "auto-order-first-report-only")
+	now := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, db.Create([]models.Client{
+		{UUID: "hk-1", Token: "token-hk-1", Region: "🇭🇰", Weight: 0, CreatedAt: now},
+		{UUID: "jp-1", Token: "token-jp-1", Region: "🇯🇵", Weight: 1, CreatedAt: now.Add(time.Minute)},
+		{UUID: "existing", Token: "token-existing", Region: "🇸🇬", Weight: 2, CreatedAt: now.Add(2 * time.Minute)},
+	}).Error)
+
+	require.NoError(t, saveClientInfo(db, map[string]interface{}{
+		"uuid": "existing", "region": "🇭🇰",
+	}))
+
+	assertClientOrder(t, db, []string{"hk-1", "jp-1", "existing"})
+	var existing models.Client
+	require.NoError(t, db.First(&existing, "uuid = ?", "existing").Error)
+	assert.Equal(t, "🇭🇰", existing.Region)
+}
+
+func TestOrderClientAfterRegionPeers(t *testing.T) {
+	ordered := []clientOrderState{
+		{UUID: "hk-1", Region: "🇭🇰", Group: "edge", Weight: 0},
+		{UUID: "jp-1", Region: "🇯🇵", Group: "edge", Weight: 1},
+		{UUID: "hk-other", Region: "🇭🇰", Group: "other", Weight: 2},
+		{UUID: "new", Region: "🇸🇬", RegionOverride: "🇭🇰", Group: "edge", Weight: 3},
+		{UUID: "sg-1", Region: "🇸🇬", Group: "edge", Weight: 4},
+	}
+
+	reordered, changed, err := orderClientAfterRegionPeers(ordered, "new", "🇭🇰")
+	require.NoError(t, err)
+	require.True(t, changed)
+	assert.Equal(t, []string{"hk-1", "new", "jp-1", "hk-other", "sg-1"}, clientOrderUUIDs(reordered))
+}
+
+func TestOrderClientAfterRegionPeersKeepsOrderWithoutPeer(t *testing.T) {
+	ordered := []clientOrderState{
+		{UUID: "hk-1", Region: "🇭🇰", Weight: 10},
+		{UUID: "new", Region: "🇸🇬", Weight: 20},
+	}
+
+	reordered, changed, err := orderClientAfterRegionPeers(ordered, "new", "🇸🇬")
+	require.NoError(t, err)
+	assert.False(t, changed)
+	assert.Equal(t, []string{"hk-1", "new"}, clientOrderUUIDs(reordered))
+	assert.Equal(t, []int{10, 20}, []int{reordered[0].Weight, reordered[1].Weight})
+}
+
+func clientOrderUUIDs(ordered []clientOrderState) []string {
+	uuids := make([]string, len(ordered))
+	for index := range ordered {
+		uuids[index] = ordered[index].UUID
+	}
+	return uuids
+}
+
+func newClientTestDB(t *testing.T, name string) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open("file:"+name+"?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Client{}))
+	return db
+}
+
+func assertClientOrder(t *testing.T, db *gorm.DB, want []string) {
+	t.Helper()
+	var ordered []models.Client
+	require.NoError(t, db.Order("weight ASC").Order("created_at ASC").Order("uuid ASC").Find(&ordered).Error)
+	got := make([]string, len(ordered))
+	for index := range ordered {
+		got[index] = ordered[index].UUID
+		assert.Equal(t, index, ordered[index].Weight)
+	}
+	assert.Equal(t, want, got)
+}
+
 func TestSaveClientKeepsExistingTrafficLimitTypeWhenOmitted(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:keep-existing-traffic-type?mode=memory&cache=shared"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
