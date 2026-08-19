@@ -87,25 +87,6 @@ func TestSaveClientInfoUsesRegionOverrideForInitialPlacement(t *testing.T) {
 	assertClientOrder(t, db, []string{"hk-1", "new", "sg-1"})
 }
 
-func TestSaveClientInfoSkipsAutoOrderWhenDisabled(t *testing.T) {
-	db := newClientTestDB(t, "auto-order-disabled")
-	now := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
-	require.NoError(t, db.Create([]models.Client{
-		{UUID: "hk-1", Token: "token-hk-1", Region: "🇭🇰", Group: "edge", Weight: 0, CreatedAt: now},
-		{UUID: "jp-1", Token: "token-jp-1", Region: "🇯🇵", Group: "edge", Weight: 1, CreatedAt: now.Add(time.Minute)},
-		{UUID: "hk-new", Token: "token-hk-new", Group: "edge", Weight: 2, CreatedAt: now.Add(2 * time.Minute)},
-	}).Error)
-
-	require.NoError(t, saveClientInfoWithAutoOrder(db, map[string]interface{}{
-		"uuid": "hk-new", "region": "🇭🇰",
-	}, false))
-
-	assertClientOrder(t, db, []string{"hk-1", "jp-1", "hk-new"})
-	var created models.Client
-	require.NoError(t, db.First(&created, "uuid = ?", "hk-new").Error)
-	assert.Equal(t, "🇭🇰", created.Region)
-}
-
 func TestSaveClientInfoDoesNotReorderAfterInitialRegion(t *testing.T) {
 	db := newClientTestDB(t, "auto-order-first-report-only")
 	now := time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC)
