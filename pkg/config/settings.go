@@ -14,7 +14,7 @@ type Settings struct {
 	Description            string `json:"description" default:"A simple server monitor tool."` // 站点描述
 	AdminDefaultPageSize   int    `json:"admin_default_page_size" default:"10"`                // 后台列表默认每页条数
 	ReduceMotion           bool   `json:"reduce_motion" default:"false"`                       // 减少后台界面动态效果
-	AutoOrderNewClients    bool   `json:"auto_order_new_clients_by_region" default:"true"`     // 新服务器首次识别国家后自动排到同组同国家节点后面
+	AutoOrderNewClients    bool   `json:"auto_order_new_clients_by_region" default:"false"`    // 新服务器首次识别国家后自动排到同组同国家节点后面，默认关闭
 	CorsOriginCheckEnabled bool   `json:"cors_origin_check_enabled" default:"true"`            // 是否启用 API CORS 跨域请求校验，默认 true
 	CorsAllowedOrigins     string `json:"cors_allowed_origins" default:""`                     // API 跨域允许列表
 	WsOriginCheckEnabled   bool   `json:"ws_origin_check_enabled" default:"true"`              // 是否校验 WebSocket Origin
