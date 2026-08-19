@@ -206,9 +206,9 @@ func SaveClientInfo(update map[string]interface{}) error {
 }
 
 func autoOrderNewClientsEnabled() bool {
-	enabled, err := config.GetAs[bool](config.AutoOrderNewClientsKey, false)
+	enabled, err := config.GetAs[bool](config.AutoOrderNewClientsKey, true)
 	if err != nil {
-		return false
+		return true
 	}
 	return enabled
 }
