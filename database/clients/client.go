@@ -15,6 +15,7 @@ import (
 	"github.com/komari-monitor/komari/database/notificationdefaults"
 	"github.com/komari-monitor/komari/database/tasks"
 	"github.com/komari-monitor/komari/database/trafficledger"
+	"github.com/komari-monitor/komari/pkg/config"
 	"github.com/komari-monitor/komari/utils"
 
 	"github.com/google/uuid"
@@ -201,10 +202,22 @@ func deleteLegacyClientRows(tx *gorm.DB, clientUUID string) error {
 }
 
 func SaveClientInfo(update map[string]interface{}) error {
-	return saveClientInfo(dbcore.GetDBInstance(), update)
+	return saveClientInfoWithAutoOrder(dbcore.GetDBInstance(), update, autoOrderNewClientsEnabled())
+}
+
+func autoOrderNewClientsEnabled() bool {
+	enabled, err := config.GetAs[bool](config.AutoOrderNewClientsKey, true)
+	if err != nil {
+		return true
+	}
+	return enabled
 }
 
 func saveClientInfo(db *gorm.DB, update map[string]interface{}) error {
+	return saveClientInfoWithAutoOrder(db, update, true)
+}
+
+func saveClientInfoWithAutoOrder(db *gorm.DB, update map[string]interface{}, autoOrder bool) error {
 	clientUUID, ok := update["uuid"].(string)
 	if !ok || clientUUID == "" {
 		return fmt.Errorf("invalid client UUID")
@@ -308,7 +321,7 @@ func saveClientInfo(db *gorm.DB, update map[string]interface{}) error {
 
 		// Region is empty until the Agent's first successful basic-info report.
 		// Reorder only on that transition so later reports never fight manual order.
-		if current.Region != "" || detectedRegion == "" {
+		if !autoOrder || current.Region != "" || detectedRegion == "" {
 			return nil
 		}
 		effectiveRegion := detectedRegion
