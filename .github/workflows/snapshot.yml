@@ -167,6 +167,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Use lowercase GHCR image name
+        run: echo "IMAGE_NAME=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Ensure commit is still current
         shell: bash
         run: |

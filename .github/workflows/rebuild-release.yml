@@ -17,9 +17,9 @@ on:
         default: main
         type: string
       frontend_ref:
-        description: Lite-web branch or tag to build.
-        required: true
-        default: main
+        description: Lite-web branch or tag. Leave empty to use the same x.y.z tag as this release.
+        required: false
+        default: ""
         type: string
 
 permissions:
@@ -51,8 +51,25 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version: $VERSION" >&2; exit 1; }
-          [ -n "$FRONTEND_REF" ] || { echo "Frontend ref cannot be empty." >&2; exit 1; }
           gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null
+
+          FRONTEND_REF="${FRONTEND_REF:-$VERSION}"
+          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          WEB_REPO="${OWNER}/Lite-web"
+          if git ls-remote --exit-code "https://github.com/${WEB_REPO}.git" "refs/tags/${FRONTEND_REF}" >/dev/null; then
+            echo "Using Lite-web tag ${FRONTEND_REF}"
+          elif git ls-remote --exit-code "https://github.com/${WEB_REPO}.git" "refs/heads/${FRONTEND_REF}" >/dev/null; then
+            echo "Using Lite-web branch ${FRONTEND_REF}"
+          else
+            echo "Lite-web has no tag or branch named ${FRONTEND_REF}. Publish Lite-web ${VERSION} first." >&2
+            exit 1
+          fi
+
+          WEB_VERSION="$(gh api "repos/${WEB_REPO}/contents/package.json?ref=${FRONTEND_REF}" --jq .content | python3 -c "import json,sys,base64; print(json.loads(base64.b64decode(sys.stdin.read()).decode())['version'])")"
+          if [ "$WEB_VERSION" != "$VERSION" ]; then
+            echo "Lite-web ${FRONTEND_REF} is version ${WEB_VERSION}, expected ${VERSION}." >&2
+            exit 1
+          fi
 
           VERSION_HASH="$REQUESTED_HASH"
           if [ -z "$VERSION_HASH" ]; then

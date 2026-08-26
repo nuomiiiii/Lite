@@ -11,6 +11,9 @@ inputs:
   ref:
     description: Optional Lite-web ref to build. Uses the repository default branch when empty.
     default: main
+  expected-version:
+    description: If set, fail unless Lite-web package.json version matches this x.y.z.
+    default: ""
   artifact-name:
     description: Optional artifact name for the packed system UI.
     default: ""
@@ -38,6 +41,15 @@ runs:
           git clone --depth=1 "$repo" Lite-web
         fi
         cd Lite-web
+        expected="${{ inputs.expected-version }}"
+        if [ -n "$expected" ]; then
+          web_version="$(node -p "require('./package.json').version")"
+          if [ "$web_version" != "$expected" ]; then
+            echo "Lite-web package.json version is ${web_version}, expected ${expected}." >&2
+            git log -1 --oneline
+            exit 1
+          fi
+        fi
         npm ci
         VITE_SYSTEM_UI_BUILD=1 VITE_BASE_URL=/system-assets/ npm run build
         cd ..

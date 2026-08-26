@@ -23,9 +23,9 @@ alwaysApply: true
 
 快照：不改 x.y.z，也不改 `main`。远端没有 `Snapshot` 时，先从当前 `main` 新建 `Snapshot`，再在该分支上改；远端已有 `Snapshot` 时，直接在 `Snapshot` 上改。有 UI 改动时先推 web 的 `Snapshot`，再推 Lite 的 `Snapshot`（服务端 snapshot 构建固定 clone web 的 Snapshot 分支）。**快照不要给 Lite-web 打 GitHub Release、tag 或 `dist-release.zip`。** tag、GitHub Release 显示名、嵌入版本都是 `Snapshot-YYMMDDHHMM`（北京时间），例如 `Snapshot-2608162321`。禁止标题写成「Lite 2.2.3 Snapshot」。Release 正文只写本次变更，不要把历史快照说明整份贴进去。产物：Linux 五架构 + SHA256SUMS + lite-update.json；Docker 只打当前仓 GHCR 的 `:snapshot`（`ghcr.io/nuomiiiii/lite:snapshot`）；无 Windows。prerelease，CI 会删旧 Snapshot-*。正式更新提示不认快照。
 
-稳定新版本：bump `utils/version.go` 与 web `package.json`，合进 `main`。先发 `Lite-web` 正式版（把 `x.y.z` tag 移到 web `main`，更新 Release 说明；`dist-release.zip` 由 web 工作流上传），再跑 Lite `publish-stable-release.yml`，不传 `version_hash`。标题等于 `x.y.z`。产物含 Windows。Docker `:x.y.z` 与 `:latest`。不要恢复已删的 `follow-komari-release.yaml` / `build.yaml`。
+稳定新版本：bump `utils/version.go` 与 web `package.json`，合进 `main`。先发 `Lite-web` 正式版（把 `x.y.z` tag 移到 web `main`，更新 Release 说明；`dist-release.zip` 由 web 工作流上传），再跑 Lite `publish-stable-release.yml`，不传 `version_hash`，也不传 `web_ref`（工作流用本次版本号去 clone 同号 Lite-web tag，并核对 `package.json` 版本）。标题等于 `x.y.z`。产物含 Windows。Docker `:x.y.z` 与 `:latest`。不要恢复已删的 `follow-komari-release.yaml` / `build.yaml`。
 
-同版本再发：有 UI 改动时同样先发 web（移 tag、更新说明，zip 由工作流重打），再走 Lite `rebuild-release.yml`，必须换新的七位 `lite-version-hash`。禁止对已有 tag 再跑空 hash 的 publish-stable-release（会复用旧号，用户收不到更新）。当前正式 `2.2.3`；构建号以发版时嵌入的七位 hash 为准。
+同版本再发：有 UI 改动时同样先发 web（移 tag、更新说明，zip 由工作流重打），再走 Lite `rebuild-release.yml`，必须换新的七位 `lite-version-hash`，`frontend_ref` 同样留空。禁止对已有 tag 再跑空 hash 的 publish-stable-release（会复用旧号，用户收不到更新）。构建号以发版时嵌入的七位 hash 为准。
 
 Agent 四段号，协议没变不要空发。`2.3.0.0` 已原生适配 Lite。一键安装走 `nuomiiiii/Lite-agent` 最新脚本和 `ghcr.io/nuomiiiii/Lite-agent:latest`，不要锁死版本号。Komari 协议头仍兼容更旧 Agent。
 

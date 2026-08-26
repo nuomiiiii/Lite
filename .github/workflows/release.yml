@@ -61,6 +61,7 @@ jobs:
         uses: ./.github/actions/build-frontend
         with:
           ref: ${{ needs.prepare.outputs.web_ref }}
+          expected-version: ${{ needs.prepare.outputs.version }}
           artifact-name: lite-frontend
 
   build-and-attach-binaries:
@@ -159,6 +160,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Use lowercase GHCR image name
+        run: echo "IMAGE_NAME=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Download Docker binaries
         uses: actions/download-artifact@v4
         with:
@@ -216,8 +220,12 @@ jobs:
       - name: Promote Docker latest tag
         if: steps.release.outputs.is_latest == 'true'
         env:
-          TAG: ${{ needs.prepare.outputs.version }}
-        run: docker buildx imagetools create --tag "${REGISTRY}/${IMAGE_NAME}:latest" "${REGISTRY}/${IMAGE_NAME}:${TAG}"
+          SOURCE: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          source="${SOURCE%%$'\n'*}"
+          image="${source%:*}"
+          docker buildx imagetools create --tag "${image}:latest" "$source"
 
   publish-update-manifest:
     needs: [prepare, build-and-attach-binaries]
