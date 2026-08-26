@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari/pkg/metric"
+	"github.com/nuomiiiii/lite/pkg/metric"
 )
 
 // CompactStepInterval is the cadence used by the scheduled incremental

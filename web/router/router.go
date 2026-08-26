@@ -2,15 +2,15 @@ package router
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/web/api"
-	"github.com/komari-monitor/komari/web/api/admin"
-	"github.com/komari-monitor/komari/web/api/client"
-	public_api "github.com/komari-monitor/komari/web/api/public"
-	"github.com/komari-monitor/komari/web/api/remote"
-	"github.com/komari-monitor/komari/web/api/terminal"
-	installweb "github.com/komari-monitor/komari/web/install"
-	"github.com/komari-monitor/komari/web/public"
-	jsonRpc "github.com/komari-monitor/komari/web/rpc/jsonrpc"
+	"github.com/nuomiiiii/lite/web/api"
+	"github.com/nuomiiiii/lite/web/api/admin"
+	"github.com/nuomiiiii/lite/web/api/client"
+	public_api "github.com/nuomiiiii/lite/web/api/public"
+	"github.com/nuomiiiii/lite/web/api/remote"
+	"github.com/nuomiiiii/lite/web/api/terminal"
+	installweb "github.com/nuomiiiii/lite/web/install"
+	"github.com/nuomiiiii/lite/web/public"
+	jsonRpc "github.com/nuomiiiii/lite/web/rpc/jsonrpc"
 )
 
 // Register binds all HTTP, WebSocket, JSON-RPC and static frontend routes.
@@ -89,6 +89,15 @@ func registerAdminRoutes(r *gin.Engine) {
 	g.GET("/dashboard", jsonRpc.Bind("admin:getDashboard", jsonRpc.WithQuery("sections", "limit"), jsonRpc.WithRaw()))
 	g.GET("/dashboard/charts", jsonRpc.Bind("admin:getDashboardCharts", jsonRpc.WithQuery("sections", "limit"), jsonRpc.WithRaw()))
 	g.GET("/dashboard/alerts", jsonRpc.Bind("admin:getDashboardAlertItems", jsonRpc.WithQuery("kind"), jsonRpc.WithRaw()))
+	billingGroup := g.Group("/billing")
+	{
+		billingGroup.GET("/overview", jsonRpc.Bind("admin:getBillingOverview", jsonRpc.WithQuery("currency")))
+		billingGroup.GET("/servers", jsonRpc.Bind("admin:getBillingServers", jsonRpc.WithQuery("currency", "q", "native_currencies", "regions", "groups", "expiry", "page", "page_size")))
+		billingGroup.GET("/periods/monthly", jsonRpc.Bind("admin:getBillingMonthly", jsonRpc.WithQuery("currency", "years", "clients", "types", "native_currencies", "page", "page_size")))
+		billingGroup.GET("/periods/yearly", jsonRpc.Bind("admin:getBillingYearly", jsonRpc.WithQuery("currency", "years", "clients", "types", "native_currencies", "page", "page_size")))
+		billingGroup.GET("/entries", jsonRpc.Bind("admin:getBillingEntries", jsonRpc.WithQuery("currency", "client", "from", "to", "types", "q", "page", "page_size")))
+		billingGroup.POST("/entries/:id/void", jsonRpc.Bind("admin:voidBillingEntry", jsonRpc.WithPath("id")))
+	}
 
 	// --- 二进制/流/重定向类，保留 REST handler ---
 	g.GET("/download/backup", admin.DownloadBackup)
@@ -193,6 +202,8 @@ func registerAdminRoutes(r *gin.Engine) {
 		clientGroup.GET("/list", jsonRpc.Bind("admin:listClients", jsonRpc.WithRaw()))
 		clientGroup.GET("/:uuid", jsonRpc.Bind("admin:getClient", jsonRpc.WithPath("uuid"), jsonRpc.WithRaw()))
 		clientGroup.POST("/:uuid/edit", jsonRpc.Bind("admin:editClient", jsonRpc.WithPath("uuid")))
+		clientGroup.POST("/:uuid/billing/traffic-reset", jsonRpc.Bind("admin:createBillingTrafficReset", jsonRpc.WithPath("uuid")))
+		clientGroup.POST("/:uuid/billing/ip-change", jsonRpc.Bind("admin:createBillingIPChange", jsonRpc.WithPath("uuid")))
 		clientGroup.POST("/:uuid/remove", jsonRpc.Bind("admin:removeClient", jsonRpc.WithPath("uuid")))
 		clientGroup.GET("/:uuid/token", jsonRpc.Bind("admin:getClientToken", jsonRpc.WithPath("uuid"), jsonRpc.WithFlat()))
 		clientGroup.GET("/:uuid/deployment-profile", jsonRpc.Bind("admin:getClientDeploymentProfile", jsonRpc.WithPath("uuid"), jsonRpc.WithRaw()))

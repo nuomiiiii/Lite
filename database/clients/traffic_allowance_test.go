@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/models"
+	"github.com/nuomiiiii/lite/database/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -92,6 +92,8 @@ func TestSaveClientRebindsAllowanceWhenResetDayChanges(t *testing.T) {
 	}))
 	var client models.Client
 	require.NoError(t, db.First(&client, "uuid = ?", "node-a").Error)
+	require.NotNil(t, client.TrafficResetDay)
+	assert.Equal(t, 1, *client.TrafficResetDay)
 	assert.Equal(t, int64(50), client.TrafficResetAllowance)
 	assert.Equal(t, currentTrafficCycle(trafficDay(1), time.Now().UTC()), client.TrafficResetCycle)
 }

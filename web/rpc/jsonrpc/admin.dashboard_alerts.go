@@ -8,15 +8,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/database/tasks"
-	"github.com/komari-monitor/komari/database/trafficledger"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/rpc"
-	v1 "github.com/komari-monitor/komari/protocol/v1"
-	agent_runtime "github.com/komari-monitor/komari/web/agent"
+	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/database/tasks"
+	"github.com/nuomiiiii/lite/database/trafficledger"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/rpc"
+	v1 "github.com/nuomiiiii/lite/protocol/v1"
+	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 )
 
 type dashboardAlertLatest struct {

@@ -82,7 +82,7 @@ jobs:
       - name: Build frontend artifact
         uses: ./.github/actions/build-frontend
         with:
-          artifact-name: komari-frontend
+          artifact-name: lite-frontend
           ref: Snapshot
 
   test-backend:
@@ -148,14 +148,14 @@ jobs:
           set -euo pipefail
           version_hash="${GITHUB_SHA::7}"
           go build -trimpath \
-            -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${version_hash}" \
-            -o "komari-linux-${GOARCH}"
+            -ldflags="-s -w -X github.com/nuomiiiii/lite/utils.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite/utils.VersionHash=${version_hash}" \
+            -o "Lite-linux-${GOARCH}"
 
       - name: Upload Linux binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: komari-linux-${{ matrix.goarch }}
-          path: komari-linux-${{ matrix.goarch }}
+          name: Lite-linux-${{ matrix.goarch }}
+          path: Lite-linux-${{ matrix.goarch }}
 
   publish-docker:
     needs: [prepare, test-backend, build-linux]
@@ -181,7 +181,7 @@ jobs:
       - name: Download Docker binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: komari-linux-*
+          pattern: Lite-linux-*
           path: .
           merge-multiple: true
 
@@ -222,7 +222,7 @@ jobs:
           grep -F 'Platform:  linux/arm64' <<<"${manifest}"
           for platform in linux/amd64 linux/arm64; do
             docker pull --platform "${platform}" "${image}"
-            output="$(docker run --rm --platform "${platform}" "${image}" /app/komari version --json)"
+            output="$(docker run --rm --platform "${platform}" "${image}" /app/Lite version --json)"
             echo "${output}"
             grep -F "\"version\":\"${VERSION}\"" <<<"${output}"
             grep -F "\"hash\":\"${expected_hash}\"" <<<"${output}"
@@ -240,7 +240,7 @@ jobs:
       - name: Download Linux binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: komari-linux-*
+          pattern: Lite-linux-*
           path: release-assets
           merge-multiple: true
 
@@ -251,24 +251,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum komari-linux-* | sort -k2 > SHA256SUMS
+          sha256sum Lite-linux-* | sort -k2 > SHA256SUMS
           node <<'NODE'
           const crypto = require("crypto");
           const fs = require("fs");
           const files = fs.readdirSync(".")
-            .filter((name) => /^komari-linux-[A-Za-z0-9]+$/.test(name))
+            .filter((name) => /^Lite-linux-[A-Za-z0-9]+$/.test(name))
             .sort();
           const assets = files.map((name) => {
             const content = fs.readFileSync(name);
             return {
               name,
               os: "linux",
-              arch: name.replace("komari-linux-", ""),
+              arch: name.replace("Lite-linux-", ""),
               size: content.length,
               sha256: crypto.createHash("sha256").update(content).digest("hex"),
             };
           });
-          fs.writeFileSync("komari-update.json", JSON.stringify({
+          fs.writeFileSync("lite-update.json", JSON.stringify({
             schema: 1,
             version: process.env.VERSION,
             version_hash: process.env.GITHUB_SHA.slice(0, 7),
@@ -287,11 +287,13 @@ jobs:
           set -euo pipefail
           release_time="$(date -u -d '+8 hours' '+%Y-%m-%d %H:%M')"
           version_hash="${GITHUB_SHA::7}"
+          docker_image="ghcr.io/${GITHUB_REPOSITORY,,}:snapshot"
           release_notes="$(<.github/release-notes/snapshot.md)"
           release_notes="${release_notes//__RELEASE_TIME__/${release_time}}"
           release_notes="${release_notes//__UPDATE_TIME__/${release_time}}"
           release_notes="${release_notes//__VERSION_HASH__/${version_hash}}"
           release_notes="${release_notes//__APP_VERSION__/${APP_VERSION}}"
+          release_notes="${release_notes//__DOCKER_IMAGE__/${docker_image}}"
 
           if [ -n "${EXISTING_TAG}" ]; then
             release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${EXISTING_TAG}" --jq .id)"
@@ -338,9 +340,9 @@ jobs:
           fi
 
           gh release upload "${SNAPSHOT_TAG}" \
-            release-assets/komari-linux-* \
+            release-assets/Lite-linux-* \
             release-assets/SHA256SUMS \
-            release-assets/komari-update.json \
+            release-assets/lite-update.json \
             --repo "${GITHUB_REPOSITORY}" \
             --clobber
 

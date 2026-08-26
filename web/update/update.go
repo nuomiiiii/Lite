@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/metricstore"
-	appconfig "github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/metric"
-	"github.com/komari-monitor/komari/pkg/migrations"
-	"github.com/komari-monitor/komari/web/api"
-	publicapi "github.com/komari-monitor/komari/web/api/public"
-	jsonrpc "github.com/komari-monitor/komari/web/rpc/jsonrpc"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	appconfig "github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/metric"
+	"github.com/nuomiiiii/lite/pkg/migrations"
+	"github.com/nuomiiiii/lite/web/api"
+	publicapi "github.com/nuomiiiii/lite/web/api/public"
+	jsonrpc "github.com/nuomiiiii/lite/web/rpc/jsonrpc"
 	"gorm.io/gorm"
 )
 

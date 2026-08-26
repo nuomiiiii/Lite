@@ -3,14 +3,14 @@ package migrations
 import (
 	"database/sql"
 	"fmt"
-	logger "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"math"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	appconfig "github.com/komari-monitor/komari/pkg/config"
+	appconfig "github.com/nuomiiiii/lite/pkg/config"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

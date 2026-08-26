@@ -27,7 +27,7 @@ jobs:
       - name: Build frontend artifact
         uses: ./.github/actions/build-frontend
         with:
-          artifact-name: komari-frontend
+          artifact-name: lite-frontend
 
   build-docker-binaries:
     needs: build-frontend
@@ -59,19 +59,19 @@ jobs:
           VERSION: ${{ github.event.inputs.version }}
         run: |
           VERSION_HASH="$(git rev-parse --short=7 "${GITHUB_SHA}")"
-          LDFLAGS="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${VERSION_HASH}"
+          LDFLAGS="-s -w -X github.com/nuomiiiii/lite/utils.CurrentVersion=${VERSION} -X github.com/nuomiiiii/lite/utils.VersionHash=${VERSION_HASH}"
 
           echo "Building for linux/amd64..."
-          GOARCH=amd64 CC="zig cc -target x86_64-linux-musl" go build -trimpath -ldflags="$LDFLAGS" -o komari-linux-amd64
+          GOARCH=amd64 CC="zig cc -target x86_64-linux-musl" go build -trimpath -ldflags="$LDFLAGS" -o Lite-linux-amd64
 
           echo "Building for linux/arm64..."
-          GOARCH=arm64 CC="zig cc -target aarch64-linux-musl" go build -trimpath -ldflags="$LDFLAGS" -o komari-linux-arm64
+          GOARCH=arm64 CC="zig cc -target aarch64-linux-musl" go build -trimpath -ldflags="$LDFLAGS" -o Lite-linux-arm64
 
       - name: Upload Docker binaries
         uses: actions/upload-artifact@v4
         with:
-          name: komari-docker-binaries
-          path: komari-linux-*
+          name: lite-docker-binaries
+          path: Lite-linux-*
 
   build-and-push-multi-arch:
     needs: build-docker-binaries
@@ -87,7 +87,7 @@ jobs:
       - name: Download Docker binaries
         uses: actions/download-artifact@v4
         with:
-          name: komari-docker-binaries
+          name: lite-docker-binaries
           path: .
 
       - name: Set up QEMU
@@ -136,7 +136,7 @@ jobs:
           grep -F 'Platform:  linux/arm64' <<<"${manifest}"
           for platform in linux/amd64 linux/arm64; do
             docker pull --platform "${platform}" "${image}"
-            output="$(docker run --rm --platform "${platform}" "${image}" /app/komari version --json)"
+            output="$(docker run --rm --platform "${platform}" "${image}" /app/Lite version --json)"
             echo "${output}"
             grep -F "\"version\":\"${VERSION}\"" <<<"${output}"
             grep -F "\"hash\":\"${expected_hash}\"" <<<"${output}"

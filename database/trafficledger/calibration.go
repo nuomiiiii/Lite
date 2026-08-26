@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari/database/models"
+	"github.com/nuomiiiii/lite/database/models"
 	"gorm.io/gorm"
 )
 
@@ -66,8 +66,36 @@ func trafficCycleBoundary(year int, month time.Month, resetDay int) time.Time {
 }
 
 func trafficCycleInclusiveEnd(start time.Time, resetDay int) time.Time {
-	nextMonth := time.Date(start.Year(), start.Month()+1, 1, 0, 0, 0, 0, BeijingLocation)
-	return trafficCycleBoundary(nextMonth.Year(), nextMonth.Month(), resetDay).AddDate(0, 0, -1)
+	return NextCycleStart(start, resetDay).AddDate(0, 0, -1)
+}
+
+func NormalizedResetDay(resetDay *int) int {
+	if resetDay == nil || *resetDay < 1 || *resetDay > 31 {
+		return 1
+	}
+	return *resetDay
+}
+
+func CycleContaining(resetDay int, at time.Time) time.Time {
+	if resetDay < 1 || resetDay > 31 {
+		resetDay = 1
+	}
+	local := at.In(BeijingLocation)
+	start := trafficCycleBoundary(local.Year(), local.Month(), resetDay)
+	if local.Before(start) {
+		previous := local.AddDate(0, -1, 0)
+		start = trafficCycleBoundary(previous.Year(), previous.Month(), resetDay)
+	}
+	return start
+}
+
+func NextCycleStart(start time.Time, resetDay int) time.Time {
+	if resetDay < 1 || resetDay > 31 {
+		resetDay = 1
+	}
+	local := start.In(BeijingLocation)
+	nextMonth := time.Date(local.Year(), local.Month()+1, 1, 0, 0, 0, 0, BeijingLocation)
+	return trafficCycleBoundary(nextMonth.Year(), nextMonth.Month(), resetDay)
 }
 
 func CurrentTrafficCycle(resetDay *int, now time.Time) (time.Time, string, error) {

@@ -12,11 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari/cmd/flags"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/migrations"
-	logger "github.com/komari-monitor/komari/utils/log"
+	"github.com/nuomiiiii/lite/cmd/flags"
+	"github.com/nuomiiiii/lite/database/billing"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/migrations"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -197,8 +198,14 @@ type stagedRestore struct {
 }
 
 const (
-	restorePendingMarkerName   = ".komari-restore-pending.json"
-	restoreCommittedMarkerName = ".komari-restore-committed"
+	restorePendingMarkerName         = ".lite-restore-pending.json"
+	restoreCommittedMarkerName       = ".lite-restore-committed"
+	legacyRestorePendingMarkerName   = ".komari-restore-pending.json"
+	legacyRestoreCommittedMarkerName = ".komari-restore-committed"
+	restoreStagePrefix               = ".lite-restore-"
+	restorePreviousPrefix            = ".lite-restore-old-"
+	legacyRestoreStagePrefix         = ".komari-restore-"
+	legacyRestorePreviousPrefix      = ".komari-restore-old-"
 )
 
 type restoreJournal struct {
@@ -220,7 +227,7 @@ func restoreMarkerPaths(dataDir string) (string, string, string, error) {
 }
 
 func writeRestoreMarker(path string, content []byte) error {
-	temp, err := os.CreateTemp(filepath.Dir(path), ".komari-restore-marker-*")
+	temp, err := os.CreateTemp(filepath.Dir(path), ".lite-restore-marker-*")
 	if err != nil {
 		return err
 	}
@@ -240,11 +247,16 @@ func writeRestoreMarker(path string, content []byte) error {
 	return os.Rename(tempPath, path)
 }
 
-func resolveRestoreJournalPath(parent, name, prefix string) (string, error) {
-	if name == "" || filepath.Base(name) != name || !strings.HasPrefix(name, prefix) {
+func resolveRestoreJournalPath(parent, name string, prefixes ...string) (string, error) {
+	if name == "" || filepath.Base(name) != name {
 		return "", fmt.Errorf("invalid restore journal path %q", name)
 	}
-	return filepath.Join(parent, name), nil
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(name, prefix) {
+			return filepath.Join(parent, name), nil
+		}
+	}
+	return "", fmt.Errorf("invalid restore journal path %q", name)
 }
 
 func readRestoreJournal(path, dataDir string) (restoreJournal, string, string, error) {
@@ -260,12 +272,12 @@ func readRestoreJournal(path, dataDir string) (restoreJournal, string, string, e
 		return journal, "", "", fmt.Errorf("restore journal data directory %q does not match %q", journal.DataDir, filepath.Base(dataDir))
 	}
 	parent := filepath.Dir(dataDir)
-	previousDir, err := resolveRestoreJournalPath(parent, journal.PreviousDir, ".komari-restore-old-")
+	previousDir, err := resolveRestoreJournalPath(parent, journal.PreviousDir, restorePreviousPrefix, legacyRestorePreviousPrefix)
 	if err != nil {
 		return journal, "", "", err
 	}
-	stageDir, err := resolveRestoreJournalPath(parent, journal.StageDir, ".komari-restore-")
-	if err != nil || strings.HasPrefix(journal.StageDir, ".komari-restore-old-") {
+	stageDir, err := resolveRestoreJournalPath(parent, journal.StageDir, restoreStagePrefix, legacyRestoreStagePrefix)
+	if err != nil || strings.HasPrefix(journal.StageDir, restorePreviousPrefix) || strings.HasPrefix(journal.StageDir, legacyRestorePreviousPrefix) {
 		if err == nil {
 			err = fmt.Errorf("invalid restore stage path %q", journal.StageDir)
 		}
@@ -295,14 +307,25 @@ func recoverInterruptedRestore(dataDir string) error {
 	if err != nil {
 		return err
 	}
+	legacyPending := filepath.Join(filepath.Dir(absDataDir), legacyRestorePendingMarkerName)
+	legacyCommitted := filepath.Join(filepath.Dir(absDataDir), legacyRestoreCommittedMarkerName)
 	if _, err := os.Stat(pendingMarker); err != nil {
-		if os.IsNotExist(err) {
-			if removeErr := os.Remove(committedMarker); removeErr != nil && !os.IsNotExist(removeErr) {
-				return fmt.Errorf("remove completed restore marker: %w", removeErr)
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("inspect interrupted restore marker: %w", err)
+		}
+		if _, err := os.Stat(legacyPending); err == nil {
+			pendingMarker = legacyPending
+			committedMarker = legacyCommitted
+		} else if os.IsNotExist(err) {
+			for _, marker := range []string{committedMarker, legacyCommitted} {
+				if removeErr := os.Remove(marker); removeErr != nil && !os.IsNotExist(removeErr) {
+					return fmt.Errorf("remove completed restore marker: %w", removeErr)
+				}
 			}
 			return nil
+		} else {
+			return fmt.Errorf("inspect interrupted restore marker: %w", err)
 		}
-		return fmt.Errorf("inspect interrupted restore marker: %w", err)
 	}
 
 	_, previousDir, stageDir, err := readRestoreJournal(pendingMarker, absDataDir)
@@ -337,7 +360,7 @@ func recoverInterruptedRestore(dataDir string) error {
 		return nil
 	}
 
-	failedDir, err := os.MkdirTemp(filepath.Dir(absDataDir), ".komari-restore-interrupted-*")
+	failedDir, err := os.MkdirTemp(filepath.Dir(absDataDir), ".lite-restore-interrupted-*")
 	if err != nil {
 		return fmt.Errorf("reserve interrupted restore path: %w", err)
 	}
@@ -404,7 +427,7 @@ func (r *stagedRestore) Rollback() error {
 	if r.finished {
 		return nil
 	}
-	failedDir, err := os.MkdirTemp(filepath.Dir(r.dataDir), ".komari-restore-failed-*")
+	failedDir, err := os.MkdirTemp(filepath.Dir(r.dataDir), ".lite-restore-failed-*")
 	if err != nil {
 		return fmt.Errorf("reserve failed restore path: %w", err)
 	}
@@ -443,7 +466,7 @@ func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
 		return nil, fmt.Errorf("inspect staged backup: %w", err)
 	}
 
-	stageDir, err := os.MkdirTemp(filepath.Dir(dataDir), ".komari-restore-*")
+	stageDir, err := os.MkdirTemp(filepath.Dir(dataDir), ".lite-restore-*")
 	if err != nil {
 		return nil, fmt.Errorf("create restore staging directory: %w", err)
 	}
@@ -456,7 +479,11 @@ func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
 	if err := unzipToDir(backupZipPath, stageDir); err != nil {
 		return nil, fmt.Errorf("extract backup into staging directory: %w", err)
 	}
-	if err := validateRestoredSQLite(filepath.Join(stageDir, "komari.db"), "komari.db"); err != nil {
+	mainDB, err := alignStagedMainDatabase(stageDir)
+	if err != nil {
+		return nil, fmt.Errorf("adopt restored Komari database: %w", err)
+	}
+	if err := validateRestoredSQLite(mainDB, filepath.Base(mainDB)); err != nil {
 		return nil, err
 	}
 	metricsPath := filepath.Join(stageDir, "metrics.db")
@@ -467,6 +494,7 @@ func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("inspect restored metrics.db: %w", err)
 	}
+	_ = os.Remove(filepath.Join(stageDir, "lite-backup-markup"))
 	_ = os.Remove(filepath.Join(stageDir, "komari-backup-markup"))
 	if err := os.MkdirAll(filepath.Join(stageDir, "theme"), 0o755); err != nil {
 		return nil, fmt.Errorf("prepare restored theme directory: %w", err)
@@ -482,7 +510,7 @@ func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
 		return nil, fmt.Errorf("preserve current data before restore: %w", err)
 	}
 
-	oldDir, err := os.MkdirTemp(filepath.Dir(dataDir), ".komari-restore-old-*")
+	oldDir, err := os.MkdirTemp(filepath.Dir(dataDir), ".lite-restore-old-*")
 	if err != nil {
 		return nil, fmt.Errorf("reserve previous data path: %w", err)
 	}
@@ -544,10 +572,30 @@ const SystemVersionKey = "system_version"
 // versionID 是当前构建的版本标识，由 SetVersionID 在 Initialize 前注入。
 var versionID string
 
-// dbFileExistedAtStartup 记录本次进程启动、打开数据库之前 komari.db 是否已存在，
+// dbFileExistedAtStartup 记录本次进程启动、打开数据库之前 lite.db 是否已存在，
 // 用于区分“全新安装”与“从旧版升级（无版本标记）”。在 doInitialize 打开数据库
 // 之前采集。
 var dbFileExistedAtStartup bool
+
+// preserveLegacyHTTPSListen keeps the previous HTTPS listen address when
+// upgrading an existing Komari / Komari Lite data directory. Missing keys are
+// filled with :35938 instead of Lite's new-install default :36888.
+func preserveLegacyHTTPSListen() error {
+	if instance == nil {
+		return nil
+	}
+	if !KeepLegacyHTTPListen(filepath.Dir(resolveDatabaseFile())) {
+		return nil
+	}
+	var count int64
+	if err := instance.Model(&config.ConfigItem{}).Where("key = ?", config.HTTPSListenKey).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	return config.Set(config.HTTPSListenKey, ":35938")
+}
 
 // SetVersionID 设置当前构建的版本标识（通常为 CurrentVersion+"-"+VersionHash），
 // 用于版本升级检测与自动备份。应在 Initialize() 之前调用；为空则跳过升级备份。
@@ -559,7 +607,7 @@ func SetVersionID(id string) {
 func resolveDatabaseFile() string {
 	dbFile := flags.DatabaseFile
 	if dbFile == "" {
-		dbFile = "./data/komari.db"
+		dbFile = "./data/lite.db"
 	}
 	return dbFile
 }
@@ -599,7 +647,7 @@ func backupOnVersionUpgrade() {
 	}
 
 	// 需要备份（升级或从旧稳定版首次带版本标记启动）。
-	// 先做一次 WAL checkpoint，确保 komari.db 主文件包含最新数据，
+	// 先做一次 WAL checkpoint，确保 lite.db 主文件包含最新数据，
 	// 避免备份出的库缺少仍留在 -wal 中的写入。
 	if instance != nil {
 		instance.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
@@ -630,7 +678,7 @@ func writeVersionMarker() {
 
 func buildSQLiteDSN(databaseFile string) string {
 	if databaseFile == "" {
-		databaseFile = "./data/komari.db"
+		databaseFile = "./data/lite.db"
 	}
 
 	params := "_busy_timeout=5000&_txlock=immediate&_journal_mode=WAL&_synchronous=NORMAL"
@@ -716,6 +764,9 @@ func doInitialize() error {
 	if err != nil {
 		return fmt.Errorf("restore staged backup: %w", err)
 	}
+	if err := adoptLegacyKomariSQLite(); err != nil {
+		return fmt.Errorf("adopt Komari Lite database: %w", err)
+	}
 	initialized := false
 	defer func() {
 		if initialized || pendingRestore == nil {
@@ -729,7 +780,7 @@ func doInitialize() error {
 		_ = RollbackPendingRestore()
 	}()
 
-	// 记录“打开数据库之前”komari.db 是否已存在，用于区分全新安装与旧版升级。
+	// 记录“打开数据库之前”lite.db 是否已存在，用于区分全新安装与旧版升级。
 	// 必须在（可能的）恢复逻辑之后、gorm.Open 之前采集：恢复会解压出旧库，
 	// gorm.Open 会创建空库。
 	if _, statErr := os.Stat(resolveDatabaseFile()); statErr == nil {
@@ -787,6 +838,9 @@ func doInitialize() error {
 		return fmt.Errorf("failed to run startup migrations: %w", err)
 	}
 	config.SetDb(instance)
+	if err := preserveLegacyHTTPSListen(); err != nil {
+		return fmt.Errorf("preserve HTTPS listen: %w", err)
+	}
 
 	// 配置库就绪后、执行后续 AutoMigrate 与一次性 metrics 迁移之前：
 	// 基于配置中的版本标记检测升级并自动备份 ./data，便于回滚。
@@ -824,9 +878,18 @@ func doInitialize() error {
 		&models.OidcProvider{},
 		&models.MessageSenderProvider{},
 		&models.ThemeConfiguration{},
+		&models.BillingPriceVersion{},
+		&models.BillingFXSnapshot{},
+		&models.BillingEntry{},
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
+	}
+	if err := billing.EnsureInitialPriceVersions(instance, time.Now().UTC()); err != nil {
+		return fmt.Errorf("failed to initialize billing price versions: %w", err)
+	}
+	if err := billing.BackfillPriceVersionFX(instance); err != nil {
+		return fmt.Errorf("failed to backfill billing FX snapshots: %w", err)
 	}
 	if copyLegacyReturnRouteNotify {
 		if err := instance.Exec("UPDATE return_route_tasks SET notify_recovery = notify").Error; err != nil {

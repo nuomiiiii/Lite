@@ -6,8 +6,8 @@ import (
 )
 
 func TestOriginMatchesRequestThroughPrivateReverseProxy(t *testing.T) {
-	request := httptest.NewRequest("GET", "http://komari:25774/api/clients", nil)
-	request.Host = "komari:25774"
+	request := httptest.NewRequest("GET", "http://lite:27777/api/clients", nil)
+	request.Host = "lite:27777"
 	request.RemoteAddr = "172.17.0.1:41234"
 	request.Header.Set("X-Forwarded-Host", "monitor.example.com")
 
@@ -17,8 +17,8 @@ func TestOriginMatchesRequestThroughPrivateReverseProxy(t *testing.T) {
 }
 
 func TestOriginMatchesRequestSupportsStandardForwardedHost(t *testing.T) {
-	request := httptest.NewRequest("GET", "http://127.0.0.1:25774/api/clients", nil)
-	request.Host = "127.0.0.1:25774"
+	request := httptest.NewRequest("GET", "http://127.0.0.1:27777/api/clients", nil)
+	request.Host = "127.0.0.1:27777"
 	request.RemoteAddr = "127.0.0.1:41234"
 	request.Header.Set("Forwarded", `for=192.0.2.10;proto=https;host="monitor.example.com"`)
 

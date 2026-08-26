@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	logger "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"math"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/pkg/metric"
-	v1 "github.com/komari-monitor/komari/protocol/v1"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/pkg/metric"
+	v1 "github.com/nuomiiiii/lite/protocol/v1"
 )
 
 type reportTrafficState struct {

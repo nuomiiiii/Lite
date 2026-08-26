@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/metricstore"
-	appconfig "github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/migrations"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	appconfig "github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/migrations"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -118,7 +118,7 @@ func TestUpstreamMetricDatabaseUpgradeCompatibility(t *testing.T) {
 
 func openCompatibilityConfigDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	path := filepath.ToSlash(filepath.Join(t.TempDir(), "komari.db"))
+	path := filepath.ToSlash(filepath.Join(t.TempDir(), "lite.db"))
 	db, err := gorm.Open(sqlite.Open("file:"+path+"?mode=rwc"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open compatibility main database: %v", err)

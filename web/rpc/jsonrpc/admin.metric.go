@@ -7,16 +7,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari/database/auditlog"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/pkg/metric"
-	"github.com/komari-monitor/komari/pkg/rpc"
+	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/pkg/metric"
+	"github.com/nuomiiiii/lite/pkg/rpc"
 )
 
 // admin.metric.go
 // Metrics 数据库迁移相关 RPC 方法（admin 命名空间）。
 //
-// 语义变更：过去这些方法用于把旧 komari.db 的 records/ping 表迁移到 metric store。
+// 语义变更：过去这些方法用于把旧 lite.db 的 records/ping 表迁移到 metric store。
 // 现在“旧表 → metrics”已改为进程启动时自动一次性完成（见 metricstore.RunStartupMigration），
 // 无需 WebUI 介入。因此这些方法现在服务于「metrics 存储后端迁移」——即把默认
 // SQLite（./data/metrics.db）中的历史数据搬运到管理员新配置的 MySQL/PostgreSQL。

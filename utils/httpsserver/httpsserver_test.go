@@ -18,6 +18,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	appconfig "github.com/nuomiiiii/lite/pkg/config"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestManagerServesHTTPSWithManualCertificate(t *testing.T) {
@@ -172,7 +176,7 @@ func TestDisabledManagerShowsValidatedCertificateMetadata(t *testing.T) {
 	manager := NewManager()
 	settings := Settings{
 		Enabled:         false,
-		Listen:          ":35938",
+		Listen:          ":36888",
 		CertificatePath: certPath,
 		PrivateKeyPath:  keyPath,
 	}
@@ -196,7 +200,7 @@ func TestDisabledManagerAllowsMissingCertificate(t *testing.T) {
 	manager := NewManager()
 	settings := Settings{
 		Enabled:         false,
-		Listen:          ":35938",
+		Listen:          ":36888",
 		CertificatePath: filepath.Join(t.TempDir(), "missing.crt"),
 		PrivateKeyPath:  filepath.Join(t.TempDir(), "missing.key"),
 	}
@@ -214,7 +218,7 @@ func TestNormalizeUsesDefaultHTTPSPortAndRequiresCertificatePaths(t *testing.T) 
 	if err != nil {
 		t.Fatalf("normalize default HTTPS settings: %v", err)
 	}
-	if settings.Listen != ":35938" {
+	if settings.Listen != ":36888" {
 		t.Fatalf("default listen = %q", settings.Listen)
 	}
 	settings.Enabled = true
@@ -223,11 +227,41 @@ func TestNormalizeUsesDefaultHTTPSPortAndRequiresCertificatePaths(t *testing.T) 
 	}
 }
 
+func TestLoadSettingsKeepsLegacyHTTPSListenPort(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:https-keep-legacy-port?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open config database: %v", err)
+	}
+	appconfig.SetDb(db)
+	if err := appconfig.SetMany(map[string]any{
+		appconfig.HTTPSEnabledKey:      false,
+		appconfig.HTTPSListenKey:       ":35938",
+		appconfig.HTTPSRedirectHTTPKey: false,
+	}); err != nil {
+		t.Fatalf("seed legacy HTTPS listen: %v", err)
+	}
+
+	settings, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("load HTTPS settings: %v", err)
+	}
+	if settings.Listen != ":35938" {
+		t.Fatalf("listen = %q, want to keep :35938", settings.Listen)
+	}
+	persisted, err := appconfig.GetAs[string](appconfig.HTTPSListenKey)
+	if err != nil {
+		t.Fatalf("read HTTPS listen: %v", err)
+	}
+	if persisted != ":35938" {
+		t.Fatalf("persisted listen = %q, want :35938", persisted)
+	}
+}
+
 func TestHTTPRedirectUsesPublic443AndHonorsForwardedHTTPS(t *testing.T) {
 	manager := NewManager()
 	manager.settings = Settings{
 		Enabled:      true,
-		Listen:       ":35938",
+		Listen:       ":36888",
 		RedirectHTTP: true,
 	}
 	manager.status = Status{Running: true, Ready: true}
@@ -248,10 +282,10 @@ func TestHTTPRedirectUsesPublic443AndHonorsForwardedHTTPS(t *testing.T) {
 		t.Fatalf("location = %q", location)
 	}
 
-	request = httptest.NewRequest(http.MethodGet, "http://example.com:25774/admin", nil)
+	request = httptest.NewRequest(http.MethodGet, "http://example.com:27777/admin", nil)
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if location := response.Header().Get("Location"); location != "https://example.com:35938/admin" {
+	if location := response.Header().Get("Location"); location != "https://example.com:36888/admin" {
 		t.Fatalf("explicit-port location = %q", location)
 	}
 
@@ -279,7 +313,7 @@ func TestHTTPRedirectUsesPublic443AndHonorsForwardedHTTPS(t *testing.T) {
 
 func TestHTTPRedirectPreservesUploadMethodAndBody(t *testing.T) {
 	manager := &Manager{}
-	manager.settings = Settings{Enabled: true, Listen: ":35938", RedirectHTTP: true}
+	manager.settings = Settings{Enabled: true, Listen: ":36888", RedirectHTTP: true}
 	manager.status = Status{Running: true, Ready: true}
 	handler := manager.HTTPRedirectHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		t.Fatal("redirected upload unexpectedly reached the HTTP handler")
@@ -399,7 +433,7 @@ func TestDisableAfterResponseKeepsTLSAliveUntilResponseCompletes(t *testing.T) {
 		}
 		w.Header().Set("Strict-Transport-Security", "max-age=0")
 		_, _ = io.WriteString(w, "disabled")
-	}), enabled, "0.0.0.0:25774"); err != nil {
+	}), enabled, "0.0.0.0:27777"); err != nil {
 		t.Fatalf("start HTTPS manager: %v", err)
 	}
 	t.Cleanup(func() { _ = manager.Shutdown(context.Background()) })
@@ -477,14 +511,14 @@ func TestDeferredDisableDoesNotStopReenabledHTTPS(t *testing.T) {
 
 func TestHTTPOriginOnlyForDirectTLS(t *testing.T) {
 	manager := NewManager()
-	manager.httpListen = "0.0.0.0:25774"
+	manager.httpListen = "0.0.0.0:27777"
 
-	direct := httptest.NewRequest(http.MethodPost, "https://example.test:35938/api/admin/settings/https", nil)
-	if origin := manager.HTTPOrigin(direct); origin != "http://example.test:25774" {
+	direct := httptest.NewRequest(http.MethodPost, "https://example.test:36888/api/admin/settings/https", nil)
+	if origin := manager.HTTPOrigin(direct); origin != "http://example.test:27777" {
 		t.Fatalf("direct TLS HTTP origin = %q", origin)
 	}
-	directIPv6 := httptest.NewRequest(http.MethodPost, "https://[2001:db8::10]:35938/api/admin/settings/https", nil)
-	if origin := manager.HTTPOrigin(directIPv6); origin != "http://[2001:db8::10]:25774" {
+	directIPv6 := httptest.NewRequest(http.MethodPost, "https://[2001:db8::10]:36888/api/admin/settings/https", nil)
+	if origin := manager.HTTPOrigin(directIPv6); origin != "http://[2001:db8::10]:27777" {
 		t.Fatalf("direct IPv6 TLS HTTP origin = %q", origin)
 	}
 	forwarded := httptest.NewRequest(http.MethodPost, "http://internal/api/admin/settings/https", nil)
@@ -503,17 +537,17 @@ func TestHTTPOriginOnlyForDirectTLS(t *testing.T) {
 
 func TestHTTPSOriginOnlyForDirectHTTP(t *testing.T) {
 	manager := NewManager()
-	manager.settings = Settings{Listen: ":35938"}
+	manager.settings = Settings{Listen: ":36888"}
 
 	direct := httptest.NewRequest(http.MethodPost, "http://example.test:25881/api/admin/settings/https", nil)
-	if origin := manager.HTTPSOrigin(direct); origin != "https://example.test:35938" {
+	if origin := manager.HTTPSOrigin(direct); origin != "https://example.test:36888" {
 		t.Fatalf("direct HTTP HTTPS origin = %q", origin)
 	}
 	directIPv6 := httptest.NewRequest(http.MethodPost, "http://[2001:db8::10]:25881/api/admin/settings/https", nil)
-	if origin := manager.HTTPSOrigin(directIPv6); origin != "https://[2001:db8::10]:35938" {
+	if origin := manager.HTTPSOrigin(directIPv6); origin != "https://[2001:db8::10]:36888" {
 		t.Fatalf("direct IPv6 HTTP HTTPS origin = %q", origin)
 	}
-	secure := httptest.NewRequest(http.MethodPost, "https://example.test:35938/api/admin/settings/https", nil)
+	secure := httptest.NewRequest(http.MethodPost, "https://example.test:36888/api/admin/settings/https", nil)
 	if origin := manager.HTTPSOrigin(secure); origin != "" {
 		t.Fatalf("direct TLS received redundant HTTPS origin %q", origin)
 	}
@@ -549,7 +583,7 @@ func TestListenerFamilyAvailabilityIgnoresMissingAndLoopbackFamilies(t *testing.
 
 func TestRedirectWaitsForReadyHTTPS(t *testing.T) {
 	manager := NewManager()
-	manager.settings = Settings{Enabled: true, Listen: ":35938", RedirectHTTP: true}
+	manager.settings = Settings{Enabled: true, Listen: ":36888", RedirectHTTP: true}
 	manager.status = Status{Running: true, Ready: false}
 	handler := manager.HTTPRedirectHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)

@@ -1,15 +1,15 @@
 name: Build system UI
-description: Clone komari-web, build the theme-independent system UI, and optionally upload it as an artifact.
+description: Clone Lite-web, build the theme-independent system UI, and optionally upload it as an artifact.
 
 inputs:
   node-version:
-    description: Node.js version used to build komari-web.
+    description: Node.js version used to build Lite-web.
     default: "24"
   repository:
-    description: komari-web repository URL.
-    default: https://github.com/nuomiiiii/komari-web
+    description: Lite-web Git clone URL. Leave empty to use the sibling repo under the current GitHub owner.
+    default: ""
   ref:
-    description: Optional komari-web ref to build. Uses the repository default branch when empty.
+    description: Optional Lite-web ref to build. Uses the repository default branch when empty.
     default: main
   artifact-name:
     description: Optional artifact name for the packed system UI.
@@ -27,25 +27,32 @@ runs:
       shell: bash
       run: |
         set -euxo pipefail
-        rm -rf komari-web
-        if [ -n "${{ inputs.ref }}" ]; then
-          git clone --depth=1 --branch "${{ inputs.ref }}" "${{ inputs.repository }}" komari-web
-        else
-          git clone --depth=1 "${{ inputs.repository }}" komari-web
+        rm -rf Lite-web
+        repo="${{ inputs.repository }}"
+        if [ -z "$repo" ]; then
+          repo="https://github.com/${{ github.repository_owner }}/Lite-web"
         fi
-        cd komari-web
+        if [ -n "${{ inputs.ref }}" ]; then
+          git clone --depth=1 --branch "${{ inputs.ref }}" "$repo" Lite-web
+        else
+          git clone --depth=1 "$repo" Lite-web
+        fi
+        cd Lite-web
         npm ci
         VITE_SYSTEM_UI_BUILD=1 VITE_BASE_URL=/system-assets/ npm run build
         cd ..
 
         rm -rf web/public/systemUI
         mkdir -p web/public/systemUI
-        cp -r komari-web/dist web/public/systemUI/
+        cp -r Lite-web/dist web/public/systemUI/
 
         grep -F '/system-assets/' web/public/systemUI/dist/index.html
-        test -f web/public/bundledThemes/nezha/komari-theme.json
-        test -f web/public/bundledThemes/nezha/dist/index.html
+        test -f web/public/bundledThemes/Lite-theme/Lite-theme.json
+        test -f web/public/bundledThemes/Lite-theme/dist/index.html
+        test -f web/public/rescueTheme/Lite-theme.json
         test -f web/public/rescueTheme/dist/index.html
+        test ! -e web/public/rescueTheme/komari-theme.json
+        test ! -e web/public/bundledThemes/nezha
 
     - name: Pack frontend artifact
       if: ${{ inputs.artifact-name != '' }}

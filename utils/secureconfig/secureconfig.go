@@ -80,7 +80,7 @@ func DecryptString(ciphertext string) (string, error) {
 }
 
 func loadOrCreateKey() ([]byte, error) {
-	if env := strings.TrimSpace(os.Getenv("KOMARI_SECRET_KEY")); env != "" {
+	if env := strings.TrimSpace(os.Getenv("LITE_SECRET_KEY")); env != "" {
 		return normalizeKey(env)
 	}
 

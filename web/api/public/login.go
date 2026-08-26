@@ -5,11 +5,11 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/komari-monitor/komari/database/accounts"
-	"github.com/komari-monitor/komari/database/auditlog"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/utils"
-	"github.com/komari-monitor/komari/web/api"
+	"github.com/nuomiiiii/lite/database/accounts"
+	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/utils"
+	"github.com/nuomiiiii/lite/web/api"
 
 	"github.com/gin-gonic/gin"
 )

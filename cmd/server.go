@@ -1,9 +1,12 @@
 package cmd
 
 import (
-	logger "github.com/komari-monitor/komari/utils/log"
+	"path/filepath"
+	"strings"
 
-	"github.com/komari-monitor/komari/cmd/flags"
+	"github.com/nuomiiiii/lite/cmd/flags"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"github.com/spf13/cobra"
 )
 
@@ -12,15 +15,33 @@ var ServerCmd = &cobra.Command{
 	Short: "Start the server",
 	Long:  `Start the server`,
 	Run: func(cmd *cobra.Command, args []string) {
+		applyHTTPListenDefault(cmd)
 		RunServer()
 	},
 }
 
 func init() {
-	// 从环境变量获取监听地址
-	listenAddr := GetEnv("KOMARI_LISTEN", "0.0.0.0:25774")
-	ServerCmd.PersistentFlags().StringVarP(&flags.Listen, "listen", "l", listenAddr, "监听地址 [env: KOMARI_LISTEN]")
+	// -l / LITE_LISTEN / KOMARI_LISTEN 原样保留。未指定时：新安装 27777，
+	// 从 Komari / Komari Lite 升级则继续用原来的端口，不改到 Lite 默认口。
+	ServerCmd.PersistentFlags().StringVarP(&flags.Listen, "listen", "l", "0.0.0.0:27777", "监听地址 [env: LITE_LISTEN]")
 	RootCmd.AddCommand(ServerCmd)
+}
+
+func applyHTTPListenDefault(cmd *cobra.Command) {
+	if cmd != nil && cmd.Flags().Changed("listen") {
+		return
+	}
+	if env := GetEnvFirst("", "LITE_LISTEN", "KOMARI_LISTEN"); env != "" {
+		flags.Listen = env
+		return
+	}
+	dataDir := filepath.Join(".", "data")
+	if strings.TrimSpace(flags.DatabaseFile) != "" {
+		if dir := filepath.Dir(flags.DatabaseFile); dir != "" && dir != "." {
+			dataDir = dir
+		}
+	}
+	flags.Listen = dbcore.ResolveDefaultHTTPListen(dataDir)
 }
 
 // RunServer 按显式的生命周期阶段启动服务端。

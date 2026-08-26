@@ -16,35 +16,36 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/komari-monitor/komari/cmd/flags"
-	"github.com/komari-monitor/komari/database"
-	"github.com/komari-monitor/komari/database/accounts"
-	"github.com/komari-monitor/komari/database/auditlog"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
-	d_notification "github.com/komari-monitor/komari/database/notification"
-	"github.com/komari-monitor/komari/database/tasks"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/corn"
-	"github.com/komari-monitor/komari/pkg/metric"
-	"github.com/komari-monitor/komari/pkg/migrations"
-	"github.com/komari-monitor/komari/utils"
-	"github.com/komari-monitor/komari/utils/cloudflared"
-	"github.com/komari-monitor/komari/utils/geoip"
-	"github.com/komari-monitor/komari/utils/httpsserver"
-	logger "github.com/komari-monitor/komari/utils/log"
-	"github.com/komari-monitor/komari/utils/messageSender"
-	"github.com/komari-monitor/komari/utils/notifier"
-	"github.com/komari-monitor/komari/web/api"
-	installweb "github.com/komari-monitor/komari/web/install"
-	"github.com/komari-monitor/komari/web/oauth"
-	frontendpublic "github.com/komari-monitor/komari/web/public"
-	"github.com/komari-monitor/komari/web/router"
-	"github.com/komari-monitor/komari/web/security"
-	storageupdateweb "github.com/komari-monitor/komari/web/storageupdate"
-	upgradeweb "github.com/komari-monitor/komari/web/update"
-	"github.com/komari-monitor/komari/web/upload"
+	"github.com/nuomiiiii/lite/cmd/flags"
+	"github.com/nuomiiiii/lite/database"
+	"github.com/nuomiiiii/lite/database/accounts"
+	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/database/billing"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
+	d_notification "github.com/nuomiiiii/lite/database/notification"
+	"github.com/nuomiiiii/lite/database/tasks"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/corn"
+	"github.com/nuomiiiii/lite/pkg/metric"
+	"github.com/nuomiiiii/lite/pkg/migrations"
+	"github.com/nuomiiiii/lite/utils"
+	"github.com/nuomiiiii/lite/utils/cloudflared"
+	"github.com/nuomiiiii/lite/utils/geoip"
+	"github.com/nuomiiiii/lite/utils/httpsserver"
+	logger "github.com/nuomiiiii/lite/utils/log"
+	"github.com/nuomiiiii/lite/utils/messageSender"
+	"github.com/nuomiiiii/lite/utils/notifier"
+	"github.com/nuomiiiii/lite/web/api"
+	installweb "github.com/nuomiiiii/lite/web/install"
+	"github.com/nuomiiiii/lite/web/oauth"
+	frontendpublic "github.com/nuomiiiii/lite/web/public"
+	"github.com/nuomiiiii/lite/web/router"
+	"github.com/nuomiiiii/lite/web/security"
+	storageupdateweb "github.com/nuomiiiii/lite/web/storageupdate"
+	upgradeweb "github.com/nuomiiiii/lite/web/update"
+	"github.com/nuomiiiii/lite/web/upload"
 	"gorm.io/gorm"
 )
 
@@ -122,6 +123,9 @@ func (a *App) Bootstrap() error {
 	if err := normalizeMetricStorageSettings(); err != nil {
 		return fmt.Errorf("failed to normalize metric storage settings: %w", err)
 	}
+	if err := normalizeSiteFactoryDefaults(); err != nil {
+		return fmt.Errorf("failed to normalize site factory defaults: %w", err)
+	}
 
 	conf, err := config.GetManyAs[config.Settings]()
 	if err != nil {
@@ -139,6 +143,45 @@ func normalizeMetricStorageSettings() error {
 		config.LowResourceModeKey:                false,
 		metricstore.MetricDownsamplingEnabledKey: true,
 	})
+}
+
+func normalizeSiteFactoryDefaults() error {
+	all, err := config.GetAll()
+	if err != nil {
+		return err
+	}
+	updates := map[string]any{
+		config.ReduceMotionKey: false,
+	}
+	migrated, _ := all[config.SiteFactoryDefaultsKey].(bool)
+	if !migrated {
+		if description, ok := all[config.DescriptionKey].(string); ok && config.IsLegacyDefaultDescription(description) {
+			updates[config.DescriptionKey] = config.DefaultSiteDescription
+		}
+		if pageSize, ok := configValueAsInt(all[config.AdminDefaultPageSizeKey]); ok && pageSize == 10 {
+			updates[config.AdminDefaultPageSizeKey] = config.AdminDefaultPageSize
+		}
+		updates[config.SiteFactoryDefaultsKey] = true
+	}
+	return config.SetMany(updates)
+}
+
+func configValueAsInt(value any) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int32:
+		return int(typed), true
+	case int64:
+		return int(typed), true
+	case float64:
+		if typed != float64(int(typed)) {
+			return 0, false
+		}
+		return int(typed), true
+	default:
+		return 0, false
+	}
 }
 
 // InitStores 初始化独立存储组件（metric store）并执行 metrics 迁移。
@@ -531,7 +574,7 @@ func (a *App) StartBackground() error {
 		return nil
 	})
 
-	if err := cloudflared.AutoStart(GetEnv("KOMARI_CLOUDFLARED_TOKEN", "")); err != nil {
+	if err := cloudflared.AutoStart(GetEnvFirst("", "LITE_CLOUDFLARED_TOKEN", "KOMARI_CLOUDFLARED_TOKEN")); err != nil {
 		logger.Errorf("cloudflared", "failed to auto start: %v", err)
 	}
 	a.addCleanup("cloudflared", func(context.Context) error {
@@ -764,6 +807,21 @@ func registerScheduledWork() {
 	}
 	if err := corn.AddFunc("notifier:expire", "0 0 9 * * *", notifier.CheckExpireScheduledWork); err != nil {
 		logger.ErrorArgs("server", "Failed to add expire notification scheduled task:", err)
+	}
+	if err := corn.AddContextFunc("billing:fx-refresh", "@every 6h", true, func(ctx context.Context) {
+		if _, refreshErr := billing.RefreshFX(ctx, dbcore.GetDBInstance(), nil, ""); refreshErr != nil {
+			logger.Errorf("billing", "Failed to refresh reference rates: %v", refreshErr)
+		}
+	}); err != nil {
+		logger.ErrorArgs("billing", "Failed to add reference-rate task:", err)
+	}
+	if err := corn.AddFuncInLocation("billing:accrue", "0 10 0 * * *", billing.BeijingLocation, func() {
+		now := time.Now().UTC()
+		if accrueErr := billing.EnsureAccruedThrough(context.Background(), dbcore.GetDBInstance(), billing.BeijingDay(now).AddDate(0, 0, -1)); accrueErr != nil {
+			logger.Errorf("billing", "Failed to accrue the previous billing day: %v", accrueErr)
+		}
+	}); err != nil {
+		logger.ErrorArgs("billing", "Failed to add daily accrual task:", err)
 	}
 
 	notifier.InitTrafficReportSchedule()

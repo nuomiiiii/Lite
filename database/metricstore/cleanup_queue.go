@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari/database/models"
-	logger "github.com/komari-monitor/komari/utils/log"
+	"github.com/nuomiiiii/lite/database/models"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

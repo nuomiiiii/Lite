@@ -1,7 +1,7 @@
 package bark
 
 import (
-	"github.com/komari-monitor/komari/utils/messageSender/factory"
+	"github.com/nuomiiiii/lite/utils/messageSender/factory"
 )
 
 type Addition struct {

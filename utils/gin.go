@@ -2,7 +2,7 @@ package utils
 
 import "github.com/gin-gonic/gin"
 
-import "github.com/komari-monitor/komari/utils/requestscheme"
+import "github.com/nuomiiiii/lite/utils/requestscheme"
 
 // https://github.com/labstack/echo/blob/98ca08e7dd64075b858e758d6693bf9799340756/context.go#L275-L294
 func GetScheme(c *gin.Context) string {

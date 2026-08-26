@@ -1,8 +1,8 @@
 package client
 
 import (
-	"github.com/komari-monitor/komari/database/clients"
-	v2 "github.com/komari-monitor/komari/protocol/v2"
+	"github.com/nuomiiiii/lite/database/clients"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
 )
 
 func getClientRuntimeConfig(uuid string) (*v2.ConfigParams, error) {

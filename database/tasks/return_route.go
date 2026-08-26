@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
-	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
-	v2 "github.com/komari-monitor/komari/protocol/v2"
-	"github.com/komari-monitor/komari/utils"
-	"github.com/komari-monitor/komari/utils/messageSender"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
+	messageevent "github.com/nuomiiiii/lite/database/models/messageEvent"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
+	"github.com/nuomiiiii/lite/utils"
+	"github.com/nuomiiiii/lite/utils/messageSender"
 	"gorm.io/gorm"
 )
 
@@ -41,12 +41,14 @@ type ReturnRouteSummary struct {
 }
 
 type ReturnRouteTaskQuery struct {
-	Page     int    `json:"page"`
-	PageSize int    `json:"page_size"`
-	TaskID   uint   `json:"task_id"`
-	Keyword  string `json:"keyword"`
-	Carrier  string `json:"carrier"`
-	State    string `json:"state"`
+	Page     int      `json:"page"`
+	PageSize int      `json:"page_size"`
+	TaskID   uint     `json:"task_id"`
+	Keyword  string   `json:"keyword"`
+	Carrier  string   `json:"carrier"`
+	Carriers []string `json:"carriers"`
+	State    string   `json:"state"`
+	States   []string `json:"states"`
 }
 
 type ReturnRouteTaskPage struct {
@@ -76,16 +78,21 @@ type ReturnRouteTaskBatchEdit struct {
 }
 
 type ReturnRouteEventQuery struct {
-	Page         int        `json:"page"`
-	PageSize     int        `json:"page_size"`
-	Keyword      string     `json:"keyword"`
-	Kind         string     `json:"kind"`
-	Carrier      string     `json:"carrier"`
-	Region       string     `json:"region"`
-	ExpectedLine string     `json:"expected_line"`
-	ActualLine   string     `json:"actual_line"`
-	Start        *time.Time `json:"start"`
-	End          *time.Time `json:"end"`
+	Page          int        `json:"page"`
+	PageSize      int        `json:"page_size"`
+	Keyword       string     `json:"keyword"`
+	Kind          string     `json:"kind"`
+	Kinds         []string   `json:"kinds"`
+	Carrier       string     `json:"carrier"`
+	Carriers      []string   `json:"carriers"`
+	Region        string     `json:"region"`
+	Regions       []string   `json:"regions"`
+	ExpectedLine  string     `json:"expected_line"`
+	ExpectedLines []string   `json:"expected_lines"`
+	ActualLine    string     `json:"actual_line"`
+	ActualLines   []string   `json:"actual_lines"`
+	Start         *time.Time `json:"start"`
+	End           *time.Time `json:"end"`
 }
 
 type ReturnRouteEventItem struct {
@@ -396,39 +403,86 @@ func filterReturnRouteTasks(query *gorm.DB, params ReturnRouteTaskQuery, db *gor
 		query = query.Where("LOWER(name) LIKE ? OR LOWER(target) LIKE ? OR LOWER(region) LIKE ? OR LOWER(client) LIKE ? OR client IN (?)",
 			pattern, pattern, pattern, pattern, clients)
 	}
-	if carrier := strings.ToLower(strings.TrimSpace(params.Carrier)); carrier != "" {
+	carriers := normalizeReturnRouteQueryValues(params.Carrier, params.Carriers, normalizeLowerTrimmed)
+	for _, carrier := range carriers {
 		if carrier != "mobile" && carrier != "telecom" && carrier != "unicom" {
 			return query, fmt.Errorf("unsupported carrier %q", carrier)
 		}
-		query = query.Where("carrier = ?", carrier)
 	}
-	switch state := strings.ToLower(strings.TrimSpace(params.State)); state {
-	case "":
-	case "disabled":
-		query = query.Where("enabled = ?", false)
-	case "pending":
+	if len(carriers) > 0 {
+		query = query.Where("carrier IN ?", carriers)
+	}
+
+	states := normalizeReturnRouteQueryValues(params.State, params.States, normalizeLowerTrimmed)
+	if len(states) == 0 {
+		return query, nil
+	}
+	validStates := map[string]bool{
+		"disabled":  true,
+		"pending":   true,
+		"probing":   true,
+		"observing": true,
+		"healthy":   true,
+		"switched":  true,
+		"unknown":   true,
+	}
+	for _, state := range states {
+		if !validStates[state] {
+			return query, fmt.Errorf("unsupported state %q", state)
+		}
+	}
+
+	clauses := make([]string, 0, len(states))
+	args := make([]any, 0, len(states)*3)
+	containsState := func(target string) bool {
+		for _, state := range states {
+			if state == target {
+				return true
+			}
+		}
+		return false
+	}
+	probingIDs := utils.ProbingReturnRouteTaskIDs()
+	if containsState("disabled") {
+		clauses = append(clauses, "(enabled = ?)")
+		args = append(args, false)
+	}
+	if containsState("pending") {
 		allStatuses := db.Model(&models.ReturnRouteStatus{}).Select("task_id")
 		pendingStatuses := db.Model(&models.ReturnRouteStatus{}).Select("task_id").Where("state = ?", "pending")
-		query = query.Where("enabled = ?", true).Where("(id NOT IN (?) OR id IN (?))", allStatuses, pendingStatuses)
-		if probing := utils.ProbingReturnRouteTaskIDs(); len(probing) > 0 {
-			query = query.Where("id NOT IN ?", probing)
+		clause := "(enabled = ? AND (id NOT IN (?) OR id IN (?))"
+		args = append(args, true, allStatuses, pendingStatuses)
+		if len(probingIDs) > 0 {
+			clause += " AND id NOT IN ?"
+			args = append(args, probingIDs)
 		}
-	case "probing":
-		probing := utils.ProbingReturnRouteTaskIDs()
-		if len(probing) == 0 {
-			query = query.Where("1 = 0")
-		} else {
-			query = query.Where("enabled = ? AND id IN ?", true, probing)
-		}
-	case "observing", "healthy", "switched", "unknown":
-		statuses := db.Model(&models.ReturnRouteStatus{}).Select("task_id").Where("state = ?", state)
-		query = query.Where("id IN (?)", statuses)
-		if probing := utils.ProbingReturnRouteTaskIDs(); len(probing) > 0 {
-			query = query.Where("id NOT IN ?", probing)
-		}
-	default:
-		return query, fmt.Errorf("unsupported state %q", state)
+		clauses = append(clauses, clause+")")
 	}
+	if containsState("probing") {
+		if len(probingIDs) == 0 {
+			clauses = append(clauses, "(1 = 0)")
+		} else {
+			clauses = append(clauses, "(enabled = ? AND id IN ?)")
+			args = append(args, true, probingIDs)
+		}
+	}
+	statusStates := make([]string, 0, len(states))
+	for _, state := range states {
+		if state == "observing" || state == "healthy" || state == "switched" || state == "unknown" {
+			statusStates = append(statusStates, state)
+		}
+	}
+	if len(statusStates) > 0 {
+		statuses := db.Model(&models.ReturnRouteStatus{}).Select("task_id").Where("state IN ?", statusStates)
+		clause := "(enabled = ? AND id IN (?)"
+		args = append(args, true, statuses)
+		if len(probingIDs) > 0 {
+			clause += " AND id NOT IN ?"
+			args = append(args, probingIDs)
+		}
+		clauses = append(clauses, clause+")")
+	}
+	query = query.Where(strings.Join(clauses, " OR "), args...)
 	return query, nil
 }
 
@@ -504,17 +558,23 @@ func filterReturnRouteEvents(query *gorm.DB, params ReturnRouteEventQuery, db *g
 	if params.Start != nil && params.End != nil && !params.End.After(*params.Start) {
 		return query, fmt.Errorf("end must be after start")
 	}
-	if kind := strings.ToLower(strings.TrimSpace(params.Kind)); kind != "" {
+	kinds := normalizeReturnRouteQueryValues(params.Kind, params.Kinds, normalizeLowerTrimmed)
+	for _, kind := range kinds {
 		if kind != "switch" && kind != "recovery" {
 			return query, fmt.Errorf("unsupported event kind %q", kind)
 		}
-		query = query.Where("kind = ?", kind)
 	}
-	if line := normalizeReturnRouteLine(params.ActualLine); line != "" {
+	if len(kinds) > 0 {
+		query = query.Where("kind IN ?", kinds)
+	}
+	actualLines := normalizeReturnRouteQueryValues(params.ActualLine, params.ActualLines, normalizeReturnRouteLine)
+	for _, line := range actualLines {
 		if !isReturnRouteLine(line) {
 			return query, fmt.Errorf("unsupported actual_line %q", line)
 		}
-		query = query.Where("to_line = ?", line)
+	}
+	if len(actualLines) > 0 {
+		query = query.Where("to_line IN ?", actualLines)
 	}
 
 	if keyword := strings.ToLower(strings.TrimSpace(params.Keyword)); keyword != "" {
@@ -526,25 +586,50 @@ func filterReturnRouteEvents(query *gorm.DB, params ReturnRouteEventQuery, db *g
 		query = query.Where("LOWER(task_name) LIKE ? OR LOWER(target) LIKE ? OR LOWER(asn_path) LIKE ? OR LOWER(route_path) LIKE ? OR task_id IN (?)",
 			pattern, pattern, pattern, pattern, tasks)
 	}
-	if carrier := strings.ToLower(strings.TrimSpace(params.Carrier)); carrier != "" {
+	carriers := normalizeReturnRouteQueryValues(params.Carrier, params.Carriers, normalizeLowerTrimmed)
+	for _, carrier := range carriers {
 		if carrier != "mobile" && carrier != "telecom" && carrier != "unicom" {
 			return query, fmt.Errorf("unsupported carrier %q", carrier)
 		}
-		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("carrier = ?", carrier)
-		query = query.Where("(carrier = ? OR ((carrier = '' OR carrier IS NULL) AND task_id IN (?)))", carrier, tasks)
 	}
-	if region := strings.TrimSpace(params.Region); region != "" {
-		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("region = ?", region)
-		query = query.Where("(region = ? OR ((region = '' OR region IS NULL) AND task_id IN (?)))", region, tasks)
+	if len(carriers) > 0 {
+		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("carrier IN ?", carriers)
+		query = query.Where("(carrier IN ? OR ((carrier = '' OR carrier IS NULL) AND task_id IN (?)))", carriers, tasks)
 	}
-	if line := normalizeReturnRouteLine(params.ExpectedLine); line != "" {
+	regions := normalizeReturnRouteQueryValues(params.Region, params.Regions, strings.TrimSpace)
+	if len(regions) > 0 {
+		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("region IN ?", regions)
+		query = query.Where("(region IN ? OR ((region = '' OR region IS NULL) AND task_id IN (?)))", regions, tasks)
+	}
+	expectedLines := normalizeReturnRouteQueryValues(params.ExpectedLine, params.ExpectedLines, normalizeReturnRouteLine)
+	for _, line := range expectedLines {
 		if !isReturnRouteLine(line) {
 			return query, fmt.Errorf("unsupported expected_line %q", line)
 		}
-		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("expected_line = ?", line)
-		query = query.Where("(expected_line = ? OR ((expected_line = '' OR expected_line IS NULL) AND task_id IN (?)))", line, tasks)
+	}
+	if len(expectedLines) > 0 {
+		tasks := db.Model(&models.ReturnRouteTask{}).Select("id").Where("expected_line IN ?", expectedLines)
+		query = query.Where("(expected_line IN ? OR ((expected_line = '' OR expected_line IS NULL) AND task_id IN (?)))", expectedLines, tasks)
 	}
 	return query, nil
+}
+
+func normalizeLowerTrimmed(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func normalizeReturnRouteQueryValues(single string, multiple []string, normalize func(string) string) []string {
+	values := make([]string, 0, len(multiple)+1)
+	seen := make(map[string]bool, len(multiple)+1)
+	for _, raw := range append([]string{single}, multiple...) {
+		value := normalize(raw)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		values = append(values, value)
+	}
+	return values
 }
 
 func normalizeReturnRoutePagination(page, pageSize int) (int, int) {

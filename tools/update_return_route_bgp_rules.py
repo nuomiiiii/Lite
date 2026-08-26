@@ -12,7 +12,7 @@ BASE_RULES = ROOT / "database/tasks/return_route_signatures.json"
 OVERRIDES = ROOT / "database/tasks/return_route_bgp_overrides.json"
 OUTPUT = ROOT / "database/tasks/return_route_bgp_prefixes.json"
 TABLE_URL = "https://bgp.tools/table.jsonl"
-USER_AGENT = "Komari-Return-Route (+https://github.com/nuomiiiii/komari)"
+USER_AGENT = "Lite-Return-Route (+https://github.com/nuomiiiii/Lite)"
 
 # Equal-length BGP prefixes can legitimately have more than one origin ASN.
 # Keep the route family that is checked first by the runtime classifier.

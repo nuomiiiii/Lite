@@ -1,4 +1,4 @@
-// Package backup validates and stages Komari backup archives for startup restore.
+// Package backup validates and stages Lite backup archives for startup restore.
 package backup
 
 import (
@@ -17,6 +17,8 @@ var restoreMutex sync.Mutex
 const (
 	MaxArchiveSize    int64 = 4 << 30
 	maxArchiveEntries       = 100_000
+	MarkupName              = "lite-backup-markup"
+	LegacyMarkupName        = "komari-backup-markup"
 )
 
 // RestoreLock prevents a second upload from replacing the already validated
@@ -163,11 +165,13 @@ func ValidateArchive(archivePath string) error {
 		if entry.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("backup archive contains unsupported symbolic link %q", name)
 		}
-		if name == "komari-backup-markup" {
+		if name == MarkupName || name == LegacyMarkupName {
 			hasMarkup = true
 		}
-		if name == "komari.db" && !entry.FileInfo().IsDir() {
-			hasMainDatabase = true
+		if name == "lite.db" || name == "komari.db" {
+			if !entry.FileInfo().IsDir() {
+				hasMainDatabase = true
+			}
 		}
 		if entry.UncompressedSize64 > uint64(MaxArchiveSize) || expandedSize > uint64(MaxArchiveSize)-entry.UncompressedSize64 {
 			return fmt.Errorf("backup archive expands beyond the %d byte limit", MaxArchiveSize)
@@ -175,10 +179,10 @@ func ValidateArchive(archivePath string) error {
 		expandedSize += entry.UncompressedSize64
 	}
 	if !hasMarkup {
-		return fmt.Errorf("invalid backup file: missing komari-backup-markup file")
+		return fmt.Errorf("invalid backup file: missing lite-backup-markup or komari-backup-markup file")
 	}
 	if !hasMainDatabase {
-		return fmt.Errorf("invalid backup file: missing komari.db")
+		return fmt.Errorf("invalid backup file: missing lite.db or komari.db")
 	}
 	return nil
 }

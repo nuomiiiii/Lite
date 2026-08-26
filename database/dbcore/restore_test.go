@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/nuomiiiii/lite/cmd/flags"
 )
 
 func createRestoreSQLite(t *testing.T, path, value string) {
@@ -25,13 +27,17 @@ func createRestoreSQLite(t *testing.T, path, value string) {
 }
 
 func writeRestoreArchive(t *testing.T, archivePath, databasePath string) {
+	writeNamedRestoreArchive(t, archivePath, "lite.db", databasePath)
+}
+
+func writeNamedRestoreArchive(t *testing.T, archivePath, zipName, databasePath string) {
 	t.Helper()
 	archive, err := os.Create(archivePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	writer := zip.NewWriter(archive)
-	databaseEntry, err := writer.Create("komari.db")
+	databaseEntry, err := writer.Create(zipName)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +71,7 @@ func TestRestoreStagedBackupReplacesDataOnlyAfterValidation(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	createRestoreSQLite(t, filepath.Join(dataDir, "komari.db"), "old")
+	createRestoreSQLite(t, filepath.Join(dataDir, "lite.db"), "old")
 	newDatabase := filepath.Join(root, "new.db")
 	createRestoreSQLite(t, newDatabase, "new")
 	writeRestoreArchive(t, filepath.Join(dataDir, "backup.zip"), newDatabase)
@@ -80,7 +86,7 @@ func TestRestoreStagedBackupReplacesDataOnlyAfterValidation(t *testing.T) {
 	if err := restore.Commit(); err != nil {
 		t.Fatalf("commit restore: %v", err)
 	}
-	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "komari.db"))
+	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "lite.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +132,7 @@ func TestRestoreStagedBackupRollsBackAfterStartupFailure(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	createRestoreSQLite(t, filepath.Join(dataDir, "komari.db"), "old")
+	createRestoreSQLite(t, filepath.Join(dataDir, "lite.db"), "old")
 	newDatabase := filepath.Join(root, "new.db")
 	createRestoreSQLite(t, newDatabase, "new")
 	writeRestoreArchive(t, filepath.Join(dataDir, "backup.zip"), newDatabase)
@@ -138,7 +144,7 @@ func TestRestoreStagedBackupRollsBackAfterStartupFailure(t *testing.T) {
 	if err := restore.Rollback(); err != nil {
 		t.Fatalf("rollback staged restore: %v", err)
 	}
-	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "komari.db"))
+	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "lite.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +171,7 @@ func TestCloseRollsBackPendingRestoreWithoutDatabaseHandle(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	createRestoreSQLite(t, filepath.Join(dataDir, "komari.db"), "old")
+	createRestoreSQLite(t, filepath.Join(dataDir, "lite.db"), "old")
 	newDatabase := filepath.Join(root, "new.db")
 	createRestoreSQLite(t, newDatabase, "new")
 	writeRestoreArchive(t, filepath.Join(dataDir, "backup.zip"), newDatabase)
@@ -183,7 +189,7 @@ func TestCloseRollsBackPendingRestoreWithoutDatabaseHandle(t *testing.T) {
 		t.Fatalf("close without database handle: %v", err)
 	}
 
-	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "komari.db"))
+	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "lite.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +209,7 @@ func TestInterruptedRestoreRollsBackBeforeCommit(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	createRestoreSQLite(t, filepath.Join(dataDir, "komari.db"), "old")
+	createRestoreSQLite(t, filepath.Join(dataDir, "lite.db"), "old")
 	newDatabase := filepath.Join(root, "new.db")
 	createRestoreSQLite(t, newDatabase, "new")
 	writeRestoreArchive(t, filepath.Join(dataDir, "backup.zip"), newDatabase)
@@ -215,7 +221,7 @@ func TestInterruptedRestoreRollsBackBeforeCommit(t *testing.T) {
 		t.Fatalf("recover interrupted restore: %v", err)
 	}
 
-	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "komari.db"))
+	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "lite.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +245,7 @@ func TestInterruptedRestoreKeepsDataAfterCommitMarker(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	createRestoreSQLite(t, filepath.Join(dataDir, "komari.db"), "old")
+	createRestoreSQLite(t, filepath.Join(dataDir, "lite.db"), "old")
 	newDatabase := filepath.Join(root, "new.db")
 	createRestoreSQLite(t, newDatabase, "new")
 	writeRestoreArchive(t, filepath.Join(dataDir, "backup.zip"), newDatabase)
@@ -255,7 +261,7 @@ func TestInterruptedRestoreKeepsDataAfterCommitMarker(t *testing.T) {
 		t.Fatalf("finish interrupted commit: %v", err)
 	}
 
-	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "komari.db"))
+	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "lite.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,5 +275,41 @@ func TestInterruptedRestoreKeepsDataAfterCommitMarker(t *testing.T) {
 	}
 	if _, err := os.Stat(restore.previousDir); !os.IsNotExist(err) {
 		t.Fatalf("previous directory still exists: %v", err)
+	}
+}
+
+func TestRestoreStagedBackupAdoptsKomariDatabase(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	createRestoreSQLite(t, filepath.Join(dataDir, "lite.db"), "old")
+	newDatabase := filepath.Join(root, "new.db")
+	createRestoreSQLite(t, newDatabase, "from-komari")
+	writeNamedRestoreArchive(t, filepath.Join(dataDir, "backup.zip"), "komari.db", newDatabase)
+
+	previous := flags.DatabaseFile
+	t.Cleanup(func() { flags.DatabaseFile = previous })
+	flags.DatabaseFile = filepath.Join(dataDir, "lite.db")
+
+	restore, err := restoreStagedBackup(dataDir)
+	if err != nil {
+		t.Fatalf("restore komari.db backup: %v", err)
+	}
+	if err := restore.Commit(); err != nil {
+		t.Fatalf("commit restore: %v", err)
+	}
+	db, err := sql.Open("sqlite3", filepath.Join(dataDir, "lite.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var value string
+	if err := db.QueryRow(`SELECT value FROM state`).Scan(&value); err != nil {
+		t.Fatal(err)
+	}
+	if value != "from-komari" {
+		t.Fatalf("restored value = %q, want from-komari", value)
 	}
 }

@@ -4,7 +4,7 @@ description: Download and unpack a previously built theme-independent system UI 
 inputs:
   artifact-name:
     description: System UI artifact name.
-    default: komari-frontend
+    default: lite-frontend
 
 runs:
   using: composite

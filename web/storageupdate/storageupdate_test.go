@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	appconfig "github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/metric"
-	"github.com/komari-monitor/komari/web/api"
+	appconfig "github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/metric"
+	"github.com/nuomiiiii/lite/web/api"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )

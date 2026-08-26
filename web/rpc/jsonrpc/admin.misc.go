@@ -7,14 +7,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari/database/accounts"
-	"github.com/komari-monitor/komari/database/auditlog"
-	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/records"
-	"github.com/komari-monitor/komari/database/tasks"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/rpc"
+	"github.com/nuomiiiii/lite/database/accounts"
+	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/records"
+	"github.com/nuomiiiii/lite/database/tasks"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/rpc"
 )
 
 // admin.misc.go
@@ -107,6 +107,7 @@ func adminGetSettings(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonR
 	}
 	delete(cst, config.CloudflareTunnelTokenKey)
 	delete(cst, config.LowResourceModeKey)
+	delete(cst, config.SiteFactoryDefaultsKey)
 	delete(cst, metricstore.MetricDownsamplingEnabledKey)
 	return cst, nil
 }
@@ -164,6 +165,8 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 	// Ignore retired controls submitted by an older cached frontend. The
 	// startup normalizer keeps their persisted compatibility values fixed.
 	delete(cfg, config.LowResourceModeKey)
+	delete(cfg, config.SiteFactoryDefaultsKey)
+	delete(cfg, config.ReduceMotionKey)
 	delete(cfg, metricstore.MetricDownsamplingEnabledKey)
 
 	// 若本次修改涉及 metrics 数据库配置，则在落库前先用「当前配置 + 本次改动」

@@ -1,6 +1,6 @@
 package jsonrpc
 
-import "github.com/komari-monitor/komari/database/models"
+import "github.com/nuomiiiii/lite/database/models"
 
 // applyThemeTrafficCompatibility keeps existing themes on the current billing
 // cycle quota while the admin API continues to expose the configured base quota.

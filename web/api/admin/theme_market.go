@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/web/api"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/web/api"
 )
 
 const (
@@ -75,7 +75,7 @@ var themeMarketCache = struct {
 func defaultThemeMarketSources() []ThemeMarketSource {
 	return []ThemeMarketSource{{
 		ID:      "official",
-		Name:    "Komari Official",
+		Name:    "Official",
 		URL:     defaultThemeMarketURL,
 		Enabled: true,
 	}}
@@ -322,7 +322,7 @@ func InstallThemeFromMarket(c *gin.Context) {
 		api.RespondError(c, http.StatusBadRequest, "Theme SHA-256 checksum does not match the market catalog")
 		return
 	}
-	tempFile, err := os.CreateTemp("", "komari-market-theme-*.zip")
+	tempFile, err := os.CreateTemp("", "lite-market-theme-*.zip")
 	if err != nil {
 		api.RespondError(c, http.StatusInternalServerError, "Failed to create temporary theme file")
 		return

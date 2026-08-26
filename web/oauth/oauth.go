@@ -3,13 +3,13 @@ package oauth
 import (
 	"encoding/json"
 	"fmt"
-	logger "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"sync"
 
-	"github.com/komari-monitor/komari/database"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/web/oauth/factory"
+	"github.com/nuomiiiii/lite/database"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/web/oauth/factory"
 )
 
 var (

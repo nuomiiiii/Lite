@@ -32,7 +32,7 @@ jobs:
         with:
           script: |
             const { owner, repo } = context.repo;
-            const webRepo = { owner, repo: "komari-web" };
+            const webRepo = { owner, repo: "Lite-web" };
 
             const AI_CONTEXT_CHAR_LIMIT = 120000;
             const AI_MAX_COMMITS = 160;
@@ -473,7 +473,7 @@ jobs:
               appendWithinLimit(sections, `Commit details:\n${buildCommitContext(comparison.commits)}`, AI_CONTEXT_CHAR_LIMIT);
 
               if (webReleaseSection) {
-                appendWithinLimit(sections, `Komari Web release notes for the same tag:\n${webReleaseSection}`, AI_CONTEXT_CHAR_LIMIT);
+                appendWithinLimit(sections, `Lite-web release notes for the same tag:\n${webReleaseSection}`, AI_CONTEXT_CHAR_LIMIT);
               }
 
               return sections.join("\n\n---\n\n");
@@ -572,9 +572,9 @@ jobs:
                 {
                   role: "system",
                   content: [
-                    "You write accurate release notes for the Komari server project.",
+                    "You write accurate release notes for the Lite server project.",
                     "Use only the supplied repository context.",
-                    "Include both Komari server changes and Komari Web frontend changes when frontend release notes are supplied.",
+                    "Include both Lite server changes and Lite-web frontend changes when frontend release notes are supplied.",
                     "Prioritize user-visible behavior, compatibility or migration notes, operations/deployment changes, security fixes, and important bug fixes.",
                     "Do not invent features or implementation details that are not supported by the context.",
                     "Write concise Markdown in Simplified Chinese.",
@@ -619,19 +619,19 @@ jobs:
 
                 const webBody = clean(webRelease.body);
                 if (!webBody) {
-                  return `## Komari Web Release Notes\n\nKomari Web release [${tag}](${webRelease.html_url}) exists, but its release notes are empty.`;
+                  return `## Lite-web Release Notes\n\nLite-web release [${tag}](${webRelease.html_url}) exists, but its release notes are empty.`;
                 }
 
                 return [
-                  "## Komari Web Release Notes",
+                  "## Lite-web Release Notes",
                   "",
-                  `Source: [komari-web ${tag}](${webRelease.html_url})`,
+                  `Source: [Lite-web ${tag}](${webRelease.html_url})`,
                   "",
                   demoteMarkdownHeadings(webBody),
                 ].join("\n");
               } catch (error) {
                 if (error.status === 404) {
-                  core.info(`Komari Web release ${tag} does not exist yet. Skipping web release notes for now.`);
+                  core.info(`Lite-web release ${tag} does not exist yet. Skipping web release notes for now.`);
                   return "";
                 }
 
@@ -672,8 +672,11 @@ jobs:
               webReleaseSection,
             });
 
+            const hashMatch = clean(release.body).match(/<!--\s*(?:lite|komari)-version-hash:\s*([A-Za-z0-9]{7})\s*-->/i);
+            const hashComment = hashMatch ? `<!-- lite-version-hash: ${hashMatch[1]} -->` : "";
+
             const body = [
-              clean(release.body).match(/<!--\s*komari-version-hash:\s*[A-Za-z0-9]{7}\s*-->/i)?.[0] || "",
+              hashComment,
               releaseSummarySection,
               whatsChangedSection,
             ].filter(Boolean).join("\n\n");

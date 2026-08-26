@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/pkg/rpc"
-	"github.com/komari-monitor/komari/web/api"
+	"github.com/nuomiiiii/lite/pkg/rpc"
+	"github.com/nuomiiiii/lite/web/api"
 )
 
 func EstablishAgent(c *gin.Context) {
@@ -17,7 +17,7 @@ func EstablishAgent(c *gin.Context) {
 		api.RespondError(c, http.StatusNotFound, "Remote session not found")
 		return
 	}
-	ticket := c.GetHeader("X-Komari-Remote-Ticket")
+	ticket := api.AgentRemoteTicketHeader(c)
 	if !session.canAttachAgent(principal.ClientUUID, ticket, time.Now()) {
 		api.RespondError(c, http.StatusUnauthorized, "Remote session authorization failed")
 		return
@@ -38,5 +38,5 @@ func EstablishAgent(c *gin.Context) {
 }
 
 func agentRemoteSessionID(c *gin.Context) string {
-	return c.GetHeader("X-Komari-Remote-Session")
+	return api.AgentRemoteSessionHeader(c)
 }

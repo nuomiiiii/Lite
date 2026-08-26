@@ -3,7 +3,7 @@ package corn
 import (
 	"context"
 	"fmt"
-	logger "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"strconv"
 	"strings"
 	"sync"

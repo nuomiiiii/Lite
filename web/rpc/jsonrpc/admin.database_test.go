@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/pkg/metric"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/pkg/metric"
 )
 
 func TestLocalDatabaseTotalRequiresTwoKnownLocalSizes(t *testing.T) {

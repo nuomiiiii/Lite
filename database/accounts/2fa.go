@@ -3,19 +3,19 @@ package accounts
 import (
 	"image"
 
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
 	"github.com/pquerna/otp/totp"
 )
 
 var (
-	TwoFactorIssuer = "Komari Monitor"
+	TwoFactorIssuer = "Lite"
 )
 
 func Generate2Fa() (string, image.Image, error) {
 	otp, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      TwoFactorIssuer,
-		AccountName: "komari",
+		AccountName: "lite",
 	})
 	if err != nil {
 		return "", nil, err

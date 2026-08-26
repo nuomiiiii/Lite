@@ -17,12 +17,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/pkg/config"
-	logger "github.com/komari-monitor/komari/utils/log"
-	"github.com/komari-monitor/komari/web/api"
-	"github.com/komari-monitor/komari/web/public"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/thememanifest"
+	logger "github.com/nuomiiiii/lite/utils/log"
+	"github.com/nuomiiiii/lite/web/api"
+	"github.com/nuomiiiii/lite/web/public"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -86,7 +87,11 @@ func installedThemes() ([]models.Theme, error) {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") || !public.IsLocalThemeUsable(entry.Name()) {
 			continue
 		}
-		theme, err := loadThemeConfig(filepath.Join("./data/theme", entry.Name(), "komari-theme.json"))
+		themePath, ok := thememanifest.FindInDir(filepath.Join("./data/theme", entry.Name()))
+		if !ok {
+			continue
+		}
+		theme, err := loadThemeConfig(themePath)
 		if err != nil || theme.Short != entry.Name() || !isValidThemeShort(theme.Short) {
 			continue
 		}
@@ -262,17 +267,9 @@ func extractAndValidateTheme(zipPath string) (models.Theme, error) {
 		return themeInfo, err
 	}
 
-	// 查找komari-theme.json文件
-	var themeConfigFile *zip.File
-	for _, f := range r.File {
-		if f.Name == "komari-theme.json" {
-			themeConfigFile = f
-			break
-		}
-	}
-
+	themeConfigFile := zipThemeManifest(r.File)
 	if themeConfigFile == nil {
-		return themeInfo, fmt.Errorf("主题配置文件 komari-theme.json 不存在")
+		return themeInfo, fmt.Errorf("%s", thememanifest.MissingMessage())
 	}
 
 	// 读取主题配置
@@ -320,7 +317,7 @@ func extractAndValidateTheme(zipPath string) (models.Theme, error) {
 
 	hasIndex := false
 	for _, f := range r.File {
-		cleanName := filepath.Clean(filepath.FromSlash(f.Name))
+		cleanName := zipEntryCleanName(f.Name)
 		if cleanName == "." || filepath.IsAbs(cleanName) || cleanName == ".." || strings.HasPrefix(cleanName, ".."+string(os.PathSeparator)) {
 			return themeInfo, fmt.Errorf("主题文件包含不安全路径: %s", f.Name)
 		}
@@ -412,6 +409,31 @@ func validateThemeArchive(files []*zip.File) error {
 		}
 	}
 	return nil
+}
+
+// zipEntryCleanName treats Windows zip paths (dist\index.html) as POSIX
+// paths so Linux Docker can install themes packed by Compress-Archive.
+func zipEntryCleanName(name string) string {
+	return filepath.Clean(filepath.FromSlash(strings.ReplaceAll(name, `\`, "/")))
+}
+
+func zipThemeManifest(files []*zip.File) *zip.File {
+	var primary, legacy *zip.File
+	for _, file := range files {
+		if file.FileInfo().IsDir() {
+			continue
+		}
+		switch thememanifest.RootName(file.Name) {
+		case thememanifest.File:
+			primary = file
+		case thememanifest.LegacyFile:
+			legacy = file
+		}
+	}
+	if primary != nil {
+		return primary
+	}
+	return legacy
 }
 
 // loadThemeConfig 加载主题配置
@@ -640,9 +662,8 @@ func UpdateTheme(c *gin.Context) {
 
 	// 检查主题是否存在
 	themeDir := filepath.Join("./data/theme", req.Short)
-	themeConfigPath := filepath.Join(themeDir, "komari-theme.json")
-
-	if _, err := os.Stat(themeConfigPath); os.IsNotExist(err) {
+	themeConfigPath, ok := thememanifest.FindInDir(themeDir)
+	if !ok {
 		api.RespondError(c, http.StatusNotFound, "主题不存在")
 		return
 	}
@@ -783,7 +804,7 @@ func UpdateTheme(c *gin.Context) {
 	// 	updatedThemeInfo.URL = downloadURL
 
 	// 	// 更新主题配置文件
-	// 	updatedConfigPath := filepath.Join("./data/theme", updatedThemeInfo.Short, "komari-theme.json")
+	// 	updatedConfigPath := filepath.Join("./data/theme", updatedThemeInfo.Short, thememanifest.File)
 	// 	updatedConfigData, err := json.MarshalIndent(updatedThemeInfo, "", "  ")
 	// 	if err != nil {
 	// 		api.RespondError(c, http.StatusInternalServerError, "生成主题配置失败: "+err.Error())
@@ -799,7 +820,7 @@ func UpdateTheme(c *gin.Context) {
 	api.RespondSuccessMessage(c, "主题更新成功", updatedThemeInfo)
 }
 
-// peekThemeFromZip 仅从ZIP文件中读取komari-theme.json并解析主题信息
+// peekThemeFromZip 仅从ZIP文件中读取主题清单并解析主题信息
 // 不执行解压安装，用于preview模式
 func peekThemeFromZip(zipPath string) (models.Theme, error) {
 	var themeInfo models.Theme
@@ -814,16 +835,9 @@ func peekThemeFromZip(zipPath string) (models.Theme, error) {
 		return themeInfo, err
 	}
 
-	var themeConfigFile *zip.File
-	for _, f := range r.File {
-		if f.Name == "komari-theme.json" {
-			themeConfigFile = f
-			break
-		}
-	}
-
+	themeConfigFile := zipThemeManifest(r.File)
 	if themeConfigFile == nil {
-		return themeInfo, fmt.Errorf("主题配置文件 komari-theme.json 不存在，不是合法的主题包")
+		return themeInfo, fmt.Errorf("%s，不是合法的主题包", thememanifest.MissingMessage())
 	}
 
 	rc, err := themeConfigFile.Open()

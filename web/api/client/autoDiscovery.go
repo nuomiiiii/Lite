@@ -2,12 +2,12 @@ package client
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/database/notification"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/utils"
-	logger "github.com/komari-monitor/komari/utils/log"
-	"github.com/komari-monitor/komari/web/api"
+	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/database/notification"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/utils"
+	logger "github.com/nuomiiiii/lite/utils/log"
+	"github.com/nuomiiiii/lite/web/api"
 )
 
 func RegisterClient(c *gin.Context) {

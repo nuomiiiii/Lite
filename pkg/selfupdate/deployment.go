@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/nuomiiiii/lite/cmd/flags"
 )
 
 const (
@@ -19,7 +21,7 @@ const (
 	DeploymentLinux   = "linux"
 	DeploymentWindows = "windows"
 	DeploymentUnknown = "unknown"
-	defaultService    = "komari.service"
+	defaultService    = "lite.service"
 )
 
 type Capability struct {
@@ -32,8 +34,17 @@ type Capability struct {
 	LastResult          *UpdateResult `json:"last_result,omitempty"`
 }
 
+func firstEnv(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func DeploymentType() string {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("KOMARI_DEPLOYMENT"))) {
+	switch strings.ToLower(firstEnv("LITE_DEPLOYMENT", "KOMARI_DEPLOYMENT")) {
 	case DeploymentDocker:
 		return DeploymentDocker
 	case DeploymentLinux, "binary":
@@ -150,7 +161,7 @@ func managedPaths() (string, string, error) {
 }
 
 func configuredDatabaseWithin(dataDir, workingDir string) bool {
-	databasePath := "./data/komari.db"
+	databasePath := "./data/lite.db"
 	for i := 1; i < len(os.Args); i++ {
 		arg := os.Args[i]
 		switch {
@@ -204,10 +215,10 @@ func pathWithin(path, parent string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func serviceName() string {
-	name := strings.TrimSpace(os.Getenv("KOMARI_SERVICE_NAME"))
+func normalizeServiceName(name string) string {
+	name = strings.TrimSpace(name)
 	if name == "" {
-		return defaultService
+		return ""
 	}
 	if !strings.HasSuffix(name, ".service") {
 		name += ".service"
@@ -215,10 +226,40 @@ func serviceName() string {
 	return name
 }
 
+func explicitServiceName() string {
+	return normalizeServiceName(firstEnv("LITE_SERVICE_NAME", "KOMARI_SERVICE_NAME"))
+}
+
+var lookupServicePID = serviceMainPID
+
+func serviceMainPID(name string) string {
+	output, err := exec.Command("systemctl", "show", name, "--property=MainPID").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(output)), "MainPID="))
+}
+
+func serviceName() string {
+	if name := explicitServiceName(); name != "" {
+		return name
+	}
+	pid := strconv.Itoa(os.Getpid())
+	for _, name := range []string{defaultService, "komari.service"} {
+		if lookupServicePID(name) == pid {
+			return name
+		}
+	}
+	return defaultService
+}
+
 func localHealthURL() (string, error) {
-	listen := strings.TrimSpace(os.Getenv("KOMARI_LISTEN"))
+	listen := firstEnv("LITE_LISTEN", "KOMARI_LISTEN")
 	if listen == "" {
-		listen = "0.0.0.0:25774"
+		listen = strings.TrimSpace(flags.Listen)
+	}
+	if listen == "" {
+		listen = "0.0.0.0:27777"
 	}
 	for i := 1; i < len(os.Args); i++ {
 		arg := os.Args[i]
@@ -263,16 +304,27 @@ func isMountPoint(path string) bool {
 }
 
 func ReadLastResult(executableDir string) (*UpdateResult, error) {
-	content, err := os.ReadFile(filepath.Join(executableDir, updateRootName, lastResultName))
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for _, name := range []string{updateRootName, legacyUpdateRootName} {
+		content, err := os.ReadFile(filepath.Join(executableDir, name, lastResultName))
+		if err != nil {
+			if os.IsNotExist(err) {
+				lastErr = err
+				continue
+			}
+			return nil, err
+		}
+		var result UpdateResult
+		if err := json.Unmarshal(content, &result); err != nil {
+			return nil, err
+		}
+		if time.Since(result.UpdatedAt) > 7*24*time.Hour {
+			return nil, nil
+		}
+		return &result, nil
 	}
-	var result UpdateResult
-	if err := json.Unmarshal(content, &result); err != nil {
-		return nil, err
+	if lastErr != nil {
+		return nil, lastErr
 	}
-	if time.Since(result.UpdatedAt) > 7*24*time.Hour {
-		return nil, nil
-	}
-	return &result, nil
+	return nil, os.ErrNotExist
 }

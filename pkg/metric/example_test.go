@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari/pkg/metric"
+	"github.com/nuomiiiii/lite/pkg/metric"
 )
 
 // Example_rollupTags demonstrates tagged rollups with automatic series routing.
@@ -91,11 +91,11 @@ func Example_rollupTags() {
 	// device 0: count=10 avg=14.5
 }
 
-// Example_agentFleetLifecycle demonstrates a realistic Komari-style fleet:
+// Example_agentFleetLifecycle demonstrates a realistic Lite-style fleet:
 // 50 agents report system metrics every second, ping tasks are represented as a
 // tagged ping metric, and lifecycle events clean up task and agent series.
 //
-// Example_agentFleetLifecycle 演示贴近 Komari 的实际场景：50 个 agent 每秒上报系统
+// Example_agentFleetLifecycle 演示贴近 Lite 的实际场景：50 个 agent 每秒上报系统
 // 指标，ping task 用带标签的 ping 指标表示，并通过生命周期事件清理 task 和 agent 序列。
 func Example_agentFleetLifecycle() {
 	ctx := context.Background()

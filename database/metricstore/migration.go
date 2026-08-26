@@ -2,16 +2,16 @@ package metricstore
 
 import (
 	"fmt"
-	logger "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"strings"
 
-	"github.com/komari-monitor/komari/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/config"
 )
 
 // migration.go
 //
 // 启动阶段的 metrics 数据迁移。这里只处理 metrics 存储后端切换时的数据搬运
-// （例如默认 SQLite ./data/metrics.db 切换到 MySQL/PostgreSQL）。旧 komari.db
+// （例如默认 SQLite ./data/metrics.db 切换到 MySQL/PostgreSQL）。旧 lite.db
 // 监控表导入属于一次性迁移，见 pkg/migrations.RunMetricStoreMigrations。
 
 // targetFingerprint 返回当前 metrics 目标库的指纹（driver + 归一化 DSN），

@@ -1,10 +1,10 @@
-# Komari
+# Lite
 
 ![Badge](https://hitscounter.dev/api/hit?url=https%3A%2F%2Fgithub.com%2Fnuomiiiii%2Fkomari&label=&icon=github&color=%23a370f7&message=&style=flat&tz=UTC)
 
-![komari](https://socialify.git.ci/nuomiiiii/komari/image?description=1&font=Inter&forks=1&issues=1&language=1&logo=https%3A%2F%2Fraw.githubusercontent.com%2Fnuomiiiii%2Fkomari-web%2Fd54ce1288df41ead08aa19f8700186e68028a889%2Fpublic%2Ffavicon.png&name=1&owner=1&pattern=Plus&pulls=1&stargazers=1&theme=Auto)
+![komari](https://socialify.git.ci/nuomiiiii/lite/image?description=1&font=Inter&forks=1&issues=1&language=1&logo=https%3A%2F%2Fraw.githubusercontent.com%2Fnuomiiiii%2Fkomari-web%2Fd54ce1288df41ead08aa19f8700186e68028a889%2Fpublic%2Ffavicon.png&name=1&owner=1&pattern=Plus&pulls=1&stargazers=1&theme=Auto)
 
-Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单、高效的服务器性能监控解决方案。它支持通过 Web 界面查看服务器状态，并通过轻量级 Agent 收集数据。
+Lite 是一款轻量级的自托管服务器监控工具，旨在提供简单、高效的服务器性能监控解决方案。它支持通过 Web 界面查看服务器状态，并通过轻量级 Agent 收集数据。
 
 > [!WARNING]
 > Komari 是一款自托管的监控/控制程序，仅应部署在你拥有或已获得授权管理的系统上。请勿将 Komari 武器化，或在未获授权的情况下部署、访问、持久化、执行命令及从事其他滥用行为。关于现实中的滥用风险，可参考 Huntress 的分析：[Komari C2 agent abuse](https://www.huntress.com/blog/komari-c2-agent-abuse)。
@@ -36,9 +36,9 @@ Komari 是一款轻量级的自托管服务器监控工具，旨在提供简单�
 适用于使用了 systemd 的发行版（Ubuntu、Debian...）。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nuomiiiii/komari/main/install-komari.sh -o install-komari.sh
-chmod +x install-komari.sh
-sudo ./install-komari.sh
+curl -fsSL https://raw.githubusercontent.com/nuomiiiii/lite/main/install-lite.sh -o install-lite.sh
+chmod +x install-lite.sh
+sudo ./install-lite.sh
 ```
 
 ### 2. Docker 部署
@@ -50,21 +50,21 @@ sudo ./install-komari.sh
 2. 运行 Docker 容器：
    ```bash
    docker run -d \
-     -p 25774:25774 \
+     -p 27777:27777 \
      -v $(pwd)/data:/app/data \
      --name komari \
-     ghcr.io/nuomiiiii/komari:latest
+     ghcr.io/nuomiiiii/lite:latest
    ```
-3. 在浏览器中访问 `http://<your_server_ip>:25774` 并完成安装向导。向导会创建管理员账号，并设置站点元信息和监控数据库。
+3. 在浏览器中访问 `http://<your_server_ip>:27777` 并完成安装向导。向导会创建管理员账号，并设置站点元信息和监控数据库。
 
 ### 3. 二进制文件部署
 
-1. 访问 Komari 的 [GitHub Release 页面](https://github.com/nuomiiiii/komari/releases) 下载适用于你操作系统的最新二进制文件。
+1. 访问 Komari 的 [GitHub Release 页面](https://github.com/nuomiiiii/lite/releases) 下载适用于你操作系统的最新二进制文件。
 2. 运行 Komari：
    ```bash
-   ./komari server -l 0.0.0.0:25774
+   ./Lite server -l 0.0.0.0:27777
    ```
-3. 在浏览器中访问 `http://<your_server_ip>:25774`，默认监听 `25774` 端口。
+3. 在浏览器中访问 `http://<your_server_ip>:27777`，默认监听 `27777` 端口。
 4. 按照安装向导创建管理员账号，并设置站点元信息和监控数据库。
 
 > [!NOTE]
@@ -78,25 +78,25 @@ sudo ./install-komari.sh
 
 1. 构建前端静态文件：
    ```bash
-   git clone https://github.com/nuomiiiii/komari-web
+   git clone https://github.com/nuomiiiii/Lite-web
    cd komari-web
    npm install
    npm run build
    ```
 2. 构建后端：
    ```bash
-   git clone https://github.com/nuomiiiii/komari
+   git clone https://github.com/nuomiiiii/lite
    cd komari
    ```
    将步骤1中生成的静态文件复制到 `komari` 项目根目录下的 `/web/public/defaultTheme/dist` 文件夹，并将 `komari-theme.json` 与 `preview.png`/`perview.png` 复制到 `/web/public/defaultTheme`。
    ```bash
-   go build -o komari
+   go build -o Lite
    ```
 3. 运行：
    ```bash
-   ./komari server -l 0.0.0.0:25774
+   ./Lite server -l 0.0.0.0:27777
    ```
-   默认监听 `25774` 端口，访问 `http://localhost:25774`。
+   默认监听 `27777` 端口，访问 `http://localhost:27777`。
 
 ## 前端开发指南
 
@@ -138,4 +138,4 @@ SharonNetworks 为您的业务起飞保驾护航！
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=nuomiiiii/komari&type=Date)](https://www.star-history.com/#nuomiiiii/komari&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=nuomiiiii/lite&type=Date)](https://www.star-history.com/#nuomiiiii/lite&Date)

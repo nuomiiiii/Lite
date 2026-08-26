@@ -87,7 +87,7 @@ func (tx transaction) run() error {
 		UpdatedAt:     time.Now().UTC(),
 	}
 	backupData := filepath.Join(tx.config.BackupRoot, "data")
-	backupExecutable := filepath.Join(tx.config.BackupRoot, "komari")
+	backupExecutable := filepath.Join(tx.config.BackupRoot, "Lite")
 
 	if previous, err := ReadLastResult(filepath.Dir(tx.config.CurrentExecutable)); err == nil && previous != nil && previous.JobID == tx.config.JobID {
 		result = *previous

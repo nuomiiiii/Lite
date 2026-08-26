@@ -12,7 +12,7 @@ import (
 
 func createConfigSnapshotFixture(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "komari.db")
+	path := filepath.Join(t.TempDir(), "lite.db")
 	db, err := openSnapshotDatabase(path)
 	if err != nil {
 		t.Fatalf("open fixture: %v", err)
@@ -113,7 +113,7 @@ func TestSanitizeConfigSnapshotKeepsServersAndTasksWithoutHistory(t *testing.T) 
 
 func TestBuildBackupArchiveUsesUpstreamCompatibleRootLayout(t *testing.T) {
 	content := t.TempDir()
-	if err := os.WriteFile(filepath.Join(content, "komari.db"), []byte("main"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(content, "lite.db"), []byte("main"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(content, "metrics.db"), []byte("history"), 0o600); err != nil {
@@ -132,7 +132,7 @@ func TestBuildBackupArchiveUsesUpstreamCompatibleRootLayout(t *testing.T) {
 	for _, entry := range reader.File {
 		found[entry.Name] = true
 	}
-	for _, name := range []string{"komari.db", "metrics.db", "komari-backup-markup"} {
+	for _, name := range []string{"lite.db", "metrics.db", "lite-backup-markup"} {
 		if !found[name] {
 			t.Fatalf("archive missing %s: %#v", name, found)
 		}
@@ -141,7 +141,7 @@ func TestBuildBackupArchiveUsesUpstreamCompatibleRootLayout(t *testing.T) {
 
 func TestBuildConfigurationArchiveDoesNotContainMetricHistory(t *testing.T) {
 	content := t.TempDir()
-	if err := os.WriteFile(filepath.Join(content, "komari.db"), []byte("configuration"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(content, "lite.db"), []byte("configuration"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	archive := filepath.Join(t.TempDir(), "config.zip")
@@ -157,8 +157,8 @@ func TestBuildConfigurationArchiveDoesNotContainMetricHistory(t *testing.T) {
 	for _, entry := range reader.File {
 		found[entry.Name] = true
 	}
-	if !found["komari.db"] || !found["komari-backup-markup"] {
-		t.Fatalf("configuration archive is not compatible with upstream restore: %#v", found)
+	if !found["lite.db"] || !found["lite-backup-markup"] {
+		t.Fatalf("configuration archive is missing Lite backup files: %#v", found)
 	}
 	if found["metrics.db"] || found["metrics.db-wal"] || found["metrics.db-shm"] {
 		t.Fatalf("configuration archive contains metric history: %#v", found)

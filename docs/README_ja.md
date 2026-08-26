@@ -2,7 +2,7 @@
 
 ![Badge](https://hitscounter.dev/api/hit?url=https%3A%2F%2Fgithub.com%2Fnuomiiiii%2Fkomari&label=&icon=github&color=%23a370f7&message=&style=flat&tz=UTC)
 
-![komari](https://socialify.git.ci/nuomiiiii/komari/image?description=1&font=Inter&forks=1&issues=1&language=1&logo=https%3A%2F%2Fraw.githubusercontent.com%2Fnuomiiiii%2Fkomari-web%2Fd54ce1288df41ead08aa19f8700186e68028a889%2Fpublic%2Ffavicon.png&name=1&owner=1&pattern=Plus&pulls=1&stargazers=1&theme=Auto)
+![komari](https://socialify.git.ci/nuomiiiii/lite/image?description=1&font=Inter&forks=1&issues=1&language=1&logo=https%3A%2F%2Fraw.githubusercontent.com%2Fnuomiiiii%2Fkomari-web%2Fd54ce1288df41ead08aa19f8700186e68028a889%2Fpublic%2Ffavicon.png&name=1&owner=1&pattern=Plus&pulls=1&stargazers=1&theme=Auto)
 
 Komariは、サーバーのパフォーマンスを監視するためのシンプルで効率的なソリューションを提供することを目的とした、軽量の自己ホスト型サーバー監視ツールです。Webインターフェースを介してサーバーのステータスを表示し、軽量エージェントを介してデータを収集します。
 
@@ -36,9 +36,9 @@ Komariは、サーバーのパフォーマンスを監視するためのシン�
 systemdを使用するディストリビューション（Ubuntu、Debianなど）に適しています。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nuomiiiii/komari/main/install-komari.sh -o install-komari.sh
-chmod +x install-komari.sh
-sudo ./install-komari.sh
+curl -fsSL https://raw.githubusercontent.com/nuomiiiii/lite/main/install-lite.sh -o install-lite.sh
+chmod +x install-lite.sh
+sudo ./install-lite.sh
 ```
 
 ### 2. Docker展開
@@ -50,21 +50,21 @@ sudo ./install-komari.sh
 2. Dockerコンテナを実行します:
    ```bash
    docker run -d \
-     -p 25774:25774 \
+     -p 27777:27777 \
      -v $(pwd)/data:/app/data \
      --name komari \
-     ghcr.io/nuomiiiii/komari:latest
+     ghcr.io/nuomiiiii/lite:latest
    ```
-3. ブラウザで `http://<your_server_ip>:25774` にアクセスし、インストールガイドを完了します。ガイドで管理者アカウント、サイト情報、監視データベースを設定します。
+3. ブラウザで `http://<your_server_ip>:27777` にアクセスし、インストールガイドを完了します。ガイドで管理者アカウント、サイト情報、監視データベースを設定します。
 
 ### 3. バイナリファイル展開
 
-1. Komariの[GitHubリリース](https://github.com/nuomiiiii/komari/releases)ページにアクセスして、お使いのオペレーティングシステム用の最新のバイナリをダウンロードします。
+1. Komariの[GitHubリリース](https://github.com/nuomiiiii/lite/releases)ページにアクセスして、お使いのオペレーティングシステム用の最新のバイナリをダウンロードします。
 2. Komariを実行します:
    ```bash
-   ./komari server -l 0.0.0.0:25774
+   ./Lite server -l 0.0.0.0:27777
    ```
-3. ブラウザで `http://<your_server_ip>:25774` にアクセスします。デフォルトのポートは `25774` です。
+3. ブラウザで `http://<your_server_ip>:27777` にアクセスします。デフォルトのポートは `27777` です。
 4. インストールガイドに従って管理者アカウント、サイト情報、監視データベースを設定します。
 
 > [!NOTE]
@@ -78,25 +78,25 @@ sudo ./install-komari.sh
 
 1. フロントエンドの静的ファイルをビルドします:
    ```bash
-   git clone https://github.com/nuomiiiii/komari-web
+   git clone https://github.com/nuomiiiii/Lite-web
    cd komari-web
    npm install
    npm run build
    ```
 2. バックエンドをビルドします:
    ```bash
-   git clone https://github.com/nuomiiiii/komari
+   git clone https://github.com/nuomiiiii/lite
    cd komari
    ```
    ステップ1で生成された静的ファイルを `komari` プロジェクトのルートにある `/web/public/defaultTheme/dist` フォルダにコピーし、`komari-theme.json` と `preview.png`/`perview.png` を `/web/public/defaultTheme` にコピーします。
    ```bash
-   go build -o komari
+   go build -o Lite
    ```
 3. 実行:
    ```bash
-   ./komari server -l 0.0.0.0:25774
+   ./Lite server -l 0.0.0.0:27777
    ```
-   デフォルトのリスニングポートは `25774` です。`http://localhost:25774` にアクセスします。
+   デフォルトのリスニングポートは `27777` です。`http://localhost:27777` にアクセスします。
 
 ## フロントエンド開発ガイド
 
@@ -138,4 +138,4 @@ PR を送ってくれた方、テーマを作成してくれた全ての開発�
 
 ## Star履歴
 
-[![Star History Chart](https://api.star-history.com/svg?repos=nuomiiiii/komari&type=Date)](https://www.star-history.com/#nuomiiiii/komari&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=nuomiiiii/lite&type=Date)](https://www.star-history.com/#nuomiiiii/lite&Date)

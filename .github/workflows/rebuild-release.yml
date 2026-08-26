@@ -17,7 +17,7 @@ on:
         default: main
         type: string
       frontend_ref:
-        description: komari-web branch or tag to build.
+        description: Lite-web branch or tag to build.
         required: true
         default: main
         type: string
@@ -86,9 +86,9 @@ jobs:
           BODY_FILE="$BODY_FILE" VERSION_HASH="$VERSION_HASH" node <<'NODE'
           const fs = require("fs");
           const path = process.env.BODY_FILE;
-          const marker = `<!-- komari-version-hash: ${process.env.VERSION_HASH} -->`;
+          const marker = `<!-- lite-version-hash: ${process.env.VERSION_HASH} -->`;
           const body = fs.readFileSync(path, "utf8");
-          const pattern = /<!--\s*komari-version-hash:\s*[A-Za-z0-9]{7}\s*-->/i;
+          const pattern = /<!--\s*(?:lite|komari)-version-hash:\s*[A-Za-z0-9]{7}\s*-->/i;
           fs.writeFileSync(path, pattern.test(body) ? body.replace(pattern, marker) : `${marker}\n\n${body}`);
           NODE
           gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --title "$VERSION" --notes-file "$BODY_FILE"

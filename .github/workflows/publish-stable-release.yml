@@ -17,7 +17,7 @@ on:
         default: main
         type: string
       web_ref:
-        description: Branch or tag in nuomiiiii/komari-web
+        description: Branch or tag in the sibling Lite-web repository
         required: true
         default: main
         type: string
@@ -59,8 +59,8 @@ jobs:
           VERSION_HASH="$REQUESTED_HASH"
           if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             EXISTING_BODY="$(gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json body --jq .body)"
-            if [ -z "$VERSION_HASH" ] && [[ "$EXISTING_BODY" =~ komari-version-hash:[[:space:]]*([A-Za-z0-9]{7}) ]]; then
-              VERSION_HASH="${BASH_REMATCH[1]}"
+            if [ -z "$VERSION_HASH" ] && [[ "$EXISTING_BODY" =~ (lite|komari)-version-hash:[[:space:]]*([A-Za-z0-9]{7}) ]]; then
+              VERSION_HASH="${BASH_REMATCH[2]}"
             fi
           fi
 
@@ -74,7 +74,7 @@ jobs:
           fi
 
           if [ -z "$WEB_REF" ]; then
-            echo "Komari Web ref cannot be empty." >&2
+            echo "Lite-web ref cannot be empty." >&2
             exit 1
           fi
 
@@ -114,7 +114,7 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$TARGET_SHA" \
               --title "$VERSION" \
-              --notes "<!-- komari-version-hash: $VERSION_HASH -->" \
+              --notes "<!-- lite-version-hash: $VERSION_HASH -->" \
               --latest \
               --verify-tag
           fi

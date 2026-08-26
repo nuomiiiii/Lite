@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/komari-monitor/komari/pkg/metric"
+	"github.com/nuomiiiii/lite/pkg/metric"
 )
 
 var (

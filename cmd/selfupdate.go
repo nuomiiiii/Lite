@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/komari-monitor/komari/pkg/selfupdate"
+	"github.com/nuomiiiii/lite/pkg/selfupdate"
 	"github.com/spf13/cobra"
 )
 

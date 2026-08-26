@@ -5,9 +5,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
-	v1 "github.com/komari-monitor/komari/protocol/v1"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
+	v1 "github.com/nuomiiiii/lite/protocol/v1"
 	"gorm.io/gorm"
 )
 

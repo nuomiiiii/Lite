@@ -1,25 +1,29 @@
 package config
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
-	AdminDefaultPageSize    = 10
+	AdminDefaultPageSize    = 20
 	AdminDefaultPageSizeMin = 5
 	AdminDefaultPageSizeMax = 100
+	DefaultSiteDescription  = "All your servers, one simple view."
 )
 
 type Settings struct {
 	ID                     uint   `json:"id,omitempty"`                                        // 1
-	Sitename               string `json:"sitename" default:"Komari Lite"`                      // 站点名称，默认 "Komari Lite"
-	Description            string `json:"description" default:"A simple server monitor tool."` // 站点描述
-	AdminDefaultPageSize   int    `json:"admin_default_page_size" default:"10"`                // 后台列表默认每页条数
-	ReduceMotion           bool   `json:"reduce_motion" default:"false"`                       // 减少后台界面动态效果
-	AutoOrderNewClients    bool   `json:"auto_order_new_clients_by_region" default:"false"`    // 新服务器首次识别国家后自动排到同组同国家节点后面，默认关闭
+	Sitename               string `json:"sitename" default:"Lite"`                      // 站点名称，默认 "Lite"
+	Description            string `json:"description" default:"All your servers, one simple view."` // 站点描述
+	AdminDefaultPageSize   int    `json:"admin_default_page_size" default:"20"`                // 后台列表默认每页条数
+	ReduceMotion           bool   `json:"reduce_motion" default:"false"`                       // 兼容旧库；界面不再提供关闭动效的开关
+	AutoOrderNewClients    bool   `json:"auto_order_new_clients_by_region" default:"false"`    // 新服务器首次识别国家\地区后自动排到同组同国家\地区节点后面，默认关闭
 	CorsOriginCheckEnabled bool   `json:"cors_origin_check_enabled" default:"true"`            // 是否启用 API CORS 跨域请求校验，默认 true
 	CorsAllowedOrigins     string `json:"cors_allowed_origins" default:""`                     // API 跨域允许列表
 	WsOriginCheckEnabled   bool   `json:"ws_origin_check_enabled" default:"true"`              // 是否校验 WebSocket Origin
 	WsAllowedOrigins       string `json:"ws_allowed_origins" default:""`                       // WebSocket Origin 允许列表
-	Theme                  string `json:"theme" default:"nezha"`                               // 新安装默认使用 Nezha 公共主题
+	Theme                  string `json:"theme" default:"lite-theme"`                          // 新安装默认使用 Lite-Theme 公共主题
 	PrivateSite            bool   `json:"private_site" default:"false"`                        // 是否为私有站点，默认 false
 	ApiKey                 string `json:"api_key" default:""`                                  // API 密钥，默认空字符串
 	AutoDiscoveryKey       string `json:"auto_discovery_key" default:""`                       // 自动发现密钥
@@ -37,7 +41,7 @@ type Settings struct {
 	DisablePasswordLogin  bool   `json:"disable_password_login" default:"false"`
 	CloudflareTunnelToken string `json:"cloudflare_tunnel_token" default:""`
 	HTTPSEnabled          bool   `json:"https_enabled" default:"false"`
-	HTTPSListen           string `json:"https_listen" default:":35938"`
+	HTTPSListen           string `json:"https_listen" default:":36888"`
 	HTTPSRedirectHTTP     bool   `json:"https_redirect_http" default:"false"`
 	HTTPSCertificatePath  string `json:"https_certificate_path" default:"./data/tls/server.crt"`
 	HTTPSPrivateKeyPath   string `json:"https_private_key_path" default:"./data/tls/server.key"`
@@ -55,6 +59,15 @@ type Settings struct {
 	TrafficLimitPercentage     float64 `json:"traffic_limit_percentage" default:"80.00"`   // 流量限制百分比，默认80.00%
 	TrafficReportTime          string  `json:"traffic_report_time" default:"00:00"`        // 流量日报/周报/月报发送时间（北京时间）
 	UpdatedAt                  time.Time
+}
+
+func IsLegacyDefaultDescription(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "A simple server monitor tool.", "Lite, a simple server monitoring tool.":
+		return true
+	default:
+		return false
+	}
 }
 
 const (
@@ -77,6 +90,7 @@ const (
 	// LowResourceModeKey is retained only to normalize databases created by
 	// releases that exposed the removed low-resource mode.
 	LowResourceModeKey       = "low_resource_mode"
+	SiteFactoryDefaultsKey   = "site_factory_defaults_v2"
 	EulaAcceptedKey          = "eula_accepted"
 	BaseScriptsURLKey        = "base_scripts_url"
 	GeoIpEnabledKey          = "geo_ip_enabled"

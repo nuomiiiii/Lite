@@ -18,14 +18,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	logger "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/nuomiiiii/lite/utils/log"
 )
 
 const (
 	returnRouteRuleSchemaVersion      = 1
 	returnRouteRuleExternalPath       = "./data/return-route-signatures.json"
 	returnRouteBGPExternalPath        = "./data/return-route-bgp-prefixes.json"
-	returnRouteBGPDefaultURL          = "https://raw.githubusercontent.com/nuomiiiii/komari/main/database/tasks/return_route_bgp_prefixes.json"
+	returnRouteBGPDefaultURL          = "https://raw.githubusercontent.com/nuomiiiii/Lite/main/database/tasks/return_route_bgp_prefixes.json"
 	returnRouteRulePollInterval       = 2 * time.Second
 	returnRouteBGPRefreshInterval     = 2 * time.Hour
 	returnRouteRuleMaxSize            = 2 << 20
@@ -308,30 +308,8 @@ func reloadReturnRouteRuleFilesIfChanged() {
 
 func refreshReturnRouteBGPRules(ctx context.Context) error {
 	url := returnRouteBGPSourceURL()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	data, err := downloadReturnRouteBGPRules(ctx, url)
 	if err != nil {
-		recordReturnRouteBGPError(err)
-		return err
-	}
-	request.Header.Set("User-Agent", "Komari-Return-Route (+https://github.com/nuomiiiii/komari)")
-	response, err := returnRouteBGPHTTPClient.Do(request)
-	if err != nil {
-		recordReturnRouteBGPError(err)
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		err = fmt.Errorf("BGP 规则源返回 HTTP %d", response.StatusCode)
-		recordReturnRouteBGPError(err)
-		return err
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, returnRouteBGPRuleMaxSize+1))
-	if err != nil {
-		recordReturnRouteBGPError(err)
-		return err
-	}
-	if len(data) > returnRouteBGPRuleMaxSize {
-		err = fmt.Errorf("BGP 规则文件不能超过 %d MiB", returnRouteBGPRuleMaxSize>>20)
 		recordReturnRouteBGPError(err)
 		return err
 	}
@@ -352,6 +330,30 @@ func refreshReturnRouteBGPRules(ctx context.Context) error {
 	}
 	activateReturnRouteBGPRules(compiled, time.Now().UTC())
 	return nil
+}
+
+func downloadReturnRouteBGPRules(ctx context.Context, url string) ([]byte, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	request.Header.Set("User-Agent", "Lite-Return-Route (+https://github.com/nuomiiiii/Lite)")
+	response, err := returnRouteBGPHTTPClient.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("BGP 规则源返回 HTTP %d", response.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, returnRouteBGPRuleMaxSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > returnRouteBGPRuleMaxSize {
+		return nil, fmt.Errorf("BGP 规则文件不能超过 %d MiB", returnRouteBGPRuleMaxSize>>20)
+	}
+	return data, nil
 }
 
 func reloadCachedReturnRouteBGPRules() error {
@@ -741,7 +743,7 @@ func returnRouteRuleFileDigest(path string) (string, error) {
 }
 
 func returnRouteBGPSourceURL() string {
-	if value := strings.TrimSpace(os.Getenv("KOMARI_RETURN_ROUTE_BGP_RULE_URL")); value != "" {
+	if value := strings.TrimSpace(os.Getenv("LITE_RETURN_ROUTE_BGP_RULE_URL")); value != "" {
 		return value
 	}
 	return returnRouteBGPDefaultURL

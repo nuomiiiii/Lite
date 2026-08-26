@@ -4,19 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	logger "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"math"
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/database/notificationdefaults"
-	"github.com/komari-monitor/komari/database/tasks"
-	"github.com/komari-monitor/komari/database/trafficledger"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/utils"
+	"github.com/nuomiiiii/lite/database/billing"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/database/notificationdefaults"
+	"github.com/nuomiiiii/lite/database/tasks"
+	"github.com/nuomiiiii/lite/database/trafficledger"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/utils"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -602,10 +603,36 @@ func applyClientDeploymentStatuses(db *gorm.DB, clientList []models.Client) erro
 }
 
 func SaveClient(updates map[string]interface{}) error {
-	return saveClient(dbcore.GetDBInstance(), updates)
+	return SaveClientWithSource(updates, billing.PriceSourceClientEdit)
 }
 
 func saveClient(db *gorm.DB, updates map[string]interface{}) error {
+	return saveClientWithSource(db, updates, billing.PriceSourceClientEdit)
+}
+
+func SaveClientWithSource(updates map[string]interface{}, source string) error {
+	return saveClientWithSource(dbcore.GetDBInstance(), updates, source)
+}
+
+func saveClientWithSource(db *gorm.DB, updates map[string]interface{}, source string) error {
+	if source == "" {
+		source = billing.PriceSourceClientEdit
+	}
+	cloned := make(map[string]interface{}, len(updates))
+	for key, value := range updates {
+		cloned[key] = value
+	}
+	err := db.Transaction(func(tx *gorm.DB) error {
+		return saveClientTransaction(tx, cloned, source)
+	})
+	if err != nil {
+		return err
+	}
+	trafficledger.InvalidateCalibratedCycleCache()
+	return nil
+}
+
+func saveClientTransaction(db *gorm.DB, updates map[string]interface{}, source string) error {
 	clientUUID, ok := updates["uuid"].(string)
 	if !ok || clientUUID == "" {
 		return fmt.Errorf("invalid client UUID")
@@ -617,7 +644,7 @@ func saveClient(db *gorm.DB, updates map[string]interface{}) error {
 	}
 
 	var existing models.Client
-	if err := db.Select("uuid", "region", "region_override", "traffic_limit", "traffic_limit_type", "traffic_reset_day", "traffic_reset_allowance", "traffic_reset_cycle").
+	if err := db.Select("uuid", "name", "region", "group", "price", "billing_cycle", "currency", "expired_at", "region_override", "traffic_limit", "traffic_limit_type", "traffic_reset_day", "traffic_reset_allowance", "traffic_reset_cycle").
 		Where("uuid = ?", clientUUID).First(&existing).Error; err != nil {
 		return err
 	}
@@ -653,14 +680,26 @@ func saveClient(db *gorm.DB, updates map[string]interface{}) error {
 		}
 		updates["region_override"] = normalized
 	}
+	if value, exists := updates["bandwidth"]; exists {
+		raw, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("bandwidth must be a string")
+		}
+		updates["bandwidth"] = normalizeBandwidth(raw)
+	}
 	resetDay := existing.TrafficResetDay
 	if value, exists := updates["traffic_reset_day"]; exists {
 		normalized, err := normalizeTrafficResetDay(value)
 		if err != nil {
 			return err
 		}
-		updates["traffic_reset_day"] = normalized
-		resetDay = normalized
+		if normalized == nil {
+			updates["traffic_reset_day"] = nil
+			resetDay = nil
+		} else {
+			updates["traffic_reset_day"] = *normalized
+			resetDay = normalized
+		}
 	}
 	resetAllowance := existing.TrafficResetAllowance
 	if value, exists := updates["traffic_reset_allowance"]; exists {
@@ -733,11 +772,15 @@ func saveClient(db *gorm.DB, updates map[string]interface{}) error {
 
 	updates["updated_at"] = time.Now().UTC()
 
+	if db.Migrator().HasTable(&models.BillingPriceVersion{}) {
+		if err := billing.CapturePriceVersion(db, existing, updates, source, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
 	err := db.Model(&models.Client{}).Where("uuid = ?", clientUUID).Updates(updates).Error
 	if err != nil {
 		return err
 	}
-	trafficledger.InvalidateCalibratedCycleCache()
 	return nil
 }
 
@@ -770,6 +813,40 @@ func toInt64(value interface{}) (int64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func normalizeBandwidth(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	fields := strings.Fields(value)
+	number, unit, glued := splitGluedBandwidth(fields[0])
+	if glued {
+		fields = append([]string{number, unit}, fields[1:]...)
+	}
+	return strings.Join(fields, " ")
+}
+
+func splitGluedBandwidth(value string) (number, unit string, ok bool) {
+	index := 0
+	length := len(value)
+	for index < length && value[index] >= '0' && value[index] <= '9' {
+		index++
+	}
+	if index > 0 && index < length && value[index] == '.' {
+		fraction := index + 1
+		for fraction < length && value[fraction] >= '0' && value[fraction] <= '9' {
+			fraction++
+		}
+		if fraction > index+1 {
+			index = fraction
+		}
+	}
+	if index == 0 || index == length {
+		return "", "", false
+	}
+	return value[:index], value[index:], true
 }
 
 func normalizeRegionOverride(value string) (string, error) {
@@ -821,7 +898,7 @@ func normalizeTrafficResetDay(value interface{}) (*int, error) {
 }
 
 // AdoptTrafficResetDay records an Agent's existing setting only while the node
-// has not yet been explicitly managed by Komari.
+// has not yet been explicitly managed by Lite.
 func AdoptTrafficResetDay(clientUUID string, value interface{}) error {
 	day, err := normalizeTrafficResetDay(value)
 	if err != nil {

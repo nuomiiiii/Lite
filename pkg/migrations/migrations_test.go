@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/models"
-	appconfig "github.com/komari-monitor/komari/pkg/config"
+	"github.com/nuomiiiii/lite/database/models"
+	appconfig "github.com/nuomiiiii/lite/pkg/config"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -254,7 +254,7 @@ func TestRunMigratesLegacyConfigTableToConfigItems(t *testing.T) {
 		t.Fatalf("migrate legacy config table: %v", err)
 	}
 	legacy := legacyModelConfig{
-		Sitename:                   "Old Komari",
+		Sitename:                   "Old Lite",
 		Description:                "legacy description",
 		Theme:                      "classic",
 		GeoIpEnabled:               true,
@@ -280,7 +280,7 @@ func TestRunMigratesLegacyConfigTableToConfigItems(t *testing.T) {
 	if err := db.First(&sitename, "key = ?", appconfig.SitenameKey).Error; err != nil {
 		t.Fatalf("find migrated sitename: %v", err)
 	}
-	if sitename.Value != `"Old Komari"` {
+	if sitename.Value != `"Old Lite"` {
 		t.Fatalf("unexpected sitename value: %s", sitename.Value)
 	}
 

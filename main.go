@@ -4,9 +4,9 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/komari-monitor/komari/cmd"
-	"github.com/komari-monitor/komari/utils"
-	logger "github.com/komari-monitor/komari/utils/log"
+	"github.com/nuomiiiii/lite/cmd"
+	"github.com/nuomiiiii/lite/utils"
+	logger "github.com/nuomiiiii/lite/utils/log"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 		logger.Setup(slog.LevelInfo)
 	}
 
-	logger.Infof("server", "Komari Monitor %s (%s)", utils.CurrentVersion, utils.VersionHash)
+	logger.Infof("server", "Lite %s (%s)", utils.CurrentVersion, utils.VersionHash)
 
 	cmd.Execute()
 }

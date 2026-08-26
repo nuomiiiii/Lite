@@ -17,11 +17,13 @@ import (
 )
 
 const (
-	releaseBaseURL = "https://github.com/nuomiiiii/komari/releases/download"
-	manifestName   = "komari-update.json"
-	maxManifest    = 2 << 20
-	maxBinary      = 256 << 20
+	manifestName       = "lite-update.json"
+	legacyManifestName = "komari-update.json"
+	maxManifest        = 2 << 20
+	maxBinary          = 256 << 20
 )
+
+var releaseBaseURL = "https://github.com/nuomiiiii/Lite/releases/download"
 
 var (
 	versionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
@@ -41,6 +43,21 @@ type ManifestAsset struct {
 	Arch   string `json:"arch"`
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
+}
+
+func fetchReleaseManifest(version string, client *http.Client) (*Manifest, error) {
+	var lastErr error
+	for _, name := range []string{manifestName, legacyManifestName} {
+		manifest, err := fetchManifest(releaseURL(version, name), client)
+		if err == nil {
+			return manifest, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = errors.New("update manifest not found")
+	}
+	return nil, lastErr
 }
 
 func fetchManifest(ctxURL string, client *http.Client) (*Manifest, error) {
@@ -78,24 +95,39 @@ func (manifest *Manifest) validate(version, versionHash string) (*ManifestAsset,
 	if manifest.Version != version || manifest.VersionHash != versionHash {
 		return nil, errors.New("release metadata does not match the requested update")
 	}
-	name := fmt.Sprintf("komari-%s-%s", runtime.GOOS, runtime.GOARCH)
-	for i := range manifest.Assets {
-		asset := &manifest.Assets[i]
-		if asset.Name != name || asset.OS != runtime.GOOS || asset.Arch != runtime.GOARCH {
-			continue
-		}
-		if asset.Size <= 0 || asset.Size > maxBinary {
-			return nil, errors.New("invalid update asset size")
-		}
-		if len(asset.SHA256) != sha256.Size*2 {
-			return nil, errors.New("invalid update asset checksum")
-		}
-		if _, err := hex.DecodeString(asset.SHA256); err != nil {
-			return nil, errors.New("invalid update asset checksum")
-		}
-		return asset, nil
+	asset := manifest.currentAsset()
+	if asset == nil {
+		return nil, fmt.Errorf("release does not contain %s", strings.Join(platformAssetNames(), " or "))
 	}
-	return nil, fmt.Errorf("release does not contain %s", name)
+	if asset.Size <= 0 || asset.Size > maxBinary {
+		return nil, errors.New("invalid update asset size")
+	}
+	if len(asset.SHA256) != sha256.Size*2 {
+		return nil, errors.New("invalid update asset checksum")
+	}
+	if _, err := hex.DecodeString(asset.SHA256); err != nil {
+		return nil, errors.New("invalid update asset checksum")
+	}
+	return asset, nil
+}
+
+func platformAssetNames() []string {
+	return []string{
+		fmt.Sprintf("Lite-%s-%s", runtime.GOOS, runtime.GOARCH),
+		fmt.Sprintf("komari-%s-%s", runtime.GOOS, runtime.GOARCH),
+	}
+}
+
+func (manifest *Manifest) currentAsset() *ManifestAsset {
+	for _, name := range platformAssetNames() {
+		for i := range manifest.Assets {
+			asset := &manifest.Assets[i]
+			if asset.Name == name && asset.OS == runtime.GOOS && asset.Arch == runtime.GOARCH {
+				return asset
+			}
+		}
+	}
+	return nil
 }
 
 func downloadAsset(client *http.Client, url, destination string, asset ManifestAsset) error {

@@ -3,11 +3,11 @@ package metricstore
 import (
 	"context"
 	"fmt"
-	logger "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari/pkg/metric"
+	"github.com/nuomiiiii/lite/pkg/metric"
 )
 
 // storeMigrationWindow 是 store-to-store 迁移时按时间分窗查询的窗口大小。

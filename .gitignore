@@ -10,7 +10,7 @@
 __debug*
 
 # local development data
-komari.db
+lite.db
 /data
 /utils/geoip/data
 .vscode/
@@ -35,3 +35,6 @@ go.work.sum
 # build
 komari
 .codex
+
+# Compiled system UI is produced by CI from Lite-web.
+/web/public/systemUI/dist/

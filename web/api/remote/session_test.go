@@ -48,7 +48,11 @@ func TestAgentRemoteSessionIDIgnoresQueryParameter(t *testing.T) {
 	}
 	context.Request.Header.Set("X-Komari-Remote-Session", "header-session")
 	if got := agentRemoteSessionID(context); got != "header-session" {
-		t.Fatalf("header session identifier was rejected: %q", got)
+		t.Fatalf("komari header session identifier was rejected: %q", got)
+	}
+	context.Request.Header.Set("X-Lite-Remote-Session", "lite-session")
+	if got := agentRemoteSessionID(context); got != "lite-session" {
+		t.Fatalf("lite header session identifier was rejected: %q", got)
 	}
 }
 

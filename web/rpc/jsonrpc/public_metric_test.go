@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/pkg/metric"
-	"github.com/komari-monitor/komari/pkg/rpc"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/pkg/metric"
+	"github.com/nuomiiiii/lite/pkg/rpc"
 )
 
 func TestMetricQueryParamsRequireRFC3339Time(t *testing.T) {

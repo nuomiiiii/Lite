@@ -3,8 +3,8 @@ package jsonrpc
 import (
 	"context"
 
-	"github.com/komari-monitor/komari/database/accounts"
-	"github.com/komari-monitor/komari/pkg/rpc"
+	"github.com/nuomiiiii/lite/database/accounts"
+	"github.com/nuomiiiii/lite/pkg/rpc"
 )
 
 func init() {

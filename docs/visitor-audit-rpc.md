@@ -1,6 +1,6 @@
 # Visitor Audit RPC 使用说明
 
-本文档说明 `public:recordVisitorEvent` RPC2 接口的调用方式。该接口用于让主题前端把访客访问和前端操作记录写入 Komari 后端审计日志。
+本文档说明 `public:recordVisitorEvent` RPC2 接口的调用方式。该接口用于让主题前端把访客访问和前端操作记录写入 Lite 后端审计日志。
 
 ## 接口概览
 
@@ -100,7 +100,7 @@ node:open.detail -> node:open.detail
 ## 请求示例：页面访问
 
 ```bash
-curl -X POST http://localhost:25774/api/rpc2 \
+curl -X POST http://localhost:27777/api/rpc2 \
   -H 'Content-Type: application/json' \
   --data '{
     "jsonrpc": "2.0",

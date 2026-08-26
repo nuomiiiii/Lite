@@ -3,7 +3,7 @@ package oauth
 import (
 	"testing"
 
-	"github.com/komari-monitor/komari/web/oauth/factory"
+	"github.com/nuomiiiii/lite/web/oauth/factory"
 )
 
 // Test function

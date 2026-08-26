@@ -44,7 +44,7 @@ func (s *IPInfoService) Name() string {
 }
 
 // GetGeoInfo 使用 ipinfo.io 服务检索给定 IP 地址的地理位置信息。
-// 免费额度主要提供国家信息。
+// 免费额度主要提供国家\地区信息。
 func (s *IPInfoService) GetGeoInfo(ip net.IP) (*GeoInfo, error) {
 	// IPinfo 免费额度不需要 API token 就可以查询基本的 IP 信息。
 	// API URL: https://ipinfo.io/json (查询自身IP) 或 https://ipinfo.io/YOUR_IP/json
@@ -66,11 +66,11 @@ func (s *IPInfoService) GetGeoInfo(ip net.IP) (*GeoInfo, error) {
 	}
 
 	// IPinfo 的 "country" 字段直接返回 ISO 2-letter code，例如 "US", "CN"
-	// 我们需要将 "country" 字段作为 ISOCode，并尝试获取其对应的国家名称。
-	// IPinfo 响应中通常不直接提供完整的国家名称，但我们可以通过 CountryCode 映射。
+	// 我们需要将 "country" 字段作为 ISOCode，并尝试获取其对应的国家\地区名称。
+	// IPinfo 响应中通常不直接提供完整的国家\地区名称，但我们可以通过 CountryCode 映射。
 	// 为了简化并符合 GeoInfo 结构，我们直接使用 Country 作为 ISOCode，并尝试从 CountryCode 获取名称。
 	// 实际上，IPinfo 的 'country' 字段就是 ISO 2-letter code。
-	// 如果需要完整的国家名称，可能需要一个本地的 ISO 代码到名称的映射。
+	// 如果需要完整的国家\地区名称，可能需要一个本地的 ISO 代码到名称的映射。
 	// 为了与 GetRegionUnicodeEmoji 函数兼容，我们直接使用 country 作为 ISOCode。
 	return &GeoInfo{
 		ISOCode: apiResp.Country, // IPinfo 的 'country' 字段就是 ISO 2-letter code

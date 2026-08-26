@@ -5,12 +5,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari/cmd/flags"
-	"github.com/komari-monitor/komari/database/auditlog"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/pkg/metric"
-	"github.com/komari-monitor/komari/pkg/rpc"
+	"github.com/nuomiiiii/lite/cmd/flags"
+	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/pkg/metric"
+	"github.com/nuomiiiii/lite/pkg/rpc"
 )
 
 const (

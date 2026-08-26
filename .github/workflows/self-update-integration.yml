@@ -60,26 +60,26 @@ jobs:
           # Keep the 78518cc updater logic intact while serving its test
           # manifest locally so the candidate can be validated before release.
           sed -i \
-            's#https://github.com/nuomiiiii/komari/releases/download#http://127.0.0.1:28999/releases/download#' \
+            's#https://github.com/[^/]*/[^/]*/releases/download#http://127.0.0.1:28999/releases/download#' \
             self-update-old-source/pkg/selfupdate/manifest.go
           (
             cd self-update-old-source
             go build -trimpath \
-              -ldflags='-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=2.2.2 -X github.com/komari-monitor/komari/utils.VersionHash=78518cc' \
+              -ldflags='-s -w -X github.com/nuomiiiii/lite/utils.CurrentVersion=2.2.2 -X github.com/nuomiiiii/lite/utils.VersionHash=78518cc' \
               -o ../self-update-test/komari-old .
           )
           go build -trimpath \
-            -ldflags="-s -w -X github.com/komari-monitor/komari/utils.CurrentVersion=${TARGET_VERSION} -X github.com/komari-monitor/komari/utils.VersionHash=${TARGET_HASH}" \
-            -o self-update-test/komari-new .
+            -ldflags="-s -w -X github.com/nuomiiiii/lite/utils.CurrentVersion=${TARGET_VERSION} -X github.com/nuomiiiii/lite/utils.VersionHash=${TARGET_HASH}" \
+            -o self-update-test/Lite-new .
           release_dir="self-update-test/repository/releases/download/${TARGET_VERSION}"
           mkdir -p "$release_dir"
-          cp self-update-test/komari-new "$release_dir/komari-linux-amd64"
+          cp self-update-test/Lite-new "$release_dir/Lite-linux-amd64"
           RELEASE_DIR="$release_dir" node <<'NODE'
           const crypto = require("crypto");
           const fs = require("fs");
           const path = require("path");
           const dir = process.env.RELEASE_DIR;
-          const name = "komari-linux-amd64";
+          const name = "Lite-linux-amd64";
           const content = fs.readFileSync(path.join(dir, name));
           const manifest = {
             schema: 1,
@@ -93,6 +93,7 @@ jobs:
               sha256: crypto.createHash("sha256").update(content).digest("hex"),
             }],
           };
+          fs.writeFileSync(path.join(dir, "lite-update.json"), JSON.stringify(manifest));
           fs.writeFileSync(path.join(dir, "komari-update.json"), JSON.stringify(manifest));
           NODE
 
@@ -105,7 +106,7 @@ jobs:
           set -euo pipefail
           for image in ubuntu:20.04 debian:11-slim quay.io/centos/centos:7; do
             echo "Testing $image"
-            output="$(docker run --rm -v "$PWD/self-update-test/komari-new:/komari:ro" "$image" /komari version --json)"
+            output="$(docker run --rm -v "$PWD/self-update-test/Lite-new:/Lite:ro" "$image" /Lite version --json)"
             jq -e --arg version "$TARGET_VERSION" --arg hash "$TARGET_HASH" \
               '.version == $version and .hash == $hash' <<<"$output"
           done
@@ -117,13 +118,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ROOT=/tmp/komari-self-update-integration
-          SUCCESS_SERVICE=komari-update-success.service
-          ROLLBACK_SERVICE=komari-update-rollback.service
-          HTTPS_SERVICE=komari-update-old-https.service
-          FAILURE_SERVICE=komari-update-rollback-failed.service
+          ROOT=/tmp/lite-self-update-integration
+          SUCCESS_SERVICE=lite-update-success.service
+          ROLLBACK_SERVICE=lite-update-rollback.service
+          HTTPS_SERVICE=lite-update-old-https.service
+          FAILURE_SERVICE=lite-update-rollback-failed.service
 
-          python3 -m http.server 28999 --bind 127.0.0.1 --directory self-update-test/repository >/tmp/komari-self-update-assets.log 2>&1 &
+          python3 -m http.server 28999 --bind 127.0.0.1 --directory self-update-test/repository >/tmp/lite-self-update-assets.log 2>&1 &
           ASSET_SERVER_PID=$!
 
           cleanup() {
@@ -131,9 +132,9 @@ jobs:
             sudo rm -f "/etc/systemd/system/$SUCCESS_SERVICE" "/etc/systemd/system/$ROLLBACK_SERVICE" "/etc/systemd/system/$HTTPS_SERVICE" "/etc/systemd/system/$FAILURE_SERVICE"
             sudo systemctl daemon-reload
             sudo rm -rf "$ROOT"
-            sudo rm -f /usr/local/share/ca-certificates/komari-self-update-test.crt
+            sudo rm -f /usr/local/share/ca-certificates/lite-self-update-test.crt
             sudo update-ca-certificates >/dev/null 2>&1 || true
-            rm -f /tmp/komari-self-update-*.cookies
+            rm -f /tmp/lite-self-update-*.cookies
             kill "$ASSET_SERVER_PID" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
@@ -141,10 +142,10 @@ jobs:
           create_case() {
             local name=$1 service=$2 port=$3
             local case_root="$ROOT/$name"
-            sudo mkdir -p "$case_root/data" "$case_root/.komari-update/jobs/test"
+            sudo mkdir -p "$case_root/data" "$case_root/.lite-update/jobs/test"
             sudo cp self-update-test/komari-old "$case_root/komari"
-            sudo cp self-update-test/komari-new "$case_root/.komari-update/jobs/test/candidate"
-            sudo chmod 0755 "$case_root/komari" "$case_root/.komari-update/jobs/test/candidate"
+            sudo cp self-update-test/Lite-new "$case_root/.lite-update/jobs/test/candidate"
+            sudo chmod 0755 "$case_root/komari" "$case_root/.lite-update/jobs/test/candidate"
             sudo tee "/etc/systemd/system/$service" >/dev/null <<UNIT
           [Unit]
           Description=Komari self-update integration case
@@ -156,8 +157,8 @@ jobs:
           ExecStart=$case_root/komari server -l 127.0.0.1:$port
           Restart=always
           User=root
-          Environment=KOMARI_DEPLOYMENT=linux
-          Environment=KOMARI_SERVICE_NAME=$service
+          Environment=LITE_DEPLOYMENT=linux
+          Environment=LITE_SERVICE_NAME=$service
 
           [Install]
           WantedBy=multi-user.target
@@ -189,20 +190,23 @@ jobs:
               --no-block \
               --property=Restart=on-failure \
               --property=RestartSec=3s \
-              "$case_root/.komari-update/jobs/test/candidate" \
-              _self-update-helper "$case_root/.komari-update/jobs/test/helper.json"
+              "$case_root/.lite-update/jobs/test/candidate" \
+              _self-update-helper "$case_root/.lite-update/jobs/test/helper.json"
           }
 
           wait_result() {
             local name=$1 expected=$2
-            local result="$ROOT/$name/.komari-update/last-result.json"
+            local result_lite="$ROOT/$name/.lite-update/last-result.json"
+            local result_legacy="$ROOT/$name/.komari-update/last-result.json"
             for _ in $(seq 1 120); do
-              if sudo test -f "$result" && sudo grep -q '"status": "'"$expected"'"' "$result"; then
-                return 0
-              fi
+              for result in "$result_lite" "$result_legacy"; do
+                if sudo test -f "$result" && sudo grep -q '"status": "'"$expected"'"' "$result"; then
+                  return 0
+                fi
+              done
               sleep 1
             done
-            sudo cat "$result" || true
+            sudo cat "$result_lite" "$result_legacy" 2>/dev/null || true
             return 1
           }
 
@@ -212,7 +216,7 @@ jobs:
           }
 
           create_case success "$SUCCESS_SERVICE" 28774
-          COOKIE_JAR=/tmp/komari-self-update-success.cookies
+          COOKIE_JAR=/tmp/lite-self-update-success.cookies
           curl -fsS \
             -c "$COOKIE_JAR" \
             -H 'Content-Type: application/json' \
@@ -227,11 +231,11 @@ jobs:
             --arg service "$SUCCESS_SERVICE" \
             '.result.deployment == "linux" and .result.supported == true and .result.service == $service' \
             <<<"$capability"
-          sudo tee "$ROOT/success/.komari-update/jobs/test/helper.json" >/dev/null <<JSON
+          sudo tee "$ROOT/success/.lite-update/jobs/test/helper.json" >/dev/null <<JSON
           {
             "job_id": "integration-success",
             "current_executable": "$ROOT/success/komari",
-            "candidate_executable": "$ROOT/success/.komari-update/jobs/test/candidate",
+            "candidate_executable": "$ROOT/success/.lite-update/jobs/test/candidate",
             "data_dir": "$ROOT/success/data",
             "service": "$SUCCESS_SERVICE",
             "health_url": "http://127.0.0.1:28774/api/version",
@@ -239,23 +243,23 @@ jobs:
             "expected_hash": "$TARGET_HASH",
             "previous_version": "2.2.2",
             "previous_hash": "78518cc",
-            "update_root": "$ROOT/success/.komari-update",
+            "update_root": "$ROOT/success/.lite-update",
             "backup_root": "$ROOT/success/backup/self-update-integration-success",
             "health_timeout": 30000000000,
             "stable_window": 3000000000
           }
           JSON
-          schedule_helper success komari-self-update-integration-success
+          schedule_helper success lite-self-update-integration-success
           wait_result success succeeded
           curl -fsS http://127.0.0.1:28774/api/version | jq -e --arg version "$TARGET_VERSION" --arg hash "$TARGET_HASH" '(.data // .) | .version == $version and .hash == $hash'
           assert_service_active "$SUCCESS_SERVICE"
 
           create_case rollback "$ROLLBACK_SERVICE" 28775
-          sudo tee "$ROOT/rollback/.komari-update/jobs/test/helper.json" >/dev/null <<JSON
+          sudo tee "$ROOT/rollback/.lite-update/jobs/test/helper.json" >/dev/null <<JSON
           {
             "job_id": "integration-rollback",
             "current_executable": "$ROOT/rollback/komari",
-            "candidate_executable": "$ROOT/rollback/.komari-update/jobs/test/candidate",
+            "candidate_executable": "$ROOT/rollback/.lite-update/jobs/test/candidate",
             "data_dir": "$ROOT/rollback/data",
             "service": "$ROLLBACK_SERVICE",
             "health_url": "http://127.0.0.1:28775/api/version",
@@ -263,57 +267,57 @@ jobs:
             "expected_hash": "bad9999",
             "previous_version": "2.2.2",
             "previous_hash": "78518cc",
-            "update_root": "$ROOT/rollback/.komari-update",
+            "update_root": "$ROOT/rollback/.lite-update",
             "backup_root": "$ROOT/rollback/backup/self-update-integration-rollback",
             "health_timeout": 8000000000,
             "stable_window": 2000000000
           }
           JSON
-          schedule_helper rollback komari-self-update-integration-rollback
+          schedule_helper rollback lite-self-update-integration-rollback
           wait_result rollback rolled_back
           curl -fsS http://127.0.0.1:28775/api/version | jq -e '(.data // .) | .version == "2.2.2" and .hash == "78518cc"'
           assert_service_active "$ROLLBACK_SERVICE"
 
           # Reproduce the field deployment: build 78518cc creates the old
           # Restart=on-failure unit, while the released binary runs the helper.
-          create_case old-https "$HTTPS_SERVICE" 25774
+          create_case old-https "$HTTPS_SERVICE" 27777
           HTTPS_ROOT="$ROOT/old-https"
           sudo mkdir -p "$HTTPS_ROOT/data/tls"
           openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
             -subj '/CN=Komari self-update test CA' \
-            -keyout /tmp/komari-self-update-ca.key \
-            -out /tmp/komari-self-update-ca.crt >/dev/null 2>&1
+            -keyout /tmp/lite-self-update-ca.key \
+            -out /tmp/lite-self-update-ca.crt >/dev/null 2>&1
           openssl req -newkey rsa:2048 -nodes \
             -subj '/CN=monitor.example' \
-            -keyout /tmp/komari-self-update-server.key \
-            -out /tmp/komari-self-update-server.csr >/dev/null 2>&1
-          printf 'subjectAltName=DNS:monitor.example\nextendedKeyUsage=serverAuth\n' >/tmp/komari-self-update-server.ext
+            -keyout /tmp/lite-self-update-server.key \
+            -out /tmp/lite-self-update-server.csr >/dev/null 2>&1
+          printf 'subjectAltName=DNS:monitor.example\nextendedKeyUsage=serverAuth\n' >/tmp/lite-self-update-server.ext
           openssl x509 -req -days 1 \
-            -in /tmp/komari-self-update-server.csr \
-            -CA /tmp/komari-self-update-ca.crt \
-            -CAkey /tmp/komari-self-update-ca.key \
+            -in /tmp/lite-self-update-server.csr \
+            -CA /tmp/lite-self-update-ca.crt \
+            -CAkey /tmp/lite-self-update-ca.key \
             -CAcreateserial \
-            -extfile /tmp/komari-self-update-server.ext \
-            -out /tmp/komari-self-update-server.crt >/dev/null 2>&1
-          sudo cp /tmp/komari-self-update-ca.crt /usr/local/share/ca-certificates/komari-self-update-test.crt
+            -extfile /tmp/lite-self-update-server.ext \
+            -out /tmp/lite-self-update-server.crt >/dev/null 2>&1
+          sudo cp /tmp/lite-self-update-ca.crt /usr/local/share/ca-certificates/lite-self-update-test.crt
           sudo update-ca-certificates >/dev/null
-          sudo cp /tmp/komari-self-update-server.crt "$HTTPS_ROOT/data/tls/server.crt"
-          sudo cp /tmp/komari-self-update-server.key "$HTTPS_ROOT/data/tls/server.key"
+          sudo cp /tmp/lite-self-update-server.crt "$HTTPS_ROOT/data/tls/server.crt"
+          sudo cp /tmp/lite-self-update-server.key "$HTTPS_ROOT/data/tls/server.key"
           sudo chmod 0600 "$HTTPS_ROOT/data/tls/server.crt" "$HTTPS_ROOT/data/tls/server.key"
 
-          HTTPS_COOKIE=/tmp/komari-self-update-old-https.cookies
+          HTTPS_COOKIE=/tmp/lite-self-update-old-https.cookies
           curl -fsS -c "$HTTPS_COOKIE" \
             -H 'Content-Type: application/json' \
             --data '{"username":"integration","password":"Integration-test1","twofa_code":""}' \
-            http://127.0.0.1:25774/api/login >/dev/null
+            http://127.0.0.1:27777/api/login >/dev/null
           curl -fsS -b "$HTTPS_COOKIE" \
             -H 'Content-Type: application/json' \
-            --data "{\"https_enabled\":true,\"https_listen\":\"127.0.0.1:35938\",\"https_redirect_http\":true,\"https_certificate_path\":\"$HTTPS_ROOT/data/tls/server.crt\",\"https_private_key_path\":\"$HTTPS_ROOT/data/tls/server.key\"}" \
-            http://127.0.0.1:25774/api/admin/settings/https >/dev/null
-          redirect_headers="$(curl -sS -D - -o /dev/null --max-redirs 0 http://127.0.0.1:25774/api/version || true)"
+            --data "{\"https_enabled\":true,\"https_listen\":\"127.0.0.1:36888\",\"https_redirect_http\":true,\"https_certificate_path\":\"$HTTPS_ROOT/data/tls/server.crt\",\"https_private_key_path\":\"$HTTPS_ROOT/data/tls/server.key\"}" \
+            http://127.0.0.1:27777/api/admin/settings/https >/dev/null
+          redirect_headers="$(curl -sS -D - -o /dev/null --max-redirs 0 http://127.0.0.1:27777/api/version || true)"
           grep -q '^HTTP/.* 307' <<<"$redirect_headers"
-          grep -qi '^location: https://127.0.0.1:35938/api/version' <<<"$redirect_headers"
-          if curl --cacert /tmp/komari-self-update-ca.crt -fsS https://127.0.0.1:35938/api/version >/dev/null 2>&1; then
+          grep -qi '^location: https://127.0.0.1:36888/api/version' <<<"$redirect_headers"
+          if curl --cacert /tmp/lite-self-update-ca.crt -fsS https://127.0.0.1:36888/api/version >/dev/null 2>&1; then
             echo 'test certificate unexpectedly contains a loopback address' >&2
             exit 1
           fi
@@ -321,7 +325,7 @@ jobs:
           update_response="$(curl -kfsS -b "$HTTPS_COOKIE" \
             -H 'Content-Type: application/json' \
             --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"admin:startSelfUpdate\",\"params\":{\"version\":\"$TARGET_VERSION\",\"version_hash\":\"$TARGET_HASH\"}}" \
-            https://127.0.0.1:35938/api/rpc2)"
+            https://127.0.0.1:36888/api/rpc2)"
           jq -e '.result.status == "scheduled"' <<<"$update_response"
           old_job_id="$(jq -r '.result.job_id' <<<"$update_response")"
           old_helper_unit="komari-self-update-${old_job_id}.service"
@@ -331,12 +335,12 @@ jobs:
           done
           [ "$(sudo systemctl show "$old_helper_unit" --property=Restart --value)" = "on-failure" ]
           wait_result old-https succeeded
-          curl -kfsS https://127.0.0.1:35938/api/version | jq -e --arg version "$TARGET_VERSION" --arg hash "$TARGET_HASH" '(.data // .) | .version == $version and .hash == $hash'
+          curl -kfsS https://127.0.0.1:36888/api/version | jq -e --arg version "$TARGET_VERSION" --arg hash "$TARGET_HASH" '(.data // .) | .version == $version and .hash == $hash'
           assert_service_active "$HTTPS_SERVICE"
 
           create_case rollback-failed "$FAILURE_SERVICE" 28777
           FAILURE_ROOT="$ROOT/rollback-failed"
-          sudo tee "$FAILURE_ROOT/.komari-update/last-result.json" >/dev/null <<JSON
+          sudo tee "$FAILURE_ROOT/.lite-update/last-result.json" >/dev/null <<JSON
           {
             "job_id": "integration-rollback-failed",
             "status": "rolling_back",
@@ -345,14 +349,14 @@ jobs:
           }
           JSON
           write_failure_config() {
-            sudo mkdir -p "$FAILURE_ROOT/.komari-update/jobs/test"
-            sudo cp self-update-test/komari-new "$FAILURE_ROOT/.komari-update/jobs/test/candidate"
-            sudo chmod 0755 "$FAILURE_ROOT/.komari-update/jobs/test/candidate"
-            sudo tee "$FAILURE_ROOT/.komari-update/jobs/test/helper.json" >/dev/null <<JSON
+            sudo mkdir -p "$FAILURE_ROOT/.lite-update/jobs/test"
+            sudo cp self-update-test/Lite-new "$FAILURE_ROOT/.lite-update/jobs/test/candidate"
+            sudo chmod 0755 "$FAILURE_ROOT/.lite-update/jobs/test/candidate"
+            sudo tee "$FAILURE_ROOT/.lite-update/jobs/test/helper.json" >/dev/null <<JSON
           {
             "job_id": "integration-rollback-failed",
             "current_executable": "$FAILURE_ROOT/komari",
-            "candidate_executable": "$FAILURE_ROOT/.komari-update/jobs/test/candidate",
+            "candidate_executable": "$FAILURE_ROOT/.lite-update/jobs/test/candidate",
             "data_dir": "$FAILURE_ROOT/data",
             "service": "$FAILURE_SERVICE",
             "health_url": "http://127.0.0.1:28777/api/version",
@@ -360,7 +364,7 @@ jobs:
             "expected_hash": "$TARGET_HASH",
             "previous_version": "2.2.2",
             "previous_hash": "78518cc",
-            "update_root": "$FAILURE_ROOT/.komari-update",
+            "update_root": "$FAILURE_ROOT/.lite-update",
             "backup_root": "$FAILURE_ROOT/backup/missing-rollback",
             "health_timeout": 3000000000,
             "stable_window": 1000000000
@@ -368,18 +372,18 @@ jobs:
           JSON
           }
           write_failure_config
-          schedule_helper rollback-failed komari-self-update-integration-rollback-failed
+          schedule_helper rollback-failed lite-self-update-integration-rollback-failed
           wait_result rollback-failed rollback_failed
           assert_service_active "$FAILURE_SERVICE"
-          failure_message="$(sudo jq -r .message "$FAILURE_ROOT/.komari-update/last-result.json")"
+          failure_message="$(sudo jq -r .message "$FAILURE_ROOT/.lite-update/last-result.json")"
           [ "$(grep -o 'rollback failed:' <<<"$failure_message" | wc -l)" -eq 1 ]
           sleep 5
-          [ "$(sudo jq -r .message "$FAILURE_ROOT/.komari-update/last-result.json")" = "$failure_message" ]
+          [ "$(sudo jq -r .message "$FAILURE_ROOT/.lite-update/last-result.json")" = "$failure_message" ]
 
           # A helper restarted by an old unit must treat rollback_failed as
           # terminal, exit zero, and leave both the result and service alone.
           write_failure_config
-          schedule_helper rollback-failed komari-self-update-integration-rollback-failed-restart
+          schedule_helper rollback-failed lite-self-update-integration-rollback-failed-restart
           sleep 5
-          [ "$(sudo jq -r .message "$FAILURE_ROOT/.komari-update/last-result.json")" = "$failure_message" ]
+          [ "$(sudo jq -r .message "$FAILURE_ROOT/.lite-update/last-result.json")" = "$failure_message" ]
           assert_service_active "$FAILURE_SERVICE"

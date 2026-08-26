@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari/utils/messageSender/factory"
+	"github.com/nuomiiiii/lite/utils/messageSender/factory"
 )
 
 // ServerChanTurboSender 为 Server酱 Turbo 推送实现

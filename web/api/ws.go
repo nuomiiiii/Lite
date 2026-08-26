@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/database/accounts"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/database/trafficledger"
-	"github.com/komari-monitor/komari/protocol/v1"
-	agent_runtime "github.com/komari-monitor/komari/web/agent"
+	"github.com/nuomiiiii/lite/database/accounts"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/database/trafficledger"
+	"github.com/nuomiiiii/lite/protocol/v1"
+	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 )
 
 func GetClients(c *gin.Context) {

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/database/trafficledger"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/database/trafficledger"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )

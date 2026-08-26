@@ -17,8 +17,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	logger "github.com/komari-monitor/komari/utils/log"
-	"github.com/komari-monitor/komari/web/backup"
+	logger "github.com/nuomiiiii/lite/utils/log"
+	"github.com/nuomiiiii/lite/web/backup"
 )
 
 const (

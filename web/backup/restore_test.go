@@ -110,13 +110,21 @@ func TestReplaceStagedBackupRestoresPreviousFileWhenInstallFails(t *testing.T) {
 func TestValidateArchiveAcceptsFullAndConfigurationPackages(t *testing.T) {
 	for name, entries := range map[string]map[string]string{
 		"config": {
-			"komari.db":            "main",
-			"komari-backup-markup": "config",
+			"lite.db":            "main",
+			"lite-backup-markup": "config",
 		},
 		"full": {
+			"lite.db":            "main",
+			"metrics.db":         "history",
+			"lite-backup-markup": "full",
+		},
+		"legacy komari markup": {
+			"lite.db":              "main",
+			"komari-backup-markup": "config",
+		},
+		"komari lite": {
 			"komari.db":            "main",
-			"metrics.db":           "history",
-			"komari-backup-markup": "full",
+			"komari-backup-markup": "config",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -129,12 +137,12 @@ func TestValidateArchiveAcceptsFullAndConfigurationPackages(t *testing.T) {
 
 func TestValidateArchiveRejectsPackagesThatCouldWipeCurrentData(t *testing.T) {
 	for name, entries := range map[string]map[string]string{
-		"missing database": {"komari-backup-markup": "marker"},
-		"missing marker":   {"komari.db": "main"},
+		"missing database": {"lite-backup-markup": "marker"},
+		"missing marker":   {"lite.db": "main"},
 		"path traversal": {
-			"komari.db":            "main",
-			"komari-backup-markup": "marker",
-			"../outside":           "bad",
+			"lite.db":            "main",
+			"lite-backup-markup": "marker",
+			"../outside":         "bad",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
-	appconfig "github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/web/backup"
-	"github.com/komari-monitor/komari/web/upload"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
+	appconfig "github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/web/backup"
+	"github.com/nuomiiiii/lite/web/upload"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -58,7 +58,7 @@ func installBackupArchive(t *testing.T) []byte {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
 	for name, content := range map[string]string{
-		"komari.db":            "sqlite-data",
+		"lite.db":            "sqlite-data",
 		"metrics.db":           "metrics-data",
 		"komari-backup-markup": "full",
 	} {
@@ -155,7 +155,7 @@ func performJSON(r http.Handler, method, path string, body any) *httptest.Respon
 func TestInstallRejectsInvalidInputWithoutCreatingAccount(t *testing.T) {
 	r, db, _ := setupInstallRouter(t)
 	response := performJSON(r, http.MethodPost, APIPath+"/complete", completeRequest{
-		Username: "admin", Password: "short", Sitename: "Komari",
+		Username: "admin", Password: "short", Sitename: "Lite",
 	})
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid install status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body.String())
@@ -169,7 +169,7 @@ func TestInstallRejectsInvalidInputWithoutCreatingAccount(t *testing.T) {
 func TestInstallRejectsWeakPasswordWithoutCreatingAccount(t *testing.T) {
 	r, db, _ := setupInstallRouter(t)
 	response := performJSON(r, http.MethodPost, APIPath+"/complete", completeRequest{
-		Username: "admin", Password: "lowercaseonly1", Sitename: "Komari", MetricDSN: "./data/metrics.db",
+		Username: "admin", Password: "lowercaseonly1", Sitename: "Lite", MetricDSN: "./data/metrics.db",
 	})
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("weak password status = %d, want %d: %s", response.Code, http.StatusBadRequest, response.Body.String())
@@ -186,7 +186,7 @@ func TestInstallCompletesAndPersistsSettings(t *testing.T) {
 	response := performJSON(r, http.MethodPost, APIPath+"/complete", completeRequest{
 		Username:    "owner",
 		Password:    "Correct-horse-battery-staple1",
-		Sitename:    "My Komari",
+		Sitename:    "My Lite",
 		Description: "Private monitoring",
 		MetricDSN:   metricDSN,
 	})
@@ -198,7 +198,7 @@ func TestInstallCompletesAndPersistsSettings(t *testing.T) {
 		t.Fatalf("find installed admin: %v", err)
 	}
 	want := map[string]any{
-		appconfig.SitenameKey:         "My Komari",
+		appconfig.SitenameKey:         "My Lite",
 		appconfig.DescriptionKey:      "Private monitoring",
 		metricstore.MetricDBDriverKey: "sqlite",
 		metricstore.MetricDBDSNKey:    metricDSN,
@@ -224,7 +224,7 @@ func TestInstallCompletesAndPersistsSettings(t *testing.T) {
 func TestInstallRejectsUnknownDSN(t *testing.T) {
 	r, db, _ := setupInstallRouter(t)
 	response := performJSON(r, http.MethodPost, APIPath+"/complete", completeRequest{
-		Username: "admin", Password: "Strong-password1", Sitename: "Komari",
+		Username: "admin", Password: "Strong-password1", Sitename: "Lite",
 		MetricDSN: "not-a-recognized-dsn",
 	})
 	if response.Code != http.StatusBadRequest {

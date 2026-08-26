@@ -3,7 +3,7 @@ package notification
 import (
 	"context"
 
-	"github.com/komari-monitor/komari/database/notificationdefaults"
+	"github.com/nuomiiiii/lite/database/notificationdefaults"
 )
 
 func init() {

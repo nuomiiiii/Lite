@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
-	"github.com/komari-monitor/komari/utils/messageSender/outboundhttp"
+	"github.com/nuomiiiii/lite/utils/messageSender/outboundhttp"
 )
 
 // createFetchFunction 创建一个 fetch API 实现

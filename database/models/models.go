@@ -40,6 +40,7 @@ type Client struct {
 	ExpiredAt              *time.Time `json:"expired_at" gorm:"type:timestamp"`
 	Group                  string     `json:"group" gorm:"type:varchar(100)"`
 	Tags                   string     `json:"tags" gorm:"type:text"` // split by ';'
+	Bandwidth              string     `json:"bandwidth" gorm:"type:varchar(64);not null;default:''"`
 	Hidden                 bool       `json:"hidden" gorm:"default:false"`
 	RemoteControlProtected bool       `json:"remote_control_protected" gorm:"default:false"`
 	TrafficLimit           int64      `json:"traffic_limit" gorm:"type:bigint"`

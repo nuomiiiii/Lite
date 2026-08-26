@@ -83,7 +83,7 @@ func TestLoopbackHTTPSStillVerifiesCertificateChain(t *testing.T) {
 func TestLoopbackHealthClientDoesNotChangeOtherHTTPClients(t *testing.T) {
 	defaultTransport := http.DefaultTransport.(*http.Transport)
 	defaultTLSConfig := defaultTransport.TLSClientConfig
-	healthURL := "http://127.0.0.1:25774/api/version"
+	healthURL := "http://127.0.0.1:27777/api/version"
 	client, err := newLoopbackHealthClient(healthURL, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -129,17 +129,17 @@ func TestLoopbackHealthRedirectRejectsNonLoopbackTargets(t *testing.T) {
 
 func TestParseLoopbackHealthURLAllowsIPv4AndIPv6Only(t *testing.T) {
 	for _, healthURL := range []string{
-		"http://127.0.0.1:25774/api/version",
-		"http://[::1]:25774/api/version",
+		"http://127.0.0.1:27777/api/version",
+		"http://[::1]:27777/api/version",
 	} {
 		if _, err := parseLoopbackHealthURL(healthURL, "http"); err != nil {
 			t.Fatalf("approved loopback URL %q was rejected: %v", healthURL, err)
 		}
 	}
 	for _, healthURL := range []string{
-		"http://localhost:25774/api/version",
-		"http://127.0.0.2:25774/api/version",
-		"http://[::ffff:127.0.0.1]:25774/api/version",
+		"http://localhost:27777/api/version",
+		"http://127.0.0.2:27777/api/version",
+		"http://[::ffff:127.0.0.1]:27777/api/version",
 	} {
 		if _, err := parseLoopbackHealthURL(healthURL, "http"); err == nil {
 			t.Fatalf("unapproved health URL %q was accepted", healthURL)
@@ -245,7 +245,7 @@ func TestRollbackFailureReturnsSuccessAndEnsuresServiceStart(t *testing.T) {
 	if err := tx.finishRollback(result, filepath.Join(root, "missing-komari"), filepath.Join(root, "missing-data")); err != nil {
 		t.Fatalf("rollback_failed must exit successfully for old Restart=on-failure units: %v", err)
 	}
-	if len(commands) == 0 || commands[len(commands)-1] != "start komari.service" {
+	if len(commands) == 0 || commands[len(commands)-1] != "start lite.service" {
 		t.Fatalf("rollback failure did not finish by ensuring the service was started: %v", commands)
 	}
 	stored, err := ReadLastResult(root)

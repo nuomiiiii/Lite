@@ -3,17 +3,55 @@ package database
 import (
 	"context"
 	"encoding/json"
-	logger "github.com/komari-monitor/komari/utils/log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/managedconfig"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/pkg/config"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/managedconfig"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/thememanifest"
+	logger "github.com/nuomiiiii/lite/utils/log"
+	"gorm.io/gorm"
 )
+
+const liteThemeShort = "lite-theme"
+
+func migrateLiteThemeConfiguration(db *gorm.DB) error {
+	var target models.ThemeConfiguration
+	if result := db.Where("short = ?", liteThemeShort).Limit(1).Find(&target); result.Error != nil {
+		return result.Error
+	}
+	if strings.TrimSpace(target.Data) != "" && strings.TrimSpace(target.Data) != "{}" {
+		return nil
+	}
+
+	for _, legacyShort := range []string{"lite-theme-default", "nezha"} {
+		var source models.ThemeConfiguration
+		result := db.Where("short = ?", legacyShort).Limit(1).Find(&source)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 || strings.TrimSpace(source.Data) == "" {
+			continue
+		}
+
+		var legacySettings map[string]any
+		if err := json.Unmarshal([]byte(source.Data), &legacySettings); err != nil {
+			continue
+		}
+		data, err := json.Marshal(legacySettings)
+		if err != nil {
+			return err
+		}
+		target = models.ThemeConfiguration{Short: liteThemeShort, Data: string(data)}
+		return db.Where("short = ?", liteThemeShort).Assign(target).FirstOrCreate(&target).Error
+	}
+	return nil
+}
 
 func GetPublicInfo() (map[string]interface{}, error) {
 	cstPtr, err := config.GetManyAs[config.Settings]()
@@ -33,13 +71,13 @@ func GetPublicInfo() (map[string]interface{}, error) {
 
 	// Apply defaults only when a key is missing.
 	if !hasKey("sitename") {
-		cst.Sitename = "Komari Lite"
+		cst.Sitename = "Lite"
 	}
 	if !hasKey("description") {
-		cst.Description = "Komari Monitor, a simple server monitoring tool."
+		cst.Description = config.DefaultSiteDescription
 	}
 	if !hasKey("theme") {
-		cst.Theme = "nezha"
+		cst.Theme = "lite-theme"
 	}
 	if !hasKey("o_auth_provider") {
 		cst.OAuthProvider = "github"
@@ -48,10 +86,10 @@ func GetPublicInfo() (map[string]interface{}, error) {
 	// Fallback defaults if we couldn't enumerate keys.
 	if allErr != nil {
 		if cst.Sitename == "" {
-			cst.Sitename = "Komari Lite"
+			cst.Sitename = "Lite"
 		}
 		if cst.Description == "" {
-			cst.Description = "Komari Monitor, a simple server monitoring tool."
+			cst.Description = config.DefaultSiteDescription
 		}
 	}
 	retention, err := metricstore.GetRetentionSummary(context.Background())
@@ -59,6 +97,11 @@ func GetPublicInfo() (map[string]interface{}, error) {
 		return nil, err
 	}
 	db := dbcore.GetDBInstance()
+	if cst.Theme == liteThemeShort {
+		if err := migrateLiteThemeConfiguration(db); err != nil {
+			return nil, err
+		}
+	}
 	tc := models.ThemeConfiguration{}
 	err = db.Model(&models.ThemeConfiguration{}).Where("short = ?", cst.Theme).First(&tc).Error
 	if err != nil {
@@ -70,10 +113,10 @@ func GetPublicInfo() (map[string]interface{}, error) {
 		logger.Infof("database", "%v", err)
 	}
 	// Try to load theme declaration file and merge defaults for managed configuration
-	// Theme declarations live in ./data/theme/<short>/komari-theme.json
+	// Prefer Lite-theme.json, then komari-theme.json for installed Komari packages.
 	if cst.Theme != "" && cst.Theme != "default" {
-		themeConfigPath := filepath.Join("./data/theme", cst.Theme, "komari-theme.json")
-		if _, err := os.Stat(themeConfigPath); err == nil {
+		themeConfigPath, ok := thememanifest.FindInDir(filepath.Join("./data/theme", cst.Theme))
+		if ok {
 			b, err := os.ReadFile(themeConfigPath)
 			if err == nil {
 				var themeDecl struct {

@@ -2,7 +2,7 @@
 
 ![Badge](https://hitscounter.dev/api/hit?url=https%3A%2F%2Fgithub.com%2Fnuomiiiii%2Fkomari&label=&icon=github&color=%23a370f7&message=&style=flat&tz=UTC)
 
-![komari](https://socialify.git.ci/nuomiiiii/komari/image?description=1&font=Inter&forks=1&issues=1&language=1&logo=https%3A%2F%2Fraw.githubusercontent.com%2Fnuomiiiii%2Fkomari-web%2Fd54ce1288df41ead08aa19f8700186e68028a889%2Fpublic%2Ffavicon.png&name=1&owner=1&pattern=Plus&pulls=1&stargazers=1&theme=Auto)
+![komari](https://socialify.git.ci/nuomiiiii/lite/image?description=1&font=Inter&forks=1&issues=1&language=1&logo=https%3A%2F%2Fraw.githubusercontent.com%2Fnuomiiiii%2Fkomari-web%2Fd54ce1288df41ead08aa19f8700186e68028a889%2Fpublic%2Ffavicon.png&name=1&owner=1&pattern=Plus&pulls=1&stargazers=1&theme=Auto)
 
 Komari 是一款輕量級的自託管伺服器監控工具，旨在提供簡單、高效的伺服器性能監控解決方案。它支援透過 Web 介面查看伺服器狀態，並透過輕量級 Agent 收集數據。
 
@@ -36,9 +36,9 @@ Komari 是一款輕量級的自託管伺服器監控工具，旨在提供簡單�
 適用於使用了 systemd 的發行版（Ubuntu、Debian...）。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nuomiiiii/komari/main/install-komari.sh -o install-komari.sh
-chmod +x install-komari.sh
-sudo ./install-komari.sh
+curl -fsSL https://raw.githubusercontent.com/nuomiiiii/lite/main/install-lite.sh -o install-lite.sh
+chmod +x install-lite.sh
+sudo ./install-lite.sh
 ```
 
 ### 2. Docker 部署
@@ -50,21 +50,21 @@ sudo ./install-komari.sh
 2. 執行 Docker 容器：
    ```bash
    docker run -d \
-     -p 25774:25774 \
+     -p 27777:27777 \
      -v $(pwd)/data:/app/data \
      --name komari \
-     ghcr.io/nuomiiiii/komari:latest
+     ghcr.io/nuomiiiii/lite:latest
    ```
-3. 在瀏覽器中存取 `http://<your_server_ip>:25774` 並完成安裝精靈。精靈會建立管理員帳號，並設定站點中繼資料和監控資料庫。
+3. 在瀏覽器中存取 `http://<your_server_ip>:27777` 並完成安裝精靈。精靈會建立管理員帳號，並設定站點中繼資料和監控資料庫。
 
 ### 3. 二進位檔案部署
 
-1. 存取 Komari 的 [GitHub Release 頁面](https://github.com/nuomiiiii/komari/releases) 下載適用於你作業系統的最新二進位檔案。
+1. 存取 Komari 的 [GitHub Release 頁面](https://github.com/nuomiiiii/lite/releases) 下載適用於你作業系統的最新二進位檔案。
 2. 執行 Komari：
    ```bash
-   ./komari server -l 0.0.0.0:25774
+   ./Lite server -l 0.0.0.0:27777
    ```
-3. 在瀏覽器中存取 `http://<your_server_ip>:25774`，預設監聽 `25774` 連接埠。
+3. 在瀏覽器中存取 `http://<your_server_ip>:27777`，預設監聽 `27777` 連接埠。
 4. 按照安裝精靈建立管理員帳號，並設定站點中繼資料和監控資料庫。
 
 > [!NOTE]
@@ -78,25 +78,25 @@ sudo ./install-komari.sh
 
 1. 建置前端靜態檔案：
    ```bash
-   git clone https://github.com/nuomiiiii/komari-web
+   git clone https://github.com/nuomiiiii/Lite-web
    cd komari-web
    npm install
    npm run build
    ```
 2. 建置後端：
    ```bash
-   git clone https://github.com/nuomiiiii/komari
+   git clone https://github.com/nuomiiiii/lite
    cd komari
    ```
    將步驟1中產生的靜態檔案複製到 `komari` 專案根目錄下的 `/web/public/defaultTheme/dist` 資料夾，並將 `komari-theme.json` 與 `preview.png`/`perview.png` 複製到 `/web/public/defaultTheme`。
    ```bash
-   go build -o komari
+   go build -o Lite
    ```
 3. 執行：
    ```bash
-   ./komari server -l 0.0.0.0:25774
+   ./Lite server -l 0.0.0.0:27777
    ```
-   預設監聽 `25774` 連接埠，存取 `http://localhost:25774`。
+   預設監聽 `27777` 連接埠，存取 `http://localhost:27777`。
 
 ## 前端開發指南
 
@@ -138,4 +138,4 @@ SharonNetworks 為您的業務起飛保駕護航！
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=nuomiiiii/komari&type=Date)](https://www.star-history.com/#nuomiiiii/komari&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=nuomiiiii/lite&type=Date)](https://www.star-history.com/#nuomiiiii/lite&Date)

@@ -18,7 +18,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/thememanifest"
 )
 
 var legacyDefaultFaviconSHA256 = [32]byte{
@@ -36,8 +37,10 @@ const (
 	DataDir            = "./data"
 	ThemesDir          = "theme"
 	FaviconFile        = "favicon.ico"
-	DefaultTheme       = "nezha"
+	DefaultTheme       = "lite-theme"
+	LegacyPublicTheme  = "nezha"
 	LegacyDefaultTheme = "default"
+	LegacyLiteTheme    = "lite-theme-default"
 	LanguageCookieName = "language"
 
 	// 主题内部结构定义
@@ -47,13 +50,13 @@ const (
 
 const themeBundleMigrationKey = "theme_bundle_migration_v1"
 
-const currentThemeBundleMigration = 3
+const currentThemeBundleMigration = 10
 
-const adminApplicationTitle = "Komari Lite Monitor"
+const adminApplicationTitle = "Lite"
 
-const themeChangeReloadScript = `<script>(()=>{window.addEventListener("storage",(event)=>{if(event.key==="komari-active-theme-changed"){window.location.reload();}});})();</script>`
+const themeChangeReloadScript = `<script>(()=>{window.addEventListener("storage",(event)=>{if(event.key==="lite-active-theme-changed"||event.key==="komari-active-theme-changed"){window.location.reload();}});})();</script>`
 
-const documentTitleSyncMarker = "data-komari-title-sync"
+const documentTitleSyncMarker = "data-lite-title-sync"
 
 type webAppManifest struct {
 	ID              string               `json:"id"`
@@ -110,7 +113,7 @@ func injectCustomHTML(htmlStr, customHead, customBody string) string {
 func renderDocumentTitle(htmlStr, title string) string {
 	title = strings.TrimSpace(title)
 	if title == "" {
-		title = "Komari Lite"
+		title = "Lite"
 	}
 
 	titleTag := "<title>" + html.EscapeString(title) + "</title>"
@@ -133,7 +136,7 @@ func renderPublicDocumentTitle(htmlStr, title string) string {
 
 	title = strings.TrimSpace(title)
 	if title == "" {
-		title = "Komari Lite"
+		title = "Lite"
 	}
 	encodedTitle, _ := json.Marshal(title)
 	script := `<script ` + documentTitleSyncMarker + `>(()=>{const expectedTitle=` + string(encodedTitle) + `;const syncTitle=()=>{if(document.title!==expectedTitle){document.title=expectedTitle;}};syncTitle();if(document.head){new MutationObserver(syncTitle).observe(document.head,{childList:true,subtree:true,characterData:true});}})();</script>`
@@ -146,7 +149,7 @@ func renderPublicDocumentTitle(htmlStr, title string) string {
 func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle bool) string {
 	title = strings.TrimSpace(title)
 	if title == "" {
-		title = "Komari Lite"
+		title = "Lite"
 	}
 
 	if synchronizeTitle {
@@ -184,11 +187,11 @@ func renderSystemApplicationIdentity(htmlStr, title string) string {
 func renderWebAppManifest(siteName, description string) webAppManifest {
 	siteName = strings.TrimSpace(siteName)
 	if siteName == "" {
-		siteName = "Komari Lite"
+		siteName = "Lite"
 	}
 	description = strings.TrimSpace(description)
 	if description == "" {
-		description = "A simple server monitor tool."
+		description = config.DefaultSiteDescription
 	}
 
 	return webAppManifest{
@@ -209,6 +212,16 @@ func renderWebAppManifest(siteName, description string) webAppManifest {
 			Purpose: "any",
 		}},
 	}
+}
+
+func injectSiteDescription(html, description string) string {
+	for _, placeholder := range []string{
+		config.DefaultSiteDescription,
+		"A simple server monitor tool.",
+	} {
+		html = strings.ReplaceAll(html, placeholder, description)
+	}
+	return html
 }
 
 func init() {
@@ -358,13 +371,11 @@ func IsLocalThemeUsable(themeID string) bool {
 		return false
 	}
 	base := filepath.Join(DataDir, ThemesDir, themeID)
-	for _, relativePath := range []string{"komari-theme.json", filepath.Join(DistDir, IndexFile)} {
-		info, err := os.Stat(filepath.Join(base, relativePath))
-		if err != nil || info.IsDir() {
-			return false
-		}
+	if _, ok := thememanifest.FindInDir(base); !ok {
+		return false
 	}
-	return true
+	info, err := os.Stat(filepath.Join(base, DistDir, IndexFile))
+	return err == nil && !info.IsDir()
 }
 
 func installEmbeddedTheme(root, themeID string) error {
@@ -454,28 +465,33 @@ func EnsureBundledThemes() error {
 	if currentTheme == "" {
 		currentTheme = DefaultTheme
 	}
-	if currentTheme == LegacyDefaultTheme {
+	if currentTheme == LegacyDefaultTheme || currentTheme == LegacyLiteTheme {
 		currentTheme = DefaultTheme
 	}
 	if migrated < 1 {
-		if err := installEmbeddedTheme("bundledThemes/nezha", DefaultTheme); err != nil {
-			return fmt.Errorf("install bundled Nezha theme: %w", err)
+		if err := installEmbeddedTheme("bundledThemes/Lite-theme", DefaultTheme); err != nil {
+			return fmt.Errorf("install bundled Lite-Theme: %w", err)
 		}
+		currentTheme = DefaultTheme
 	}
-	// The first decoupled snapshot installed Nezha as a managed theme but did
-	// not refresh that copy on later Komari upgrades. Replace an existing copy
-	// once so deployments do not keep an old router/API bundle indefinitely.
-	// A user who deleted Nezha and selected another theme keeps that choice.
-	if migrated >= 1 && migrated < currentThemeBundleMigration && IsLocalThemeUsable(DefaultTheme) {
-		if err := installEmbeddedThemeWithReplace("bundledThemes/nezha", DefaultTheme, true); err != nil {
-			return fmt.Errorf("refresh bundled Nezha theme: %w", err)
+	// Migrate the former built-in public themes to Lite-Theme once. A user who
+	// selected an unrelated custom theme keeps that choice.
+	if migrated >= 1 && migrated < currentThemeBundleMigration {
+		switchToLiteDefault := currentTheme == LegacyPublicTheme || currentTheme == LegacyDefaultTheme || currentTheme == LegacyLiteTheme || currentTheme == DefaultTheme
+		if switchToLiteDefault || IsLocalThemeUsable(DefaultTheme) {
+			if err := installEmbeddedThemeWithReplace("bundledThemes/Lite-theme", DefaultTheme, true); err != nil {
+				return fmt.Errorf("install bundled Lite-Theme: %w", err)
+			}
+		}
+		if currentTheme == LegacyPublicTheme || currentTheme == LegacyDefaultTheme || currentTheme == LegacyLiteTheme {
+			currentTheme = DefaultTheme
 		}
 	}
 	if !IsLocalThemeUsable(currentTheme) {
 		currentTheme = localThemeFallback()
 		if currentTheme == "" {
-			if err := installEmbeddedTheme("bundledThemes/nezha", DefaultTheme); err != nil {
-				return fmt.Errorf("restore bundled Nezha theme: %w", err)
+			if err := installEmbeddedTheme("bundledThemes/Lite-theme", DefaultTheme); err != nil {
+				return fmt.Errorf("restore bundled Lite-Theme: %w", err)
 			}
 			currentTheme = DefaultTheme
 		}
@@ -490,10 +506,10 @@ func EnsureBundledThemes() error {
 func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	getConfig := func() map[string]any {
 		cfg, _ := config.GetMany(map[string]any{
-			config.DescriptionKey: "A simple server monitor tool.",
+			config.DescriptionKey: config.DefaultSiteDescription,
 			config.CustomHeadKey:  "",
 			config.CustomBodyKey:  "",
-			config.SitenameKey:    "Komari Lite",
+			config.SitenameKey:    "Lite",
 			config.ThemeKey:       DefaultTheme,
 		})
 		return cfg
@@ -568,9 +584,8 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			cfg[config.CustomBodyKey].(string),
 		)
 
-		rendered := strings.ReplaceAll(
+		rendered := injectSiteDescription(
 			htmlStr,
-			"A simple server monitor tool.",
 			cfg[config.DescriptionKey].(string),
 		)
 		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(injectThemeChangeReload(rendered)))
@@ -632,7 +647,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	})
 
 	// 2. Static theme files are served only from installed, manageable themes.
-	// 允许访问 /themes/MyTheme/theme.json 和 /themes/MyTheme/dist/assets/a.js
+	// 允许访问 /themes/MyTheme/Lite-theme.json 和 /themes/MyTheme/dist/assets/a.js
 	r.GET("/themes/:id/*path", func(c *gin.Context) {
 		themeID := c.Param("id")
 		// c.Param("path") 包含了开头的 /，getFileContent 会处理

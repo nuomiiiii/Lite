@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/pkg/metric"
+	"github.com/nuomiiiii/lite/pkg/metric"
 )
 
 func TestDashboardSQLiteResourceAcceptance(t *testing.T) {
-	if os.Getenv("KOMARI_DASHBOARD_PERF") != "1" {
-		t.Skip("set KOMARI_DASHBOARD_PERF=1 to run the dashboard resource acceptance test")
+	if os.Getenv("LITE_DASHBOARD_PERF") != "1" {
+		t.Skip("set LITE_DASHBOARD_PERF=1 to run the dashboard resource acceptance test")
 	}
 	previousProcs := runtime.GOMAXPROCS(1)
 	t.Cleanup(func() { runtime.GOMAXPROCS(previousProcs) })

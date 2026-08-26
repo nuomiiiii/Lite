@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/cmd/flags"
-	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/pkg/config"
-	v2 "github.com/komari-monitor/komari/protocol/v2"
-	"github.com/komari-monitor/komari/utils/geoip"
+	"github.com/nuomiiiii/lite/cmd/flags"
+	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/pkg/config"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
+	"github.com/nuomiiiii/lite/utils/geoip"
 )
 
 type staticGeoIPProvider struct {

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/komari-monitor/komari/database/auditlog"
+	"github.com/nuomiiiii/lite/database/auditlog"
 )
 
 func forwardSession(session *remoteSession) {

@@ -3,8 +3,8 @@ package clipboard
 import (
 	"time"
 
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
 )
 
 // CreateClipboard 创建剪贴板记录

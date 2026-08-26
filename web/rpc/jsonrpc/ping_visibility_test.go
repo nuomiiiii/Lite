@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
 )
 
 func TestFilterPingRecordsByCurrentAssignments(t *testing.T) {

@@ -4,11 +4,11 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/web/api"
+	"github.com/nuomiiiii/lite/web/api"
 )
 
 func EstablishConnection(c *gin.Context) {
-	session_id := c.GetHeader("X-Komari-Terminal-Session")
+	session_id := api.AgentTerminalSessionHeader(c)
 	session, exists := TerminalSessions[session_id]
 	if !exists || session == nil || session.Browser == nil {
 		c.JSON(404, gin.H{"status": "error", "error": "Session not found"})

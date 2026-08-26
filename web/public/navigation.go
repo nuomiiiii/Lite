@@ -7,7 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/komari-monitor/komari/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/thememanifest"
 )
 
 const (
@@ -30,9 +31,11 @@ type themeNavigationManifest struct {
 
 func ActiveThemeNavigation() ThemeNavigation {
 	themeID, _ := config.GetAs[string](config.ThemeKey, DefaultTheme)
-	if manifest, _, ok := localThemeFileContent(themeID, "komari-theme.json"); ok {
-		if navigation, valid := parseThemeNavigation(manifest); valid {
-			return navigation
+	for _, name := range thememanifest.Names() {
+		if manifest, _, ok := localThemeFileContent(themeID, name); ok {
+			if navigation, valid := parseThemeNavigation(manifest); valid {
+				return navigation
+			}
 		}
 	}
 	return bundledThemeNavigation(themeID)
@@ -91,7 +94,7 @@ func parseThemeNavigation(data []byte) (ThemeNavigation, bool) {
 
 func bundledThemeNavigation(themeID string) ThemeNavigation {
 	switch strings.TrimSpace(themeID) {
-	case DefaultTheme:
+	case DefaultTheme, LegacyPublicTheme:
 		return ThemeNavigation{
 			serverDetailTemplate:  "/server/{uuid}",
 			serverNetworkTemplate: "/server/{uuid}?view=network",
@@ -100,8 +103,8 @@ func bundledThemeNavigation(themeID string) ThemeNavigation {
 	case LegacyDefaultTheme:
 		return ThemeNavigation{serverDetailTemplate: "/instance/{uuid}"}
 	default:
-		// Existing Komari themes traditionally use /instance/:uuid. Themes with
-		// another route can declare it explicitly in komari-theme.json.
+		// Existing themes traditionally use /instance/:uuid. Themes with
+		// another route can declare it explicitly in Lite-theme.json.
 		return ThemeNavigation{serverDetailTemplate: "/instance/{uuid}"}
 	}
 }

@@ -6,14 +6,14 @@ import (
 	"math"
 	"time"
 
-	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/database/trafficledger"
-	"github.com/komari-monitor/komari/pkg/config"
-	logger "github.com/komari-monitor/komari/utils/log"
-	"github.com/komari-monitor/komari/utils/messageSender"
-	agent_runtime "github.com/komari-monitor/komari/web/agent"
+	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/database/trafficledger"
+	"github.com/nuomiiiii/lite/pkg/config"
+	logger "github.com/nuomiiiii/lite/utils/log"
+	"github.com/nuomiiiii/lite/utils/messageSender"
+	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 	cache "github.com/patrickmn/go-cache"
 )
 

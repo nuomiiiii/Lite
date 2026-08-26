@@ -18,14 +18,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari/pkg/config"
-	logger "github.com/komari-monitor/komari/utils/log"
-	"github.com/komari-monitor/komari/utils/requestscheme"
+	"github.com/nuomiiiii/lite/pkg/config"
+	logger "github.com/nuomiiiii/lite/utils/log"
+	"github.com/nuomiiiii/lite/utils/requestscheme"
 )
 
 type Settings struct {
 	Enabled         bool   `json:"https_enabled" default:"false"`
-	Listen          string `json:"https_listen" default:":35938"`
+	Listen          string `json:"https_listen" default:":36888"`
 	RedirectHTTP    bool   `json:"https_redirect_http" default:"false"`
 	CertificatePath string `json:"https_certificate_path" default:"./data/tls/server.crt"`
 	PrivateKeyPath  string `json:"https_private_key_path" default:"./data/tls/server.key"`
@@ -254,7 +254,7 @@ func LoadSettings() (Settings, error) {
 func Normalize(settings Settings) (Settings, error) {
 	settings.Listen = strings.TrimSpace(settings.Listen)
 	if settings.Listen == "" {
-		settings.Listen = ":35938"
+		settings.Listen = ":36888"
 	}
 	if !strings.Contains(settings.Listen, ":") {
 		settings.Listen = ":" + settings.Listen
@@ -762,7 +762,7 @@ func (m *Manager) reloadManual(provider *manualProvider) {
 	}
 	m.refreshStatus(provider, "")
 	if changed {
-		logger.Infof("https", "TLS certificate was reloaded without restarting Komari")
+		logger.Infof("https", "TLS certificate was reloaded without restarting Lite")
 	}
 }
 

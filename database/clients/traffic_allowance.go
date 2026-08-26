@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari/database/models"
+	"github.com/nuomiiiii/lite/database/models"
 	"gorm.io/gorm"
 )
 

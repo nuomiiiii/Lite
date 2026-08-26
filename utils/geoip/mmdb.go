@@ -2,7 +2,7 @@ package geoip // 与 geoip.go 保持相同的包名，表示它们是同一个�
 
 import (
 	"fmt"
-	logger "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"io"
 	"net"
 	"net/http"
@@ -10,7 +10,7 @@ import (
 	"path/filepath" // 新增导入，用于处理文件路径
 	"sync"
 
-	"github.com/komari-monitor/komari/database/auditlog"
+	"github.com/nuomiiiii/lite/database/auditlog"
 	"github.com/oschwald/maxminddb-golang"
 )
 
@@ -120,7 +120,7 @@ func (s *MaxMindGeoIPService) GetGeoInfo(ip net.IP) (*GeoInfo, error) {
 	// 将 MaxMind 的特定结构体转换为通用的 GeoInfo 结构体
 	geoInfo := &GeoInfo{
 		ISOCode: record.Country.ISOCode,
-		// 尝试获取英文国家名称，如果不存在则使用 ISO 代码作为备用
+		// 尝试获取英文国家\地区名称，如果不存在则使用 ISO 代码作为备用
 		Name: record.Country.Names["en"],
 	}
 	if geoInfo.Name == "" && geoInfo.ISOCode != "" {

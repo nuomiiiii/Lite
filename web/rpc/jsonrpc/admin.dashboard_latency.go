@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
-	dbtasks "github.com/komari-monitor/komari/database/tasks"
-	"github.com/komari-monitor/komari/pkg/metric"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
+	dbtasks "github.com/nuomiiiii/lite/database/tasks"
+	"github.com/nuomiiiii/lite/pkg/metric"
 )
 
 type dashboardLatencyPoint struct {

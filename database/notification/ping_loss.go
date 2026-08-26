@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
 	"gorm.io/gorm"
 )
 

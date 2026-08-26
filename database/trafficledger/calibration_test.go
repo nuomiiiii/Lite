@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/models"
+	"github.com/nuomiiiii/lite/database/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +42,17 @@ func TestCurrentTrafficCycleClampsResetDayAtMonthEnd(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "2026-01-31", cycle)
 	assert.Equal(t, time.Date(2026, 1, 31, 0, 0, 0, 0, BeijingLocation), start)
+}
+
+func TestNextCycleStartFollowsResetDay(t *testing.T) {
+	assert.Equal(t,
+		time.Date(2026, 9, 15, 0, 0, 0, 0, BeijingLocation),
+		NextCycleStart(time.Date(2026, 8, 15, 0, 0, 0, 0, BeijingLocation), 15),
+	)
+	assert.Equal(t,
+		time.Date(2026, 2, 28, 0, 0, 0, 0, BeijingLocation),
+		NextCycleStart(time.Date(2026, 1, 31, 0, 0, 0, 0, BeijingLocation), 31),
+	)
 }
 
 func TestTrafficCycleInclusiveEndUsesTheDayBeforeTheNextReset(t *testing.T) {

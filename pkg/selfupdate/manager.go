@@ -15,11 +15,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari/utils"
+	"github.com/nuomiiiii/lite/utils"
 )
 
 const (
-	updateRootName           = ".komari-update"
+	updateRootName           = ".lite-update"
+	legacyUpdateRootName     = ".komari-update"
+	candidateName            = "lite-candidate"
+	helperUnitPrefix         = "lite-self-update-"
 	lastResultName           = "last-result.json"
 	defaultHealthTimeout     = 15 * time.Minute
 	defaultStableWindow      = 15 * time.Second
@@ -101,9 +104,9 @@ func PrepareAndLaunch(ctx context.Context, version, versionHash string) (*Update
 			_ = os.RemoveAll(jobRoot)
 		}
 	}()
-	candidate := filepath.Join(jobRoot, "komari-candidate")
+	candidate := filepath.Join(jobRoot, candidateName)
 	client := updateHTTPClient()
-	manifest, err := fetchManifest(releaseURL(version, manifestName), client)
+	manifest, err := fetchReleaseManifest(version, client)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +175,7 @@ func runCombinedOutput(ctx context.Context, name string, arguments ...string) ([
 
 func scheduleUpdateHelper(ctx context.Context, jobID, candidate, configPath string, run commandRunner) ([]byte, error) {
 	arguments := []string{
-		"--unit=komari-self-update-" + jobID,
+		"--unit=" + helperUnitPrefix + jobID,
 		"--no-block",
 		candidate, "_self-update-helper", configPath,
 	}

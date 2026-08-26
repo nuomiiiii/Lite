@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
-	logger "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"io"
 	"net/http"
 	"strings"
@@ -12,13 +12,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/database/tasks"
-	v2 "github.com/komari-monitor/komari/protocol/v2"
-	"github.com/komari-monitor/komari/utils/notifier"
-	agent_runtime "github.com/komari-monitor/komari/web/agent"
-	"github.com/komari-monitor/komari/web/api"
-	"github.com/komari-monitor/komari/web/connection"
+	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/database/tasks"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
+	"github.com/nuomiiiii/lite/utils/notifier"
+	agent_runtime "github.com/nuomiiiii/lite/web/agent"
+	"github.com/nuomiiiii/lite/web/api"
+	"github.com/nuomiiiii/lite/web/connection"
 )
 
 func readMaybeCompressedBody(r *http.Request) ([]byte, error) {

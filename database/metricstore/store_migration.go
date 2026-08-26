@@ -3,13 +3,13 @@ package metricstore
 import (
 	"context"
 	"fmt"
-	logger "github.com/komari-monitor/komari/utils/log"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/metric"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/metric"
 )
 
 // store_migration.go
@@ -19,7 +19,7 @@ import (
 // （通常是用户新配置并热重载后的 MySQL/PostgreSQL）。
 //
 // 与启动迁移（RunStartupMigration）的区别：
-//   - 启动迁移在进程启动时自动、同步执行（komari.db → 当前 metrics 目标，或上一个
+//   - 启动迁移在进程启动时自动、同步执行（lite.db → 当前 metrics 目标，或上一个
 //     metrics 目标 → 当前目标）。
 //   - 此处的 store 迁移由管理员在 WebUI 中「切换数据库后」手动触发，异步执行并可
 //     查询进度 / 取消。数据以 upsert 写入，可安全重复执行。

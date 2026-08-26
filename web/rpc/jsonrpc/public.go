@@ -5,17 +5,17 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/komari-monitor/komari/database"
-	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/database/records"
-	"github.com/komari-monitor/komari/database/tasks"
-	"github.com/komari-monitor/komari/database/trafficledger"
-	"github.com/komari-monitor/komari/pkg/rpc"
-	"github.com/komari-monitor/komari/pkg/selfupdate"
-	"github.com/komari-monitor/komari/utils"
-	agent_runtime "github.com/komari-monitor/komari/web/agent"
+	"github.com/nuomiiiii/lite/database"
+	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/database/records"
+	"github.com/nuomiiiii/lite/database/tasks"
+	"github.com/nuomiiiii/lite/database/trafficledger"
+	"github.com/nuomiiiii/lite/pkg/rpc"
+	"github.com/nuomiiiii/lite/pkg/selfupdate"
+	"github.com/nuomiiiii/lite/utils"
+	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 )
 
 // public.go

@@ -20,9 +20,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/database/models"
-	conf "github.com/komari-monitor/komari/pkg/config"
-	jsonRpc "github.com/komari-monitor/komari/web/rpc/jsonrpc"
+	"github.com/nuomiiiii/lite/database/models"
+	conf "github.com/nuomiiiii/lite/pkg/config"
+	jsonRpc "github.com/nuomiiiii/lite/web/rpc/jsonrpc"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
 	"golang.org/x/image/font/opentype"
@@ -121,7 +121,7 @@ var langEN = langPack{
 	LongTerm:        "Long-term",
 	Expired:         "Expired",
 	LastUpdate:      "Last Update: ",
-	PoweredBy:       "Powered by Komari Monitor",
+	PoweredBy:       "Powered by Lite",
 	PreparingMJPEG:  "Preparing MJPEG Stream",
 	DownloadingFont: "Downloading font %s / %s",
 	SpeedRemaining:  "Speed %s, %ds remaining",
@@ -161,7 +161,7 @@ var langZH = langPack{
 	LongTerm:        "长期",
 	Expired:         "已过期",
 	LastUpdate:      "最后更新：",
-	PoweredBy:       "Powered by Komari Monitor",
+	PoweredBy:       "Powered by Lite",
 	PreparingMJPEG:  "Preparing MJPEG Stream",
 	DownloadingFont: "Downloading font %s / %s",
 	SpeedRemaining:  "Speed %s, %ds remaining",
@@ -664,7 +664,7 @@ func renderStatusTable(ctx context.Context, lang string, tzOffset *int, fontErr 
 	y := padding
 
 	// 标题
-	siteName, _ := conf.GetAs[string](conf.SitenameKey, "Komari Lite")
+	siteName, _ := conf.GetAs[string](conf.SitenameKey, "Lite")
 	fontMutex.RLock()
 	boldFace := fontFaceBold
 	normalFace := fontFace
@@ -832,7 +832,7 @@ func renderStatusTableWithBasicFont(ctx context.Context, lang string, tzOffset *
 	y := padding
 
 	// 标题
-	siteName, _ := conf.GetAs[string](conf.SitenameKey, "Komari Lite")
+	siteName, _ := conf.GetAs[string](conf.SitenameKey, "Lite")
 
 	drawStringBasic(img, siteName, padding+5, y+titleFontSize, color.Black)
 	y += headerHeight

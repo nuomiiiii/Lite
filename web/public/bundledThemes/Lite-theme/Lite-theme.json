@@ -1,0 +1,74 @@
+{
+  "name": "Lite-Theme",
+  "short": "lite-theme",
+  "description": "Lite 官方公共大屏主题，使用与 Lite 管理后台一致的界面语言。",
+  "version": "1.0.0",
+  "author": "Nomi",
+  "url": "https://github.com/nuomiiiii/Lite-theme",
+  "preview": "preview.png",
+  "navigation": {
+    "server_detail": "/server/{uuid}",
+    "server_network": "/server/{uuid}?view=network",
+    "ping_task_parameter": "ping_task"
+  },
+  "configuration": {
+    "type": "managed",
+    "data": [
+      { "name": "外观设置", "type": "title" },
+      {
+        "key": "CustomBackgroundImage",
+        "name": "背景图片",
+        "type": "input",
+        "default": "",
+        "help": "桌面端背景图片 URL，留空使用主题默认背景。"
+      },
+      {
+        "key": "CustomMobileBackgroundImage",
+        "name": "移动端背景图片",
+        "type": "input",
+        "default": "",
+        "help": "移动端单独的背景图片 URL，留空时跟随桌面端。"
+      },
+      {
+        "key": "CustomLogo",
+        "name": "站点 Logo",
+        "type": "input",
+        "default": "/favicon.ico",
+        "help": "留空时跟随 Lite 后台的站点图标。"
+      },
+      {
+        "key": "ForceTheme",
+        "name": "强制主题",
+        "type": "select",
+        "options": "跟随系统,dark,light",
+        "default": "跟随系统",
+        "help": "选择跟随系统时，访客可以在大屏右上角切换主题。"
+      },
+      { "name": "内容设置", "type": "title" },
+      {
+        "key": "ForcePeakCutEnabled",
+        "name": "网络图表削峰",
+        "type": "switch",
+        "default": false,
+        "help": "裁剪异常峰值，使网络趋势更易读。"
+      },
+      { "name": "账单货币设置", "type": "title" },
+      {
+        "key": "DefaultBillingCurrency",
+        "name": "默认账单货币",
+        "type": "select",
+        "options": "跟随后端,CNY,JPY,USD,EUR,HKD,TWD,KRW,SGD,CAD,AUD",
+        "default": "跟随后端",
+        "help": "未单独指定时使用的货币。"
+      },
+      {
+        "key": "CnySymbolStyle",
+        "name": "人民币显示风格",
+        "type": "select",
+        "options": "¥,CNY",
+        "default": "¥",
+        "help": "设置人民币金额的前缀。"
+      }
+    ]
+  }
+}

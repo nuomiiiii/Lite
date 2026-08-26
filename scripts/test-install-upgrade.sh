@@ -2,8 +2,8 @@
 set -eu
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-INSTALLER_PATH=$(cd "$SCRIPT_DIR/.." && pwd)/install-komari.sh
-KOMARI_INSTALLER_LIBRARY_ONLY=1 source "$INSTALLER_PATH"
+INSTALLER_PATH=$(cd "$SCRIPT_DIR/.." && pwd)/install-lite.sh
+LITE_INSTALLER_LIBRARY_ONLY=1 source "$INSTALLER_PATH"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -28,8 +28,8 @@ run_case() (
 
     INSTALL_DIR="$root/opt"
     DATA_DIR="$INSTALL_DIR"
-    BINARY_PATH="$INSTALL_DIR/komari"
-    SERVICE_NAME="komari-test"
+    BINARY_PATH="$INSTALL_DIR/Lite"
+    SERVICE_NAME="lite-test"
     CHANNEL="$channel"
     TUI_TOOL=""
     mkdir -p "$INSTALL_DIR"
@@ -50,7 +50,7 @@ run_case() (
         if [ "$failure" = "url" ]; then
             return 1
         fi
-        printf 'https://example.invalid/komari'
+            printf 'https://example.invalid/lite'
     }
     ui_msgbox() { :; }
     log_step() { :; }
@@ -120,16 +120,16 @@ run_case() (
     }
 
     if [ "$failure" = "stop" ]; then
-        upgrade_komari && fail "$name unexpectedly succeeded"
+        upgrade_lite && fail "$name unexpectedly succeeded"
         assert_file_content "$BINARY_PATH" old
         [ "$service_active" -eq 1 ] || fail "$name stopped the original service"
     elif [ -n "$failure" ]; then
-        upgrade_komari && fail "$name unexpectedly succeeded"
+        upgrade_lite && fail "$name unexpectedly succeeded"
         assert_file_content "$BINARY_PATH" old
         [ "$binary_executable" -eq 1 ] || fail "$name restored a non-executable binary"
         [ "$service_active" -eq 1 ] || fail "$name did not leave the original service active"
     else
-        upgrade_komari || fail "$name failed"
+        upgrade_lite || fail "$name failed"
         assert_file_content "$BINARY_PATH" new
         [ "$binary_executable" -eq 1 ] || fail "$name installed a non-executable binary"
         [ "$service_active" -eq 1 ] || fail "$name did not leave the new service active"

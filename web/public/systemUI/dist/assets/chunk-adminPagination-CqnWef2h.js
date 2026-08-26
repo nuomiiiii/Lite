@@ -1,1 +1,0 @@
-const A=10,t=5,e=100;function i(n){return typeof n=="number"&&Number.isInteger(n)&&n>=5&&n<=100}function S(n,I=10){const _=typeof n=="string"?Number(n):n;return i(_)?_:I}function r(){return[10,50,100]}export{A,e as a,t as b,r as c,i,S as n};

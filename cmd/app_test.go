@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/pkg/config"
-	installweb "github.com/komari-monitor/komari/web/install"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/pkg/config"
+	installweb "github.com/nuomiiiii/lite/web/install"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -150,6 +150,53 @@ func TestStartupMetricCleanupFailureIsRetainedForRetry(t *testing.T) {
 	}
 	if retained.Attempts != 1 || !strings.Contains(retained.LastError, "unsupported metric cleanup kind") {
 		t.Fatalf("retained cleanup job = %#v, want one recorded failed attempt", retained)
+	}
+}
+
+func TestNormalizeSiteFactoryDefaultsMigratesLegacyValuesOnce(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:normalize-site-factory-defaults?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open config database: %v", err)
+	}
+	config.SetDb(db)
+	if err := config.SetMany(map[string]any{
+		config.DescriptionKey:          "A simple server monitor tool.",
+		config.AdminDefaultPageSizeKey: 10,
+		config.ReduceMotionKey:         true,
+	}); err != nil {
+		t.Fatalf("seed legacy site defaults: %v", err)
+	}
+	if err := normalizeSiteFactoryDefaults(); err != nil {
+		t.Fatalf("normalize site factory defaults: %v", err)
+	}
+	description, err := config.GetAs[string](config.DescriptionKey)
+	if err != nil || description != config.DefaultSiteDescription {
+		t.Fatalf("description = %q, err %v; want %q", description, err, config.DefaultSiteDescription)
+	}
+	pageSize, err := config.GetAs[int](config.AdminDefaultPageSizeKey)
+	if err != nil || pageSize != config.AdminDefaultPageSize {
+		t.Fatalf("page size = %d, err %v; want %d", pageSize, err, config.AdminDefaultPageSize)
+	}
+	reduceMotion, err := config.GetAs[bool](config.ReduceMotionKey)
+	if err != nil || reduceMotion {
+		t.Fatalf("reduce motion = %t, err %v; want false", reduceMotion, err)
+	}
+	if err := config.SetMany(map[string]any{
+		config.DescriptionKey:          "Custom description",
+		config.AdminDefaultPageSizeKey: 10,
+	}); err != nil {
+		t.Fatalf("set customized values: %v", err)
+	}
+	if err := normalizeSiteFactoryDefaults(); err != nil {
+		t.Fatalf("normalize site factory defaults again: %v", err)
+	}
+	description, err = config.GetAs[string](config.DescriptionKey)
+	if err != nil || description != "Custom description" {
+		t.Fatalf("custom description overwritten: %q, err %v", description, err)
+	}
+	pageSize, err = config.GetAs[int](config.AdminDefaultPageSizeKey)
+	if err != nil || pageSize != 10 {
+		t.Fatalf("custom page size overwritten: %d, err %v", pageSize, err)
 	}
 }
 

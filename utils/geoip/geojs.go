@@ -58,7 +58,7 @@ func (s *GeoJSService) GetGeoInfo(ip net.IP) (*GeoInfo, error) {
 		return nil, fmt.Errorf("failed to decode geojs.io response: %w", err)
 	}
 
-	// 检查国家代码是否为空，因为 geojs 对无效/私有IP可能返回200 OK但内容为空
+	// 检查国家\地区代码是否为空，因为 geojs 对无效/私有IP可能返回200 OK但内容为空
 	if apiResp.CountryCode == "" {
 		return nil, fmt.Errorf("geojs.io returned empty geo info for ip: %s", ip.String())
 	}

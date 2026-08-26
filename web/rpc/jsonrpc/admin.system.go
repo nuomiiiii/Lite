@@ -9,20 +9,20 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/komari-monitor/komari/database/accounts"
-	"github.com/komari-monitor/komari/database/auditlog"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/database/tasks"
+	"github.com/nuomiiiii/lite/database/accounts"
+	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/database/tasks"
 
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/rpc"
-	v2 "github.com/komari-monitor/komari/protocol/v2"
-	"github.com/komari-monitor/komari/utils"
-	"github.com/komari-monitor/komari/utils/cloudflared"
-	"github.com/komari-monitor/komari/utils/geoip"
-	"github.com/komari-monitor/komari/utils/messageSender"
-	agent_runtime "github.com/komari-monitor/komari/web/agent"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/rpc"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
+	"github.com/nuomiiiii/lite/utils"
+	"github.com/nuomiiiii/lite/utils/cloudflared"
+	"github.com/nuomiiiii/lite/utils/geoip"
+	"github.com/nuomiiiii/lite/utils/messageSender"
+	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 	"gorm.io/gorm"
 )
 
@@ -243,7 +243,7 @@ func adminTestSendMessage(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.J
 	err := messageSender.SendEvent(models.EventMessage{
 		Event:   "Test",
 		Time:    time.Now().UTC(),
-		Message: "This is a test message from Komari.",
+		Message: "This is a test message from Lite.",
 	})
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to send message: "+err.Error(), nil)

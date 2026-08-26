@@ -15,8 +15,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/utils/secureconfig"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/utils/secureconfig"
 )
 
 type RuntimeStatus struct {
@@ -88,7 +88,7 @@ func RemoveToken() error {
 }
 
 func LoadToken() (token string, err error) {
-	if envToken := strings.TrimSpace(os.Getenv("KOMARI_CLOUDFLARED_TOKEN")); envToken != "" {
+	if envToken := cloudflareEnvToken(); envToken != "" {
 		return envToken, nil
 	}
 
@@ -107,7 +107,7 @@ func AutoStart(envToken string) error {
 		if err := SaveToken(token); err != nil {
 			return err
 		}
-		log.Println("[cloudflared] using token from KOMARI_CLOUDFLARED_TOKEN")
+		log.Println("[cloudflared] using token from LITE_CLOUDFLARED_TOKEN or KOMARI_CLOUDFLARED_TOKEN")
 	}
 
 	if token == "" {
@@ -279,7 +279,7 @@ func (m *manager) status() RuntimeStatus {
 		ErrorMessage:    m.errorMessage,
 		Logs:            append([]string{}, m.logs...),
 		BinaryPath:      binaryPath,
-		EnvTokenPresent: strings.TrimSpace(os.Getenv("KOMARI_CLOUDFLARED_TOKEN")) != "",
+		EnvTokenPresent: cloudflareEnvToken() != "",
 	}
 	if m.cmd != nil && m.cmd.Process != nil {
 		status.PID = m.cmd.Process.Pid
@@ -334,6 +334,9 @@ func loadStoredToken() (token string, err error) {
 
 func resolveBinaryPath() (string, bool) {
 	candidates := []string{}
+	if envPath := strings.TrimSpace(os.Getenv("LITE_CLOUDFLARED_BIN")); envPath != "" {
+		candidates = append(candidates, envPath)
+	}
 	if envPath := strings.TrimSpace(os.Getenv("KOMARI_CLOUDFLARED_BIN")); envPath != "" {
 		candidates = append(candidates, envPath)
 	}
@@ -383,4 +386,13 @@ func looksLikeError(line string) bool {
 		strings.Contains(lower, "failed") ||
 		strings.Contains(lower, "invalid") ||
 		strings.Contains(lower, "unauthorized")
+}
+
+func cloudflareEnvToken() string {
+	for _, key := range []string{"LITE_CLOUDFLARED_TOKEN", "KOMARI_CLOUDFLARED_TOKEN"} {
+		if token := strings.TrimSpace(os.Getenv(key)); token != "" {
+			return token
+		}
+	}
+	return ""
 }

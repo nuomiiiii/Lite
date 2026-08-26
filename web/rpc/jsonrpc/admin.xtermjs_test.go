@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/komari-monitor/komari/pkg/rpc"
+	"github.com/nuomiiiii/lite/pkg/rpc"
 )
 
 // xtermjs 设置归一化逻辑的单元测试（迁移自 web/api/admin/settings_xtermjs_test.go，

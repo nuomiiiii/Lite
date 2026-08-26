@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/models"
+	"github.com/nuomiiiii/lite/database/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -353,8 +353,27 @@ func TestNormalizeTrafficResetDay(t *testing.T) {
 	assert.Nil(t, day)
 }
 
+func TestSaveClientPersistsTrafficResetDay(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:client-reset-day?mode=memory&cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Client{}))
+	require.NoError(t, db.Create(&models.Client{UUID: "node-a", Token: "token-a", Name: "A"}).Error)
+
+	require.NoError(t, saveClient(db, map[string]interface{}{
+		"uuid":              "node-a",
+		"traffic_reset_day": float64(1),
+	}))
+
+	var client models.Client
+	require.NoError(t, db.First(&client, "uuid = ?", "node-a").Error)
+	require.NotNil(t, client.TrafficResetDay)
+	assert.Equal(t, 1, *client.TrafficResetDay)
+}
+
 func TestSaveClientPersistsCADCurrency(t *testing.T) {
-	databasePath := filepath.Join(t.TempDir(), "komari.db")
+	databasePath := filepath.Join(t.TempDir(), "lite.db")
 	db, err := gorm.Open(sqlite.Open(databasePath), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
@@ -432,4 +451,45 @@ func TestExpiredPreviousClientTokenIsRejected(t *testing.T) {
 
 	_, err = getClientUUIDByToken(db, "old-token", time.Now().UTC())
 	require.Error(t, err)
+}
+
+func TestNormalizeBandwidthInsertsSingleSpace(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"100M", "100 M"},
+		{"200M", "200 M"},
+		{"1.5Gbps", "1.5 Gbps"},
+		{"100    M", "100 M"},
+		{"  100   Mbps  ", "100 Mbps"},
+		{"1 Gbps", "1 Gbps"},
+		{"10 G", "10 G"},
+		{"", ""},
+		{"   ", ""},
+		{"100", "100"},
+	}
+	for _, tc := range tests {
+		assert.Equal(t, tc.want, normalizeBandwidth(tc.in), tc.in)
+	}
+}
+
+func TestSaveClientNormalizesBandwidth(t *testing.T) {
+	db := newClientTestDB(t, "normalize-bandwidth")
+	require.NoError(t, db.Create(&models.Client{
+		UUID: "n1", Token: "token-n1", Name: "N",
+	}).Error)
+
+	require.NoError(t, saveClient(db, map[string]interface{}{
+		"uuid": "n1", "bandwidth": "100M",
+	}))
+	var first models.Client
+	require.NoError(t, db.Where("uuid = ?", "n1").First(&first).Error)
+	assert.Equal(t, "100 M", first.Bandwidth)
+
+	require.NoError(t, saveClient(db, map[string]interface{}{
+		"uuid": "n1", "bandwidth": "200    Mbps",
+	}))
+	var second models.Client
+	require.NoError(t, db.Where("uuid = ?", "n1").First(&second).Error)
+	assert.Equal(t, "200 Mbps", second.Bandwidth)
 }

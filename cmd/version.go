@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/komari-monitor/komari/utils"
+	"github.com/nuomiiiii/lite/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -12,7 +12,7 @@ var versionJSON bool
 
 var VersionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print the Komari version",
+	Short: "Print the Lite version",
 	RunE: func(_ *cobra.Command, _ []string) error {
 		if versionJSON {
 			return json.NewEncoder(RootCmd.OutOrStdout()).Encode(map[string]string{

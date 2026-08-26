@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 
-	"github.com/komari-monitor/komari/database/auditlog"
-	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/pkg/rpc"
-	agent_runtime "github.com/komari-monitor/komari/web/agent"
+	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/pkg/rpc"
+	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 	"gorm.io/gorm"
 )
 

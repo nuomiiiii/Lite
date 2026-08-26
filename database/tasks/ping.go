@@ -6,12 +6,12 @@ import (
 	"sort"
 	"time"
 
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/database/notificationdefaults"
-	"github.com/komari-monitor/komari/utils"
-	logger "github.com/komari-monitor/komari/utils/log"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/database/notificationdefaults"
+	"github.com/nuomiiiii/lite/utils"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"gorm.io/gorm"
 )
 

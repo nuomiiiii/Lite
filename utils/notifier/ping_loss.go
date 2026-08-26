@@ -9,14 +9,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
-	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/corn"
-	"github.com/komari-monitor/komari/pkg/metric"
-	"github.com/komari-monitor/komari/utils/messageSender"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
+	messageevent "github.com/nuomiiiii/lite/database/models/messageEvent"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/corn"
+	"github.com/nuomiiiii/lite/pkg/metric"
+	"github.com/nuomiiiii/lite/utils/messageSender"
 )
 
 const pingLossCheckInterval = 15 * time.Second

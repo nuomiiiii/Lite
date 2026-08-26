@@ -11,8 +11,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/web/api"
-	"github.com/komari-monitor/komari/web/public"
+	"github.com/nuomiiiii/lite/web/api"
+	"github.com/nuomiiiii/lite/web/public"
 )
 
 const (

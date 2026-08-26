@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/pkg/rpc"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/pkg/rpc"
 	"github.com/stretchr/testify/require"
 )
 

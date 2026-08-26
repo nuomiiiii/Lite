@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/models"
-	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
-	"github.com/komari-monitor/komari/pkg/metric"
+	"github.com/nuomiiiii/lite/database/models"
+	messageevent "github.com/nuomiiiii/lite/database/models/messageEvent"
+	"github.com/nuomiiiii/lite/pkg/metric"
 	"github.com/stretchr/testify/assert"
 )
 

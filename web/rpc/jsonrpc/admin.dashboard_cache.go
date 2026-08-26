@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/database/models"
+	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/database/models"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )

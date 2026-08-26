@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/database/auditlog"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/utils/httpsserver"
-	"github.com/komari-monitor/komari/web/api"
+	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/utils/httpsserver"
+	"github.com/nuomiiiii/lite/web/api"
 )
 
 func GetHTTPSSettings(c *gin.Context) {

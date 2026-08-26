@@ -13,11 +13,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/cmd/flags"
-	"github.com/komari-monitor/komari/database/dbcore"
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/web/api"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/nuomiiiii/lite/cmd/flags"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/web/api"
+	"github.com/nuomiiiii/lite/web/backup"
 )
 
 type backupScope string
@@ -342,10 +343,10 @@ func writeDirectoryToZip(writer *zip.Writer, contentDir string) error {
 }
 
 func writeBackupMarkup(writer *zip.Writer, scope backupScope, now time.Time) error {
-	content := "此文件为 Komari 备份标记文件，请勿删除。\nThis is a Komari backup markup file, please do not delete.\n\n" +
+	content := "此文件为 Lite 备份标记文件，请勿删除。\nThis is a Lite backup markup file, please do not delete.\n\n" +
 		"备份类型 / Backup Type: " + string(scope) + "\n" +
 		"备份时间 / Backup Time: " + now.UTC().Format(time.RFC3339Nano)
-	entry, err := writer.CreateHeader(&zip.FileHeader{Name: "komari-backup-markup", Method: zip.Deflate, Modified: now})
+	entry, err := writer.CreateHeader(&zip.FileHeader{Name: backup.MarkupName, Method: zip.Deflate, Modified: now})
 	if err != nil {
 		return err
 	}
@@ -386,11 +387,11 @@ func DownloadBackup(c *gin.Context) {
 		return
 	}
 	if !flags.IsSQLite() {
-		api.RespondError(c, http.StatusUnprocessableEntity, "当前主数据库不是 SQLite，无法生成可直接恢复的 Komari 备份")
+		api.RespondError(c, http.StatusUnprocessableEntity, "当前主数据库不是 SQLite，无法生成可直接恢复的 Lite 备份")
 		return
 	}
 
-	tempDir, err := os.MkdirTemp("", "komari-backup-*")
+	tempDir, err := os.MkdirTemp("", "lite-backup-*")
 	if err != nil {
 		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("创建备份临时目录失败: %v", err))
 		return
@@ -406,7 +407,7 @@ func DownloadBackup(c *gin.Context) {
 		return
 	}
 
-	mainSnapshot := filepath.Join(contentDir, "komari.db")
+	mainSnapshot := filepath.Join(contentDir, "lite.db")
 	if err := backupMainSQLite(mainSnapshot); err != nil {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
 		return
@@ -434,7 +435,7 @@ func DownloadBackup(c *gin.Context) {
 		return
 	}
 	defer archive.Close()
-	filename := fmt.Sprintf("Komari-%s-%s.zip", scope, now.Format("20060102-150405"))
+	filename := fmt.Sprintf("Lite-%s-%s.zip", scope, now.Format("20060102-150405"))
 	c.Writer.Header().Set("Content-Type", "application/zip")
 	c.Writer.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
 	http.ServeContent(c.Writer, c.Request, filename, now, archive)

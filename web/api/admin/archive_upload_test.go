@@ -24,11 +24,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/pkg/rpc"
-	"github.com/komari-monitor/komari/utils/httpsserver"
-	"github.com/komari-monitor/komari/web/api"
-	"github.com/komari-monitor/komari/web/backup"
-	"github.com/komari-monitor/komari/web/upload"
+	"github.com/nuomiiiii/lite/pkg/rpc"
+	"github.com/nuomiiiii/lite/utils/httpsserver"
+	"github.com/nuomiiiii/lite/web/api"
+	"github.com/nuomiiiii/lite/web/backup"
+	"github.com/nuomiiiii/lite/web/upload"
 )
 
 func archiveUploadStore(t *testing.T) *upload.Store {
@@ -138,7 +138,7 @@ func TestChunkedBackupUploadStagesOnlyValidatedArchive(t *testing.T) {
 	runRestartImmediately(t)
 	router := archiveUploadRouter(t)
 	archive := themeArchive(t, map[string]string{
-		"komari.db":            "sqlite-data",
+		"lite.db":              "sqlite-data",
 		"metrics.db":           "metrics-data",
 		"komari-backup-markup": "full",
 	})
@@ -166,7 +166,7 @@ func TestUploadInitAcceptsUpstreamOptionalFilename(t *testing.T) {
 func TestChunkedBackupUploadFailurePreservesExistingStagedBackup(t *testing.T) {
 	for name, archive := range map[string][]byte{
 		"not zip":        []byte("not a zip"),
-		"missing marker": themeArchive(t, map[string]string{"komari.db": "sqlite-data"}),
+		"missing marker": themeArchive(t, map[string]string{"lite.db": "sqlite-data"}),
 		"missing database": themeArchive(t, map[string]string{
 			"komari-backup-markup": "config",
 		}),

@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/komari-monitor/komari/pkg/rpc"
-	logger "github.com/komari-monitor/komari/utils/log"
-	"github.com/komari-monitor/komari/web/api"
-	"github.com/komari-monitor/komari/web/backup"
-	"github.com/komari-monitor/komari/web/upload"
+	"github.com/nuomiiiii/lite/pkg/rpc"
+	logger "github.com/nuomiiiii/lite/utils/log"
+	"github.com/nuomiiiii/lite/web/api"
+	"github.com/nuomiiiii/lite/web/backup"
+	"github.com/nuomiiiii/lite/web/upload"
 )
 
 var (

@@ -19,12 +19,14 @@ RUN set -eux; \
     curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cloudflared_arch}" -o /usr/local/bin/cloudflared; \
     chmod +x /usr/local/bin/cloudflared
 
-COPY --chmod=755 komari-${TARGETOS}-${TARGETARCH} /app/komari
+COPY --chmod=755 Lite-${TARGETOS}-${TARGETARCH} /app/Lite
+# 保留旧容器启动命令 /app/komari，方便直接换镜像。
+RUN ln -s Lite /app/komari
 
 ENV GIN_MODE=release
-ENV KOMARI_LISTEN=0.0.0.0:25774
-ENV KOMARI_DEPLOYMENT=docker
+ENV LITE_DEPLOYMENT=docker
 
+EXPOSE 27777 36888
 EXPOSE 25774 35938
 
-CMD ["/app/komari", "server"]
+CMD ["/app/Lite", "server"]

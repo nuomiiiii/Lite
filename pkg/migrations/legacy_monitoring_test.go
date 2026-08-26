@@ -9,17 +9,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/metricstore"
-	"github.com/komari-monitor/komari/database/models"
-	appconfig "github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/metric"
+	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/database/models"
+	appconfig "github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/metric"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
 func TestLegacyMonitoringTablesMigratedByOneShotMigration(t *testing.T) {
 	ctx := context.Background()
-	mainDB, err := gorm.Open(sqlite.Open("file:"+filepath.ToSlash(filepath.Join(t.TempDir(), "komari.db"))+"?mode=rwc"), &gorm.Config{})
+	mainDB, err := gorm.Open(sqlite.Open("file:"+filepath.ToSlash(filepath.Join(t.TempDir(), "lite.db"))+"?mode=rwc"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open legacy db: %v", err)
 	}

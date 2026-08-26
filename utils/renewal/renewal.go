@@ -4,13 +4,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/komari-monitor/komari/database/auditlog"
-	"github.com/komari-monitor/komari/database/clients"
-	"github.com/komari-monitor/komari/database/models"
-	messageevent "github.com/komari-monitor/komari/database/models/messageEvent"
-	"github.com/komari-monitor/komari/pkg/timeutil"
-	"github.com/komari-monitor/komari/utils/messageSender"
-	agent_runtime "github.com/komari-monitor/komari/web/agent"
+	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/database/models"
+	messageevent "github.com/nuomiiiii/lite/database/models/messageEvent"
+	"github.com/nuomiiiii/lite/pkg/timeutil"
+	"github.com/nuomiiiii/lite/utils/messageSender"
+	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 )
 
 func CheckAndAutoRenewal(client models.Client) {
@@ -96,7 +96,7 @@ func CheckAndAutoRenewal(client models.Client) {
 				"expired_at": newExpireTime.UTC(),
 			}
 
-			err := clients.SaveClient(updates)
+			err := clients.SaveClientWithSource(updates, "renewal")
 			if err != nil {
 				auditlog.EventLog("renewal", fmt.Sprintf("Failed to renew client %s (%s): %v", client.Name, client.UUID, err))
 				return

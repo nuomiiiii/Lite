@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/utils"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/utils"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -411,7 +411,7 @@ func TestFailedBGPRefreshPreservesActiveRules(t *testing.T) {
 		http.Error(response, "temporary failure", http.StatusBadGateway)
 	}))
 	defer server.Close()
-	t.Setenv("KOMARI_RETURN_ROUTE_BGP_RULE_URL", server.URL)
+	t.Setenv("LITE_RETURN_ROUTE_BGP_RULE_URL", server.URL)
 
 	originalClient := returnRouteBGPHTTPClient
 	returnRouteBGPHTTPClient = server.Client()

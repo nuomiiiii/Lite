@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/komari-monitor/komari/database/models"
-	"github.com/komari-monitor/komari/database/trafficledger"
-	"github.com/komari-monitor/komari/pkg/config"
-	"github.com/komari-monitor/komari/pkg/metric"
+	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/database/trafficledger"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/metric"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -139,7 +139,7 @@ func TestDashboardNavigationFollowsThirdPartyThemeManifest(t *testing.T) {
 	assert.Equal(t, detailURL, summary.Resources.Memory[0].DetailURL)
 	assert.Equal(t, detailURL, summary.Resources.Disk[0].DetailURL)
 
-	// Themes published before navigation metadata existed keep Komari's
+	// Themes published before navigation metadata existed keep the original
 	// traditional UUID detail route and do not receive an unknown task query.
 	require.NoError(t, os.WriteFile(
 		filepath.Join(themeDir, "komari-theme.json"),
