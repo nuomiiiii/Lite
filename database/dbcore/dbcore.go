@@ -1079,6 +1079,10 @@ func cleanupOrphanedClientData(db *gorm.DB) error {
 			}
 		}
 
+		if err := billing.CloseOrphanedPriceVersions(tx, time.Now()); err != nil {
+			return fmt.Errorf("close orphaned billing versions: %w", err)
+		}
+
 		for _, table := range []string{"records", "records_long_term", "gpu_records", "ping_records"} {
 			if !tx.Migrator().HasTable(table) {
 				continue

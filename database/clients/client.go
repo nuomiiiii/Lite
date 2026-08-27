@@ -102,6 +102,9 @@ func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
 		if err := deleteLegacyClientRows(tx, clientUuid); err != nil {
 			return err
 		}
+		if err := billing.CloseOpenPriceVersions(tx, clientUuid, time.Now()); err != nil {
+			return fmt.Errorf("close client billing versions: %w", err)
+		}
 
 		var pingTasks []models.PingTask
 		if err := tx.Select("id", "clients").Find(&pingTasks).Error; err != nil {

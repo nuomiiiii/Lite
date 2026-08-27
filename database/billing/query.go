@@ -400,6 +400,9 @@ func GetServers(ctx context.Context, db *gorm.DB, query ServerQuery) (ServerPage
 		if search != "" && !serverMatchesSearch(search, clientName, region, group, tags, version.Client) {
 			continue
 		}
+		if _, ok := clientByID[version.Client]; !ok {
+			continue
+		}
 		if query.ExpiryDays > 0 {
 			if version.ExpiredAt == nil || version.ExpiredAt.Before(query.Now) || version.ExpiredAt.After(query.Now.AddDate(0, 0, query.ExpiryDays)) {
 				continue
@@ -1174,9 +1177,17 @@ func remainingValueSummary(ctx context.Context, db *gorm.DB, currency string, no
 	if err := db.WithContext(ctx).Where("effective_to IS NULL").Find(&versions).Error; err != nil {
 		return 0, 0, err
 	}
+	var live []string
+	if err := db.WithContext(ctx).Model(&models.Client{}).Pluck("uuid", &live).Error; err != nil {
+		return 0, 0, err
+	}
+	liveSet := stringSet(live)
 	var total int64
 	expiring := 0
 	for _, version := range versions {
+		if _, ok := liveSet[version.Client]; !ok {
+			continue
+		}
 		value, days := remainingValue(version, currency, rates, now)
 		if value != nil {
 			amount, parseErr := ParseAmountMicros(*value)

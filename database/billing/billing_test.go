@@ -501,12 +501,41 @@ func TestRemainingValueUsesFullRemainingTimePastOneCycle(t *testing.T) {
 	assert.Equal(t, want, direct)
 }
 
+func TestGetServersOmitsDeletedClients(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 27, 12, 0)
+	expiry := now.AddDate(1, 0, 0)
+	live := saveClient(t, db, models.Client{Name: "Legend_SG", Price: 70, BillingCycle: 1095, Currency: "USD", ExpiredAt: &expiry})
+	gone := saveClient(t, db, models.Client{Name: "Neburst_HK", Price: 383.04, BillingCycle: 365, Currency: "USD", ExpiredAt: &expiry})
+	require.NoError(t, EnsureInitialPriceVersions(db, now))
+	require.NoError(t, db.Delete(&models.Client{}, "uuid = ?", gone.UUID).Error)
+
+	page, err := GetServers(context.Background(), db, ServerQuery{Currency: "USD", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, live.UUID, page.Items[0].Client)
+	assert.Equal(t, "Legend_SG", page.Items[0].Name)
+
+	remaining, expiring, err := remainingValueSummary(context.Background(), db, "USD", now)
+	require.NoError(t, err)
+	assert.Greater(t, remaining, int64(0))
+	assert.Equal(t, 0, expiring)
+
+	require.NoError(t, CloseOrphanedPriceVersions(db, now))
+	var open int64
+	require.NoError(t, db.Model(&models.BillingPriceVersion{}).Where("client = ? AND effective_to IS NULL", gone.UUID).Count(&open).Error)
+	assert.Zero(t, open)
+}
+
 func TestRemainingValueSummaryExcludesAlreadyExpiredServers(t *testing.T) {
 	db := billingTestDB(t)
 	now := beijingTime(2026, time.August, 25, 12, 0)
 	expiredAt := now.Add(-time.Minute)
 	nearExpiry := now.Add(12 * time.Hour)
 	farExpiry := now.AddDate(0, 0, 31)
+	saveClient(t, db, models.Client{UUID: "expired", Name: "expired"})
+	saveClient(t, db, models.Client{UUID: "near", Name: "near"})
+	saveClient(t, db, models.Client{UUID: "far", Name: "far"})
 	versions := []models.BillingPriceVersion{
 		{Client: "expired", ClientName: "expired", PriceMicros: 30_000_000, Currency: "CNY", CurrencyValid: true, BillingCycleDays: 30, EffectiveFrom: now.AddDate(0, -1, 0), ExpiredAt: &expiredAt, Source: PriceSourceMigration},
 		{Client: "near", ClientName: "near", PriceMicros: 30_000_000, Currency: "CNY", CurrencyValid: true, BillingCycleDays: 30, EffectiveFrom: now.AddDate(0, -1, 0), ExpiredAt: &nearExpiry, Source: PriceSourceMigration},

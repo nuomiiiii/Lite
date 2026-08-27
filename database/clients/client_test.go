@@ -222,6 +222,7 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 				&models.MetricCleanupJob{},
 				&models.Task{},
 				&models.TaskResult{},
+				&models.BillingPriceVersion{},
 			))
 			for _, table := range []string{"records", "records_long_term", "gpu_records", "ping_records"} {
 				require.NoError(t, db.Exec("CREATE TABLE "+table+" (client TEXT NOT NULL, task_id INTEGER)").Error)
@@ -229,6 +230,10 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 			require.NoError(t, db.Create([]models.Client{
 				{UUID: "client-a", Token: "token-a", Name: "Server A"},
 				{UUID: "client-b", Token: "token-b", Name: "Server B"},
+			}).Error)
+			require.NoError(t, db.Create(&models.BillingPriceVersion{
+				Client: "client-a", ClientName: "Server A", PriceMicros: 1_000_000, Currency: "USD",
+				CurrencyValid: true, BillingCycleDays: 30, EffectiveFrom: time.Now().UTC(), Source: "migration",
 			}).Error)
 
 			pingTask := models.PingTask{
@@ -303,6 +308,10 @@ func TestDeleteClientCleansAllRelatedRowsAndSharedAssignments(t *testing.T) {
 			assert.Equal(t, models.StringArray{"client-b"}, remainingTasks[0].Clients)
 			assertRowCount(t, db, &models.TaskResult{}, "client = ?", 1, "client-b")
 			assertRowCount(t, db, &models.MetricCleanupJob{}, "kind = ? AND entity_id = ?", 1, models.MetricCleanupEntity, "client-a")
+			assertRowCount(t, db, &models.BillingPriceVersion{}, "client = ? AND effective_to IS NULL", 0, "client-a")
+			var closed models.BillingPriceVersion
+			require.NoError(t, db.Where("client = ? AND effective_to IS NOT NULL", "client-a").First(&closed).Error)
+			assert.Equal(t, "client-a", closed.Client)
 		})
 	}
 }
