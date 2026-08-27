@@ -81,6 +81,7 @@ runs:
           cd "$theme_dir"
           npm ci
           npm run build
+          node -e "const t=JSON.parse(require('fs').readFileSync('Lite-theme.json','utf8')); if(!t.version) process.exit(1); console.log('Bundled Lite-theme version '+t.version)"
         )
 
         install_theme() {

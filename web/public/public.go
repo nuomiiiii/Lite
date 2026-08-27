@@ -86,6 +86,7 @@ var (
 	appleTouchIconPattern        = regexp.MustCompile(`(?is)<link\s+[^>]*rel\s*=\s*["']apple-touch-icon["'][^>]*>`)
 	headClosePattern             = regexp.MustCompile(`(?i)</head\s*>`)
 	bodyClosePattern             = regexp.MustCompile(`(?i)</body\s*>`)
+	themeVersionPattern          = regexp.MustCompile(`^(\d+)(?:\.(\d+))?(?:\.(\d+))?`)
 )
 
 func injectThemeChangeReload(html string) string {
@@ -435,6 +436,90 @@ func installEmbeddedThemeWithReplace(root, themeID string, replace bool) error {
 	return nil
 }
 
+func themeManifestVersion(content []byte) string {
+	var meta struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(content, &meta) != nil {
+		return ""
+	}
+	return strings.TrimSpace(meta.Version)
+}
+
+func parseThemeVersion(value string) ([3]int, bool) {
+	value = strings.TrimSpace(value)
+	if value != "" && (value[0] == 'v' || value[0] == 'V') {
+		value = value[1:]
+	}
+	match := themeVersionPattern.FindStringSubmatch(value)
+	if match == nil {
+		return [3]int{}, false
+	}
+	part := func(index int) int {
+		if index >= len(match) || match[index] == "" {
+			return 0
+		}
+		n := 0
+		fmt.Sscanf(match[index], "%d", &n)
+		return n
+	}
+	return [3]int{part(1), part(2), part(3)}, true
+}
+
+func themeVersionNewer(candidate, installed string) bool {
+	next, nextOK := parseThemeVersion(candidate)
+	current, currentOK := parseThemeVersion(installed)
+	if !nextOK || !currentOK {
+		return candidate != installed
+	}
+	for i := range next {
+		if next[i] != current[i] {
+			return next[i] > current[i]
+		}
+	}
+	return false
+}
+
+func localThemeVersion(themeID string) string {
+	manifestPath, ok := thememanifest.FindInDir(filepath.Join(DataDir, ThemesDir, themeID))
+	if !ok {
+		return ""
+	}
+	content, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return ""
+	}
+	return themeManifestVersion(content)
+}
+
+func embeddedThemeVersion(root string) string {
+	for _, name := range thememanifest.Names() {
+		content, err := fs.ReadFile(PublicFS, path.Join(root, name))
+		if err != nil {
+			continue
+		}
+		if version := themeManifestVersion(content); version != "" {
+			return version
+		}
+	}
+	return ""
+}
+
+func refreshBundledLiteThemeIfNewer() error {
+	if !IsLocalThemeUsable(DefaultTheme) {
+		return nil
+	}
+	embedded := embeddedThemeVersion("bundledThemes/Lite-theme")
+	installed := localThemeVersion(DefaultTheme)
+	if embedded == "" || !themeVersionNewer(embedded, installed) {
+		return nil
+	}
+	if err := installEmbeddedThemeWithReplace("bundledThemes/Lite-theme", DefaultTheme, true); err != nil {
+		return fmt.Errorf("refresh bundled Lite-Theme: %w", err)
+	}
+	return nil
+}
+
 func localThemeFallback() string {
 	if IsLocalThemeUsable(DefaultTheme) {
 		return DefaultTheme
@@ -486,6 +571,9 @@ func EnsureBundledThemes() error {
 		if currentTheme == LegacyPublicTheme || currentTheme == LegacyDefaultTheme || currentTheme == LegacyLiteTheme {
 			currentTheme = DefaultTheme
 		}
+	}
+	if err := refreshBundledLiteThemeIfNewer(); err != nil {
+		return err
 	}
 	if !IsLocalThemeUsable(currentTheme) {
 		currentTheme = localThemeFallback()

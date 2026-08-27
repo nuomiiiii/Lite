@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="800" viewBox="0 0 2400 800" role="img" aria-labelledby="title desc">
+  <title id="title">Lite banner with online status logo</title>
+  <desc id="desc">Lite brand banner using the selected three-tile L mark with an integrated green online node.</desc>
+  <defs>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse"><path d="M48 0H0V48" fill="none" stroke="#EEF1F3" stroke-width="2"/></pattern>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="22" stdDeviation="28" flood-color="#1E2933" flood-opacity=".08"/></filter>
+    <filter id="cardShadow" x="-30%" y="-40%" width="160%" height="190%"><feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#1E2933" flood-opacity=".11"/></filter>
+  </defs>
+  <rect width="2400" height="800" fill="#FFFFFF"/>
+  <rect width="2400" height="800" fill="url(#grid)" opacity=".42"/>
+  <path d="M0 650C350 600 540 715 820 656C1090 600 1250 528 1530 584C1830 644 2070 526 2400 570V800H0Z" fill="#F8FAFB"/>
+  <g transform="translate(146 150)" filter="url(#shadow)">
+    <rect width="500" height="500" rx="112" fill="#F7F9FB" stroke="#E5E9ED" stroke-width="6"/>
+    <rect x="103" y="103" width="142" height="142" rx="38" fill="#202A33"/>
+    <rect x="103" y="255" width="142" height="142" rx="38" fill="#FF6B5E"/>
+    <rect x="255" y="255" width="142" height="142" rx="38" fill="#0E86DD"/>
+    <circle cx="327" cy="174" r="34" fill="#DDF7E8"/>
+    <circle cx="327" cy="174" r="20" fill="#22B573"/>
+  </g>
+  <g transform="translate(770 204)">
+    <text x="0" y="214" fill="#18232C" font-family="Segoe UI Variable Display, Segoe UI, Arial, sans-serif" font-size="256" font-weight="700">Lite</text>
+    <text x="10" y="302" fill="#5F6B73" font-family="Segoe UI, Arial, Microsoft YaHei, sans-serif" font-size="43">轻量、自托管的服务器监控与管理工具</text>
+    <g transform="translate(12 366)">
+      <text x="0" y="28" fill="#879198" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="600">LIGHTWEIGHT</text><circle cx="246" cy="18" r="6" fill="#0E86DD"/>
+      <text x="276" y="28" fill="#879198" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="600">SELF-HOSTED</text><circle cx="530" cy="18" r="6" fill="#CDD3D7"/>
+      <text x="560" y="28" fill="#879198" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="600">REAL-TIME</text>
+    </g>
+  </g>
+  <g>
+    <circle cx="2250" cy="72" r="446" fill="#202A33"/>
+    <circle cx="2250" cy="72" r="348" fill="none" stroke="#36515A" stroke-width="4" opacity=".72"/>
+    <circle cx="2250" cy="72" r="260" fill="none" stroke="#36515A" stroke-width="4" opacity=".72"/>
+    <path d="M1664 538C1772 492 1833 526 1918 454C2000 384 2070 402 2142 342C2218 279 2224 190 2312 128C2344 106 2374 90 2400 79" fill="none" stroke="#0E86DD" stroke-width="26" stroke-linecap="round"/>
+    <circle cx="2198" cy="228" r="46" fill="none" stroke="#FF6B5E" stroke-width="7" opacity=".34"/>
+    <circle cx="2198" cy="228" r="25" fill="#FF6B5E"/>
+    <circle cx="2304" cy="92" r="18" fill="#F2C14E"/>
+    <g transform="translate(1880 506)" filter="url(#cardShadow)">
+      <rect width="410" height="202" rx="34" fill="#FFFFFF" stroke="#E5E9ED" stroke-width="5"/>
+      <circle cx="54" cy="58" r="14" fill="#0E86DD"/>
+      <text x="88" y="68" fill="#46525A" font-family="Segoe UI, Arial, sans-serif" font-size="28" font-weight="700">LIVE STATUS</text>
+      <text x="52" y="137" fill="#18232C" font-family="Segoe UI Variable Display, Segoe UI, Arial, sans-serif" font-size="48" font-weight="700">24 / 24</text>
+      <text x="252" y="136" fill="#879198" font-family="Segoe UI, Arial, sans-serif" font-size="22" font-weight="700">ONLINE</text>
+      <rect x="52" y="164" width="306" height="11" rx="6" fill="#E8ECEF"/>
+      <rect x="52" y="164" width="270" height="11" rx="6" fill="#0E86DD"/>
+    </g>
+  </g>
+</svg>

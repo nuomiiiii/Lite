@@ -1,6 +1,6 @@
 # Lite
 
-![Lite](docs/assets/branding/komari-banner.svg)
+![Lite](docs/assets/branding/lite-banner.svg)
 
 [![Release](https://img.shields.io/github/v/release/nuomiiiii/lite?label=release)](https://github.com/nuomiiiii/lite/releases)
 [![Docker](https://img.shields.io/badge/GHCR-nuomiiiii%2Flite-2496ED?logo=docker)](https://github.com/nuomiiiii/lite/pkgs/container/lite)

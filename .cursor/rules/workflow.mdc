@@ -33,7 +33,7 @@ Agent 四段号，协议没变不要空发。`2.3.0.0` 已原生适配 Lite。�
 
 发版只认现有文件：`publish-stable-release.yml`、`rebuild-release.yml`、`release.yml`、`snapshot.yml`。本地和 GitHub 都已删除、不要找回：`docker-publish.yml`（旧实验，push main 已关）、`test-sqlite-v4-docker.yml`（只绑已不存在的 `test-2.1.7-v4`）、`development.yml`、`auto-merge-dev-to-main.yml`。没有 `dev`、`candidate/*`。Docker 正式产物由 `release.yml` / `snapshot.yml` 打，不经过上述已删文件。
 
-clone `Lite-web` 和 `Lite-theme` 的 URL 不要写死 owner。未填输入时按当前仓的 `github.repository_owner` 拼兄弟仓。当前远端是 https://github.com/nuomiiiii/Lite-web 与 https://github.com/nuomiiiii/Lite-theme 。正式版、同版本再发和快照都走 `build-frontend`：编最新 Lite-theme 写入 `bundledThemes/Lite-theme` 和 `rescueTheme`，不要只检查仓里已有的旧主题。未填 `theme_ref` 时用 Lite-theme `main`（主题仓没有 Snapshot 分支）。
+clone `Lite-web` 和 `Lite-theme` 的 URL 不要写死 owner。未填输入时按当前仓的 `github.repository_owner` 拼兄弟仓。当前远端是 https://github.com/nuomiiiii/Lite-web 与 https://github.com/nuomiiiii/Lite-theme 。正式版、同版本再发和快照都走 `build-frontend`：编最新 Lite-theme 写入 `bundledThemes/Lite-theme` 和 `rescueTheme`，不要只检查仓里已有的旧主题。未填 `theme_ref` 时用 Lite-theme `main`（主题仓没有 Snapshot 分支）。用户用新包升级后，若已安装的官方 Lite-Theme 版本低于包内版本，启动时要刷新；不要只编进二进制却沿用旧主题目录。已装更高版本的不要降级，已删官方主题改用第三方的不要重装。
 
 # 硬限制
 

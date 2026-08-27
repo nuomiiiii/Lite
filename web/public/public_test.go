@@ -522,6 +522,102 @@ func TestEnsureBundledThemesRefreshesExistingLiteThemeOnce(t *testing.T) {
 	}
 }
 
+func TestThemeVersionNewer(t *testing.T) {
+	cases := []struct {
+		candidate, installed string
+		want                 bool
+	}{
+		{"1.0.1", "1.0.0", true},
+		{"1.0.0", "1.0.1", false},
+		{"1.0.1", "1.0.1", false},
+		{"v1.0.1", "1.0.0", true},
+		{"1.0.1", "", true},
+		{"99.0.0", "1.0.1", true},
+	}
+	for _, tc := range cases {
+		if got := themeVersionNewer(tc.candidate, tc.installed); got != tc.want {
+			t.Fatalf("themeVersionNewer(%q, %q) = %v, want %v", tc.candidate, tc.installed, got, tc.want)
+		}
+	}
+}
+
+func writeInstalledLiteTheme(t *testing.T, version, index string) {
+	t.Helper()
+	dir := filepath.Join(DataDir, ThemesDir, DefaultTheme, DistDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"Lite-Theme","short":"lite-theme","version":"` + version + `"}`
+	if err := os.WriteFile(filepath.Join(DataDir, ThemesDir, DefaultTheme, "Lite-theme.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, IndexFile), []byte(index), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureBundledThemesRefreshesWhenBundledVersionIsNewer(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+
+	writeInstalledLiteTheme(t, "0.0.1", "stale-older-theme")
+	if err := config.SetMany(map[string]any{
+		config.ThemeKey:         DefaultTheme,
+		themeBundleMigrationKey: currentThemeBundleMigration,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureBundledThemes(); err != nil {
+		t.Fatal(err)
+	}
+	index, err := os.ReadFile(filepath.Join(DataDir, ThemesDir, DefaultTheme, DistDir, IndexFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(index) == "stale-older-theme" {
+		t.Fatal("older installed Lite-Theme was not refreshed from the bundled version")
+	}
+	if got := localThemeVersion(DefaultTheme); got != embeddedThemeVersion("bundledThemes/Lite-theme") {
+		t.Fatalf("installed version = %q, bundled = %q", got, embeddedThemeVersion("bundledThemes/Lite-theme"))
+	}
+}
+
+func TestEnsureBundledThemesKeepsNewerInstalledLiteTheme(t *testing.T) {
+	t.Chdir(t.TempDir())
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+
+	writeInstalledLiteTheme(t, "99.0.0", "market-newer-theme")
+	if err := config.SetMany(map[string]any{
+		config.ThemeKey:         DefaultTheme,
+		themeBundleMigrationKey: currentThemeBundleMigration,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := EnsureBundledThemes(); err != nil {
+		t.Fatal(err)
+	}
+	index, err := os.ReadFile(filepath.Join(DataDir, ThemesDir, DefaultTheme, DistDir, IndexFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(index) != "market-newer-theme" {
+		t.Fatal("newer installed Lite-Theme was overwritten by an older bundled version")
+	}
+	if got := localThemeVersion(DefaultTheme); got != "99.0.0" {
+		t.Fatalf("installed version = %q, want 99.0.0", got)
+	}
+}
+
 func TestEnsureBundledThemesDoesNotReinstallDeletedLiteTheme(t *testing.T) {
 	t.Chdir(t.TempDir())
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
