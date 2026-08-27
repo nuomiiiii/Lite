@@ -525,6 +525,56 @@ func TestGetServersOmitsDeletedClients(t *testing.T) {
 	var open int64
 	require.NoError(t, db.Model(&models.BillingPriceVersion{}).Where("client = ? AND effective_to IS NULL", gone.UUID).Count(&open).Error)
 	assert.Zero(t, open)
+
+	overview, err := GetOverview(context.Background(), db, "USD", now)
+	require.NoError(t, err)
+	assert.NotEqual(t, "0.000000", overview.Summary.Month.Base)
+	monthly, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "USD", Now: now, PageSize: 20})
+	require.NoError(t, err)
+	august := periodByKey(monthly.Items, "2026-08")
+	assert.Equal(t, 1, august.ServerCount)
+	entries, err := GetEntries(context.Background(), db, EntryQuery{
+		Currency: "USD", From: "2026-08-01", To: "2026-08-31", Page: 1, PageSize: 100, Now: now,
+	})
+	require.NoError(t, err)
+	for _, row := range entries.Items {
+		assert.NotEqual(t, gone.UUID, row.Client)
+		assert.NotEqual(t, "Neburst_HK", row.ClientName)
+	}
+	assert.NotEmpty(t, entries.Items)
+}
+
+func TestThirtyDayCycleKeepsListedMonthlyPrice(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 27, 12, 0)
+	client := saveClient(t, db, models.Client{Name: "VMRack_LAX_L3_01", Price: 4, BillingCycle: 30, Currency: "USD"})
+	require.NoError(t, EnsureInitialPriceVersions(db, beijingTime(2026, time.August, 1, 0, 0)))
+
+	daily, monthlyNative, yearly, err := cycleAverageMicros(models.BillingPriceVersion{PriceMicros: 4_000_000, BillingCycleDays: 30})
+	require.NoError(t, err)
+	assert.Equal(t, int64(4_000_000/30), daily)
+	assert.Equal(t, int64(4_000_000), monthlyNative)
+	assert.Equal(t, int64(48_000_000), yearly)
+
+	page, err := GetEntries(context.Background(), db, EntryQuery{
+		Currency: "USD", Client: client.UUID, From: "2026-08-01", To: "2026-08-31", Page: 1, PageSize: 20, Now: now,
+	})
+	require.NoError(t, err)
+	found := false
+	for _, row := range page.Items {
+		if row.Type != EntryTypeBaseAccrual {
+			continue
+		}
+		found = true
+		assert.Equal(t, "4.000000", row.OriginalAmount)
+	}
+	assert.True(t, found)
+
+	servers, err := GetServers(context.Background(), db, ServerQuery{Currency: "USD", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Len(t, servers.Items, 1)
+	require.NotNil(t, servers.Items[0].MonthlyAverage)
+	assert.Equal(t, "4.000000", *servers.Items[0].MonthlyAverage)
 }
 
 func TestRemainingValueSummaryExcludesAlreadyExpiredServers(t *testing.T) {
@@ -627,6 +677,7 @@ func TestGetEntriesShowsCommittedBaseInsteadOfDailyAccrual(t *testing.T) {
 		if row.Type == EntryTypeBaseAccrual {
 			monthBase++
 			assert.Equal(t, "base-node", row.ClientName)
+			assert.Equal(t, "30.000000", row.OriginalAmount)
 			assert.NotContains(t, row.Note, "daily")
 		}
 	}

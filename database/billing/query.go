@@ -861,7 +861,8 @@ func queryCalculatedEntries(ctx context.Context, db *gorm.DB, now time.Time, cli
 	if err := EnsureAccruedThrough(ctx, db, yesterdayInBeijing(now)); err != nil {
 		return nil, nil, nil, err
 	}
-	query := db.WithContext(ctx).Order("occurred_at ASC, id ASC")
+	query := db.WithContext(ctx).Order("occurred_at ASC, id ASC").
+		Where(existingClientCondition("billing_entries.client"))
 	if len(clients) > 0 {
 		query = query.Where("client IN ?", clients)
 	}
@@ -988,7 +989,9 @@ func entryMatchesTypes(entry models.BillingEntry, category string, typeSet map[s
 
 func coverageStart(ctx context.Context, db *gorm.DB) (*time.Time, error) {
 	var version models.BillingPriceVersion
-	if err := db.WithContext(ctx).Order("effective_from ASC, id ASC").First(&version).Error; err != nil {
+	if err := db.WithContext(ctx).
+		Where(existingClientCondition("billing_price_versions.client")).
+		Order("effective_from ASC, id ASC").First(&version).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
