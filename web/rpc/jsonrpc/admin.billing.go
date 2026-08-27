@@ -34,6 +34,7 @@ type billingListParams struct {
 	Groups           string `json:"groups"`
 	Expiry           string `json:"expiry"`
 	Years            string `json:"years"`
+	Months           string `json:"months"`
 	Clients          string `json:"clients"`
 	Types            string `json:"types"`
 	Page             string `json:"page"`
@@ -116,8 +117,12 @@ func bindPeriodQuery(req *rpc.JsonRpcRequest) (billing.PeriodQuery, *rpc.JsonRpc
 	if err != nil {
 		return billing.PeriodQuery{}, invalidBillingParams(err)
 	}
+	months, err := parseMonths(params.Months)
+	if err != nil {
+		return billing.PeriodQuery{}, invalidBillingParams(err)
+	}
 	return billing.PeriodQuery{
-		Currency: params.Currency, Years: years, Clients: splitCSV(params.Clients), Types: splitCSV(params.Types),
+		Currency: params.Currency, Years: years, Months: months, Clients: splitCSV(params.Clients), Types: splitCSV(params.Types),
 		NativeCurrencies: splitCSV(params.NativeCurrencies), Page: page, PageSize: pageSize, Now: time.Now().UTC(),
 	}, nil
 }
@@ -264,6 +269,25 @@ func parseYears(value string) ([]int, error) {
 		}
 	}
 	return years, nil
+}
+
+func parseMonths(value string) ([]string, error) {
+	parts := splitCSV(value)
+	months := make([]string, 0, len(parts))
+	seen := map[string]struct{}{}
+	for _, part := range parts {
+		parsed, err := time.ParseInLocation("2006-01", part, billing.BeijingLocation)
+		if err != nil {
+			return nil, fmt.Errorf("months contains an invalid month")
+		}
+		month := parsed.Format("2006-01")
+		if _, ok := seen[month]; ok {
+			continue
+		}
+		seen[month] = struct{}{}
+		months = append(months, month)
+	}
+	return months, nil
 }
 
 func splitCSV(value string) []string {

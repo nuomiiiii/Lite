@@ -38,6 +38,14 @@ func beijingTime(year int, month time.Month, day, hour, minute int) time.Time {
 	return time.Date(year, month, day, hour, minute, 0, 0, BeijingLocation)
 }
 
+func yearMonthKeys(year int) []string {
+	keys := make([]string, 0, 12)
+	for month := 1; month <= 12; month++ {
+		keys = append(keys, fmt.Sprintf("%04d-%02d", year, month))
+	}
+	return keys
+}
+
 func saveFX(t *testing.T, db *gorm.DB, fetchedAt time.Time, cny, cad string) models.BillingFXSnapshot {
 	t.Helper()
 	snapshot := models.BillingFXSnapshot{
@@ -341,16 +349,16 @@ func TestCommittedMonthlyUsesTrafficResetDayAndStopsAtExpiry(t *testing.T) {
 	require.NoError(t, err)
 	expected := FormatAmountMicros(monthlyNative)
 
-	early, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Now: beijingTime(2026, time.August, 16, 12, 0), PageSize: 20})
+	early, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Months: yearMonthKeys(2026), Now: beijingTime(2026, time.August, 16, 12, 0), PageSize: 20})
 	require.NoError(t, err)
-	late, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Now: beijingTime(2026, time.August, 26, 12, 0), PageSize: 20})
+	late, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Months: yearMonthKeys(2026), Now: beijingTime(2026, time.August, 26, 12, 0), PageSize: 20})
 	require.NoError(t, err)
 	assert.Equal(t, expected, periodByKey(early.Items, "2026-08").Base)
 	assert.Equal(t, periodByKey(early.Items, "2026-08").Base, periodByKey(late.Items, "2026-08").Base)
 	assert.Equal(t, "projected", periodByKey(late.Items, "2026-09").Status)
 	assert.Equal(t, expected, periodByKey(late.Items, "2026-09").Base)
 
-	nextYear, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Years: []int{2027}, Now: beijingTime(2026, time.August, 26, 12, 0), PageSize: 20})
+	nextYear, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Months: yearMonthKeys(2027), Now: beijingTime(2026, time.August, 26, 12, 0), PageSize: 20})
 	require.NoError(t, err)
 	assert.Equal(t, expected, periodByKey(nextYear.Items, "2027-04").Base)
 	assert.Equal(t, "no_record", periodByKey(nextYear.Items, "2027-05").Status)
@@ -398,7 +406,7 @@ func TestFXValidationTimeoutAndCacheFallback(t *testing.T) {
 	}
 }
 
-func TestMonthlyDefaultsCurrentYearAndMultiYearSortsAndPages(t *testing.T) {
+func TestMonthlyDefaultsCurrentMonthAndSelectedMonthsSortAndPage(t *testing.T) {
 	db := billingTestDB(t)
 	now := beijingTime(2026, time.August, 25, 12, 0)
 	client := saveClient(t, db, models.Client{Name: "periods", Currency: "CNY"})
@@ -408,17 +416,16 @@ func TestMonthlyDefaultsCurrentYearAndMultiYearSortsAndPages(t *testing.T) {
 	}
 	defaultPage, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Now: now, PageSize: 20})
 	require.NoError(t, err)
-	for _, row := range defaultPage.Items {
-		assert.True(t, strings.HasPrefix(row.Period, "2026-"))
-	}
-	assert.Equal(t, "2026-12", defaultPage.Items[0].Period)
+	require.Len(t, defaultPage.Items, 1)
+	assert.Equal(t, "2026-08", defaultPage.Items[0].Period)
+	assert.Equal(t, defaultPage.Items[0].Total, defaultPage.MonthlyAverage)
 
-	multi, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Years: []int{2025, 2026}, Now: now, Page: 1, PageSize: 2})
+	multi, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Months: []string{"2026-12", "2026-01"}, Now: now, Page: 1, PageSize: 2})
 	require.NoError(t, err)
 	require.Len(t, multi.Items, 2)
 	assert.Equal(t, "2026-12", multi.Items[0].Period)
-	assert.Equal(t, "2026-11", multi.Items[1].Period)
-	assert.Greater(t, multi.Page.Total, int64(2))
+	assert.Equal(t, "2026-01", multi.Items[1].Period)
+	assert.Equal(t, int64(2), multi.Page.Total)
 }
 
 func TestOverviewTrendUsesCurrentYearMonths(t *testing.T) {
@@ -501,12 +508,91 @@ func TestRemainingValueUsesFullRemainingTimePastOneCycle(t *testing.T) {
 	assert.Equal(t, want, direct)
 }
 
+func TestGetServersOmitsDeletedClients(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 27, 12, 0)
+	expiry := now.AddDate(1, 0, 0)
+	live := saveClient(t, db, models.Client{Name: "Legend_SG", Price: 70, BillingCycle: 1095, Currency: "USD", ExpiredAt: &expiry})
+	gone := saveClient(t, db, models.Client{Name: "Neburst_HK", Price: 383.04, BillingCycle: 365, Currency: "USD", ExpiredAt: &expiry})
+	require.NoError(t, EnsureInitialPriceVersions(db, now))
+	require.NoError(t, db.Delete(&models.Client{}, "uuid = ?", gone.UUID).Error)
+
+	page, err := GetServers(context.Background(), db, ServerQuery{Currency: "USD", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, live.UUID, page.Items[0].Client)
+	assert.Equal(t, "Legend_SG", page.Items[0].Name)
+
+	remaining, expiring, err := remainingValueSummary(context.Background(), db, "USD", now)
+	require.NoError(t, err)
+	assert.Greater(t, remaining, int64(0))
+	assert.Equal(t, 0, expiring)
+
+	require.NoError(t, CloseOrphanedPriceVersions(db, now))
+	var open int64
+	require.NoError(t, db.Model(&models.BillingPriceVersion{}).Where("client = ? AND effective_to IS NULL", gone.UUID).Count(&open).Error)
+	assert.Zero(t, open)
+
+	overview, err := GetOverview(context.Background(), db, "USD", now)
+	require.NoError(t, err)
+	assert.NotEqual(t, "0.000000", overview.Summary.Month.Base)
+	monthly, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "USD", Now: now, PageSize: 20})
+	require.NoError(t, err)
+	august := periodByKey(monthly.Items, "2026-08")
+	assert.Equal(t, 1, august.ServerCount)
+	entries, err := GetEntries(context.Background(), db, EntryQuery{
+		Currency: "USD", From: "2026-08-01", To: "2026-08-31", Page: 1, PageSize: 100, Now: now,
+	})
+	require.NoError(t, err)
+	for _, row := range entries.Items {
+		assert.NotEqual(t, gone.UUID, row.Client)
+		assert.NotEqual(t, "Neburst_HK", row.ClientName)
+	}
+	assert.NotEmpty(t, entries.Items)
+}
+
+func TestThirtyDayCycleKeepsListedMonthlyPrice(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 27, 12, 0)
+	client := saveClient(t, db, models.Client{Name: "VMRack_LAX_L3_01", Price: 4, BillingCycle: 30, Currency: "USD"})
+	require.NoError(t, EnsureInitialPriceVersions(db, beijingTime(2026, time.August, 1, 0, 0)))
+
+	daily, monthlyNative, yearly, err := cycleAverageMicros(models.BillingPriceVersion{PriceMicros: 4_000_000, BillingCycleDays: 30})
+	require.NoError(t, err)
+	assert.Equal(t, int64(4_000_000/30), daily)
+	assert.Equal(t, int64(4_000_000), monthlyNative)
+	assert.Equal(t, int64(48_000_000), yearly)
+
+	page, err := GetEntries(context.Background(), db, EntryQuery{
+		Currency: "USD", Client: client.UUID, From: "2026-08-01", To: "2026-08-31", Page: 1, PageSize: 20, Now: now,
+	})
+	require.NoError(t, err)
+	found := false
+	for _, row := range page.Items {
+		if row.Type != EntryTypeBaseAccrual {
+			continue
+		}
+		found = true
+		assert.Equal(t, "4.000000", row.OriginalAmount)
+	}
+	assert.True(t, found)
+
+	servers, err := GetServers(context.Background(), db, ServerQuery{Currency: "USD", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Len(t, servers.Items, 1)
+	require.NotNil(t, servers.Items[0].MonthlyAverage)
+	assert.Equal(t, "4.000000", *servers.Items[0].MonthlyAverage)
+}
+
 func TestRemainingValueSummaryExcludesAlreadyExpiredServers(t *testing.T) {
 	db := billingTestDB(t)
 	now := beijingTime(2026, time.August, 25, 12, 0)
 	expiredAt := now.Add(-time.Minute)
 	nearExpiry := now.Add(12 * time.Hour)
 	farExpiry := now.AddDate(0, 0, 31)
+	saveClient(t, db, models.Client{UUID: "expired", Name: "expired"})
+	saveClient(t, db, models.Client{UUID: "near", Name: "near"})
+	saveClient(t, db, models.Client{UUID: "far", Name: "far"})
 	versions := []models.BillingPriceVersion{
 		{Client: "expired", ClientName: "expired", PriceMicros: 30_000_000, Currency: "CNY", CurrencyValid: true, BillingCycleDays: 30, EffectiveFrom: now.AddDate(0, -1, 0), ExpiredAt: &expiredAt, Source: PriceSourceMigration},
 		{Client: "near", ClientName: "near", PriceMicros: 30_000_000, Currency: "CNY", CurrencyValid: true, BillingCycleDays: 30, EffectiveFrom: now.AddDate(0, -1, 0), ExpiredAt: &nearExpiry, Source: PriceSourceMigration},
@@ -598,6 +684,7 @@ func TestGetEntriesShowsCommittedBaseInsteadOfDailyAccrual(t *testing.T) {
 		if row.Type == EntryTypeBaseAccrual {
 			monthBase++
 			assert.Equal(t, "base-node", row.ClientName)
+			assert.Equal(t, "30.000000", row.OriginalAmount)
 			assert.NotContains(t, row.Note, "daily")
 		}
 	}

@@ -48,6 +48,7 @@ func (s *Store) seriesPhysicalUsesOnlyRawCached(ctx context.Context, query Aggre
 	}
 	q := query.Query.normalized()
 	now = now.UTC()
+	policy = s.rollupPolicyForMetric(ctx, q.MetricName)
 	rawCutoff := policy.rawCutoff(now)
 	if rawCutoff.IsZero() || !q.Start.Before(rawCutoff) {
 		return true, nil
@@ -115,8 +116,8 @@ func (s *Store) collectRelationalSeriesBatchGroups(ctx context.Context, groups [
 }
 
 func (s *Store) planRelationalSeriesCollect(ctx context.Context, group *seriesBatchGroup, now time.Time, watermarks map[string]seriesBatchWatermark) (*relationalSeriesCollectPlan, []relationalSeriesRollupScan, error) {
-	policy := s.cfg.RollupPolicy
 	query := group.query
+	policy := s.rollupPolicyForMetric(ctx, query.MetricName)
 	q := query.Query.normalized()
 	now = now.UTC()
 	rawBoundary := policy.rawCutoff(now)

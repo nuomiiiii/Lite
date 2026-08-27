@@ -491,7 +491,14 @@ func rawTagsToJSON(v any) (string, error) {
 // retained tiers, it uses the longest-retained tier so the available portion of
 // the window can still be returned.
 func (s *Store) CompatibleSeriesInterval(start, now time.Time, interval time.Duration) time.Duration {
-	policy := s.cfg.RollupPolicy
+	return compatibleSeriesInterval(s.cfg.RollupPolicy, start, now, interval)
+}
+
+func (s *Store) CompatibleSeriesIntervalForMetric(ctx context.Context, metricName string, start, now time.Time, interval time.Duration) time.Duration {
+	return compatibleSeriesInterval(s.rollupPolicyForMetric(ctx, metricName), start, now, interval)
+}
+
+func compatibleSeriesInterval(policy RollupPolicy, start, now time.Time, interval time.Duration) time.Duration {
 	if interval <= 0 || !policy.Enabled() {
 		return interval
 	}
@@ -703,7 +710,7 @@ func (s *Store) pingSeriesSummaryFromRaw(ctx context.Context, query AggregateQue
 }
 
 func (s *Store) seriesPhysicalUsesOnlyRaw(ctx context.Context, query AggregateQuery, now time.Time) (bool, error) {
-	policy := s.cfg.RollupPolicy
+	policy := s.rollupPolicyForMetric(ctx, query.MetricName)
 	if !policy.Enabled() {
 		return true, nil
 	}
@@ -772,7 +779,7 @@ func (s *Store) pingSeriesSummaryCompatibility(ctx context.Context, query Aggreg
 }
 
 func (s *Store) collectSeriesPhysicalGroups(ctx context.Context, query AggregateQuery, now time.Time, needDigest bool) (map[rollupKey]*rollupBucket, error) {
-	policy := s.cfg.RollupPolicy
+	policy := s.rollupPolicyForMetric(ctx, query.MetricName)
 	q := query.Query.normalized()
 	now = now.UTC()
 	collectRaw := func(raw Query) (map[rollupKey]*rollupBucket, error) {
@@ -835,11 +842,11 @@ func (s *Store) seriesPhysical(ctx context.Context, query AggregateQuery, now ti
 	if err := query.Validate(); err != nil {
 		return nil, err
 	}
-	policy := s.cfg.RollupPolicy
+	q := query.Query.normalized()
+	policy := s.rollupPolicyForMetric(ctx, q.MetricName)
 	if !policy.Enabled() {
 		return s.Aggregate(ctx, query)
 	}
-	q := query.Query.normalized()
 	now = now.UTC()
 
 	rawCutoff := policy.rawCutoff(now)

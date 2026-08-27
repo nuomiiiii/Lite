@@ -239,7 +239,7 @@ func publicQueryMetrics(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc
 		interval := time.Duration(0)
 		if metricDownsample {
 			interval = metricDownsampleInterval(end.Sub(start), maxPoints)
-			interval = store.CompatibleSeriesInterval(start, now, interval)
+			interval = store.CompatibleSeriesIntervalForMetric(ctx, metricKey, start, now, interval)
 		}
 		for _, entityID := range entityIDs {
 			query := metric.Query{
@@ -384,7 +384,7 @@ func publicGetPingMetricStats(ctx context.Context, req *rpc.JsonRpcRequest) (any
 	}
 	now := time.Now().UTC()
 	interval := metricDownsampleInterval(end.Sub(start), maxPoints)
-	interval = store.CompatibleSeriesInterval(start, now, interval)
+	interval = store.CompatibleSeriesIntervalForMetric(ctx, metricstore.MetricPingLatency, start, now, interval)
 
 	queries := make([]metric.AggregateQuery, 0, len(entityIDs))
 	for _, entityID := range entityIDs {

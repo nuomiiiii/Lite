@@ -127,7 +127,6 @@ func (s *Store) dashboardSeriesBatchCompatibility(ctx context.Context, queries [
 func (s *Store) planDashboardSeriesBatch(ctx context.Context, queries []AggregateQuery, now time.Time, virtualLoss []bool) ([]dashboardBatchPlan, bool, error) {
 	seen := make(map[string]struct{}, len(queries))
 	plans := make([]dashboardBatchPlan, len(queries))
-	policy := s.cfg.RollupPolicy
 	now = now.UTC()
 	for index, query := range queries {
 		if virtualLoss[index] || strings.TrimSpace(query.MetricName) == "" {
@@ -137,6 +136,7 @@ func (s *Store) planDashboardSeriesBatch(ctx context.Context, queries []Aggregat
 			return nil, false, nil
 		}
 		seen[query.MetricName] = struct{}{}
+		policy := s.rollupPolicyForMetric(ctx, query.MetricName)
 		plan := dashboardBatchPlan{
 			query:   query,
 			groups:  make(map[rollupKey]*rollupBucket),

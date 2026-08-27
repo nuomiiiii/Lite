@@ -76,6 +76,25 @@ func CapturePriceVersion(tx *gorm.DB, existing models.Client, updates map[string
 	return nil
 }
 
+func CloseOpenPriceVersions(tx *gorm.DB, clientUUID string, at time.Time) error {
+	if strings.TrimSpace(clientUUID) == "" || !tx.Migrator().HasTable(&models.BillingPriceVersion{}) {
+		return nil
+	}
+	return tx.Model(&models.BillingPriceVersion{}).
+		Where("client = ? AND effective_to IS NULL", clientUUID).
+		Update("effective_to", at.UTC()).Error
+}
+
+func CloseOrphanedPriceVersions(tx *gorm.DB, at time.Time) error {
+	if !tx.Migrator().HasTable(&models.BillingPriceVersion{}) {
+		return nil
+	}
+	return tx.Model(&models.BillingPriceVersion{}).
+		Where("effective_to IS NULL").
+		Where("NOT EXISTS (SELECT 1 FROM clients WHERE clients.uuid = billing_price_versions.client)").
+		Update("effective_to", at.UTC()).Error
+}
+
 func priceVersionFromClient(db *gorm.DB, client models.Client, source string, effectiveAt time.Time) (models.BillingPriceVersion, error) {
 	priceMicros, err := MicrosFromFloat(client.Price)
 	if err != nil {

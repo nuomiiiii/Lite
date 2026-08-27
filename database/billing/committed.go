@@ -22,9 +22,14 @@ type committedCycle struct {
 	NativeAmount int64
 }
 
+func existingClientCondition(clientColumn string) string {
+	return "EXISTS (SELECT 1 FROM clients WHERE clients.uuid = " + clientColumn + ")"
+}
+
 func listBillableVersions(ctx context.Context, db *gorm.DB, clients, nativeCurrencies []string) ([]models.BillingPriceVersion, error) {
 	query := db.WithContext(ctx).
-		Where("price_micros > 0 AND billing_cycle_days > 0 AND currency_valid = ?", true)
+		Where("price_micros > 0 AND billing_cycle_days > 0 AND currency_valid = ?", true).
+		Where(existingClientCondition("billing_price_versions.client"))
 	if len(clients) > 0 {
 		query = query.Where("client IN ?", clients)
 	}
@@ -54,6 +59,32 @@ func loadClientBillingMeta(ctx context.Context, db *gorm.DB, clients []string) (
 	return result, nil
 }
 
+func billingCycleMonths(days int) int {
+	switch days {
+	case 30:
+		return 1
+	case 90, 91, 92:
+		return 3
+	case 180, 181, 182, 183, 184:
+		return 6
+	case 365, 366:
+		return 12
+	case 730, 731:
+		return 24
+	case 1095, 1096:
+		return 36
+	default:
+		if days <= 0 {
+			return 1
+		}
+		months := (days + 15) / 30
+		if months < 1 {
+			months = 1
+		}
+		return months
+	}
+}
+
 func cycleAverageMicros(version models.BillingPriceVersion) (daily, monthly, yearly int64, err error) {
 	if version.BillingCycleDays <= 0 || version.PriceMicros <= 0 {
 		return 0, 0, 0, nil
@@ -62,11 +93,12 @@ func cycleAverageMicros(version models.BillingPriceVersion) (daily, monthly, yea
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	monthly, err = multiplyRatio(version.PriceMicros, 3652425, int64(version.BillingCycleDays)*10000*12)
+	months := int64(billingCycleMonths(version.BillingCycleDays))
+	monthly, err = multiplyRatio(version.PriceMicros, 1, months)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	yearly, err = multiplyRatio(version.PriceMicros, 3652425, int64(version.BillingCycleDays)*10000)
+	yearly, err = multiplyRatio(version.PriceMicros, 12, months)
 	return daily, monthly, yearly, err
 }
 
@@ -228,6 +260,7 @@ func addCommittedCycles(
 	available map[int]struct{},
 	cycles []committedCycle,
 	yearSet map[int]struct{},
+	monthSet map[string]struct{},
 	monthly bool,
 ) {
 	ensure := func(key string) *amountAccumulator {
@@ -249,6 +282,11 @@ func addCommittedCycles(
 		key := local.Format("2006")
 		if monthly {
 			key = local.Format("2006-01")
+			if len(monthSet) > 0 {
+				if _, ok := monthSet[key]; !ok {
+					continue
+				}
+			}
 		}
 		addCategory(ensure(key), EntryTypeBaseAccrual, cycle.Amount)
 		servers[key][cycle.Client] = struct{}{}

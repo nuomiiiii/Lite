@@ -108,6 +108,7 @@ type PeriodQuery struct {
 	Clients          []string
 	Types            []string
 	NativeCurrencies []string
+	Months           []string
 	Page             int
 	PageSize         int
 	Now              time.Time
@@ -400,6 +401,9 @@ func GetServers(ctx context.Context, db *gorm.DB, query ServerQuery) (ServerPage
 		if search != "" && !serverMatchesSearch(search, clientName, region, group, tags, version.Client) {
 			continue
 		}
+		if _, ok := clientByID[version.Client]; !ok {
+			continue
+		}
 		if query.ExpiryDays > 0 {
 			if version.ExpiredAt == nil || version.ExpiredAt.Before(query.Now) || version.ExpiredAt.After(query.Now.AddDate(0, 0, query.ExpiryDays)) {
 				continue
@@ -498,8 +502,8 @@ func serverMatchesSearch(needle, name, region, group, tags, client string) bool 
 
 func GetMonthly(ctx context.Context, db *gorm.DB, query PeriodQuery) (PeriodPage, error) {
 	query.Now = normalizedNow(query.Now)
-	if len(query.Years) == 0 {
-		query.Years = []int{BeijingDay(query.Now).Year()}
+	if err := normalizeMonthlyMonths(&query); err != nil {
+		return PeriodPage{}, err
 	}
 	return getPeriods(ctx, db, query, true)
 }
@@ -510,6 +514,36 @@ func GetYearly(ctx context.Context, db *gorm.DB, query PeriodQuery) (PeriodPage,
 		query.Years = []int{BeijingDay(query.Now).Year()}
 	}
 	return getPeriods(ctx, db, query, false)
+}
+
+func normalizeMonthlyMonths(query *PeriodQuery) error {
+	if len(query.Months) == 0 {
+		query.Months = []string{BeijingDay(query.Now).Format("2006-01")}
+	}
+	normalized := make([]string, 0, len(query.Months))
+	seen := map[string]struct{}{}
+	years := make([]int, 0, len(query.Months))
+	yearSeen := map[int]struct{}{}
+	for _, month := range query.Months {
+		parsed, err := time.ParseInLocation("2006-01", month, BeijingLocation)
+		if err != nil {
+			return invalidInputf("months contains an invalid month")
+		}
+		key := parsed.Format("2006-01")
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, key)
+		year := parsed.Year()
+		if _, ok := yearSeen[year]; !ok {
+			yearSeen[year] = struct{}{}
+			years = append(years, year)
+		}
+	}
+	query.Months = normalized
+	query.Years = years
+	return nil
 }
 
 func getPeriods(ctx context.Context, db *gorm.DB, query PeriodQuery, monthly bool) (PeriodPage, error) {
@@ -523,6 +557,7 @@ func getPeriods(ctx context.Context, db *gorm.DB, query PeriodQuery, monthly boo
 		return PeriodPage{}, err
 	}
 	yearSet := intSet(query.Years)
+	monthSet := stringSet(query.Months)
 	availableSet := map[int]struct{}{}
 	periods := map[string]*amountAccumulator{}
 	servers := map[string]map[string]struct{}{}
@@ -548,6 +583,11 @@ func getPeriods(ctx context.Context, db *gorm.DB, query PeriodQuery, monthly boo
 		period := item.Entry.Day[:4]
 		if monthly && len(item.Entry.Day) >= 7 {
 			period = item.Entry.Day[:7]
+		}
+		if monthly {
+			if _, ok := monthSet[period]; !ok {
+				continue
+			}
 		}
 		if periods[period] == nil {
 			periods[period] = &amountAccumulator{}
@@ -581,16 +621,13 @@ func getPeriods(ctx context.Context, db *gorm.DB, query PeriodQuery, monthly boo
 		if walkErr != nil {
 			return PeriodPage{}, walkErr
 		}
-		addCommittedCycles(periods, servers, availableSet, cycles, yearSet, monthly)
+		addCommittedCycles(periods, servers, availableSet, cycles, yearSet, monthSet, monthly)
 	}
 	if monthly {
-		for year := range yearSet {
-			for month := 1; month <= 12; month++ {
-				key := fmt.Sprintf("%04d-%02d", year, month)
-				if periods[key] == nil {
-					periods[key] = &amountAccumulator{}
-					servers[key] = map[string]struct{}{}
-				}
+		for _, key := range query.Months {
+			if periods[key] == nil {
+				periods[key] = &amountAccumulator{}
+				servers[key] = map[string]struct{}{}
 			}
 		}
 	}
@@ -619,12 +656,12 @@ func getPeriods(ctx context.Context, db *gorm.DB, query PeriodQuery, monthly boo
 		default:
 			row.Status = "settled"
 		}
+		if monthly {
+			completeMonths++
+			completeMonthTotal += periods[key].Total
+		}
 		if row.Status != "no_record" {
 			addAccumulator(&summary, *periods[key])
-			if monthly {
-				completeMonths++
-				completeMonthTotal += periods[key].Total
-			}
 		}
 		rows = append(rows, row)
 	}
@@ -858,7 +895,8 @@ func queryCalculatedEntries(ctx context.Context, db *gorm.DB, now time.Time, cli
 	if err := EnsureAccruedThrough(ctx, db, yesterdayInBeijing(now)); err != nil {
 		return nil, nil, nil, err
 	}
-	query := db.WithContext(ctx).Order("occurred_at ASC, id ASC")
+	query := db.WithContext(ctx).Order("occurred_at ASC, id ASC").
+		Where(existingClientCondition("billing_entries.client"))
 	if len(clients) > 0 {
 		query = query.Where("client IN ?", clients)
 	}
@@ -985,7 +1023,9 @@ func entryMatchesTypes(entry models.BillingEntry, category string, typeSet map[s
 
 func coverageStart(ctx context.Context, db *gorm.DB) (*time.Time, error) {
 	var version models.BillingPriceVersion
-	if err := db.WithContext(ctx).Order("effective_from ASC, id ASC").First(&version).Error; err != nil {
+	if err := db.WithContext(ctx).
+		Where(existingClientCondition("billing_price_versions.client")).
+		Order("effective_from ASC, id ASC").First(&version).Error; err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil
 		}
@@ -1174,9 +1214,17 @@ func remainingValueSummary(ctx context.Context, db *gorm.DB, currency string, no
 	if err := db.WithContext(ctx).Where("effective_to IS NULL").Find(&versions).Error; err != nil {
 		return 0, 0, err
 	}
+	var live []string
+	if err := db.WithContext(ctx).Model(&models.Client{}).Pluck("uuid", &live).Error; err != nil {
+		return 0, 0, err
+	}
+	liveSet := stringSet(live)
 	var total int64
 	expiring := 0
 	for _, version := range versions {
+		if _, ok := liveSet[version.Client]; !ok {
+			continue
+		}
 		value, days := remainingValue(version, currency, rates, now)
 		if value != nil {
 			amount, parseErr := ParseAmountMicros(*value)

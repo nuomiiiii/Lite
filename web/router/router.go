@@ -93,7 +93,7 @@ func registerAdminRoutes(r *gin.Engine) {
 	{
 		billingGroup.GET("/overview", jsonRpc.Bind("admin:getBillingOverview", jsonRpc.WithQuery("currency")))
 		billingGroup.GET("/servers", jsonRpc.Bind("admin:getBillingServers", jsonRpc.WithQuery("currency", "q", "native_currencies", "regions", "groups", "expiry", "page", "page_size")))
-		billingGroup.GET("/periods/monthly", jsonRpc.Bind("admin:getBillingMonthly", jsonRpc.WithQuery("currency", "years", "clients", "types", "native_currencies", "page", "page_size")))
+		billingGroup.GET("/periods/monthly", jsonRpc.Bind("admin:getBillingMonthly", jsonRpc.WithQuery("currency", "years", "months", "clients", "types", "native_currencies", "page", "page_size")))
 		billingGroup.GET("/periods/yearly", jsonRpc.Bind("admin:getBillingYearly", jsonRpc.WithQuery("currency", "years", "clients", "types", "native_currencies", "page", "page_size")))
 		billingGroup.GET("/entries", jsonRpc.Bind("admin:getBillingEntries", jsonRpc.WithQuery("currency", "client", "from", "to", "types", "q", "page", "page_size")))
 		billingGroup.POST("/entries/:id/void", jsonRpc.Bind("admin:voidBillingEntry", jsonRpc.WithPath("id")))
