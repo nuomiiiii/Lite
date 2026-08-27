@@ -369,7 +369,7 @@ func GetServers(ctx context.Context, db *gorm.DB, query ServerQuery) (ServerPage
 			committedMonth[cycle.Client] += cycle.Amount
 		}
 	}
-	nativeSet := stringSet(query.NativeCurrencies)
+	nativeSet := stringSet(CanonicalNativeCurrencies(query.NativeCurrencies))
 	regionSet := stringSet(query.Regions)
 	groupSet := stringSet(query.Groups)
 	search := strings.ToLower(strings.TrimSpace(query.Search))
@@ -379,8 +379,15 @@ func GetServers(ctx context.Context, db *gorm.DB, query ServerQuery) (ServerPage
 		if client, ok := clientByID[version.Client]; ok {
 			clientName, region, group, tags = client.Name, client.Region, client.Group, client.Tags
 		}
-		if len(nativeSet) > 0 {
-			if _, ok := nativeSet[version.Currency]; !ok {
+		if len(query.NativeCurrencies) > 0 {
+			if len(nativeSet) == 0 {
+				continue
+			}
+			canonical, ok := NormalizeCurrency(version.Currency)
+			if !ok {
+				canonical = version.Currency
+			}
+			if _, match := nativeSet[canonical]; !match {
 				continue
 			}
 		}
@@ -734,7 +741,7 @@ func GetEntries(ctx context.Context, db *gorm.DB, query EntryQuery) (EntryPage, 
 			ConvertedAmount: converted, ConvertedCurrency: currency, PendingFX: !ok, ReversalOf: item.Entry.ReversalOf,
 			Note: item.Entry.Note, Operator: item.Entry.Operator,
 			Voidable: item.Entry.ID > 0 && item.Entry.Type != EntryTypeReversal && !voided,
-			Voided: voided,
+			Voided:   voided,
 		})
 	}
 	typeSet := stringSet(query.Types)
@@ -901,7 +908,12 @@ func queryCalculatedEntries(ctx context.Context, db *gorm.DB, now time.Time, cli
 		query = query.Where("client IN ?", clients)
 	}
 	if len(nativeCurrencies) > 0 {
-		query = query.Where("original_currency IN ?", nativeCurrencies)
+		canonical := CanonicalNativeCurrencies(nativeCurrencies)
+		if len(canonical) == 0 {
+			query = query.Where("1 = 0")
+		} else {
+			query = query.Where("original_currency IN ?", canonical)
+		}
 	}
 	if from != "" {
 		query = query.Where("day >= ?", from)
@@ -918,15 +930,22 @@ func queryCalculatedEntries(ctx context.Context, db *gorm.DB, now time.Time, cli
 		return nil, nil, nil, err
 	}
 	clientSet := stringSet(clients)
-	nativeSet := stringSet(nativeCurrencies)
+	nativeSet := stringSet(CanonicalNativeCurrencies(nativeCurrencies))
 	for _, entry := range current {
 		if len(clientSet) > 0 {
 			if _, ok := clientSet[entry.Client]; !ok {
 				continue
 			}
 		}
-		if len(nativeSet) > 0 {
-			if _, ok := nativeSet[entry.OriginalCurrency]; !ok {
+		if len(nativeCurrencies) > 0 {
+			if len(nativeSet) == 0 {
+				continue
+			}
+			canonical, ok := NormalizeCurrency(entry.OriginalCurrency)
+			if !ok {
+				canonical = entry.OriginalCurrency
+			}
+			if _, match := nativeSet[canonical]; !match {
 				continue
 			}
 		}

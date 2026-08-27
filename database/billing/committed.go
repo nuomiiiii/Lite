@@ -34,7 +34,12 @@ func listBillableVersions(ctx context.Context, db *gorm.DB, clients, nativeCurre
 		query = query.Where("client IN ?", clients)
 	}
 	if len(nativeCurrencies) > 0 {
-		query = query.Where("currency IN ?", nativeCurrencies)
+		canonical := CanonicalNativeCurrencies(nativeCurrencies)
+		if len(canonical) == 0 {
+			query = query.Where("1 = 0")
+		} else {
+			query = query.Where("currency IN ?", canonical)
+		}
 	}
 	var versions []models.BillingPriceVersion
 	if err := query.Order("effective_from ASC, id ASC").Find(&versions).Error; err != nil {

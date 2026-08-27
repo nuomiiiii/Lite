@@ -888,6 +888,9 @@ func doInitialize() error {
 	if err := billing.EnsureInitialPriceVersions(instance, time.Now().UTC()); err != nil {
 		return fmt.Errorf("failed to initialize billing price versions: %w", err)
 	}
+	if err := billing.ReconcileStoredCurrencies(instance); err != nil {
+		return fmt.Errorf("failed to reconcile billing currencies: %w", err)
+	}
 	if err := billing.BackfillPriceVersionFX(instance); err != nil {
 		return fmt.Errorf("failed to backfill billing FX snapshots: %w", err)
 	}

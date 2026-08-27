@@ -50,7 +50,7 @@ func saveFX(t *testing.T, db *gorm.DB, fetchedAt time.Time, cny, cad string) mod
 	t.Helper()
 	snapshot := models.BillingFXSnapshot{
 		Provider: FXProvider, BaseCurrency: "USD",
-		RatesJSON: fmt.Sprintf(`{"CAD":"%s","CNY":"%s","USD":"1"}`, cad, cny),
+		RatesJSON: fmt.Sprintf(`{"CAD":"%s","CNY":"%s","EUR":"0.92","GBP":"0.78","USD":"1"}`, cad, cny),
 		FetchedAt: fetchedAt.UTC(),
 	}
 	require.NoError(t, db.Create(&snapshot).Error)
@@ -93,10 +93,51 @@ func TestNormalizeCurrencyUsesISORegistry(t *testing.T) {
 		assert.True(t, valid, value)
 		assert.Equal(t, strings.ToUpper(value), normalized)
 	}
+	for _, tc := range []struct{ in, want string }{
+		{"¥", "CNY"},
+		{"$", "USD"},
+		{"€", "EUR"},
+		{"£", "GBP"},
+		{"C$", "CAD"},
+		{"CAD", "CAD"},
+	} {
+		normalized, valid := NormalizeCurrency(tc.in)
+		assert.True(t, valid, tc.in)
+		assert.Equal(t, tc.want, normalized, tc.in)
+	}
 	for _, value := range []string{"XYZ", "ABC", "12A"} {
 		_, valid := NormalizeCurrency(value)
 		assert.False(t, valid, value)
 	}
+}
+
+func TestReconcileStoredCurrencySymbols(t *testing.T) {
+	db := billingTestDB(t)
+	saveFX(t, db, time.Now().UTC(), "7.2", "1.35")
+	euro := saveClient(t, db, models.Client{Name: "eu", Price: 23.33, BillingCycle: 365, Currency: "€"})
+	require.NoError(t, db.Create(&models.BillingPriceVersion{
+		Client: euro.UUID, ClientName: euro.Name, PriceMicros: 23_330_000,
+		Currency: "€", CurrencyValid: false, BillingCycleDays: 365,
+		EffectiveFrom: time.Now().UTC(), Source: PriceSourceMigration,
+	}).Error)
+	pound := saveClient(t, db, models.Client{Name: "uk", Price: 1.99, BillingCycle: 30, Currency: "£"})
+	require.NoError(t, db.Create(&models.BillingPriceVersion{
+		Client: pound.UUID, ClientName: pound.Name, PriceMicros: 1_990_000,
+		Currency: "£", CurrencyValid: false, BillingCycleDays: 30,
+		EffectiveFrom: time.Now().UTC(), Source: PriceSourceMigration,
+	}).Error)
+	require.NoError(t, ReconcileStoredCurrencies(db))
+	require.NoError(t, BackfillPriceVersionFX(db))
+
+	var euroVersion, poundVersion models.BillingPriceVersion
+	require.NoError(t, db.Where("client = ?", euro.UUID).First(&euroVersion).Error)
+	require.NoError(t, db.Where("client = ?", pound.UUID).First(&poundVersion).Error)
+	assert.Equal(t, "EUR", euroVersion.Currency)
+	assert.True(t, euroVersion.CurrencyValid)
+	require.NotNil(t, euroVersion.FXSnapshotID)
+	assert.Equal(t, "GBP", poundVersion.Currency)
+	assert.True(t, poundVersion.CurrencyValid)
+	require.NotNil(t, poundVersion.FXSnapshotID)
 }
 
 func strconvInt64(t *testing.T, value string) int64 {

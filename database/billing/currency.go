@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/nuomiiiii/lite/database/models"
 	xcurrency "golang.org/x/text/currency"
+	"gorm.io/gorm"
 )
 
 const MicrosPerUnit int64 = 1_000_000
@@ -15,6 +17,8 @@ const MicrosPerUnit int64 = 1_000_000
 var legacyCurrencies = map[string]string{
 	"$": "USD", "US$": "USD", "USD": "USD",
 	"¥": "CNY", "￥": "CNY", "RMB": "CNY", "CNY": "CNY",
+	"€": "EUR", "EUR": "EUR",
+	"£": "GBP", "GBP": "GBP",
 	"C$": "CAD", "CA$": "CAD", "CAD": "CAD",
 }
 
@@ -28,6 +32,62 @@ func NormalizeCurrency(value string) (string, bool) {
 		return upper, true
 	}
 	return trimmed, false
+}
+
+func CanonicalNativeCurrencies(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		canonical, ok := NormalizeCurrency(value)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[canonical]; exists {
+			continue
+		}
+		seen[canonical] = struct{}{}
+		out = append(out, canonical)
+	}
+	return out
+}
+
+func ReconcileStoredCurrencies(db *gorm.DB) error {
+	if db == nil {
+		return nil
+	}
+	var versions []models.BillingPriceVersion
+	if err := db.Find(&versions).Error; err != nil {
+		return fmt.Errorf("list billing versions for currency reconcile: %w", err)
+	}
+	for _, version := range versions {
+		canonical, valid := NormalizeCurrency(version.Currency)
+		if !valid || (version.Currency == canonical && version.CurrencyValid) {
+			continue
+		}
+		if err := db.Model(&models.BillingPriceVersion{}).Where("id = ?", version.ID).
+			Select("currency", "currency_valid").
+			Updates(map[string]interface{}{
+				"currency":       canonical,
+				"currency_valid": valid,
+			}).Error; err != nil {
+			return fmt.Errorf("reconcile billing version %d currency: %w", version.ID, err)
+		}
+	}
+	var entries []models.BillingEntry
+	if err := db.Find(&entries).Error; err != nil {
+		return fmt.Errorf("list billing entries for currency reconcile: %w", err)
+	}
+	for _, entry := range entries {
+		canonical, valid := NormalizeCurrency(entry.OriginalCurrency)
+		if !valid || entry.OriginalCurrency == canonical {
+			continue
+		}
+		if err := db.Model(&models.BillingEntry{}).Where("id = ?", entry.ID).
+			Update("original_currency", canonical).Error; err != nil {
+			return fmt.Errorf("reconcile billing entry %d currency: %w", entry.ID, err)
+		}
+	}
+	return nil
 }
 
 func ParseAmountMicros(value string) (int64, error) {
