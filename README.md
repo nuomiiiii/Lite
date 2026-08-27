@@ -1,5 +1,3 @@
-# Lite
-
 ![Lite](docs/assets/branding/lite-banner.svg)
 
 [![Release](https://img.shields.io/github/v/release/nuomiiiii/lite?label=release)](https://github.com/nuomiiiii/lite/releases)
