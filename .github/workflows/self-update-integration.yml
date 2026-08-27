@@ -41,6 +41,7 @@ jobs:
         uses: ./.github/actions/build-frontend
         with:
           ref: main
+          theme-ref: main
 
       - name: Run updater unit tests
         run: go test ./pkg/selfupdate ./web/rpc/jsonrpc

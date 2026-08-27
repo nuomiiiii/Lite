@@ -16,6 +16,11 @@ on:
         required: true
         default: main
         type: string
+      theme_ref:
+        description: Lite-theme branch or tag. Leave empty to use main.
+        required: false
+        default: main
+        type: string
 
 permissions:
   actions: write
@@ -33,6 +38,7 @@ jobs:
       version: ${{ steps.validate.outputs.version }}
       version_hash: ${{ steps.validate.outputs.version_hash }}
       web_ref: ${{ steps.validate.outputs.web_ref }}
+      theme_ref: ${{ steps.validate.outputs.theme_ref }}
     steps:
       - name: Validate release metadata
         id: validate
@@ -40,15 +46,18 @@ jobs:
           VERSION: ${{ inputs.tag }}
           VERSION_HASH: ${{ inputs.version_hash }}
           WEB_REF: ${{ inputs.web_ref }}
+          THEME_REF: ${{ inputs.theme_ref }}
         shell: bash
         run: |
           set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version: $VERSION" >&2; exit 1; }
           [[ "$VERSION_HASH" =~ ^[A-Za-z0-9]{7}$ ]] || { echo "Invalid version identifier: $VERSION_HASH" >&2; exit 1; }
           [ -n "$WEB_REF" ] || { echo "Lite-web ref cannot be empty." >&2; exit 1; }
+          THEME_REF="${THEME_REF:-main}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "version_hash=$VERSION_HASH" >> "$GITHUB_OUTPUT"
           echo "web_ref=$WEB_REF" >> "$GITHUB_OUTPUT"
+          echo "theme_ref=$THEME_REF" >> "$GITHUB_OUTPUT"
 
   build-frontend:
     needs: prepare
@@ -61,6 +70,7 @@ jobs:
         uses: ./.github/actions/build-frontend
         with:
           ref: ${{ needs.prepare.outputs.web_ref }}
+          theme-ref: ${{ needs.prepare.outputs.theme_ref }}
           expected-version: ${{ needs.prepare.outputs.version }}
           artifact-name: lite-frontend
 

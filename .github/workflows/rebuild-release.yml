@@ -21,6 +21,11 @@ on:
         required: false
         default: ""
         type: string
+      theme_ref:
+        description: Lite-theme branch or tag. Leave empty to use main.
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: write
@@ -47,6 +52,7 @@ jobs:
           VERSION: ${{ inputs.release_tag }}
           REQUESTED_HASH: ${{ inputs.version_hash }}
           FRONTEND_REF: ${{ inputs.frontend_ref }}
+          THEME_REF: ${{ inputs.theme_ref }}
         shell: bash
         run: |
           set -euo pipefail
@@ -80,6 +86,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "version_hash=$VERSION_HASH" >> "$GITHUB_OUTPUT"
           echo "frontend_ref=$FRONTEND_REF" >> "$GITHUB_OUTPUT"
+          echo "theme_ref=${THEME_REF:-main}" >> "$GITHUB_OUTPUT"
 
       - name: Move version tag to selected source
         env:
@@ -116,6 +123,7 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
           VERSION_HASH: ${{ steps.metadata.outputs.version_hash }}
           FRONTEND_REF: ${{ steps.metadata.outputs.frontend_ref }}
+          THEME_REF: ${{ steps.metadata.outputs.theme_ref }}
           SERVER_REF: ${{ inputs.server_ref }}
         shell: bash
         run: |
@@ -124,4 +132,5 @@ jobs:
             --ref "$SERVER_REF" \
             -f tag="$VERSION" \
             -f version_hash="$VERSION_HASH" \
-            -f web_ref="$FRONTEND_REF"
+            -f web_ref="$FRONTEND_REF" \
+            -f theme_ref="$THEME_REF"

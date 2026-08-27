@@ -21,6 +21,11 @@ on:
         required: false
         default: ""
         type: string
+      theme_ref:
+        description: Lite-theme branch or tag. Leave empty to use main.
+        required: false
+        default: ""
+        type: string
 
 permissions:
   actions: write
@@ -47,6 +52,7 @@ jobs:
           VERSION: ${{ inputs.version }}
           REQUESTED_HASH: ${{ inputs.version_hash }}
           WEB_REF: ${{ inputs.web_ref }}
+          THEME_REF: ${{ inputs.theme_ref }}
         shell: bash
         run: |
           set -euo pipefail
@@ -94,6 +100,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "version_hash=$VERSION_HASH" >> "$GITHUB_OUTPUT"
           echo "web_ref=$WEB_REF" >> "$GITHUB_OUTPUT"
+          echo "theme_ref=${THEME_REF:-main}" >> "$GITHUB_OUTPUT"
           echo "Release display version: $VERSION ($VERSION_HASH), Lite-web ${WEB_REF} (${WEB_VERSION})"
 
       - name: Create version-only tag and release
@@ -138,6 +145,7 @@ jobs:
           VERSION: ${{ steps.metadata.outputs.version }}
           VERSION_HASH: ${{ steps.metadata.outputs.version_hash }}
           WEB_REF: ${{ steps.metadata.outputs.web_ref }}
+          THEME_REF: ${{ steps.metadata.outputs.theme_ref }}
         shell: bash
         run: |
           gh workflow run release.yml \
@@ -145,4 +153,5 @@ jobs:
             --ref "$VERSION" \
             -f tag="$VERSION" \
             -f version_hash="$VERSION_HASH" \
-            -f web_ref="$WEB_REF"
+            -f web_ref="$WEB_REF" \
+            -f theme_ref="$THEME_REF"
