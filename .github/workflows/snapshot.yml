@@ -84,6 +84,7 @@ jobs:
         with:
           artifact-name: lite-frontend
           ref: Snapshot
+          theme-ref: main
 
   test-backend:
     needs: build-frontend

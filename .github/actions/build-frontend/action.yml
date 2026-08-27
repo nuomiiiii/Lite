@@ -1,9 +1,9 @@
 name: Build system UI
-description: Clone Lite-web, build the theme-independent system UI, and optionally upload it as an artifact.
+description: Clone Lite-web and Lite-theme, build the system UI and bundled public theme, and optionally upload them as an artifact.
 
 inputs:
   node-version:
-    description: Node.js version used to build Lite-web.
+    description: Node.js version used to build Lite-web and Lite-theme.
     default: "24"
   repository:
     description: Lite-web Git clone URL. Leave empty to use the sibling repo under the current GitHub owner.
@@ -11,11 +11,17 @@ inputs:
   ref:
     description: Optional Lite-web ref to build. Uses the repository default branch when empty.
     default: main
+  theme-repository:
+    description: Lite-theme Git clone URL. Leave empty to use the sibling repo under the current GitHub owner.
+    default: ""
+  theme-ref:
+    description: Optional Lite-theme ref to build. Uses main when empty.
+    default: main
   expected-version:
     description: If set, fail unless Lite-web package.json version matches this x.y.z.
     default: ""
   artifact-name:
-    description: Optional artifact name for the packed system UI.
+    description: Optional artifact name for the packed system UI and bundled theme.
     default: ""
 
 runs:
@@ -26,14 +32,16 @@ runs:
       with:
         node-version: ${{ inputs.node-version }}
 
-    - name: Clone and build system UI
+    - name: Clone and build system UI and public theme
       shell: bash
       run: |
         set -euxo pipefail
+        owner="${{ github.repository_owner }}"
+
         rm -rf Lite-web
         repo="${{ inputs.repository }}"
         if [ -z "$repo" ]; then
-          repo="https://github.com/${{ github.repository_owner }}/Lite-web"
+          repo="https://github.com/${owner}/Lite-web"
         fi
         if [ -n "${{ inputs.ref }}" ]; then
           git clone --depth=1 --branch "${{ inputs.ref }}" "$repo" Lite-web
@@ -58,20 +66,53 @@ runs:
         mkdir -p web/public/systemUI
         cp -r Lite-web/dist web/public/systemUI/
 
+        theme_dir="$RUNNER_TEMP/Lite-theme"
+        rm -rf "$theme_dir"
+        theme_repo="${{ inputs.theme-repository }}"
+        if [ -z "$theme_repo" ]; then
+          theme_repo="https://github.com/${owner}/Lite-theme"
+        fi
+        theme_ref="${{ inputs.theme-ref }}"
+        if [ -z "$theme_ref" ]; then
+          theme_ref="main"
+        fi
+        git clone --depth=1 --branch "$theme_ref" "$theme_repo" "$theme_dir"
+        (
+          cd "$theme_dir"
+          npm ci
+          npm run build
+        )
+
+        install_theme() {
+          dest="$1"
+          rm -rf "$dest"
+          mkdir -p "$dest"
+          cp "$theme_dir/Lite-theme.json" "$dest/"
+          cp "$theme_dir/preview.png" "$dest/"
+          cp -r "$theme_dir/dist" "$dest/"
+        }
+        install_theme web/public/bundledThemes/Lite-theme
+        install_theme web/public/rescueTheme
+
         grep -F '/system-assets/' web/public/systemUI/dist/index.html
         test -f web/public/bundledThemes/Lite-theme/Lite-theme.json
+        test -f web/public/bundledThemes/Lite-theme/preview.png
         test -f web/public/bundledThemes/Lite-theme/dist/index.html
         test -f web/public/rescueTheme/Lite-theme.json
+        test -f web/public/rescueTheme/preview.png
         test -f web/public/rescueTheme/dist/index.html
         test ! -e web/public/rescueTheme/komari-theme.json
         test ! -e web/public/bundledThemes/nezha
+        grep -F 'lite-icon-0e86dd' web/public/rescueTheme/dist/index.html
+        grep -F '/assets/index.' web/public/rescueTheme/dist/index.html
 
     - name: Pack frontend artifact
       if: ${{ inputs.artifact-name != '' }}
       shell: bash
       run: |
         set -euxo pipefail
-        tar -czf "$RUNNER_TEMP/${{ inputs.artifact-name }}.tar.gz" -C web/public/systemUI .
+        tar -czf "$RUNNER_TEMP/${{ inputs.artifact-name }}.tar.gz" -C web/public \
+          systemUI bundledThemes/Lite-theme rescueTheme
 
     - name: Upload frontend artifact
       if: ${{ inputs.artifact-name != '' }}

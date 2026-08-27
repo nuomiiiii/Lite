@@ -465,6 +465,42 @@ func TestRecurringFeesStayOnLockedFXWhileRemainingValueUsesLatest(t *testing.T) 
 	assert.NotEqual(t, lockedRemaining, *after.Items[0].RemainingValue)
 }
 
+func TestRemainingValueUsesFullRemainingTimePastOneCycle(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 27, 12, 0)
+	expiry := now.Add(395 * 24 * time.Hour)
+	saveClient(t, db, models.Client{
+		Name: "Neburst_HK", Price: 383.04, BillingCycle: 365, Currency: "USD", ExpiredAt: &expiry,
+	})
+	require.NoError(t, EnsureInitialPriceVersions(db, now))
+
+	page, err := GetServers(context.Background(), db, ServerQuery{Currency: "USD", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	require.NotNil(t, page.Items[0].RemainingDays)
+	assert.Equal(t, 395, *page.Items[0].RemainingDays)
+	require.NotNil(t, page.Items[0].RemainingValue)
+
+	priceMicros, err := MicrosFromFloat(383.04)
+	require.NoError(t, err)
+	want, err := multiplyRatio(priceMicros, (395 * 24 * time.Hour).Nanoseconds(), (365 * 24 * time.Hour).Nanoseconds())
+	require.NoError(t, err)
+	got, err := ParseAmountMicros(*page.Items[0].RemainingValue)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	assert.Greater(t, got, priceMicros)
+
+	value, days := remainingValue(models.BillingPriceVersion{
+		PriceMicros: priceMicros, Currency: "USD", BillingCycleDays: 365, ExpiredAt: &expiry,
+	}, "USD", nil, now)
+	require.NotNil(t, value)
+	require.NotNil(t, days)
+	assert.Equal(t, 395, *days)
+	direct, err := ParseAmountMicros(*value)
+	require.NoError(t, err)
+	assert.Equal(t, want, direct)
+}
+
 func TestRemainingValueSummaryExcludesAlreadyExpiredServers(t *testing.T) {
 	db := billingTestDB(t)
 	now := beijingTime(2026, time.August, 25, 12, 0)

@@ -1,5 +1,5 @@
 name: Restore system UI
-description: Download and unpack a previously built theme-independent system UI artifact.
+description: Download and unpack a previously built system UI and bundled public theme artifact.
 
 inputs:
   artifact-name:
@@ -19,7 +19,12 @@ runs:
       shell: bash
       run: |
         set -euxo pipefail
-        rm -rf web/public/systemUI
-        mkdir -p web/public/systemUI
-        tar -xzf "$RUNNER_TEMP/frontend-artifact/${{ inputs.artifact-name }}.tar.gz" -C web/public/systemUI
+        rm -rf web/public/systemUI web/public/bundledThemes/Lite-theme web/public/rescueTheme
+        mkdir -p web/public
+        tar -xzf "$RUNNER_TEMP/frontend-artifact/${{ inputs.artifact-name }}.tar.gz" -C web/public
         grep -F '/system-assets/' web/public/systemUI/dist/index.html
+        test -f web/public/bundledThemes/Lite-theme/Lite-theme.json
+        test -f web/public/bundledThemes/Lite-theme/dist/index.html
+        test -f web/public/rescueTheme/Lite-theme.json
+        test -f web/public/rescueTheme/dist/index.html
+        test ! -e web/public/rescueTheme/komari-theme.json

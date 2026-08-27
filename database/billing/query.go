@@ -1158,9 +1158,6 @@ func remainingValue(version models.BillingPriceVersion, currency string, rates m
 		return &value, &days
 	}
 	cycle := time.Duration(version.BillingCycleDays) * 24 * time.Hour
-	if remaining > cycle {
-		remaining = cycle
-	}
 	amount, err := multiplyRatio(version.PriceMicros, remaining.Nanoseconds(), cycle.Nanoseconds())
 	if err != nil {
 		return nil, &days

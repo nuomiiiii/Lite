@@ -588,7 +588,7 @@ func TestStaticKeepsSystemUIAndPublicThemeResourcesIsolated(t *testing.T) {
 	if publicPage.Code != http.StatusOK || !strings.Contains(publicPage.Body.String(), "data-public-custom-head") {
 		t.Fatalf("public rescue page status=%d body=%q", publicPage.Code, publicPage.Body.String())
 	}
-	if !strings.Contains(publicPage.Body.String(), "font-logos") {
+	if !strings.Contains(publicPage.Body.String(), "vite-ui-theme") {
 		t.Fatal("missing public theme did not use the embedded Lite-Theme rescue page")
 	}
 
@@ -603,7 +603,7 @@ func TestStaticKeepsSystemUIAndPublicThemeResourcesIsolated(t *testing.T) {
 	if !strings.Contains(adminPage.Body.String(), "/system-assets/") {
 		t.Fatal("system UI did not reference its independent asset prefix")
 	}
-	if strings.Contains(adminPage.Body.String(), "data-public-custom-head") || strings.Contains(adminPage.Body.String(), "font-logos") {
+	if strings.Contains(adminPage.Body.String(), "data-public-custom-head") || strings.Contains(adminPage.Body.String(), "vite-ui-theme") {
 		t.Fatal("public theme content leaked into the system UI")
 	}
 
@@ -649,8 +649,8 @@ func TestRescueThemeShipsLiteThemeManifest(t *testing.T) {
 	if !strings.Contains(string(index), "lite-icon-0e86dd") {
 		t.Fatal("rescue index is not Lite-Theme")
 	}
-	if !strings.Contains(string(index), "index.BuQ1vQ1u.js") {
-		t.Fatal("rescue index is not the current Lite-Theme build")
+	if !strings.Contains(string(index), `/assets/index.`) || !strings.Contains(string(index), ".js") {
+		t.Fatal("rescue index is not a Lite-Theme production build")
 	}
 }
 
