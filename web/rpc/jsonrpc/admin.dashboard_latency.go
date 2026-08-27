@@ -65,7 +65,7 @@ func loadDashboardLatency(ctx context.Context, clientList []models.Client, now t
 		return result, fmt.Errorf("metric store is not initialized")
 	}
 	start := now.Add(-6 * time.Hour)
-	interval := store.CompatibleSeriesInterval(start, now, time.Hour)
+	interval := store.CompatibleSeriesIntervalForMetric(ctx, metricstore.MetricPingLatency, start, now, time.Hour)
 	series, err := store.DashboardSeries(ctx, metric.AggregateQuery{
 		Query: metric.Query{
 			MetricName: metricstore.MetricPingLatency,

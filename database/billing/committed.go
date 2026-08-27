@@ -260,6 +260,7 @@ func addCommittedCycles(
 	available map[int]struct{},
 	cycles []committedCycle,
 	yearSet map[int]struct{},
+	monthSet map[string]struct{},
 	monthly bool,
 ) {
 	ensure := func(key string) *amountAccumulator {
@@ -281,6 +282,11 @@ func addCommittedCycles(
 		key := local.Format("2006")
 		if monthly {
 			key = local.Format("2006-01")
+			if len(monthSet) > 0 {
+				if _, ok := monthSet[key]; !ok {
+					continue
+				}
+			}
 		}
 		addCategory(ensure(key), EntryTypeBaseAccrual, cycle.Amount)
 		servers[key][cycle.Client] = struct{}{}

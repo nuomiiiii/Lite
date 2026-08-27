@@ -172,6 +172,53 @@ func TestGetPingRecordsReadsRollupsAfterRawCompaction(t *testing.T) {
 	}
 }
 
+func TestGetPingRecordsKeepsRequestedWindowInsideLongerRetention(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	s, err := metric.Open(ctx, metric.SQLite(":memory:",
+		metric.WithMaxOpenConns(1),
+		metric.WithRollupPolicy(defaultRollupPolicy()),
+	))
+	if err != nil {
+		t.Fatalf("open metric store: %v", err)
+	}
+	defer s.Close()
+	if err := s.UpsertMetric(ctx, metric.Definition{
+		Name:          MetricPingLatency,
+		Type:          metric.TypeGauge,
+		RetentionDays: 60,
+	}); err != nil {
+		t.Fatalf("create ping metric: %v", err)
+	}
+	if err := s.WriteBatch(ctx, []metric.Point{
+		{MetricName: MetricPingLatency, EntityID: "node-a", Timestamp: now.Add(-20 * 24 * time.Hour).Add(15 * time.Minute), Value: 20, Tags: map[string]string{"task_id": "7"}},
+		{MetricName: MetricPingLatency, EntityID: "node-a", Timestamp: now.Add(-50 * 24 * time.Hour).Add(15 * time.Minute), Value: 50, Tags: map[string]string{"task_id": "7"}},
+	}); err != nil {
+		t.Fatalf("write ping points: %v", err)
+	}
+	if _, err := s.Compact(ctx, now); err != nil {
+		t.Fatalf("compact ping points: %v", err)
+	}
+
+	storeMu.Lock()
+	oldStore := store
+	store = s
+	storeMu.Unlock()
+	defer func() {
+		storeMu.Lock()
+		store = oldStore
+		storeMu.Unlock()
+	}()
+
+	records, err := GetPingRecords(ctx, "node-a", 7, now.Add(-30*24*time.Hour), now)
+	if err != nil {
+		t.Fatalf("get ping records: %v", err)
+	}
+	if len(records) != 1 || records[0].Value != 20 {
+		t.Fatalf("30-day request should return the 20-day point only, got %#v", records)
+	}
+}
+
 func TestGetGPURecordsReadsRollupsAfterRawCompaction(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Minute)

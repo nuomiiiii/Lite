@@ -105,7 +105,7 @@ func getPingLossStatsWithStore(ctx context.Context, store *metric.Store, clientU
 	if store == nil {
 		return pingLossStats{}, fmt.Errorf("metric store is not initialized")
 	}
-	interval := store.CompatibleSeriesInterval(start, end, time.Minute)
+	interval := store.CompatibleSeriesIntervalForMetric(ctx, metricstore.MetricPingLoss, start, end, time.Minute)
 	points, err := store.Series(ctx, metric.AggregateQuery{
 		Query: metric.Query{
 			MetricName: metricstore.MetricPingLoss,

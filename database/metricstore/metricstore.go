@@ -1363,7 +1363,7 @@ func GetGPURecordsByClientAndTime(ctx context.Context, clientUUID string, start,
 	recordMap := make(map[gpuKey]*models.GPURecord)
 	now := time.Now().UTC()
 	interval := pingQueryInterval(end.Sub(start), 4000)
-	interval = s.CompatibleSeriesInterval(start, now, interval)
+	interval = s.CompatibleSeriesIntervalForMetric(ctx, gpuMetrics[0], start, now, interval)
 
 	for _, metricName := range gpuMetrics {
 		points, err := s.Series(ctx, metric.AggregateQuery{
@@ -1468,7 +1468,7 @@ func GetPingRecords(ctx context.Context, clientUUID string, taskID int, start, e
 	}
 
 	interval := pingQueryInterval(end.Sub(start), 4000)
-	interval = s.CompatibleSeriesInterval(start, time.Now().UTC(), interval)
+	interval = s.CompatibleSeriesIntervalForMetric(ctx, MetricPingLatency, start, time.Now().UTC(), interval)
 	points, err := s.Series(ctx, metric.AggregateQuery{
 		Query:          query,
 		Aggregation:    metric.AggLast,

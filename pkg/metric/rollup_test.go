@@ -624,6 +624,69 @@ func TestSeriesStartBeforeLongestRetentionReturnsAvailableRollup(t *testing.T) {
 	}
 }
 
+func TestSeriesHonorsRequestedWindowInsideLongerMetricRetention(t *testing.T) {
+	ctx := context.Background()
+	policy := RollupPolicy{
+		RawRetention: 15 * time.Minute,
+		Tiers: []RollupTier{
+			{Interval: time.Minute, Retention: 48 * time.Hour},
+			{Interval: 5 * time.Minute, Retention: 14 * 24 * time.Hour},
+			{Interval: time.Hour, Retention: 14 * 24 * time.Hour},
+		},
+	}
+	s := newRollupStore(t, policy)
+	if err := s.CreateMetric(ctx, Definition{Name: "ping.latency_ms", Type: TypeGauge, RetentionDays: 60}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	inside := now.Add(-20 * 24 * time.Hour).Add(15 * time.Minute)
+	outside := now.Add(-50 * 24 * time.Hour).Add(15 * time.Minute)
+	if err := s.WriteBatch(ctx, []Point{
+		{MetricName: "ping.latency_ms", EntityID: "n1", Timestamp: inside, Value: 20},
+		{MetricName: "ping.latency_ms", EntityID: "n1", Timestamp: outside, Value: 50},
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := s.Compact(ctx, now); err != nil {
+		t.Fatalf("compact: %v", err)
+	}
+
+	got, err := s.Series(ctx, AggregateQuery{
+		Query: Query{
+			MetricName: "ping.latency_ms",
+			EntityID:   "n1",
+			Start:      now.Add(-30 * 24 * time.Hour),
+			End:        now,
+		},
+		Aggregation: AggLast,
+		Interval:    time.Hour,
+	}, now)
+	if err != nil {
+		t.Fatalf("series: %v", err)
+	}
+	if len(got) != 1 || got[0].Value != 20 {
+		t.Fatalf("30-day request should return the 20-day point only, got %#v", got)
+	}
+
+	full, err := s.Series(ctx, AggregateQuery{
+		Query: Query{
+			MetricName: "ping.latency_ms",
+			EntityID:   "n1",
+			Start:      now.Add(-60 * 24 * time.Hour),
+			End:        now,
+		},
+		Aggregation: AggLast,
+		Interval:    time.Hour,
+	}, now)
+	if err != nil {
+		t.Fatalf("full series: %v", err)
+	}
+	if len(full) != 2 {
+		t.Fatalf("60-day request should return both retained points, got %#v", full)
+	}
+}
+
 // TestSeriesRoutesByAge verifies Series auto-routes between raw and rollup data
 // based on the query window's age.
 //

@@ -38,6 +38,14 @@ func beijingTime(year int, month time.Month, day, hour, minute int) time.Time {
 	return time.Date(year, month, day, hour, minute, 0, 0, BeijingLocation)
 }
 
+func yearMonthKeys(year int) []string {
+	keys := make([]string, 0, 12)
+	for month := 1; month <= 12; month++ {
+		keys = append(keys, fmt.Sprintf("%04d-%02d", year, month))
+	}
+	return keys
+}
+
 func saveFX(t *testing.T, db *gorm.DB, fetchedAt time.Time, cny, cad string) models.BillingFXSnapshot {
 	t.Helper()
 	snapshot := models.BillingFXSnapshot{
@@ -341,16 +349,16 @@ func TestCommittedMonthlyUsesTrafficResetDayAndStopsAtExpiry(t *testing.T) {
 	require.NoError(t, err)
 	expected := FormatAmountMicros(monthlyNative)
 
-	early, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Now: beijingTime(2026, time.August, 16, 12, 0), PageSize: 20})
+	early, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Months: yearMonthKeys(2026), Now: beijingTime(2026, time.August, 16, 12, 0), PageSize: 20})
 	require.NoError(t, err)
-	late, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Now: beijingTime(2026, time.August, 26, 12, 0), PageSize: 20})
+	late, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Months: yearMonthKeys(2026), Now: beijingTime(2026, time.August, 26, 12, 0), PageSize: 20})
 	require.NoError(t, err)
 	assert.Equal(t, expected, periodByKey(early.Items, "2026-08").Base)
 	assert.Equal(t, periodByKey(early.Items, "2026-08").Base, periodByKey(late.Items, "2026-08").Base)
 	assert.Equal(t, "projected", periodByKey(late.Items, "2026-09").Status)
 	assert.Equal(t, expected, periodByKey(late.Items, "2026-09").Base)
 
-	nextYear, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Years: []int{2027}, Now: beijingTime(2026, time.August, 26, 12, 0), PageSize: 20})
+	nextYear, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Months: yearMonthKeys(2027), Now: beijingTime(2026, time.August, 26, 12, 0), PageSize: 20})
 	require.NoError(t, err)
 	assert.Equal(t, expected, periodByKey(nextYear.Items, "2027-04").Base)
 	assert.Equal(t, "no_record", periodByKey(nextYear.Items, "2027-05").Status)
@@ -398,7 +406,7 @@ func TestFXValidationTimeoutAndCacheFallback(t *testing.T) {
 	}
 }
 
-func TestMonthlyDefaultsCurrentYearAndMultiYearSortsAndPages(t *testing.T) {
+func TestMonthlyDefaultsCurrentMonthAndSelectedMonthsSortAndPage(t *testing.T) {
 	db := billingTestDB(t)
 	now := beijingTime(2026, time.August, 25, 12, 0)
 	client := saveClient(t, db, models.Client{Name: "periods", Currency: "CNY"})
@@ -408,17 +416,16 @@ func TestMonthlyDefaultsCurrentYearAndMultiYearSortsAndPages(t *testing.T) {
 	}
 	defaultPage, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Now: now, PageSize: 20})
 	require.NoError(t, err)
-	for _, row := range defaultPage.Items {
-		assert.True(t, strings.HasPrefix(row.Period, "2026-"))
-	}
-	assert.Equal(t, "2026-12", defaultPage.Items[0].Period)
+	require.Len(t, defaultPage.Items, 1)
+	assert.Equal(t, "2026-08", defaultPage.Items[0].Period)
+	assert.Equal(t, defaultPage.Items[0].Total, defaultPage.MonthlyAverage)
 
-	multi, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Years: []int{2025, 2026}, Now: now, Page: 1, PageSize: 2})
+	multi, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Months: []string{"2026-12", "2026-01"}, Now: now, Page: 1, PageSize: 2})
 	require.NoError(t, err)
 	require.Len(t, multi.Items, 2)
 	assert.Equal(t, "2026-12", multi.Items[0].Period)
-	assert.Equal(t, "2026-11", multi.Items[1].Period)
-	assert.Greater(t, multi.Page.Total, int64(2))
+	assert.Equal(t, "2026-01", multi.Items[1].Period)
+	assert.Equal(t, int64(2), multi.Page.Total)
 }
 
 func TestOverviewTrendUsesCurrentYearMonths(t *testing.T) {
