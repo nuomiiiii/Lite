@@ -19,11 +19,12 @@ import (
 )
 
 const (
-	themePreviewCardMaxEdge  = 720
-	themePreviewCardQuality  = 76
-	themePreviewCardDirName  = ".komari"
-	themePreviewCardFileName = "preview-card.jpg"
-	themePreviewMaxPixels    = 40_000_000
+	themePreviewCardMaxEdge       = 720
+	themePreviewCardQuality       = 76
+	themePreviewCardDirName       = ".lite"
+	legacyThemePreviewCardDirName = ".komari"
+	themePreviewCardFileName      = "preview-card.jpg"
+	themePreviewMaxPixels         = 40_000_000
 )
 
 func isPreviewImagePath(relativePath string) bool {
@@ -96,6 +97,9 @@ func EnsureThemePreviewCard(themeID, previewRelativePath string) error {
 
 func ensureThemePreviewCardFile(themeID, cleanPath string, source os.FileInfo) (string, error) {
 	themeBasePath := filepath.Join(DataDir, ThemesDir, themeID)
+	if err := migrateLegacyThemePreviewCardDir(themeBasePath); err != nil {
+		return "", err
+	}
 	sourcePath := filepath.Join(themeBasePath, cleanPath)
 	cardDir := filepath.Join(themeBasePath, themePreviewCardDirName)
 	cardPath := filepath.Join(cardDir, themePreviewCardFileName)
@@ -104,6 +108,7 @@ func ensureThemePreviewCardFile(themeID, cleanPath string, source os.FileInfo) (
 	expected := sourceFingerprint(cleanPath, source)
 	if current, err := os.ReadFile(metaPath); err == nil && string(current) == expected {
 		if info, err := os.Stat(cardPath); err == nil && !info.IsDir() {
+			_ = os.RemoveAll(filepath.Join(themeBasePath, legacyThemePreviewCardDirName))
 			return cardPath, nil
 		}
 	}
@@ -124,7 +129,27 @@ func ensureThemePreviewCardFile(themeID, cleanPath string, source os.FileInfo) (
 	if err := os.WriteFile(metaPath, []byte(expected), 0o644); err != nil {
 		return "", err
 	}
+	_ = os.RemoveAll(filepath.Join(themeBasePath, legacyThemePreviewCardDirName))
 	return cardPath, nil
+}
+
+func migrateLegacyThemePreviewCardDir(themeBasePath string) error {
+	current := filepath.Join(themeBasePath, themePreviewCardDirName)
+	legacy := filepath.Join(themeBasePath, legacyThemePreviewCardDirName)
+	_, currentErr := os.Stat(current)
+	_, legacyErr := os.Stat(legacy)
+	switch {
+	case os.IsNotExist(legacyErr):
+		return nil
+	case legacyErr != nil:
+		return legacyErr
+	case os.IsNotExist(currentErr):
+		return os.Rename(legacy, current)
+	case currentErr != nil:
+		return currentErr
+	default:
+		return nil
+	}
 }
 
 func sourceFingerprint(relativePath string, info os.FileInfo) string {

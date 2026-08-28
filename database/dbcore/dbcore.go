@@ -369,16 +369,16 @@ func recoverInterruptedRestore(dataDir string) error {
 	}
 	activeMoved := false
 	if _, err := os.Stat(absDataDir); err == nil {
-		if err := os.Rename(absDataDir, failedDir); err != nil {
+		if err := relocateDirectory(absDataDir, failedDir); err != nil {
 			return fmt.Errorf("move interrupted restored data aside: %w", err)
 		}
 		activeMoved = true
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("inspect interrupted restored data: %w", err)
 	}
-	if err := os.Rename(previousDir, absDataDir); err != nil {
+	if err := relocateDirectory(previousDir, absDataDir); err != nil {
 		if activeMoved {
-			_ = os.Rename(failedDir, absDataDir)
+			_ = relocateDirectory(failedDir, absDataDir)
 		}
 		return fmt.Errorf("recover previous data after interrupted restore: %w", err)
 	}
@@ -434,11 +434,11 @@ func (r *stagedRestore) Rollback() error {
 	if err := os.RemoveAll(failedDir); err != nil {
 		return fmt.Errorf("prepare failed restore path: %w", err)
 	}
-	if err := os.Rename(r.dataDir, failedDir); err != nil {
+	if err := relocateDirectory(r.dataDir, failedDir); err != nil {
 		return fmt.Errorf("move failed restored data aside: %w", err)
 	}
-	if err := os.Rename(r.previousDir, r.dataDir); err != nil {
-		_ = os.Rename(failedDir, r.dataDir)
+	if err := relocateDirectory(r.previousDir, r.dataDir); err != nil {
+		_ = relocateDirectory(failedDir, r.dataDir)
 		return fmt.Errorf("restore previous data directory: %w", err)
 	}
 	failedArchive := filepath.Join(r.dataDir, "backup.failed-"+time.Now().UTC().Format("20060102-150405")+".zip")
@@ -533,12 +533,12 @@ func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
 	if err := writeRestoreMarker(pendingMarker, journalData); err != nil {
 		return nil, fmt.Errorf("persist restore transaction journal: %w", err)
 	}
-	if err := os.Rename(dataDir, oldDir); err != nil {
+	if err := relocateDirectory(dataDir, oldDir); err != nil {
 		removeRestoreMarkers(pendingMarker, committedMarker)
 		return nil, fmt.Errorf("move current data aside: %w", err)
 	}
-	if err := os.Rename(stageDir, dataDir); err != nil {
-		rollbackErr := os.Rename(oldDir, dataDir)
+	if err := relocateDirectory(stageDir, dataDir); err != nil {
+		rollbackErr := relocateDirectory(oldDir, dataDir)
 		if rollbackErr != nil {
 			return nil, fmt.Errorf("publish restored data: %v; restore previous data: %w", err, rollbackErr)
 		}

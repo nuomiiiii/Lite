@@ -6,6 +6,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/nuomiiiii/lite/cmd/flags"
@@ -311,5 +313,58 @@ func TestRestoreStagedBackupAdoptsKomariDatabase(t *testing.T) {
 	}
 	if value != "from-komari" {
 		t.Fatalf("restored value = %q, want from-komari", value)
+	}
+}
+
+func TestRestoreStagedBackupFallsBackWhenDataDirCannotBeRenamed(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeSQLite(t, filepath.Join(dataDir, "lite.db"), "old")
+	if err := os.WriteFile(filepath.Join(dataDir, "keep.txt"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newDatabase := filepath.Join(root, "new.db")
+	writeFakeSQLite(t, newDatabase, "new")
+	writeRestoreArchive(t, filepath.Join(dataDir, "backup.zip"), newDatabase)
+
+	previous := renameDirectory
+	t.Cleanup(func() { renameDirectory = previous })
+	renameDirectory = func(oldpath, newpath string) error {
+		return &os.LinkError{Op: "rename", Old: oldpath, New: newpath, Err: syscall.EBUSY}
+	}
+
+	restore, err := restoreStagedBackup(dataDir)
+	if err != nil {
+		t.Fatalf("restore backup on busy data dir: %v", err)
+	}
+	if restore == nil {
+		t.Fatal("restore transaction was not created")
+	}
+	if _, err := os.Stat(dataDir); err != nil {
+		t.Fatalf("data directory must remain in place: %v", err)
+	}
+	if err := restore.Commit(); err != nil {
+		t.Fatalf("commit restore: %v", err)
+	}
+	content, err := os.ReadFile(filepath.Join(dataDir, "lite.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "new") {
+		t.Fatalf("restored lite.db = %q, want payload new", content)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "keep.txt")); !os.IsNotExist(err) {
+		t.Fatal("previous files should have been moved aside")
+	}
+}
+
+func writeFakeSQLite(t *testing.T, path, payload string) {
+	t.Helper()
+	data := append([]byte("SQLite format 3\x00"), payload...)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

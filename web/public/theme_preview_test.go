@@ -51,6 +51,31 @@ func TestEnsureThemePreviewCardWritesSidecar(t *testing.T) {
 	}
 }
 
+func TestEnsureThemePreviewCardMigratesLegacyKomariDir(t *testing.T) {
+	t.Chdir(t.TempDir())
+	themeDir := filepath.Join(DataDir, ThemesDir, "glass")
+	legacyDir := filepath.Join(themeDir, legacyThemePreviewCardDirName)
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previewPath := filepath.Join(themeDir, "preview.png")
+	if err := os.WriteFile(previewPath, makeOpaquePNG(t, 1280, 720), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, themePreviewCardFileName), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureThemePreviewCard("glass", "preview.png"); err != nil {
+		t.Fatalf("EnsureThemePreviewCard() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(themeDir, themePreviewCardDirName, themePreviewCardFileName)); err != nil {
+		t.Fatalf(".lite card missing: %v", err)
+	}
+	if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
+		t.Fatal("legacy .komari cache should have been migrated")
+	}
+}
+
 func makeOpaquePNG(t *testing.T, width, height int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
