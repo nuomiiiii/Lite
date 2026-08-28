@@ -115,8 +115,8 @@ func TestComputeUsedByType(t *testing.T) {
 	assert.Equal(t, int64(100), computeUsedByType("sum", 30, 70))
 	assert.Equal(t, int64(30), computeUsedByType("min", 30, 70))
 	assert.Equal(t, int64(70), computeUsedByType("max", 30, 70))
-	// 未知类型默认取较大值
-	assert.Equal(t, int64(70), computeUsedByType("unknown", 30, 70))
+	assert.Equal(t, int64(100), computeUsedByType("unknown", 30, 70))
+	assert.Equal(t, int64(100), computeUsedByType("", 30, 70))
 }
 
 func TestFormatTrafficReportLineSeparatesDirections(t *testing.T) {
@@ -137,6 +137,12 @@ func TestCurrentDailyTrafficReportRangeUsesBeijingMidnightThroughNow(t *testing.
 	if !start.Equal(wantStart) || !end.Equal(now) {
 		t.Fatalf("range = [%s, %s], want [%s, %s]", start, end, wantStart, now)
 	}
+}
+
+func TestFormatTrafficReportLineUnknownTypeFallsBackToSum(t *testing.T) {
+	client := models.Client{Name: "server-a", Price: 10, TrafficLimitType: ""}
+	line := formatTrafficReportLine(client, "昨日流量", trafficUsage{Up: 1024, Down: 2 * 1024}, false, true)
+	assert.Equal(t, "server-a 昨日流量：计费流量 3.00 KB（sum）", line)
 }
 
 func TestFormatTrafficReportLineSupportsBillingAndCombinedContent(t *testing.T) {

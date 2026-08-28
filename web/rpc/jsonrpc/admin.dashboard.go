@@ -150,6 +150,11 @@ func init() {
 		Summary: "List currently affected dashboard alert targets",
 		Returns: "DashboardAlertItems",
 	})
+	RegisterWithGroupAndMeta("getClientTrafficDaily", rpc.RoleAdmin, adminGetClientTrafficDaily, &rpc.MethodMeta{
+		Name:    "admin:getClientTrafficDaily",
+		Summary: "Get one client's dashboard daily traffic ledger",
+		Returns: "ClientTrafficDaily",
+	})
 }
 
 func adminGetDashboard(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
@@ -168,6 +173,36 @@ func adminGetDashboardCharts(ctx context.Context, req *rpc.JsonRpcRequest) (any,
 	sections, rankingLimit := parseDashboardChartRequest(req)
 	settings := loadDashboardSettings()
 	return decorateDashboardNavigation(buildDashboardChartsCached(ctx, now, sections, rankingLimit, time.Duration(settings.ChartRefreshSeconds)*time.Second)), nil
+}
+
+func adminGetClientTrafficDaily(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		UUID string `json:"uuid"`
+	}
+	req.BindParams(&params)
+	if params.UUID == "" {
+		return nil, rpc.MakeError(rpc.InvalidParams, "UUID is required", nil)
+	}
+	list, err := clients.GetClientBasicInfoByUUIDs([]string{params.UUID})
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	if len(list) == 0 {
+		return nil, rpc.MakeError(rpc.InvalidParams, "client not found", nil)
+	}
+	client := list[0]
+	summary, err := loadDashboardTraffic(ctx, list, time.Now().UTC(), 1)
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	return map[string]any{
+		"daily":              summary.Daily,
+		"today_up":           summary.TodayUp,
+		"today_down":         summary.TodayDown,
+		"today_billable":     summary.TodayBillable,
+		"history_ready":      summary.HistoryReady,
+		"traffic_limit_type": client.TrafficLimitType,
+	}, nil
 }
 
 func buildDashboard(ctx context.Context, now time.Time, sections dashboardSummarySections, rankingLimit int) (dashboardResponse, error) {

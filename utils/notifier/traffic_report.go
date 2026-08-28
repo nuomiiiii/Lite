@@ -302,7 +302,7 @@ func formatTrafficReportLine(client models.Client, suffix string, usage trafficU
 		switch rule {
 		case "up", "down", "sum", "min", "max":
 		default:
-			rule = "max"
+			rule = "sum"
 		}
 		used := computeUsedByType(rule, usage.Up, usage.Down)
 		parts = append(parts, fmt.Sprintf("计费流量 %s（%s）", humanBytes(used), rule))

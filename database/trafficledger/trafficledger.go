@@ -278,27 +278,27 @@ func maintainWithDailyCalculator(ctx context.Context, db *gorm.DB, now time.Time
 }
 
 // BillableUsage applies the same traffic accounting rule used by limits and
-// scheduled reports. Unknown values retain the historical "max" default.
+// scheduled reports. Unknown values fall back to sum (up + down).
 func BillableUsage(kind string, up, down int64) int64 {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "up":
 		return up
 	case "down":
 		return down
-	case "sum":
-		return up + down
 	case "min":
 		if up < down {
 			return up
 		}
 		return down
 	case "max":
-		fallthrough
-	default:
 		if up > down {
 			return up
 		}
 		return down
+	case "sum":
+		fallthrough
+	default:
+		return up + down
 	}
 }
 
