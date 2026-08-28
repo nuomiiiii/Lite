@@ -25,8 +25,8 @@ RUN ln -s Lite /app/komari
 
 ENV GIN_MODE=release
 ENV LITE_DEPLOYMENT=docker
+ENV TZ=Asia/Shanghai
 
 EXPOSE 27777 36888
-EXPOSE 25774 35938
 
 CMD ["/app/Lite", "server"]
