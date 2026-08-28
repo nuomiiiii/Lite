@@ -148,7 +148,7 @@ go build -o Lite
 ## 相关链接
 
 - [版本发布与完整更新日志](https://github.com/nuomiiiii/lite/releases)
-- [Lite 文档](https://nuomiiiii.github.io/komari-document/)
+- [Lite 文档](https://nuomiiiii.github.io/Lite-document/)
 - [Telegram 群组](https://t.me/komari_lite)
 - [Lite Agent](https://github.com/nuomiiiii/Lite-agent)
 - [Lite Web](https://github.com/nuomiiiii/Lite-web)
