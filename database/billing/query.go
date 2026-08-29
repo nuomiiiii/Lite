@@ -13,17 +13,19 @@ import (
 )
 
 type AmountBreakdown struct {
-	Base  string `json:"base"`
-	Extra string `json:"extra"`
-	Other string `json:"other,omitempty"`
-	Total string `json:"total"`
+	Base    string `json:"base"`
+	Extra   string `json:"extra"`
+	Other   string `json:"other,omitempty"`
+	OneTime string `json:"one_time,omitempty"`
+	Total   string `json:"total"`
 }
 
 type MonthComposition struct {
 	AmountBreakdown
-	BasePercent  string `json:"base_percent"`
-	ExtraPercent string `json:"extra_percent"`
-	OtherPercent string `json:"other_percent"`
+	BasePercent    string `json:"base_percent"`
+	ExtraPercent   string `json:"extra_percent"`
+	OtherPercent   string `json:"other_percent"`
+	OneTimePercent string `json:"one_time_percent"`
 }
 
 type BillingOverview struct {
@@ -50,6 +52,7 @@ type PeriodAmount struct {
 	Base         string  `json:"base"`
 	Extra        string  `json:"extra"`
 	Other        string  `json:"other"`
+	OneTime      string  `json:"one_time"`
 	Total        string  `json:"total"`
 	Status       string  `json:"status,omitempty"`
 	ServerCount  int     `json:"server_count,omitempty"`
@@ -120,6 +123,7 @@ type PeriodPage struct {
 	Items          []PeriodAmount  `json:"items"`
 	Summary        AmountBreakdown `json:"summary"`
 	MonthlyAverage string          `json:"monthly_average,omitempty"`
+	YearlyAverage  string          `json:"yearly_average,omitempty"`
 	AvailableYears []int           `json:"available_years"`
 	Page           PageInfo        `json:"pagination"`
 }
@@ -168,7 +172,7 @@ type calculatedEntry struct {
 }
 
 type amountAccumulator struct {
-	Base, Extra, Other, Total int64
+	Base, Extra, Other, OneTime, Total int64
 }
 
 func GetOverview(ctx context.Context, db *gorm.DB, currency string, now time.Time) (BillingOverview, error) {
@@ -432,14 +436,14 @@ func GetServers(ctx context.Context, db *gorm.DB, query ServerQuery) (ServerPage
 		default:
 			row.BillingStatus = "recurring"
 		}
-		extra, other := int64(0), int64(0)
+		extra, other, oneTime := int64(0), int64(0), int64(0)
 		if totals := monthly[version.Client]; totals != nil {
-			extra, other = totals.Extra, totals.Other
+			extra, other, oneTime = totals.Extra, totals.Other, totals.OneTime
 		}
 		base := committedMonth[version.Client]
 		row.MonthBase = FormatAmountMicros(base)
-		row.MonthExtra = FormatAmountMicros(extra + other)
-		row.MonthTotal = FormatAmountMicros(base + extra + other)
+		row.MonthExtra = FormatAmountMicros(extra + other + oneTime)
+		row.MonthTotal = FormatAmountMicros(base + extra + other + oneTime)
 		if row.BillingStatus == "recurring" && version.CurrencyValid {
 			dailyNative, monthlyNative, yearlyNative, calcErr := cycleAverageMicros(version)
 			if calcErr != nil {
@@ -645,8 +649,8 @@ func getPeriods(ctx context.Context, db *gorm.DB, query PeriodQuery, monthly boo
 	sort.Sort(sort.Reverse(sort.StringSlice(keys)))
 	rows := make([]PeriodAmount, 0, len(keys))
 	var summary amountAccumulator
-	completeMonths := 0
-	var completeMonthTotal int64
+	completePeriods := 0
+	var completePeriodTotal int64
 	for _, key := range keys {
 		row := periodFromAccumulator(key, *periods[key])
 		row.ServerCount = len(servers[key])
@@ -663,10 +667,8 @@ func getPeriods(ctx context.Context, db *gorm.DB, query PeriodQuery, monthly boo
 		default:
 			row.Status = "settled"
 		}
-		if monthly {
-			completeMonths++
-			completeMonthTotal += periods[key].Total
-		}
+		completePeriods++
+		completePeriodTotal += periods[key].Total
 		if row.Status != "no_record" {
 			addAccumulator(&summary, *periods[key])
 		}
@@ -697,8 +699,13 @@ func getPeriods(ctx context.Context, db *gorm.DB, query PeriodQuery, monthly boo
 	total := len(rows)
 	start, end := pageBounds(total, query.Page, query.PageSize)
 	result := PeriodPage{Currency: currency, CoverageStart: coverage, Items: rows[start:end], Summary: formattedBreakdown(summary), AvailableYears: available, Page: pageInfo(total, query.Page, query.PageSize)}
-	if monthly && completeMonths > 0 {
-		result.MonthlyAverage = FormatAmountMicros(completeMonthTotal / int64(completeMonths))
+	if completePeriods > 0 {
+		average := FormatAmountMicros(completePeriodTotal / int64(completePeriods))
+		if monthly {
+			result.MonthlyAverage = average
+		} else {
+			result.YearlyAverage = average
+		}
 	}
 	return result, nil
 }
@@ -1077,6 +1084,8 @@ func addCategory(total *amountAccumulator, category string, amount int64) {
 		total.Extra += amount
 	case EntryTypeIPChange:
 		total.Other += amount
+	case EntryTypeAdjustment:
+		total.OneTime += amount
 	}
 	total.Total += amount
 }
@@ -1085,11 +1094,18 @@ func addAccumulator(target *amountAccumulator, source amountAccumulator) {
 	target.Base += source.Base
 	target.Extra += source.Extra
 	target.Other += source.Other
+	target.OneTime += source.OneTime
 	target.Total += source.Total
 }
 
 func formattedBreakdown(value amountAccumulator) AmountBreakdown {
-	return AmountBreakdown{Base: FormatAmountMicros(value.Base), Extra: FormatAmountMicros(value.Extra), Other: FormatAmountMicros(value.Other), Total: FormatAmountMicros(value.Total)}
+	return AmountBreakdown{
+		Base:    FormatAmountMicros(value.Base),
+		Extra:   FormatAmountMicros(value.Extra),
+		Other:   FormatAmountMicros(value.Other),
+		OneTime: FormatAmountMicros(value.OneTime),
+		Total:   FormatAmountMicros(value.Total),
+	}
 }
 
 func compositionFromAccumulator(value amountAccumulator) MonthComposition {
@@ -1100,6 +1116,7 @@ func compositionFromAccumulator(value amountAccumulator) MonthComposition {
 	result.BasePercent = percentString(value.Base, value.Total)
 	result.ExtraPercent = percentString(value.Extra, value.Total)
 	result.OtherPercent = percentString(value.Other, value.Total)
+	result.OneTimePercent = percentString(value.OneTime, value.Total)
 	return result
 }
 
@@ -1108,7 +1125,14 @@ func percentString(part, total int64) string {
 }
 
 func periodFromAccumulator(period string, value amountAccumulator) PeriodAmount {
-	return PeriodAmount{Period: period, Base: FormatAmountMicros(value.Base), Extra: FormatAmountMicros(value.Extra), Other: FormatAmountMicros(value.Other), Total: FormatAmountMicros(value.Total)}
+	return PeriodAmount{
+		Period:  period,
+		Base:    FormatAmountMicros(value.Base),
+		Extra:   FormatAmountMicros(value.Extra),
+		Other:   FormatAmountMicros(value.Other),
+		OneTime: FormatAmountMicros(value.OneTime),
+		Total:   FormatAmountMicros(value.Total),
+	}
 }
 
 func requireDisplayCurrency(value string) (string, error) {

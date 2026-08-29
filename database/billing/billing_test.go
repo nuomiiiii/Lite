@@ -374,6 +374,36 @@ func TestCreateIPChangeEntry(t *testing.T) {
 	assert.Equal(t, "2.000000", overview.MonthComposition.Other)
 }
 
+func TestCreateOneTimeFeeEntry(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 26, 12, 0)
+	saveFX(t, db, now.Add(-time.Hour), "7", "1.3")
+	client := saveClient(t, db, models.Client{Name: "one-time-node", Currency: "USD"})
+	entry, err := CreateOneTimeFeeEntry(context.Background(), db, TrafficResetInput{
+		Client: client.UUID, Amount: "3.5", Currency: "USD", IdempotencyKey: "fee-1",
+		OccurredAt: now, Note: "线路升级补差",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, EntryTypeAdjustment, entry.Type)
+	assert.Equal(t, int64(3_500_000), entry.OriginalAmountMicros)
+	assert.Equal(t, "线路升级补差", entry.Note)
+	assert.Equal(t, "2026-08-26", entry.Day)
+
+	overview, err := GetOverview(context.Background(), db, "USD", now.Add(time.Minute))
+	require.NoError(t, err)
+	assert.Equal(t, "3.500000", overview.Summary.Today.OneTime)
+	assert.Equal(t, "0.000000", overview.Summary.Today.Extra)
+	assert.Equal(t, "3.500000", overview.MonthComposition.OneTime)
+
+	page, err := GetEntries(context.Background(), db, EntryQuery{
+		Currency: "USD", Client: client.UUID, Types: []string{EntryTypeAdjustment}, Page: 1, PageSize: 10, Now: now.Add(time.Minute),
+	})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 1)
+	assert.True(t, page.Items[0].Voidable)
+	assert.Equal(t, "线路升级补差", page.Items[0].Note)
+}
+
 func TestCommittedMonthlyUsesTrafficResetDayAndStopsAtExpiry(t *testing.T) {
 	db := billingTestDB(t)
 	resetDay := 15
@@ -461,6 +491,11 @@ func TestMonthlyDefaultsCurrentMonthAndSelectedMonthsSortAndPage(t *testing.T) {
 	assert.Equal(t, "2026-08", defaultPage.Items[0].Period)
 	assert.Equal(t, defaultPage.Items[0].Total, defaultPage.MonthlyAverage)
 
+	yearly, err := GetYearly(context.Background(), db, PeriodQuery{Currency: "CNY", Years: []int{2026}, Now: now, PageSize: 20})
+	require.NoError(t, err)
+	require.Len(t, yearly.Items, 1)
+	assert.Equal(t, yearly.Items[0].Total, yearly.YearlyAverage)
+
 	multi, err := GetMonthly(context.Background(), db, PeriodQuery{Currency: "CNY", Months: []string{"2026-12", "2026-01"}, Now: now, Page: 1, PageSize: 2})
 	require.NoError(t, err)
 	require.Len(t, multi.Items, 2)
@@ -547,6 +582,42 @@ func TestRemainingValueUsesFullRemainingTimePastOneCycle(t *testing.T) {
 	direct, err := ParseAmountMicros(*value)
 	require.NoError(t, err)
 	assert.Equal(t, want, direct)
+}
+
+func TestRemainingValueIgnoresTrafficResetIPChangeAndOneTimeFees(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 27, 12, 0)
+	expiry := now.Add(60 * 24 * time.Hour)
+	client := saveClient(t, db, models.Client{
+		Name: "remaining-base", Price: 30, BillingCycle: 30, Currency: "USD", ExpiredAt: &expiry,
+	})
+	require.NoError(t, EnsureInitialPriceVersions(db, now))
+	saveFX(t, db, now.Add(-time.Hour), "7", "1.3")
+
+	before, err := GetServers(context.Background(), db, ServerQuery{Currency: "USD", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Len(t, before.Items, 1)
+	require.NotNil(t, before.Items[0].RemainingValue)
+	beforeRemaining := *before.Items[0].RemainingValue
+	beforeSummary, _, err := remainingValueSummary(context.Background(), db, "USD", now)
+	require.NoError(t, err)
+
+	_, err = CreateTrafficResetEntry(context.Background(), db, TrafficResetInput{Client: client.UUID, Amount: "8.00", Currency: "USD", OccurredAt: now, IdempotencyKey: "remain-reset"})
+	require.NoError(t, err)
+	_, err = CreateIPChangeEntry(context.Background(), db, TrafficResetInput{Client: client.UUID, Amount: "3.00", Currency: "USD", OccurredAt: now, IdempotencyKey: "remain-ip"})
+	require.NoError(t, err)
+	_, err = CreateOneTimeFeeEntry(context.Background(), db, TrafficResetInput{Client: client.UUID, Amount: "12.00", Currency: "USD", OccurredAt: now, IdempotencyKey: "remain-one-time"})
+	require.NoError(t, err)
+
+	after, err := GetServers(context.Background(), db, ServerQuery{Currency: "USD", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Len(t, after.Items, 1)
+	require.NotNil(t, after.Items[0].RemainingValue)
+	assert.Equal(t, beforeRemaining, *after.Items[0].RemainingValue)
+	assert.Equal(t, "23.000000", after.Items[0].MonthExtra)
+	afterSummary, _, err := remainingValueSummary(context.Background(), db, "USD", now)
+	require.NoError(t, err)
+	assert.Equal(t, beforeSummary, afterSummary)
 }
 
 func TestGetServersOmitsDeletedClients(t *testing.T) {

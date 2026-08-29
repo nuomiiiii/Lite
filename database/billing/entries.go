@@ -37,6 +37,10 @@ func CreateIPChangeEntry(ctx context.Context, db *gorm.DB, input TrafficResetInp
 	return createAddonEntry(ctx, db, input, EntryTypeIPChange, "ip-change:")
 }
 
+func CreateOneTimeFeeEntry(ctx context.Context, db *gorm.DB, input TrafficResetInput) (models.BillingEntry, error) {
+	return createAddonEntry(ctx, db, input, EntryTypeAdjustment, "one-time-fee:")
+}
+
 func createAddonEntry(ctx context.Context, db *gorm.DB, input TrafficResetInput, entryType, keyPrefix string) (models.BillingEntry, error) {
 	var result models.BillingEntry
 	if strings.TrimSpace(input.Client) == "" || strings.TrimSpace(input.IdempotencyKey) == "" {

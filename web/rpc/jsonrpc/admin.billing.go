@@ -23,6 +23,7 @@ func init() {
 	RegisterWithGroupAndMeta("getBillingEntries", rpc.RoleAdmin, adminGetBillingEntries, &rpc.MethodMeta{Name: "admin:getBillingEntries", Summary: "List immutable billing entries"})
 	RegisterWithGroupAndMeta("createBillingTrafficReset", rpc.RoleAdmin, adminCreateBillingTrafficReset, &rpc.MethodMeta{Name: "admin:createBillingTrafficReset", Summary: "Record a traffic reset cost"})
 	RegisterWithGroupAndMeta("createBillingIPChange", rpc.RoleAdmin, adminCreateBillingIPChange, &rpc.MethodMeta{Name: "admin:createBillingIPChange", Summary: "Record an IP change cost"})
+	RegisterWithGroupAndMeta("createBillingOneTimeFee", rpc.RoleAdmin, adminCreateBillingOneTimeFee, &rpc.MethodMeta{Name: "admin:createBillingOneTimeFee", Summary: "Record a one-time fee"})
 	RegisterWithGroupAndMeta("voidBillingEntry", rpc.RoleAdmin, adminVoidBillingEntry, &rpc.MethodMeta{Name: "admin:voidBillingEntry", Summary: "Void a billing entry with a reversal"})
 }
 
@@ -201,6 +202,29 @@ func adminCreateBillingIPChange(ctx context.Context, req *rpc.JsonRpcRequest) (a
 		return nil, billingRPCError(err)
 	}
 	auditlog.Log(ip, actor, fmt.Sprintf("record ip change cost:%s:%d", params.UUID, entry.ID), "info")
+	return entry, nil
+}
+
+func adminCreateBillingOneTimeFee(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		UUID           string `json:"uuid"`
+		Amount         string `json:"amount"`
+		Currency       string `json:"currency"`
+		Note           string `json:"note"`
+		IdempotencyKey string `json:"idempotency_key"`
+	}
+	if err := req.BindParams(&params); err != nil {
+		return nil, invalidBillingParams(err)
+	}
+	actor, ip := auditActor(ctx)
+	entry, err := billing.CreateOneTimeFeeEntry(ctx, dbcore.GetDBInstance(), billing.TrafficResetInput{
+		Client: params.UUID, Amount: params.Amount, Currency: params.Currency,
+		Note: params.Note, IdempotencyKey: params.IdempotencyKey, Operator: actor,
+	})
+	if err != nil {
+		return nil, billingRPCError(err)
+	}
+	auditlog.Log(ip, actor, fmt.Sprintf("record one-time fee:%s:%d", params.UUID, entry.ID), "info")
 	return entry, nil
 }
 

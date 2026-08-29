@@ -25,6 +25,7 @@ const (
 	dashboardModuleServerStatus      = "server_status"
 	dashboardModuleTrafficSummary    = "traffic_summary"
 	dashboardModuleStorageSummary    = "storage_summary"
+	dashboardModuleCostCenter        = "cost_center"
 	dashboardModuleResourceRanking   = "resource_ranking"
 	dashboardModuleTrafficRanking    = "daily_traffic_ranking"
 	dashboardModuleLatencyRanking    = "latency_ranking"
@@ -42,6 +43,7 @@ var dashboardModuleOrder = []string{
 	dashboardModuleServerStatus,
 	dashboardModuleTrafficSummary,
 	dashboardModuleStorageSummary,
+	dashboardModuleCostCenter,
 	dashboardModuleResourceRanking,
 	dashboardModuleTrafficRanking,
 	dashboardModuleLatencyRanking,
@@ -68,6 +70,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 			dashboardModuleServerStatus,
 			dashboardModuleTrafficSummary,
 			dashboardModuleStorageSummary,
+			dashboardModuleCostCenter,
 			dashboardModuleLatencyTrend,
 			dashboardModuleTrafficTrend,
 			dashboardModuleBillingTrend,
@@ -82,6 +85,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 			dashboardModuleServerStatus,
 			dashboardModuleTrafficSummary,
 			dashboardModuleStorageSummary,
+			dashboardModuleCostCenter,
 			dashboardModuleLatencyTrend,
 			dashboardModuleTrafficRanking,
 			dashboardModuleLatencyRanking,
@@ -98,6 +102,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 		Modules: []string{
 			dashboardModuleServerStatus,
 			dashboardModuleStorageSummary,
+			dashboardModuleCostCenter,
 			dashboardModuleResourceRanking,
 			dashboardModuleAlerts,
 			dashboardModuleStorageDetail,
@@ -109,6 +114,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 			dashboardModuleServerStatus,
 			dashboardModuleTrafficSummary,
 			dashboardModuleStorageSummary,
+			dashboardModuleCostCenter,
 			dashboardModuleTrafficRanking,
 			dashboardModuleAlerts,
 			dashboardModuleTrafficTrend,
@@ -121,6 +127,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 			dashboardModuleServerStatus,
 			dashboardModuleTrafficSummary,
 			dashboardModuleStorageSummary,
+			dashboardModuleCostCenter,
 			dashboardModuleAlerts,
 			dashboardModuleReturnRoute,
 			dashboardModuleResourceRanking,
@@ -135,6 +142,7 @@ var dashboardPresetDefinitions = map[string]dashboardPresetDefinition{
 		Modules: []string{
 			dashboardModuleServerStatus,
 			dashboardModuleStorageSummary,
+			dashboardModuleCostCenter,
 			dashboardModuleResourceRanking,
 			dashboardModuleAlerts,
 			dashboardModuleStorageDetail,
@@ -173,6 +181,7 @@ type dashboardSettings struct {
 	RefreshSeconds      int                      `json:"refresh_seconds"`
 	ChartRefreshSeconds int                      `json:"chart_refresh_seconds"`
 	RankingLimit        int                      `json:"ranking_limit"`
+	LayoutColumns       int                      `json:"layout_columns,omitempty"`
 }
 
 func init() {
@@ -215,6 +224,7 @@ func dashboardSettingsForPreset(preset string) dashboardSettings {
 		RefreshSeconds:      definition.RefreshSeconds,
 		ChartRefreshSeconds: definition.ChartRefreshSeconds,
 		RankingLimit:        definition.RankingLimit,
+		LayoutColumns:       dashboardGridColumns,
 	}
 }
 
@@ -306,20 +316,31 @@ func normalizeDashboardSettings(input dashboardSettings, strict bool) (dashboard
 			}
 			if module.Span == 0 {
 				module.Span = dashboardDefaultModuleSpan(module.ID)
-			} else if !dashboardModuleSpanAllowed(module.Span) {
-				if strict {
-					return dashboardSettings{}, fmt.Errorf("module %q span must be 2, 3, or 6", module.ID)
+			} else {
+				module.Span = migrateDashboardModuleSpan(module.Span, input.LayoutColumns)
+				if !dashboardModuleSpanAllowed(module.Span) {
+					if strict {
+						return dashboardSettings{}, fmt.Errorf("module %q span must be 3, 4, 6, or 12", module.ID)
+					}
+					module.Span = dashboardDefaultModuleSpan(module.ID)
 				}
-				module.Span = dashboardDefaultModuleSpan(module.ID)
 			}
 			seen[module.ID] = struct{}{}
 			result.Modules = append(result.Modules, module)
 		}
+		_, hadCostCenter := seen[dashboardModuleCostCenter]
 		for _, id := range dashboardModuleOrder {
 			if _, ok := seen[id]; !ok {
+				if id == dashboardModuleCostCenter {
+					continue
+				}
 				result.Modules = append(result.Modules, dashboardModuleSetting{ID: id, Span: dashboardDefaultModuleSpan(id)})
 			}
 		}
+		if !hadCostCenter {
+			result.Modules = insertCostCenterAfterStorage(result.Modules)
+		}
+		enableNewCostCenterModule(result.Modules, !hadCostCenter)
 	}
 
 	enabled := 0
@@ -357,6 +378,7 @@ func normalizeDashboardSettings(input dashboardSettings, strict bool) (dashboard
 		result.RankingLimit = defaults.RankingLimit
 	}
 
+	result.LayoutColumns = dashboardGridColumns
 	return result, nil
 }
 
@@ -372,17 +394,81 @@ func dashboardRankingLimitAllowed(value int) bool {
 	return value == 5 || value == 10 || value == 15 || value == 20
 }
 
+const dashboardGridColumns = 12
+
 func dashboardModuleSpanAllowed(value int) bool {
-	return value == 2 || value == 3 || value == 6
+	return value == 3 || value == 4 || value == 6 || value == 12
+}
+
+func migrateDashboardModuleSpan(span, layoutColumns int) int {
+	if layoutColumns != dashboardGridColumns && (span == 2 || span == 3 || span == 6) {
+		return span * 2
+	}
+	return span
 }
 
 func dashboardDefaultModuleSpan(id string) int {
 	switch id {
-	case dashboardModuleServerStatus, dashboardModuleTrafficSummary, dashboardModuleStorageSummary:
-		return 2
-	case dashboardModuleResourceRanking, dashboardModuleLatencyTrend:
-		return 6
-	default:
+	case dashboardModuleServerStatus, dashboardModuleTrafficSummary, dashboardModuleStorageSummary, dashboardModuleCostCenter:
 		return 3
+	case dashboardModuleResourceRanking, dashboardModuleLatencyTrend:
+		return 12
+	default:
+		return 6
+	}
+}
+
+func insertCostCenterAfterStorage(modules []dashboardModuleSetting) []dashboardModuleSetting {
+	for _, module := range modules {
+		if module.ID == dashboardModuleCostCenter {
+			return modules
+		}
+	}
+	insert := dashboardModuleSetting{ID: dashboardModuleCostCenter, Span: dashboardDefaultModuleSpan(dashboardModuleCostCenter)}
+	idx := len(modules)
+	for i, module := range modules {
+		if module.ID == dashboardModuleStorageSummary {
+			idx = i + 1
+			break
+		}
+	}
+	out := make([]dashboardModuleSetting, 0, len(modules)+1)
+	out = append(out, modules[:idx]...)
+	out = append(out, insert)
+	out = append(out, modules[idx:]...)
+	return out
+}
+
+func enableNewCostCenterModule(modules []dashboardModuleSetting, newlyInserted bool) {
+	summaryOn := 0
+	legacyThirds := 0
+	costIndex := -1
+	for i, module := range modules {
+		if module.ID == dashboardModuleCostCenter {
+			costIndex = i
+		}
+		if module.ID == dashboardModuleServerStatus || module.ID == dashboardModuleTrafficSummary || module.ID == dashboardModuleStorageSummary {
+			if module.Enabled {
+				summaryOn++
+			}
+			if module.Span == 4 {
+				legacyThirds++
+			}
+		}
+	}
+	if costIndex < 0 || modules[costIndex].Enabled || summaryOn < 3 {
+		return
+	}
+	if !newlyInserted && legacyThirds < 3 {
+		return
+	}
+	modules[costIndex].Enabled = true
+	for i := range modules {
+		switch modules[i].ID {
+		case dashboardModuleServerStatus, dashboardModuleTrafficSummary, dashboardModuleStorageSummary, dashboardModuleCostCenter:
+			if modules[i].Span == 3 || modules[i].Span == 4 {
+				modules[i].Span = 3
+			}
+		}
 	}
 }
