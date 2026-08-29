@@ -140,3 +140,42 @@ func TestTDigestCompressionIsLosslessAndReadsLegacyFormat(t *testing.T) {
 		t.Fatal("compressed digest payload does not reproduce the legacy bytes")
 	}
 }
+
+func TestDecodeUpstream14ZstdAndRawEnvelopes(t *testing.T) {
+	td := NewTDigest(30)
+	for i := 0; i < 400; i++ {
+		td.Add(float64(i%17)+0.25, 1)
+	}
+	legacy := td.encodeRaw()
+	stored := encodeStoredTDigest(td)
+	if len(stored) < 3 || stored[0] != storedDigestMagic0 {
+		t.Fatalf("unexpected stored digest header: %v", stored[:min(3, len(stored))])
+	}
+	if stored[1] != storedDigestTypeZstd && stored[1] != storedDigestTypeRaw {
+		t.Fatalf("stored digest type = %q, want Z or U", stored[1])
+	}
+
+	rawEnvelope := make([]byte, storedDigestHeaderSize+len(legacy))
+	rawEnvelope[0] = storedDigestMagic0
+	rawEnvelope[1] = storedDigestTypeRaw
+	rawEnvelope[2] = storedDigestVersion
+	copy(rawEnvelope[storedDigestHeaderSize:], legacy)
+
+	for name, blob := range map[string][]byte{
+		"legacy":       legacy,
+		"lite-flate":   td.Encode(),
+		"upstream-14":  stored,
+		"upstream-raw": rawEnvelope,
+	} {
+		decoded, err := DecodeTDigest(blob)
+		if err != nil {
+			t.Fatalf("decode %s digest: %v", name, err)
+		}
+		if decoded.Count() != td.Count() {
+			t.Fatalf("%s digest count = %v, want %v", name, decoded.Count(), td.Count())
+		}
+		if got, want := decoded.Quantile(0.99), td.Quantile(0.99); math.Float64bits(got) != math.Float64bits(want) {
+			t.Fatalf("%s digest q=0.99 = %v, want bit-identical %v", name, got, want)
+		}
+	}
+}

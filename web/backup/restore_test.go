@@ -126,6 +126,11 @@ func TestValidateArchiveAcceptsFullAndConfigurationPackages(t *testing.T) {
 			"komari.db":            "main",
 			"komari-backup-markup": "config",
 		},
+		"komari 1.4 full": {
+			"komari.db":            "main",
+			"metrics.db":           "history",
+			"komari-backup-markup": "full",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := ValidateArchive(writeTestArchive(t, entries)); err != nil {

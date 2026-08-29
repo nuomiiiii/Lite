@@ -5,7 +5,6 @@ import (
 	"compress/flate"
 	"encoding/binary"
 	"errors"
-	"io"
 	"math"
 	"sort"
 )
@@ -332,24 +331,11 @@ func DecodeTDigest(b []byte) (*TDigest, error) {
 	if len(b) == 0 {
 		return NewTDigest(defaultTDigestCompression), nil
 	}
-	if len(b) >= 3 && b[0] == tdigestMagic0 && b[1] == tdigestCompressedMagic1 {
-		if b[2] != tdigestVersion {
-			return nil, errors.New("metric: unsupported compressed t-digest version")
-		}
-		reader := flate.NewReader(bytes.NewReader(b[3:]))
-		decompressed, err := io.ReadAll(io.LimitReader(reader, (64<<20)+1))
-		closeErr := reader.Close()
-		if err != nil {
-			return nil, errors.New("metric: invalid compressed t-digest blob")
-		}
-		if closeErr != nil {
-			return nil, errors.New("metric: invalid compressed t-digest blob")
-		}
-		if len(decompressed) > 64<<20 {
-			return nil, errors.New("metric: compressed t-digest blob is too large")
-		}
-		b = decompressed
+	decoded, err := decodeStoredTDigest(b)
+	if err != nil {
+		return nil, err
 	}
+	b = decoded
 	if len(b) < 3+8*4+4 || b[0] != tdigestMagic0 || b[1] != tdigestMagic1 {
 		return nil, errors.New("metric: invalid t-digest blob")
 	}

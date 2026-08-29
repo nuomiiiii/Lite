@@ -85,8 +85,15 @@ func TestRestrictedControllerOnlyRegistersLoginOAuthAndUpgradeAPIs(t *testing.T)
 	request := httptest.NewRequest(http.MethodGet, APIPath+"/status", nil)
 	response := httptest.NewRecorder()
 	r.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated status code = %d, want %d", response.Code, http.StatusUnauthorized)
+	if response.Code != http.StatusOK {
+		t.Fatalf("unauthenticated status code = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	start := httptest.NewRequest(http.MethodPost, APIPath+"/start", nil)
+	startResponse := httptest.NewRecorder()
+	r.ServeHTTP(startResponse, start)
+	if startResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated start code = %d, want %d", startResponse.Code, http.StatusUnauthorized)
 	}
 }
 

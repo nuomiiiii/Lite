@@ -63,8 +63,15 @@ func TestRestrictedControllerRoutes(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, APIPath+"/status", nil)
 	response := httptest.NewRecorder()
 	r.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated status code = %d, want %d", response.Code, http.StatusUnauthorized)
+	if response.Code != http.StatusOK {
+		t.Fatalf("unauthenticated status code = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	retry := httptest.NewRequest(http.MethodPost, APIPath+"/retry", nil)
+	retryResponse := httptest.NewRecorder()
+	r.ServeHTTP(retryResponse, retry)
+	if retryResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated retry code = %d, want %d", retryResponse.Code, http.StatusUnauthorized)
 	}
 }
 

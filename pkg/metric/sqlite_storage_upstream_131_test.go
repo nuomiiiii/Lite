@@ -123,6 +123,77 @@ func TestSQLiteStorageMigratesUpstream14LabelSets(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorageMigratesUpstream14ZstdDigests(t *testing.T) {
+	ctx := context.Background()
+	dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
+	base := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
+	seedUpstream131SQLiteStore(t, dsn, base, false)
+
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`ALTER TABLE metric_labels RENAME TO metric_label_sets`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	rows, err := db.Query(`SELECT rowid, digest FROM metric_rollups ORDER BY rowid`)
+	if err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	type stored struct {
+		id     int64
+		digest []byte
+	}
+	var updates []stored
+	for rows.Next() {
+		var item stored
+		if err := rows.Scan(&item.id, &item.digest); err != nil {
+			_ = rows.Close()
+			_ = db.Close()
+			t.Fatal(err)
+		}
+		decoded, err := DecodeTDigest(item.digest)
+		if err != nil {
+			_ = rows.Close()
+			_ = db.Close()
+			t.Fatal(err)
+		}
+		updates = append(updates, stored{id: item.id, digest: encodeStoredTDigest(decoded)})
+	}
+	if err := rows.Close(); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	for _, item := range updates {
+		if _, err := db.Exec(`UPDATE metric_rollups SET digest = ? WHERE rowid = ?`, item.digest, item.id); err != nil {
+			_ = db.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(ctx, SQLite(dsn))
+	if err != nil {
+		t.Fatalf("upgrade upstream 1.4 zstd database: %v", err)
+	}
+	defer store.Close()
+	migrated, err := store.scanRollupRowsBetween(ctx, "compat.131", "upstream-node", map[string]string{"task_id": "7"},
+		time.Minute.Nanoseconds(), base.UnixNano(), base.UnixNano(), true)
+	if err != nil {
+		t.Fatalf("read migrated upstream 1.4 zstd rollup: %v", err)
+	}
+	if len(migrated) != 1 || migrated[0].bucketData.count != 2 || migrated[0].bucketData.sum != 30 {
+		t.Fatalf("migrated upstream 1.4 zstd rollup changed: %#v", migrated)
+	}
+	if got := migrated[0].bucketData.digest.Quantile(0.5); got < 10 || got > 20 {
+		t.Fatalf("migrated upstream 1.4 zstd digest is invalid: p50=%v", got)
+	}
+}
+
 func TestSQLiteStorageUpstream131OverflowRollsBack(t *testing.T) {
 	ctx := context.Background()
 	dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
@@ -156,6 +227,28 @@ func TestSQLiteStorageUpstream131OverflowRollsBack(t *testing.T) {
 	}
 	if staging != 0 {
 		t.Fatalf("failed upstream 1.3.1 migration left %d staging objects", staging)
+	}
+}
+
+func TestDecodeUpstream131DigestReads14ZstdEnvelope(t *testing.T) {
+	digest := NewTDigest(30)
+	digest.Add(12.5, 1)
+	digest.Add(18.25, 1)
+	blob := encodeStoredTDigest(digest)
+	if len(blob) < 3 || blob[0] != storedDigestMagic0 || (blob[1] != storedDigestTypeZstd && blob[1] != storedDigestTypeRaw) {
+		t.Fatalf("upstream 1.4 envelope was not written: %v", blob[:min(3, len(blob))])
+	}
+	decoded, err := decodeUpstream131Digest(upstream131RollupRow{
+		count:  2,
+		min:    12.5,
+		max:    18.25,
+		digest: blob,
+	})
+	if err != nil {
+		t.Fatalf("decode upstream 1.4 zstd digest: %v", err)
+	}
+	if got, want := decoded.Quantile(0.5), digest.Quantile(0.5); math.Float64bits(got) != math.Float64bits(want) {
+		t.Fatalf("upstream 1.4 zstd p50 = %v, want %v", got, want)
 	}
 }
 

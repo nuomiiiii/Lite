@@ -33,25 +33,38 @@ func writeRestoreArchive(t *testing.T, archivePath, databasePath string) {
 }
 
 func writeNamedRestoreArchive(t *testing.T, archivePath, zipName, databasePath string) {
+	writeRestoreArchiveFiles(t, archivePath, map[string]string{zipName: databasePath})
+}
+
+func writeKomariFullRestoreArchive(t *testing.T, archivePath, databasePath, metricsPath string) {
+	writeRestoreArchiveFiles(t, archivePath, map[string]string{
+		"komari.db":  databasePath,
+		"metrics.db": metricsPath,
+	})
+}
+
+func writeRestoreArchiveFiles(t *testing.T, archivePath string, files map[string]string) {
 	t.Helper()
 	archive, err := os.Create(archivePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	writer := zip.NewWriter(archive)
-	databaseEntry, err := writer.Create(zipName)
-	if err != nil {
-		t.Fatal(err)
+	for zipName, filePath := range files {
+		entry, err := writer.Create(zipName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := os.Open(filePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.Copy(entry, file); err != nil {
+			file.Close()
+			t.Fatal(err)
+		}
+		file.Close()
 	}
-	database, err := os.Open(databasePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := io.Copy(databaseEntry, database); err != nil {
-		database.Close()
-		t.Fatal(err)
-	}
-	database.Close()
 	marker, err := writer.Create("komari-backup-markup")
 	if err != nil {
 		t.Fatal(err)
@@ -313,6 +326,45 @@ func TestRestoreStagedBackupAdoptsKomariDatabase(t *testing.T) {
 	}
 	if value != "from-komari" {
 		t.Fatalf("restored value = %q, want from-komari", value)
+	}
+}
+
+func TestRestoreStagedBackupAdoptsKomariFullBackupWithMetrics(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeSQLite(t, filepath.Join(dataDir, "lite.db"), "old")
+	writeFakeSQLite(t, filepath.Join(dataDir, "metrics.db"), "old-metrics")
+	mainDB := filepath.Join(root, "komari.db")
+	metricsDB := filepath.Join(root, "metrics.db")
+	writeFakeSQLite(t, mainDB, "from-komari")
+	writeFakeSQLite(t, metricsDB, "from-komari-metrics")
+	writeKomariFullRestoreArchive(t, filepath.Join(dataDir, "backup.zip"), mainDB, metricsDB)
+
+	previous := flags.DatabaseFile
+	t.Cleanup(func() { flags.DatabaseFile = previous })
+	flags.DatabaseFile = filepath.Join(dataDir, "lite.db")
+
+	restore, err := restoreStagedBackup(dataDir)
+	if err != nil {
+		t.Fatalf("restore komari 1.4 full backup: %v", err)
+	}
+	if err := restore.Commit(); err != nil {
+		t.Fatalf("commit restore: %v", err)
+	}
+	for name, want := range map[string]string{
+		"lite.db":    "from-komari",
+		"metrics.db": "from-komari-metrics",
+	} {
+		got, err := os.ReadFile(filepath.Join(dataDir, name))
+		if err != nil {
+			t.Fatalf("read restored %s: %v", name, err)
+		}
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("restored %s = %q, want payload %q", name, got, want)
+		}
 	}
 }
 

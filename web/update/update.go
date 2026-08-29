@@ -104,8 +104,8 @@ func (c *Controller) Register(r *gin.Engine) {
 
 	g := r.Group(APIPath, c.requireActive)
 	g.GET("/auth", c.authStatus)
+	g.GET("/status", c.getStatus)
 	authorized := g.Group("", api.RequireRole(api.RoleAdmin))
-	authorized.GET("/status", c.getStatus)
 	authorized.POST("/cleanup", c.cleanup)
 	authorized.POST("/start", c.start)
 }
