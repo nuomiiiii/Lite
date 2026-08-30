@@ -1,7 +1,6 @@
 package public
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/json"
@@ -38,9 +37,6 @@ const (
 	DataDir            = "./data"
 	ThemesDir          = "theme"
 	FaviconFile        = "favicon.ico"
-	AppleTouchIconFile = "apple-touch-icon.png"
-	PwaIcon192File     = "android-chrome-192x192.png"
-	PwaIcon512File     = "android-chrome-512x512.png"
 	DefaultTheme       = "lite-theme"
 	LegacyPublicTheme  = "nezha"
 	LegacyDefaultTheme = "default"
@@ -197,8 +193,9 @@ func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle 
 	// which otherwise resolve below deep SPA routes such as /admin/settings.
 	htmlStr = applicationIconPattern.ReplaceAllString(htmlStr, "")
 	htmlStr = appleTouchIconPattern.ReplaceAllString(htmlStr, "")
+	icons := `<link rel="icon" href="/favicon.ico" /><link rel="apple-touch-icon" href="/favicon.ico" />`
 	if location := headClosePattern.FindStringIndex(htmlStr); location != nil {
-		htmlStr = htmlStr[:location[0]] + applicationIconHTML + htmlStr[location[0]:]
+		htmlStr = htmlStr[:location[0]] + icons + htmlStr[location[0]:]
 	}
 	return htmlStr
 }
@@ -232,26 +229,12 @@ func renderWebAppManifest(siteName, description string) webAppManifest {
 		BackgroundColor: "#ffffff",
 		ThemeColor:      "#2563eb",
 		Orientation:     "portrait-primary",
-		Icons: []webAppManifestIcon{
-			{
-				Src:     "/apple-touch-icon.png",
-				Sizes:   "180x180",
-				Type:    "image/png",
-				Purpose: "any",
-			},
-			{
-				Src:     "/android-chrome-192x192.png",
-				Sizes:   "192x192",
-				Type:    "image/png",
-				Purpose: "any",
-			},
-			{
-				Src:     "/android-chrome-512x512.png",
-				Sizes:   "512x512",
-				Type:    "image/png",
-				Purpose: "any",
-			},
-		},
+		Icons: []webAppManifestIcon{{
+			Src:     "/favicon.ico",
+			Sizes:   "any",
+			Type:    "image/x-icon",
+			Purpose: "any",
+		}},
 	}
 }
 
@@ -381,29 +364,6 @@ func contentTypeForPath(filePath string) string {
 		return "image/x-icon"
 	}
 	return mime.TypeByExtension(filepath.Ext(filePath))
-}
-
-func detectImageContentType(data []byte) string {
-	switch {
-	case len(data) >= 8 && bytes.Equal(data[:8], []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}):
-		return "image/png"
-	case len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF:
-		return "image/jpeg"
-	case len(data) >= 6 && (bytes.Equal(data[:6], []byte("GIF87a")) || bytes.Equal(data[:6], []byte("GIF89a"))):
-		return "image/gif"
-	case len(data) >= 12 && bytes.Equal(data[:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")):
-		return "image/webp"
-	default:
-		return "image/x-icon"
-	}
-}
-
-func readUploadedFavicon() ([]byte, string, bool) {
-	data, err := os.ReadFile(filepath.Join(DataDir, FaviconFile))
-	if err != nil || len(data) == 0 {
-		return nil, "", false
-	}
-	return data, detectImageContentType(data), true
 }
 
 func validThemeID(themeID string) bool {
@@ -744,79 +704,31 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 
 	// ================= 路由定义 =================
 
-	writeIcon := func(c *gin.Context, data []byte, mimeType string, size int, flatten bool) {
-		if flatten {
-			if rendered, ok := opaquePwaIconPNG(data, size); ok {
-				c.Data(http.StatusOK, "image/png", rendered)
-				return
-			}
-		}
-		c.Data(http.StatusOK, mimeType, data)
-	}
-
-	serveNamedIcon := func(c *gin.Context, size int, flatten bool, names ...string) {
-		cfg := getConfig()
-		themeID := cfg[config.ThemeKey].(string)
-		for _, name := range names {
-			content, mimeType, exists := getPublicFileContent(themeID, path.Join(DistDir, name))
-			if exists {
-				writeIcon(c, content, mimeType, size, flatten)
-				return
-			}
-		}
-		for _, name := range names {
-			content, mimeType, exists := embeddedFileContent("systemUI", path.Join(DistDir, name))
-			if exists {
-				writeIcon(c, content, mimeType, size, flatten)
-				return
-			}
-		}
-		for _, fallback := range []string{
-			path.Join(DistDir, "favicon.png"),
-			path.Join(DistDir, "assets/pwa-icon.png"),
-		} {
-			content, mimeType, exists := embeddedFileContent("systemUI", fallback)
-			if exists {
-				writeIcon(c, content, mimeType, size, flatten)
-				return
-			}
-		}
-		c.Status(http.StatusNotFound)
-	}
-
-	serveTabIcon := func(c *gin.Context, size int, names ...string) {
-		setNoStoreHeaders(c)
-		if data, mimeType, ok := readUploadedFavicon(); ok {
-			writeIcon(c, data, mimeType, size, false)
-			return
-		}
-		serveNamedIcon(c, size, false, names...)
-	}
-
-	servePwaIcon := func(c *gin.Context, size int, names ...string) {
-		setNoStoreHeaders(c)
-		if data, mimeType, ok := readUploadedFavicon(); ok {
-			writeIcon(c, data, mimeType, size, true)
-			return
-		}
-		serveNamedIcon(c, size, false, names...)
-	}
-
 	r.GET("/favicon.ico", func(c *gin.Context) {
-		serveTabIcon(c, pwaIcon192Size, "favicon.png", FaviconFile)
-	})
+		setNoStoreHeaders(c)
 
-	r.GET("/apple-touch-icon.png", func(c *gin.Context) {
-		servePwaIcon(c, defaultPwaIconSize, AppleTouchIconFile, PwaIcon192File, PwaIcon512File, "favicon.png")
-	})
-	r.GET("/android-chrome-192x192.png", func(c *gin.Context) {
-		servePwaIcon(c, pwaIcon192Size, PwaIcon192File, PwaIcon512File, AppleTouchIconFile, "favicon.png")
-	})
-	r.GET("/android-chrome-512x512.png", func(c *gin.Context) {
-		servePwaIcon(c, pwaIcon512Size, PwaIcon512File, PwaIcon192File, AppleTouchIconFile, "favicon.png")
-	})
-	r.GET("/favicon.png", func(c *gin.Context) {
-		serveTabIcon(c, pwaIcon192Size, "favicon.png", FaviconFile)
+		localFavicon := filepath.Join(DataDir, FaviconFile)
+		if _, err := os.Stat(localFavicon); err == nil {
+			c.Header("Content-Type", contentTypeForPath(localFavicon))
+			c.File(localFavicon)
+			return
+		}
+
+		cfg := getConfig()
+		themeFaviconPath := path.Join(DistDir, FaviconFile)
+		content, mimeType, exists := getPublicFileContent(cfg[config.ThemeKey].(string), themeFaviconPath)
+		if exists {
+			c.Data(http.StatusOK, mimeType, content)
+			return
+		}
+
+		content, mimeType, exists = embeddedFileContent("systemUI", themeFaviconPath)
+		if exists {
+			c.Data(http.StatusOK, mimeType, content)
+			return
+		}
+
+		c.Status(http.StatusNotFound)
 	})
 
 	r.GET("/manifest.json", serveWebAppManifest)
