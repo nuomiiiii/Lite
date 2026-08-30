@@ -206,7 +206,7 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 	for _, want := range []string{
 		`<title>Nomi &amp; Friends</title>`,
 		`<meta name="apple-mobile-web-app-title" content="Nomi &amp; Friends" />`,
-		`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
+		`<meta name="viewport" content="width=device-width, initial-scale=1.0" />`,
 		`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
 		`<link rel="icon" type="image/png" href="/favicon.png" />`,
 		`<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />`,
@@ -297,7 +297,7 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		for _, want := range []string{
 			`<title>` + expectedTitle + `</title>`,
 			`<meta name="apple-mobile-web-app-title" content="` + expectedTitle + `" />`,
-			`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
+			`<meta name="viewport" content="width=device-width, initial-scale=1.0" />`,
 			`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
 			`<link rel="icon" type="image/png" href="/favicon.png" />`,
 			`<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />`,
