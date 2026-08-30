@@ -696,6 +696,58 @@ func TestThirtyDayCycleKeepsListedMonthlyPrice(t *testing.T) {
 	assert.Equal(t, "4.000000", *servers.Items[0].MonthlyAverage)
 }
 
+func TestRemainingValueSkipsLongTermExpiry(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 30, 12, 0)
+	longTerm := now.AddDate(200, 0, 0)
+	placeholder := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
+	finite := now.Add(30 * 24 * time.Hour)
+	saveClient(t, db, models.Client{UUID: "long-term", Name: "long-term", Price: 30, BillingCycle: 30, Currency: "CNY", ExpiredAt: &longTerm})
+	saveClient(t, db, models.Client{UUID: "placeholder", Name: "placeholder", Price: 30, BillingCycle: 30, Currency: "CNY", ExpiredAt: &placeholder})
+	saveClient(t, db, models.Client{UUID: "finite", Name: "finite", Price: 30, BillingCycle: 30, Currency: "CNY", ExpiredAt: &finite})
+	require.NoError(t, EnsureInitialPriceVersions(db, now))
+
+	page, err := GetServers(context.Background(), db, ServerQuery{Currency: "CNY", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 3)
+	byName := map[string]BillingServerRow{}
+	for _, row := range page.Items {
+		byName[row.Name] = row
+	}
+
+	require.Contains(t, byName, "long-term")
+	assert.Nil(t, byName["long-term"].RemainingValue)
+	assert.Nil(t, byName["long-term"].RemainingDays)
+	require.NotNil(t, byName["long-term"].DailyAverage)
+	require.NotNil(t, byName["long-term"].MonthlyAverage)
+	require.NotNil(t, byName["long-term"].YearlyAverage)
+	assert.Equal(t, "1.000000", *byName["long-term"].DailyAverage)
+	assert.Equal(t, "30.000000", *byName["long-term"].MonthlyAverage)
+	assert.Equal(t, "360.000000", *byName["long-term"].YearlyAverage)
+	assert.Nil(t, byName["placeholder"].RemainingValue)
+	require.NotNil(t, byName["finite"].RemainingValue)
+	require.NotNil(t, byName["finite"].RemainingDays)
+
+	summary, expiring, err := remainingValueSummary(context.Background(), db, "CNY", now)
+	require.NoError(t, err)
+	finiteAmount, err := ParseAmountMicros(*byName["finite"].RemainingValue)
+	require.NoError(t, err)
+	assert.Equal(t, finiteAmount, summary)
+	assert.Equal(t, 1, expiring)
+
+	assert.True(t, isLongTermExpiry(&longTerm))
+	assert.True(t, isLongTermExpiry(&placeholder))
+	dated := time.Date(2027, 5, 14, 0, 0, 0, 0, time.UTC)
+	assert.False(t, isLongTermExpiry(&dated))
+	assert.False(t, isLongTermExpiry(&finite))
+
+	value, days := remainingValue(models.BillingPriceVersion{
+		PriceMicros: 30_000_000, Currency: "CNY", BillingCycleDays: 30, ExpiredAt: &longTerm,
+	}, "CNY", nil, now)
+	assert.Nil(t, value)
+	assert.Nil(t, days)
+}
+
 func TestRemainingValueSummaryExcludesAlreadyExpiredServers(t *testing.T) {
 	db := billingTestDB(t)
 	now := beijingTime(2026, time.August, 25, 12, 0)

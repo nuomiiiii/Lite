@@ -1229,8 +1229,19 @@ func convertedLockedForecast(amount int64, version models.BillingPriceVersion, t
 	return &value
 }
 
+func isLongTermExpiry(expiredAt *time.Time) bool {
+	if expiredAt == nil {
+		return true
+	}
+	stamp := expiredAt.UTC()
+	return stamp.IsZero() || stamp.Year() < 2 || stamp.Year() > 2200
+}
+
 func remainingValue(version models.BillingPriceVersion, currency string, rates map[string]string, now time.Time) (*string, *int) {
 	if version.ExpiredAt == nil || version.PriceMicros <= 0 || version.BillingCycleDays <= 0 {
+		return nil, nil
+	}
+	if isLongTermExpiry(version.ExpiredAt) {
 		return nil, nil
 	}
 	remaining := version.ExpiredAt.Sub(now)
