@@ -122,3 +122,63 @@ func TestUploadedLogoStaysOriginalOnFaviconAndFlattensForPWA(t *testing.T) {
 		t.Fatalf("PWA center = rgba(%d,?,?,%d), want the uploaded coral mark", cr>>8, ca>>8)
 	}
 }
+
+func TestLiteOnlineMarkPwaHasFullBleedWhite(t *testing.T) {
+	data := defaultPwaIconPNG(defaultPwaIconSize)
+	if len(data) == 0 {
+		t.Fatal("default PWA icon was empty")
+	}
+	decoded, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Bounds().Dx() != defaultPwaIconSize || decoded.Bounds().Dy() != defaultPwaIconSize {
+		t.Fatalf("size = %v, want %dx%d", decoded.Bounds(), defaultPwaIconSize, defaultPwaIconSize)
+	}
+	r, g, b, a := decoded.At(20, 20).RGBA()
+	if a != 0xffff || r>>8 != 255 || g>>8 != 255 || b>>8 != 255 {
+		t.Fatalf("padding = rgba(%d,%d,%d,%d), want full-bleed white (no inner plate)", r>>8, g>>8, b>>8, a>>8)
+	}
+	cr, cg, cb, ca := decoded.At(61, 61).RGBA()
+	if ca != 0xffff || cr>>8 > 50 || cg>>8 > 55 || cb>>8 > 70 {
+		t.Fatalf("mark = rgba(%d,%d,%d,%d), want charcoal tile", cr>>8, cg>>8, cb>>8, ca>>8)
+	}
+}
+
+func TestWriteDefaultPwaIcons(t *testing.T) {
+	if os.Getenv("LITE_WRITE_PWA_ICONS") != "1" {
+		t.Skip("set LITE_WRITE_PWA_ICONS=1 to regenerate bundled icons")
+	}
+	png180 := defaultPwaIconPNG(defaultPwaIconSize)
+	png192 := defaultPwaIconPNG(pwaIcon192Size)
+	png512 := defaultPwaIconPNG(pwaIcon512Size)
+	if len(png180) == 0 || len(png192) == 0 || len(png512) == 0 {
+		t.Fatal("failed to encode default PWA icons")
+	}
+	dirs := filepath.SplitList(os.Getenv("LITE_WRITE_PWA_ICON_DIRS"))
+	if len(dirs) == 0 {
+		t.Fatal("LITE_WRITE_PWA_ICON_DIRS is empty")
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		files := map[string][]byte{
+			"apple-touch-icon.png":       png180,
+			"favicon.png":                png192,
+			"android-chrome-192x192.png": png192,
+			"android-chrome-512x512.png": png512,
+			"favicon.ico":                 png192,
+			"assets/pwa-icon.png":       png192,
+		}
+		for name, data := range files {
+			path := filepath.Join(dir, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				t.Fatalf("write %s: %v", path, err)
+			}
+		}
+	}
+}

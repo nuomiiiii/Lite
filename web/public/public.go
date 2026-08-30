@@ -154,7 +154,7 @@ func renderPublicDocumentTitle(htmlStr, title string) string {
 }
 
 const (
-	mobileViewportTag = `<meta name="viewport" content="width=device-width, initial-scale=1.0" />`
+	mobileViewportTag = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
 	appleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`
 )
 
