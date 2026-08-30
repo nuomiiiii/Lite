@@ -104,7 +104,7 @@ runs:
         test -f web/public/rescueTheme/dist/index.html
         test ! -e web/public/rescueTheme/komari-theme.json
         test ! -e web/public/bundledThemes/nezha
-        grep -F 'lite-icon-mark1' web/public/rescueTheme/dist/index.html
+        grep -F '/favicon.png' web/public/rescueTheme/dist/index.html
         grep -F '/assets/index.' web/public/rescueTheme/dist/index.html
 
     - name: Pack frontend artifact

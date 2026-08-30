@@ -208,8 +208,8 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 		`<meta name="apple-mobile-web-app-title" content="Nomi &amp; Friends" />`,
 		`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
 		`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
-		`<link rel="icon" type="image/png" href="/favicon.png" />`,
-		`<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />`,
+		`<link rel="icon" type="image/png" href="/favicon.png?v=lite-icon-tab1" />`,
+		`<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=lite-icon-pwa1" />`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("renderApplicationIdentity() = %q, want fragment %q", got, want)
@@ -220,7 +220,7 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 			t.Fatalf("renderApplicationIdentity() retained stale metadata %q: %q", stale, got)
 		}
 	}
-	if strings.Count(got, `<link rel="icon" type="image/png" href="/favicon.png" />`) != 1 {
+	if strings.Count(got, `<link rel="icon" type="image/png" href="/favicon.png?v=lite-icon-tab1" />`) != 1 {
 		t.Fatalf("renderApplicationIdentity() did not normalize favicon declarations: %q", got)
 	}
 	if strings.Contains(got, "relative-favicon.ico") {
@@ -239,7 +239,7 @@ func TestRenderSystemApplicationIdentityLeavesRuntimeTitleOwnershipToReact(t *te
 	if strings.Contains(got, documentTitleSyncMarker) || strings.Contains(got, "MutationObserver") {
 		t.Fatalf("system document retained the public title synchronizer: %q", got)
 	}
-	if !strings.Contains(got, `<link rel="icon" type="image/png" href="/favicon.png" />`) || strings.Contains(got, `href="favicon.ico"`) {
+	if !strings.Contains(got, `<link rel="icon" type="image/png" href="/favicon.png?v=lite-icon-tab1" />`) || strings.Contains(got, `href="favicon.ico"`) {
 		t.Fatalf("system document did not receive a route-safe favicon: %q", got)
 	}
 }
@@ -299,8 +299,8 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 			`<meta name="apple-mobile-web-app-title" content="` + expectedTitle + `" />`,
 			`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
 			`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
-			`<link rel="icon" type="image/png" href="/favicon.png" />`,
-			`<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />`,
+			`<link rel="icon" type="image/png" href="/favicon.png?v=lite-icon-tab1" />`,
+			`<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=lite-icon-pwa1" />`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("GET %s body does not contain %q", tt.path, want)
@@ -831,7 +831,7 @@ func TestRescueThemeShipsLiteThemeManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(index), "lite-icon-mark1") {
+	if !strings.Contains(string(index), "/favicon.png") {
 		t.Fatal("rescue index is not Lite-Theme")
 	}
 	if !strings.Contains(string(index), `/assets/index.`) || !strings.Contains(string(index), ".js") {

@@ -14,11 +14,14 @@ const (
 	pwaIcon192Size     = 192
 	pwaIcon512Size     = 512
 	pwaIconMaxPixels   = 16_000_000
+	pwaMarkSafeInset   = 0.10
+	tabIconCacheQuery  = "v=lite-icon-tab1"
+	pwaIconCacheQuery  = "v=lite-icon-pwa1"
 )
 
 var customPwaIconFill = color.NRGBA{R: 255, G: 255, B: 255, A: 255}
 
-const applicationIconHTML = `<link rel="icon" type="image/png" href="/favicon.png" /><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />`
+const applicationIconHTML = `<link rel="icon" type="image/png" href="/favicon.png?` + tabIconCacheQuery + `" /><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?` + pwaIconCacheQuery + `" /><link rel="apple-touch-icon-precomposed" sizes="180x180" href="/apple-touch-icon.png?` + pwaIconCacheQuery + `" />`
 
 func opaquePwaIconPNG(data []byte, size int) ([]byte, bool) {
 	if size < 1 || len(data) == 0 {
@@ -42,6 +45,36 @@ func opaquePwaIconPNG(data []byte, size int) ([]byte, bool) {
 	return out.Bytes(), true
 }
 
+func opaqueContentBounds(src image.Image) image.Rectangle {
+	bounds := src.Bounds()
+	minX, minY := bounds.Max.X, bounds.Max.Y
+	maxX, maxY := bounds.Min.X, bounds.Min.Y
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			_, _, _, a := src.At(x, y).RGBA()
+			if a <= 0x2000 {
+				continue
+			}
+			if x < minX {
+				minX = x
+			}
+			if y < minY {
+				minY = y
+			}
+			if x+1 > maxX {
+				maxX = x + 1
+			}
+			if y+1 > maxY {
+				maxY = y + 1
+			}
+		}
+	}
+	if minX >= maxX || minY >= maxY {
+		return bounds
+	}
+	return image.Rect(minX, minY, maxX, maxY)
+}
+
 func flattenIconOntoOpaqueFill(src image.Image, size int, fill color.NRGBA) *image.NRGBA {
 	out := image.NewNRGBA(image.Rect(0, 0, size, size))
 	for y := 0; y < size; y++ {
@@ -52,15 +85,21 @@ func flattenIconOntoOpaqueFill(src image.Image, size int, fill color.NRGBA) *ima
 	if src == nil {
 		return out
 	}
-	bounds := src.Bounds()
-	srcW, srcH := bounds.Dx(), bounds.Dy()
+	content := opaqueContentBounds(src)
+	srcW, srcH := content.Dx(), content.Dy()
 	if srcW < 1 || srcH < 1 {
 		return out
 	}
 
-	scale := float64(size) / float64(srcW)
-	if float64(srcH)*scale > float64(size) {
-		scale = float64(size) / float64(srcH)
+	inset := int(float64(size)*pwaMarkSafeInset + 0.5)
+	inner := size - 2*inset
+	if inner < 1 {
+		inner = size
+		inset = 0
+	}
+	scale := float64(inner) / float64(srcW)
+	if float64(srcH)*scale > float64(inner) {
+		scale = float64(inner) / float64(srcH)
 	}
 	destW := int(float64(srcW)*scale + 0.5)
 	destH := int(float64(srcH)*scale + 0.5)
@@ -70,9 +109,9 @@ func flattenIconOntoOpaqueFill(src image.Image, size int, fill color.NRGBA) *ima
 	if destH < 1 {
 		destH = 1
 	}
-	left := (size - destW) / 2
-	top := (size - destH) / 2
-	draw.CatmullRom.Scale(out, image.Rect(left, top, left+destW, top+destH), src, bounds, draw.Over, nil)
+	left := inset + (inner-destW)/2
+	top := inset + (inner-destH)/2
+	draw.CatmullRom.Scale(out, image.Rect(left, top, left+destW, top+destH), src, content, draw.Over, nil)
 
 	for y := 0; y < size; y++ {
 		for x := 0; x < size; x++ {

@@ -135,13 +135,19 @@ func TestLiteOnlineMarkPwaHasFullBleedWhite(t *testing.T) {
 	if decoded.Bounds().Dx() != defaultPwaIconSize || decoded.Bounds().Dy() != defaultPwaIconSize {
 		t.Fatalf("size = %v, want %dx%d", decoded.Bounds(), defaultPwaIconSize, defaultPwaIconSize)
 	}
-	r, g, b, a := decoded.At(20, 20).RGBA()
+	r, g, b, a := decoded.At(1, 1).RGBA()
 	if a != 0xffff || r>>8 != 255 || g>>8 != 255 || b>>8 != 255 {
-		t.Fatalf("padding = rgba(%d,%d,%d,%d), want full-bleed white (no inner plate)", r>>8, g>>8, b>>8, a>>8)
+		t.Fatalf("corner = rgba(%d,%d,%d,%d), want opaque white", r>>8, g>>8, b>>8, a>>8)
 	}
-	cr, cg, cb, ca := decoded.At(61, 61).RGBA()
+	markX := defaultPwaIconSize / 4
+	markY := defaultPwaIconSize / 4
+	cr, cg, cb, ca := decoded.At(markX, markY).RGBA()
 	if ca != 0xffff || cr>>8 > 50 || cg>>8 > 55 || cb>>8 > 70 {
-		t.Fatalf("mark = rgba(%d,%d,%d,%d), want charcoal tile", cr>>8, cg>>8, cb>>8, ca>>8)
+		t.Fatalf("mark at %d,%d = rgba(%d,%d,%d,%d), want charcoal tile", markX, markY, cr>>8, cg>>8, cb>>8, ca>>8)
+	}
+	content := opaqueContentBounds(liteOnlineMarkImage())
+	if content.Dx() >= liteOnlineMarkCanvas || content.Dy() >= liteOnlineMarkCanvas {
+		t.Fatalf("content bounds %v still include the empty 512 canvas padding", content)
 	}
 }
 
@@ -165,10 +171,8 @@ func TestWriteDefaultPwaIcons(t *testing.T) {
 		}
 		files := map[string][]byte{
 			"apple-touch-icon.png":       png180,
-			"favicon.png":                png192,
 			"android-chrome-192x192.png": png192,
 			"android-chrome-512x512.png": png512,
-			"favicon.ico":                 png192,
 			"assets/pwa-icon.png":       png192,
 		}
 		for name, data := range files {

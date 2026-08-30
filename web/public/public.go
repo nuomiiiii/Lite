@@ -784,22 +784,26 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		c.Status(http.StatusNotFound)
 	}
 
+	serveTabIcon := func(c *gin.Context, size int, names ...string) {
+		setNoStoreHeaders(c)
+		if data, mimeType, ok := readUploadedFavicon(); ok {
+			writeIcon(c, data, mimeType, size, false)
+			return
+		}
+		serveNamedIcon(c, size, false, names...)
+	}
+
 	servePwaIcon := func(c *gin.Context, size int, names ...string) {
 		setNoStoreHeaders(c)
 		if data, mimeType, ok := readUploadedFavicon(); ok {
 			writeIcon(c, data, mimeType, size, true)
 			return
 		}
-		serveNamedIcon(c, size, true, names...)
+		serveNamedIcon(c, size, false, names...)
 	}
 
 	r.GET("/favicon.ico", func(c *gin.Context) {
-		setNoStoreHeaders(c)
-		if data, mimeType, ok := readUploadedFavicon(); ok {
-			writeIcon(c, data, mimeType, pwaIcon192Size, false)
-			return
-		}
-		serveNamedIcon(c, pwaIcon192Size, true, "favicon.png", AppleTouchIconFile, PwaIcon192File, FaviconFile)
+		serveTabIcon(c, pwaIcon192Size, "favicon.png", FaviconFile)
 	})
 
 	r.GET("/apple-touch-icon.png", func(c *gin.Context) {
@@ -812,7 +816,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		servePwaIcon(c, pwaIcon512Size, PwaIcon512File, PwaIcon192File, AppleTouchIconFile, "favicon.png")
 	})
 	r.GET("/favicon.png", func(c *gin.Context) {
-		servePwaIcon(c, pwaIcon192Size, "favicon.png", AppleTouchIconFile)
+		serveTabIcon(c, pwaIcon192Size, "favicon.png", FaviconFile)
 	})
 
 	r.GET("/manifest.json", serveWebAppManifest)
