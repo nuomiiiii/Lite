@@ -206,8 +206,10 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 	for _, want := range []string{
 		`<title>Nomi &amp; Friends</title>`,
 		`<meta name="apple-mobile-web-app-title" content="Nomi &amp; Friends" />`,
+		`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
+		`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
 		`<link rel="icon" href="/favicon.ico" />`,
-		`<link rel="apple-touch-icon" href="/favicon.ico" />`,
+		`<link rel="apple-touch-icon" href="/apple-touch-icon.png" />`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("renderApplicationIdentity() = %q, want fragment %q", got, want)
@@ -295,8 +297,10 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		for _, want := range []string{
 			`<title>` + expectedTitle + `</title>`,
 			`<meta name="apple-mobile-web-app-title" content="` + expectedTitle + `" />`,
+			`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
+			`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
 			`<link rel="icon" href="/favicon.ico" />`,
-			`<link rel="apple-touch-icon" href="/favicon.ico" />`,
+			`<link rel="apple-touch-icon" href="/apple-touch-icon.png" />`,
 		} {
 			if !strings.Contains(body, want) {
 				t.Fatalf("GET %s body does not contain %q", tt.path, want)
@@ -372,14 +376,93 @@ func TestStaticServesOneDynamicManifestForPublicAndSystemUI(t *testing.T) {
 		if manifest.Description != "My monitor" || manifest.StartURL != "/" || manifest.Scope != "/" {
 			t.Fatalf("GET %s routing metadata = %#v", requestPath, manifest)
 		}
-		if len(manifest.Icons) != 1 || manifest.Icons[0] != (webAppManifestIcon{
-			Src:     "/favicon.ico",
-			Sizes:   "any",
-			Type:    "image/x-icon",
-			Purpose: "any",
-		}) {
+		if len(manifest.Icons) != 3 ||
+			manifest.Icons[0] != (webAppManifestIcon{
+				Src:     "/apple-touch-icon.png",
+				Sizes:   "180x180",
+				Type:    "image/png",
+				Purpose: "any",
+			}) ||
+			manifest.Icons[1] != (webAppManifestIcon{
+				Src:     "/android-chrome-192x192.png",
+				Sizes:   "192x192",
+				Type:    "image/png",
+				Purpose: "any",
+			}) ||
+			manifest.Icons[2] != (webAppManifestIcon{
+				Src:     "/android-chrome-512x512.png",
+				Sizes:   "512x512",
+				Type:    "image/png",
+				Purpose: "any",
+			}) {
 			t.Fatalf("GET %s icons = %#v", requestPath, manifest.Icons)
 		}
+	}
+
+	for _, iconPath := range []string{
+		"/apple-touch-icon.png",
+		"/android-chrome-192x192.png",
+		"/android-chrome-512x512.png",
+	} {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, iconPath, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d", iconPath, recorder.Code)
+		}
+		if got := recorder.Header().Get("Content-Type"); !strings.HasPrefix(got, "image/png") {
+			t.Fatalf("GET %s Content-Type = %q", iconPath, got)
+		}
+		if got := recorder.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
+			t.Fatalf("GET %s Cache-Control = %q", iconPath, got)
+		}
+	}
+}
+
+func TestStaticPwaIconsUseUploadedSiteIcon(t *testing.T) {
+	t.Chdir(t.TempDir())
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+	if err := os.MkdirAll(DataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	png := append([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}, []byte("custom-site-icon")...)
+	if err := os.WriteFile(filepath.Join(DataDir, FaviconFile), png, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	router := gin.New()
+	Static(router.Group("/"), router.NoRoute)
+	request := func(path string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		return recorder
+	}
+
+	for _, iconPath := range []string{"/favicon.ico", "/apple-touch-icon.png", "/android-chrome-512x512.png"} {
+		got := request(iconPath)
+		if got.Code != http.StatusOK {
+			t.Fatalf("GET %s status = %d", iconPath, got.Code)
+		}
+		if got.Body.String() != string(png) {
+			t.Fatalf("GET %s did not return the uploaded site icon", iconPath)
+		}
+		if !strings.HasPrefix(got.Header().Get("Content-Type"), "image/png") {
+			t.Fatalf("GET %s Content-Type = %q", iconPath, got.Header().Get("Content-Type"))
+		}
+	}
+
+	ico := []byte("custom-ico-bytes")
+	if err := os.WriteFile(filepath.Join(DataDir, FaviconFile), ico, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := request("/apple-touch-icon.png")
+	if got.Code != http.StatusOK || got.Body.String() != string(ico) {
+		t.Fatalf("uploaded non-PNG favicon was not used for PWA icon: status=%d body=%q", got.Code, got.Body.String())
 	}
 }
 
@@ -711,8 +794,12 @@ func TestStaticKeepsSystemUIAndPublicThemeResourcesIsolated(t *testing.T) {
 	if asset := request(assetPath); asset.Code != http.StatusOK {
 		t.Fatalf("GET %s status=%d", assetPath, asset.Code)
 	}
-	if favicon := request("/favicon.ico"); favicon.Code != http.StatusOK || favicon.Header().Get("Content-Type") != "image/x-icon" {
-		t.Fatalf("system favicon fallback status=%d content-type=%q", favicon.Code, favicon.Header().Get("Content-Type"))
+	favicon := request("/favicon.ico")
+	if favicon.Code != http.StatusOK {
+		t.Fatalf("system favicon fallback status=%d", favicon.Code)
+	}
+	if ct := favicon.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/") {
+		t.Fatalf("system favicon fallback content-type=%q", ct)
 	}
 	for _, missing := range []string{
 		"/system-assets/assets/not-present.js",

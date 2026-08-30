@@ -1,6 +1,7 @@
 package public
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/json"
@@ -37,6 +38,9 @@ const (
 	DataDir            = "./data"
 	ThemesDir          = "theme"
 	FaviconFile        = "favicon.ico"
+	AppleTouchIconFile = "apple-touch-icon.png"
+	PwaIcon192File     = "android-chrome-192x192.png"
+	PwaIcon512File     = "android-chrome-512x512.png"
 	DefaultTheme       = "lite-theme"
 	LegacyPublicTheme  = "nezha"
 	LegacyDefaultTheme = "default"
@@ -84,6 +88,8 @@ var (
 	appleApplicationTitlePattern = regexp.MustCompile(`(?is)<meta\s+[^>]*name\s*=\s*["']apple-mobile-web-app-title["'][^>]*>`)
 	applicationIconPattern       = regexp.MustCompile(`(?is)<link\s+[^>]*rel\s*=\s*["'](?:shortcut\s+)?icon["'][^>]*>`)
 	appleTouchIconPattern        = regexp.MustCompile(`(?is)<link\s+[^>]*rel\s*=\s*["']apple-touch-icon["'][^>]*>`)
+	viewportMetaPattern          = regexp.MustCompile(`(?is)<meta\s+[^>]*name\s*=\s*["']viewport["'][^>]*>`)
+	appleStatusBarPattern        = regexp.MustCompile(`(?is)<meta\s+[^>]*name\s*=\s*["']apple-mobile-web-app-status-bar-style["'][^>]*>`)
 	headClosePattern             = regexp.MustCompile(`(?i)</head\s*>`)
 	bodyClosePattern             = regexp.MustCompile(`(?i)</body\s*>`)
 	themeVersionPattern          = regexp.MustCompile(`^(\d+)(?:\.(\d+))?(?:\.(\d+))?`)
@@ -147,12 +153,33 @@ func renderPublicDocumentTitle(htmlStr, title string) string {
 	return htmlStr + script
 }
 
+const (
+	mobileViewportTag = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
+	appleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`
+)
+
+func replaceOrInsertHeadTag(htmlStr, tag string, pattern *regexp.Regexp) string {
+	if pattern.MatchString(htmlStr) {
+		return pattern.ReplaceAllString(htmlStr, tag)
+	}
+	if location := headClosePattern.FindStringIndex(htmlStr); location != nil {
+		return htmlStr[:location[0]] + tag + htmlStr[location[0]:]
+	}
+	return tag + htmlStr
+}
+
+func renderMobileChromeMeta(htmlStr string) string {
+	htmlStr = replaceOrInsertHeadTag(htmlStr, mobileViewportTag, viewportMetaPattern)
+	return replaceOrInsertHeadTag(htmlStr, appleStatusBarTag, appleStatusBarPattern)
+}
+
 func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle bool) string {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		title = "Lite"
 	}
 
+	htmlStr = renderMobileChromeMeta(htmlStr)
 	if synchronizeTitle {
 		htmlStr = renderPublicDocumentTitle(htmlStr, title)
 	} else {
@@ -170,7 +197,7 @@ func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle 
 	// which otherwise resolve below deep SPA routes such as /admin/settings.
 	htmlStr = applicationIconPattern.ReplaceAllString(htmlStr, "")
 	htmlStr = appleTouchIconPattern.ReplaceAllString(htmlStr, "")
-	icons := `<link rel="icon" href="/favicon.ico" /><link rel="apple-touch-icon" href="/favicon.ico" />`
+	icons := `<link rel="icon" href="/favicon.ico" /><link rel="apple-touch-icon" href="/apple-touch-icon.png" />`
 	if location := headClosePattern.FindStringIndex(htmlStr); location != nil {
 		htmlStr = htmlStr[:location[0]] + icons + htmlStr[location[0]:]
 	}
@@ -206,12 +233,26 @@ func renderWebAppManifest(siteName, description string) webAppManifest {
 		BackgroundColor: "#ffffff",
 		ThemeColor:      "#2563eb",
 		Orientation:     "portrait-primary",
-		Icons: []webAppManifestIcon{{
-			Src:     "/favicon.ico",
-			Sizes:   "any",
-			Type:    "image/x-icon",
-			Purpose: "any",
-		}},
+		Icons: []webAppManifestIcon{
+			{
+				Src:     "/apple-touch-icon.png",
+				Sizes:   "180x180",
+				Type:    "image/png",
+				Purpose: "any",
+			},
+			{
+				Src:     "/android-chrome-192x192.png",
+				Sizes:   "192x192",
+				Type:    "image/png",
+				Purpose: "any",
+			},
+			{
+				Src:     "/android-chrome-512x512.png",
+				Sizes:   "512x512",
+				Type:    "image/png",
+				Purpose: "any",
+			},
+		},
 	}
 }
 
@@ -341,6 +382,29 @@ func contentTypeForPath(filePath string) string {
 		return "image/x-icon"
 	}
 	return mime.TypeByExtension(filepath.Ext(filePath))
+}
+
+func detectImageContentType(data []byte) string {
+	switch {
+	case len(data) >= 8 && bytes.Equal(data[:8], []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}):
+		return "image/png"
+	case len(data) >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF:
+		return "image/jpeg"
+	case len(data) >= 6 && (bytes.Equal(data[:6], []byte("GIF87a")) || bytes.Equal(data[:6], []byte("GIF89a"))):
+		return "image/gif"
+	case len(data) >= 12 && bytes.Equal(data[:4], []byte("RIFF")) && bytes.Equal(data[8:12], []byte("WEBP")):
+		return "image/webp"
+	default:
+		return "image/x-icon"
+	}
+}
+
+func readUploadedFavicon() ([]byte, string, bool) {
+	data, err := os.ReadFile(filepath.Join(DataDir, FaviconFile))
+	if err != nil || len(data) == 0 {
+		return nil, "", false
+	}
+	return data, detectImageContentType(data), true
 }
 
 func validThemeID(themeID string) bool {
@@ -681,39 +745,77 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 
 	// ================= 路由定义 =================
 
-	// 1. Favicon 优先策略
-	r.GET("/favicon.ico", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
-		c.Header("Pragma", "no-cache")
-		c.Header("Expires", "0")
+	servePngIcon := func(c *gin.Context, names ...string) {
+		setNoStoreHeaders(c)
+		if data, mimeType, ok := readUploadedFavicon(); ok {
+			c.Data(http.StatusOK, mimeType, data)
+			return
+		}
+		cfg := getConfig()
+		themeID := cfg[config.ThemeKey].(string)
+		for _, name := range names {
+			content, mimeType, exists := getPublicFileContent(themeID, path.Join(DistDir, name))
+			if exists {
+				c.Data(http.StatusOK, mimeType, content)
+				return
+			}
+		}
+		for _, name := range names {
+			content, mimeType, exists := embeddedFileContent("systemUI", path.Join(DistDir, name))
+			if exists {
+				c.Data(http.StatusOK, mimeType, content)
+				return
+			}
+		}
+		for _, fallback := range []string{
+			path.Join(DistDir, "favicon.png"),
+			path.Join(DistDir, "assets/pwa-icon.png"),
+		} {
+			content, mimeType, exists := embeddedFileContent("systemUI", fallback)
+			if exists {
+				c.Data(http.StatusOK, mimeType, content)
+				return
+			}
+		}
+		c.Status(http.StatusNotFound)
+	}
 
-		// 优先：./data/favicon.ico
-		localFavicon := filepath.Join(DataDir, FaviconFile)
-		if _, err := os.Stat(localFavicon); err == nil {
-			c.Header("Content-Type", contentTypeForPath(localFavicon))
-			c.File(localFavicon)
+	r.GET("/favicon.ico", func(c *gin.Context) {
+		setNoStoreHeaders(c)
+
+		if data, mimeType, ok := readUploadedFavicon(); ok {
+			c.Data(http.StatusOK, mimeType, data)
 			return
 		}
 
-		// 其次：当前主题的 dist/favicon.ico 或 theme_root/favicon.ico ?
-		// 通常构建后的资源在 dist 中，这里假设优先找 dist 内的，如果你的 favicon 在根目录，去掉 DistDir 拼接即可
 		cfg := getConfig()
 		themeFaviconPath := path.Join(DistDir, FaviconFile)
-		content, mimeType, exists := getPublicFileContent(cfg[config.ThemeKey].(string), themeFaviconPath)
+		content, _, exists := getPublicFileContent(cfg[config.ThemeKey].(string), themeFaviconPath)
 		if exists {
-			c.Data(http.StatusOK, mimeType, content)
+			c.Data(http.StatusOK, detectImageContentType(content), content)
 			return
 		}
 
-		// Fresh installations and themes without their own favicon use the
-		// system UI icon instead of returning a broken image.
-		content, mimeType, exists = embeddedFileContent("systemUI", themeFaviconPath)
+		content, _, exists = embeddedFileContent("systemUI", themeFaviconPath)
 		if exists {
-			c.Data(http.StatusOK, mimeType, content)
+			c.Data(http.StatusOK, detectImageContentType(content), content)
 			return
 		}
 
 		c.Status(http.StatusNotFound)
+	})
+
+	r.GET("/apple-touch-icon.png", func(c *gin.Context) {
+		servePngIcon(c, AppleTouchIconFile, PwaIcon192File, PwaIcon512File, "favicon.png")
+	})
+	r.GET("/android-chrome-192x192.png", func(c *gin.Context) {
+		servePngIcon(c, PwaIcon192File, PwaIcon512File, AppleTouchIconFile, "favicon.png")
+	})
+	r.GET("/android-chrome-512x512.png", func(c *gin.Context) {
+		servePngIcon(c, PwaIcon512File, PwaIcon192File, AppleTouchIconFile, "favicon.png")
+	})
+	r.GET("/favicon.png", func(c *gin.Context) {
+		servePngIcon(c, "favicon.png", AppleTouchIconFile)
 	})
 
 	r.GET("/manifest.json", serveWebAppManifest)
