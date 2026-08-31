@@ -162,7 +162,7 @@ show_banner() {
     fi
     clear
     echo "=============================================================="
-    echo "            Liteing System Installer"
+    echo "            Lite Monitoring System Installer"
     echo "       https://github.com/nuomiiiii/lite"
     echo "=============================================================="
     echo
@@ -236,7 +236,7 @@ detect_arch() {
     esac
 }
 
-# Check if Komari is already installed
+# Check if Lite is already installed
 is_installed() {
     if [ -f "$BINARY_PATH" ]; then
         return 0 # 0 means true in bash exit codes
@@ -299,7 +299,7 @@ install_binary() {
     log_step "开始二进制安装..."
 
     if is_installed; then
-        ui_msgbox "提示" "Komari 已安装。\n如需升级，请使用主菜单中的升级选项。"
+        ui_msgbox "提示" "Lite 已安装。\n如需升级，请使用主菜单中的升级选项。"
         return
     fi
 
@@ -309,7 +309,7 @@ install_binary() {
     # 监听端口输入，校验范围 1-65535
     while true; do
         local input_port
-        input_port=$(ui_input "监听端口" "请输入 Komari 的监听端口 (1-65535)：" "$DEFAULT_PORT")
+        input_port=$(ui_input "监听端口" "请输入 Lite 的监听端口 (1-65535)：" "$DEFAULT_PORT")
         # 取消输入
         if [ $? -ne 0 ]; then
             log_info "安装已取消"
@@ -343,7 +343,7 @@ install_binary() {
         return 1
     fi
 
-    log_step "下载 Komari 二进制文件..."
+    log_step "下载 Lite 二进制文件..."
     log_info "URL: $download_url"
 
     if ! curl -fL -o "$BINARY_PATH" "$download_url"; then
@@ -352,10 +352,10 @@ install_binary() {
     fi
 
     chmod +x "$BINARY_PATH"
-    log_success "Komari 二进制文件安装完成: $BINARY_PATH"
+    log_success "Lite 二进制文件安装完成: $BINARY_PATH"
 
     if ! check_systemd; then
-        ui_msgbox "安装完成" "警告：未检测到 systemd，已跳过服务创建。\n\n您可以手动运行 Komari：\n    $BINARY_PATH server -l 0.0.0.0:$LISTEN_PORT"
+        ui_msgbox "安装完成" "警告：未检测到 systemd，已跳过服务创建。\n\n您可以手动运行 Lite：\n    $BINARY_PATH server -l 0.0.0.0:$LISTEN_PORT"
         return
     fi
 
@@ -366,11 +366,11 @@ install_binary() {
     systemctl start ${SERVICE_NAME}.service
 
     if systemctl is-active --quiet ${SERVICE_NAME}.service; then
-        log_success "Komari 服务启动成功"
+        log_success "Lite 服务启动成功"
 
         show_access_info "$LISTEN_PORT"
     else
-        ui_msgbox "错误" "Komari 服务启动失败。\n\n查看日志: journalctl -u ${SERVICE_NAME} -f"
+        ui_msgbox "错误" "Lite 服务启动失败。\n\n查看日志: journalctl -u ${SERVICE_NAME} -f"
         return 1
     fi
 }
@@ -423,10 +423,10 @@ show_access_info() {
 
 # Upgrade function
 upgrade_lite() {
-    log_step "升级 Komari..."
+    log_step "升级 Lite..."
 
     if ! is_installed; then
-        ui_msgbox "错误" "Komari 未安装。请先安装它。"
+        ui_msgbox "错误" "Lite 未安装。请先安装它。"
         return 1
     fi
 
@@ -451,12 +451,12 @@ upgrade_lite() {
         return 1
     }
 
-    log_step "停止 Komari 服务..."
+    log_step "停止 Lite 服务..."
     if ! systemctl stop "${SERVICE_NAME}.service"; then
         if systemctl start "${SERVICE_NAME}.service" && wait_for_service_active; then
-            ui_msgbox "错误" "停止 Komari 服务失败，升级已取消并已确认原服务正常运行。"
+            ui_msgbox "错误" "停止 Lite 服务失败，升级已取消并已确认原服务正常运行。"
         else
-            ui_msgbox "错误" "停止 Komari 服务失败，升级已取消，但原服务状态异常，请检查服务日志。"
+            ui_msgbox "错误" "停止 Lite 服务失败，升级已取消，但原服务状态异常，请检查服务日志。"
         fi
         return 1
     fi
@@ -543,11 +543,11 @@ upgrade_lite() {
         return 1
     fi
 
-    log_step "重启 Komari 服务..."
+    log_step "重启 Lite 服务..."
     systemctl start "${SERVICE_NAME}.service"
 
     if wait_for_service_active; then
-        ui_msgbox "升级完成" "Komari 升级成功 (通道: $CHANNEL)。"
+        ui_msgbox "升级完成" "Lite 升级成功 (通道: $CHANNEL)。"
     else
         log_error "新版本服务未能启动，正在从本次备份恢复"
         if restore_upgrade_backup; then
@@ -561,14 +561,14 @@ upgrade_lite() {
 
 # Uninstall function
 uninstall_lite() {
-    log_step "卸载 Komari..."
+    log_step "卸载 Lite..."
 
     if ! is_installed; then
-        ui_msgbox "提示" "Komari 未安装。"
+        ui_msgbox "提示" "Lite 未安装。"
         return 0
     fi
 
-    if ! ui_yesno "确认卸载" "这将删除 Komari 二进制文件和服务。\n\n您确定要继续吗？"; then
+    if ! ui_yesno "确认卸载" "这将删除 Lite 二进制文件和服务。\n\n您确定要继续吗？"; then
         log_info "卸载已取消"
         return 0
     fi
@@ -586,15 +586,15 @@ uninstall_lite() {
     rm -f "$BINARY_PATH"
     # 尝试在目录为空时删除该目录
     rmdir "$INSTALL_DIR" 2>/dev/null || log_info "数据目录 $INSTALL_DIR 不为空，未删除"
-    log_success "Komari 二进制文件已删除"
+    log_success "Lite 二进制文件已删除"
 
-    ui_msgbox "卸载完成" "Komari 卸载完成。\n\n数据文件保留在 $DATA_DIR"
+    ui_msgbox "卸载完成" "Lite 卸载完成。\n\n数据文件保留在 $DATA_DIR"
 }
 
 # Show service status
 show_status() {
     if ! is_installed; then
-        ui_msgbox "错误" "Komari 未安装。"
+        ui_msgbox "错误" "Lite 未安装。"
         return
     fi
     if ! check_systemd; then
@@ -606,7 +606,7 @@ show_status() {
         status_output=$(systemctl status ${SERVICE_NAME}.service --no-pager -l 2>&1)
         ui_msgbox "服务状态" "$status_output"
     else
-        log_step "Komari 服务状态:"
+        log_step "Lite 服务状态:"
         systemctl status ${SERVICE_NAME}.service --no-pager -l
         read -r -p "按回车键继续..." _
     fi
@@ -615,7 +615,7 @@ show_status() {
 # Show service logs
 show_logs() {
     if ! is_installed; then
-        ui_msgbox "错误" "Komari 未安装。"
+        ui_msgbox "错误" "Lite 未安装。"
         return
     fi
     if ! check_systemd; then
@@ -626,21 +626,21 @@ show_logs() {
     if tui_enabled; then
         clear
     fi
-    log_step "查看 Komari 服务日志 (按 Ctrl+C 退出)..."
+    log_step "查看 Lite 服务日志 (按 Ctrl+C 退出)..."
     journalctl -u ${SERVICE_NAME} -f --no-pager
 }
 
 # Restart service
 restart_service() {
     if ! is_installed; then
-        ui_msgbox "错误" "Komari 未安装。"
+        ui_msgbox "错误" "Lite 未安装。"
         return
     fi
     if ! check_systemd; then
         ui_msgbox "错误" "未检测到 systemd。无法重启服务。"
         return
     fi
-    log_step "重启 Komari 服务..."
+    log_step "重启 Lite 服务..."
     systemctl restart ${SERVICE_NAME}.service
     if systemctl is-active --quiet ${SERVICE_NAME}.service; then
         ui_msgbox "成功" "服务重启成功。"
@@ -652,14 +652,14 @@ restart_service() {
 # Stop service
 stop_service() {
     if ! is_installed; then
-        ui_msgbox "错误" "Komari 未安装。"
+        ui_msgbox "错误" "Lite 未安装。"
         return
     fi
     if ! check_systemd; then
         ui_msgbox "错误" "未检测到 systemd。无法停止服务。"
         return
     fi
-    log_step "停止 Komari 服务..."
+    log_step "停止 Lite 服务..."
     systemctl stop ${SERVICE_NAME}.service
     ui_msgbox "成功" "服务已停止。"
 }
@@ -671,10 +671,10 @@ main_menu() {
         show_banner
 
         local choice
-        choice=$(ui_menu "Komari 监控系统安装器" "请选择操作：" \
-            "1" "安装 Komari" \
-            "2" "升级 Komari" \
-            "3" "卸载 Komari" \
+        choice=$(ui_menu "Lite 监控系统安装器" "请选择操作：" \
+            "1" "安装 Lite" \
+            "2" "升级 Lite" \
+            "3" "卸载 Lite" \
             "4" "查看状态" \
             "5" "查看日志" \
             "6" "重启服务" \
