@@ -875,6 +875,8 @@ func doInitialize() error {
 		&models.ReturnRouteTask{},
 		&models.ReturnRouteStatus{},
 		&models.ReturnRouteEvent{},
+		&models.ReturnRouteProbeSample{},
+		&models.ReturnRouteReachabilityStatus{},
 		&models.OidcProvider{},
 		&models.MessageSenderProvider{},
 		&models.ThemeConfiguration{},
@@ -983,9 +985,17 @@ func cleanupOrphanedClientData(db *gorm.DB) error {
 				if err := tx.Where("task_id IN ?", orphanTaskIDs).Delete(&models.ReturnRouteStatus{}).Error; err != nil {
 					return fmt.Errorf("delete orphaned return route states: %w", err)
 				}
+				if err := tx.Where("task_id IN ?", orphanTaskIDs).Delete(&models.ReturnRouteProbeSample{}).Error; err != nil {
+					return fmt.Errorf("delete orphaned return route samples: %w", err)
+				}
 				if err := tx.Where("id IN ?", orphanTaskIDs).Delete(&models.ReturnRouteTask{}).Error; err != nil {
 					return fmt.Errorf("delete orphaned return route tasks: %w", err)
 				}
+			}
+			if err := tx.Where(`NOT EXISTS (
+				SELECT 1 FROM clients WHERE clients.uuid = return_route_reachability_statuses.client
+			)`).Delete(&models.ReturnRouteReachabilityStatus{}).Error; err != nil {
+				return fmt.Errorf("delete orphaned return route reachability: %w", err)
 			}
 		}
 		for label, model := range map[string]any{

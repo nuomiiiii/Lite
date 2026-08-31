@@ -855,7 +855,7 @@ func seedReturnRouteQueryData(t *testing.T) (*gorm.DB, []models.ReturnRouteTask)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&models.Client{}, &models.ReturnRouteTask{}, &models.ReturnRouteStatus{}, &models.ReturnRouteEvent{}); err != nil {
+	if err := db.AutoMigrate(&models.Client{}, &models.ReturnRouteTask{}, &models.ReturnRouteStatus{}, &models.ReturnRouteEvent{}, &models.ReturnRouteProbeSample{}, &models.ReturnRouteReachabilityStatus{}); err != nil {
 		t.Fatal(err)
 	}
 	clients := []models.Client{

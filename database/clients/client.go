@@ -75,9 +75,15 @@ func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
 				if err := tx.Where("task_id IN ?", routeTaskIDs).Delete(&models.ReturnRouteStatus{}).Error; err != nil {
 					return fmt.Errorf("delete client return route states: %w", err)
 				}
+				if err := tx.Where("task_id IN ?", routeTaskIDs).Delete(&models.ReturnRouteProbeSample{}).Error; err != nil {
+					return fmt.Errorf("delete client return route samples: %w", err)
+				}
 				if err := tx.Where("id IN ?", routeTaskIDs).Delete(&models.ReturnRouteTask{}).Error; err != nil {
 					return fmt.Errorf("delete client return route tasks: %w", err)
 				}
+			}
+			if err := tx.Where("client = ?", clientUuid).Delete(&models.ReturnRouteReachabilityStatus{}).Error; err != nil {
+				return fmt.Errorf("delete client return route reachability: %w", err)
 			}
 		}
 

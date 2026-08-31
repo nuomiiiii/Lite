@@ -838,6 +838,9 @@ func cleanupScheduledData() {
 
 	auditlog.RemoveOldLogs()
 	accounts.RemoveExpiredSessions()
+	if err := tasks.CleanupMainlandReachabilityData(); err != nil {
+		logger.Errorf("server", "Failed to clean mainland reachability samples: %v", err)
+	}
 }
 
 func compactMetricStore(ctx context.Context) {

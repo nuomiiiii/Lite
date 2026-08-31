@@ -121,3 +121,9 @@ func FinishReturnRouteProbe(taskID uint) {
 func ReloadReturnRouteSchedule(tasks []models.ReturnRouteTask) error {
 	return returnRouteManager.Reload(tasks)
 }
+
+// IsReturnRouteClientOnline reports whether the agent still has a live connection
+// to Lite. V2 pull-only presence is not enough for mainland reachability.
+func IsReturnRouteClientOnline(uuid string) bool {
+	return agentRuntime.GetConnectedClients()[uuid] != nil
+}
