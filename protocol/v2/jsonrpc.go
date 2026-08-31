@@ -80,13 +80,15 @@ type RouteHop struct {
 }
 
 type RouteResultParams struct {
-	TaskID     uint       `json:"task_id"`
-	Protocol   string     `json:"protocol"`
-	Target     string     `json:"target"`
-	IPVersion  int        `json:"ip_version"`
-	Hops       []RouteHop `json:"hops,omitempty"`
-	Error      string     `json:"error,omitempty"`
-	FinishedAt time.Time  `json:"finished_at"`
+	TaskID           uint       `json:"task_id"`
+	Protocol         string     `json:"protocol"`
+	Target           string     `json:"target"`
+	IPVersion        int        `json:"ip_version"`
+	Hops             []RouteHop  `json:"hops,omitempty"`
+	Error            string      `json:"error,omitempty"`
+	ResolvedTargetIP string     `json:"resolved_target_ip,omitempty"`
+	TargetReached    bool       `json:"target_reached,omitempty"`
+	FinishedAt       time.Time  `json:"finished_at"`
 }
 
 type PullParams struct {

@@ -3,6 +3,11 @@ set -eu
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 INSTALLER_PATH=$(cd "$SCRIPT_DIR/.." && pwd)/install-lite.sh
+if grep -qi komari "$INSTALLER_PATH"; then
+    echo "FAIL: install-lite.sh still mentions Komari" >&2
+    grep -ni komari "$INSTALLER_PATH" >&2
+    exit 1
+fi
 LITE_INSTALLER_LIBRARY_ONLY=1 source "$INSTALLER_PATH"
 
 fail() {

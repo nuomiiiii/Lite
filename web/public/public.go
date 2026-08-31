@@ -84,6 +84,8 @@ var (
 	appleApplicationTitlePattern = regexp.MustCompile(`(?is)<meta\s+[^>]*name\s*=\s*["']apple-mobile-web-app-title["'][^>]*>`)
 	applicationIconPattern       = regexp.MustCompile(`(?is)<link\s+[^>]*rel\s*=\s*["'](?:shortcut\s+)?icon["'][^>]*>`)
 	appleTouchIconPattern        = regexp.MustCompile(`(?is)<link\s+[^>]*rel\s*=\s*["']apple-touch-icon["'][^>]*>`)
+	viewportMetaPattern          = regexp.MustCompile(`(?is)<meta\s+[^>]*name\s*=\s*["']viewport["'][^>]*>`)
+	appleStatusBarPattern        = regexp.MustCompile(`(?is)<meta\s+[^>]*name\s*=\s*["']apple-mobile-web-app-status-bar-style["'][^>]*>`)
 	headClosePattern             = regexp.MustCompile(`(?i)</head\s*>`)
 	bodyClosePattern             = regexp.MustCompile(`(?i)</body\s*>`)
 	themeVersionPattern          = regexp.MustCompile(`^(\d+)(?:\.(\d+))?(?:\.(\d+))?`)
@@ -147,12 +149,33 @@ func renderPublicDocumentTitle(htmlStr, title string) string {
 	return htmlStr + script
 }
 
+const (
+	mobileViewportTag = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
+	appleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`
+)
+
+func replaceOrInsertHeadTag(htmlStr, tag string, pattern *regexp.Regexp) string {
+	if pattern.MatchString(htmlStr) {
+		return pattern.ReplaceAllString(htmlStr, tag)
+	}
+	if location := headClosePattern.FindStringIndex(htmlStr); location != nil {
+		return htmlStr[:location[0]] + tag + htmlStr[location[0]:]
+	}
+	return tag + htmlStr
+}
+
+func renderMobileChromeMeta(htmlStr string) string {
+	htmlStr = replaceOrInsertHeadTag(htmlStr, mobileViewportTag, viewportMetaPattern)
+	return replaceOrInsertHeadTag(htmlStr, appleStatusBarTag, appleStatusBarPattern)
+}
+
 func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle bool) string {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		title = "Lite"
 	}
 
+	htmlStr = renderMobileChromeMeta(htmlStr)
 	if synchronizeTitle {
 		htmlStr = renderPublicDocumentTitle(htmlStr, title)
 	} else {
@@ -681,13 +704,9 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 
 	// ================= 路由定义 =================
 
-	// 1. Favicon 优先策略
 	r.GET("/favicon.ico", func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store, no-cache, must-revalidate")
-		c.Header("Pragma", "no-cache")
-		c.Header("Expires", "0")
+		setNoStoreHeaders(c)
 
-		// 优先：./data/favicon.ico
 		localFavicon := filepath.Join(DataDir, FaviconFile)
 		if _, err := os.Stat(localFavicon); err == nil {
 			c.Header("Content-Type", contentTypeForPath(localFavicon))
@@ -695,8 +714,6 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			return
 		}
 
-		// 其次：当前主题的 dist/favicon.ico 或 theme_root/favicon.ico ?
-		// 通常构建后的资源在 dist 中，这里假设优先找 dist 内的，如果你的 favicon 在根目录，去掉 DistDir 拼接即可
 		cfg := getConfig()
 		themeFaviconPath := path.Join(DistDir, FaviconFile)
 		content, mimeType, exists := getPublicFileContent(cfg[config.ThemeKey].(string), themeFaviconPath)
@@ -705,8 +722,6 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			return
 		}
 
-		// Fresh installations and themes without their own favicon use the
-		// system UI icon instead of returning a broken image.
 		content, mimeType, exists = embeddedFileContent("systemUI", themeFaviconPath)
 		if exists {
 			c.Data(http.StatusOK, mimeType, content)

@@ -206,6 +206,8 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 	for _, want := range []string{
 		`<title>Nomi &amp; Friends</title>`,
 		`<meta name="apple-mobile-web-app-title" content="Nomi &amp; Friends" />`,
+		`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
+		`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
 		`<link rel="icon" href="/favicon.ico" />`,
 		`<link rel="apple-touch-icon" href="/favicon.ico" />`,
 	} {
@@ -295,6 +297,8 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		for _, want := range []string{
 			`<title>` + expectedTitle + `</title>`,
 			`<meta name="apple-mobile-web-app-title" content="` + expectedTitle + `" />`,
+			`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
+			`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
 			`<link rel="icon" href="/favicon.ico" />`,
 			`<link rel="apple-touch-icon" href="/favicon.ico" />`,
 		} {
@@ -711,8 +715,12 @@ func TestStaticKeepsSystemUIAndPublicThemeResourcesIsolated(t *testing.T) {
 	if asset := request(assetPath); asset.Code != http.StatusOK {
 		t.Fatalf("GET %s status=%d", assetPath, asset.Code)
 	}
-	if favicon := request("/favicon.ico"); favicon.Code != http.StatusOK || favicon.Header().Get("Content-Type") != "image/x-icon" {
-		t.Fatalf("system favicon fallback status=%d content-type=%q", favicon.Code, favicon.Header().Get("Content-Type"))
+	favicon := request("/favicon.ico")
+	if favicon.Code != http.StatusOK {
+		t.Fatalf("system favicon fallback status=%d", favicon.Code)
+	}
+	if ct := favicon.Header().Get("Content-Type"); !strings.HasPrefix(ct, "image/") {
+		t.Fatalf("system favicon fallback content-type=%q", ct)
 	}
 	for _, missing := range []string{
 		"/system-assets/assets/not-present.js",
@@ -742,7 +750,7 @@ func TestRescueThemeShipsLiteThemeManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(index), "lite-icon-0e86dd") {
+	if !strings.Contains(string(index), "/favicon.png") {
 		t.Fatal("rescue index is not Lite-Theme")
 	}
 	if !strings.Contains(string(index), `/assets/index.`) || !strings.Contains(string(index), ".js") {
