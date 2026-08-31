@@ -254,6 +254,52 @@ func TestMainlandSameCarrierMultipleTasksCountOnce(t *testing.T) {
 	}
 }
 
+func TestMainlandOptOutSiblingsDoNotParticipate(t *testing.T) {
+	db := seedMainlandReachabilityDB(t)
+	calls := captureMainlandNotify(t)
+	if err := db.Create(&models.Client{UUID: "node-multi", Token: "t", Name: "LAX-02"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	telecomA := createMainlandTask(t, db, "telecom-a", "node-multi", "telecom", 4, true)
+	telecomB := createMainlandTask(t, db, "telecom-b", "node-multi", "telecom", 4, false)
+	unicom := createMainlandTask(t, db, "unicom", "node-multi", "unicom", 4, true)
+	mobile := createMainlandTask(t, db, "mobile", "node-multi", "mobile", 4, false)
+	if err := db.Model(&telecomB).Update("target", "8.8.8.8").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&mobile).Update("target", "114.114.114.114").Error; err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	insertMainlandSamples(t, db, telecomA, mainlandOutcomeTruncated, 2, now)
+	insertMainlandSamples(t, db, unicom, mainlandOutcomeTruncated, 2, now)
+	insertMainlandSamples(t, db, telecomB, mainlandOutcomeTruncated, 4, now)
+	insertMainlandSamples(t, db, mobile, mainlandOutcomeTruncated, 4, now)
+
+	if err := evaluateMainlandReachability(db, "node-multi", 4, telecomA, now); err != nil {
+		t.Fatal(err)
+	}
+	var row models.ReturnRouteReachabilityStatus
+	if err := db.Where("client = ? AND ip_version = ?", "node-multi", 4).First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.State != mainlandStateObserving {
+		t.Fatalf("two opted-in carriers should start observing, got %#v", row)
+	}
+	if err := evaluateMainlandReachability(db, "node-multi", 4, unicom, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Where("client = ? AND ip_version = ?", "node-multi", 4).First(&row).Error; err != nil {
+		t.Fatal(err)
+	}
+	if row.State != mainlandStateSuspectedBlocked {
+		t.Fatalf("opt-out siblings should not block two opted-in carriers: %#v", row)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("notify = %#v", *calls)
+	}
+}
+
 func TestMainlandInvalidSamplesAreIgnored(t *testing.T) {
 	db := seedMainlandReachabilityDB(t)
 	_ = captureMainlandNotify(t)
@@ -450,6 +496,50 @@ func TestCleanupMainlandReachabilityDataDropsExpiredAndInactiveSamples(t *testin
 	}
 	if leftover != 0 {
 		t.Fatal("orphaned reachability row was kept")
+	}
+}
+
+func TestQueryReturnRouteReachabilityFilterSkipsOptOutTasks(t *testing.T) {
+	db := seedMainlandReachabilityDB(t)
+	if err := db.Create(&models.Client{UUID: "node-opt", Token: "token-opt", Name: "LAX-02"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	onA := createMainlandTask(t, db, "LAX CT", "node-opt", "telecom", 4, true)
+	onB := createMainlandTask(t, db, "LAX CM", "node-opt", "mobile", 4, true)
+	off := createMainlandTask(t, db, "LAX CU", "node-opt", "unicom", 4, false)
+	extraIP := createMainlandTask(t, db, "LAX CT extra", "node-opt", "telecom", 4, false)
+	if err := db.Model(&extraIP).Update("target", "203.0.113.10").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&models.ReturnRouteReachabilityStatus{}).Create(&models.ReturnRouteReachabilityStatus{
+		Client: "node-opt", IPVersion: 4, State: mainlandStateNormal, Display: mainlandDisplayCollecting,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	page, err := queryReturnRouteTasks(db, ReturnRouteTaskQuery{State: "insufficient"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 0 {
+		t.Fatalf("collecting node should not match insufficient filter: %#v", page)
+	}
+	if err := db.Model(&models.ReturnRouteReachabilityStatus{}).Where("client = ?", "node-opt").
+		Update("display", mainlandDisplaySuspectedBlocked).Error; err != nil {
+		t.Fatal(err)
+	}
+	blocked, err := queryReturnRouteTasks(db, ReturnRouteTaskQuery{State: "suspected_blocked"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocked.Total != 2 {
+		t.Fatalf("blocked filter total = %d, want 2 opted-in tasks", blocked.Total)
+	}
+	seen := map[uint]bool{}
+	for _, task := range blocked.Tasks {
+		seen[task.Id] = true
+	}
+	if !seen[onA.Id] || !seen[onB.Id] || seen[off.Id] || seen[extraIP.Id] {
+		t.Fatalf("blocked filter ids = %#v, opt-out tasks %d/%d should be excluded", blocked.Tasks, off.Id, extraIP.Id)
 	}
 }
 

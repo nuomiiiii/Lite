@@ -943,7 +943,8 @@ func returnRouteReachabilityTaskIDs(db *gorm.DB, displays []string) *gorm.DB {
 	return db.Model(&models.ReturnRouteReachabilityStatus{}).
 		Select("return_route_tasks.id").
 		Joins("JOIN return_route_tasks ON return_route_tasks.client = return_route_reachability_statuses.client AND return_route_tasks.ip_version = return_route_reachability_statuses.ip_version").
-		Where("return_route_reachability_statuses.display IN ?", displays)
+		Where("return_route_reachability_statuses.display IN ?", displays).
+		Where("return_route_tasks.mainland_reachability_enabled = ?", true)
 }
 
 func blockedMainlandTaskIDs(db *gorm.DB) ([]uint, error) {
