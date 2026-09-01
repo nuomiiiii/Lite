@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-09-01T05:16:29.025016Z",
+  "generated_at": "2026-09-01T11:44:21.872283Z",
   "source": "bgp.tools/table.jsonl + maintained overrides",
   "prefix_groups": {
     "cmin2": [
@@ -1121,7 +1121,6 @@
     "unicom_9929": [
       "1.28.41.0/24",
       "1.28.42.0/24",
-      "36.33.152.0/24",
       "42.84.176.0/21",
       "43.243.88.0/22",
       "43.250.96.0/24",
