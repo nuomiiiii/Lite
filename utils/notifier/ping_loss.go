@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"strings"
 	"sync"
 	"time"
@@ -23,10 +22,7 @@ const pingLossCheckInterval = 15 * time.Second
 
 var pingLossCheckMu sync.Mutex
 
-type pingLossStats struct {
-	Total int64
-	Lost  int64
-}
+type pingLossStats = metricstore.PingLossStats
 
 type pingLossNotificationAction uint8
 
@@ -35,13 +31,6 @@ const (
 	pingLossNotificationAlert
 	pingLossNotificationRecovery
 )
-
-func (stats pingLossStats) LossRate() float64 {
-	if stats.Total == 0 {
-		return 0
-	}
-	return float64(stats.Lost) / float64(stats.Total) * 100
-}
 
 func InitPingLossNotificationSchedule() {
 	if err := corn.AddFunc("ping-loss-notification", corn.Every(pingLossCheckInterval), CheckPingLossNotifications); err != nil {
@@ -102,46 +91,7 @@ func CheckPingLossNotifications() {
 }
 
 func getPingLossStatsWithStore(ctx context.Context, store *metric.Store, clientUUID string, taskID uint, start, end time.Time) (pingLossStats, error) {
-	if store == nil {
-		return pingLossStats{}, fmt.Errorf("metric store is not initialized")
-	}
-	interval := store.CompatibleSeriesIntervalForMetric(ctx, metricstore.MetricPingLoss, start, end, time.Minute)
-	points, err := store.Series(ctx, metric.AggregateQuery{
-		Query: metric.Query{
-			MetricName: metricstore.MetricPingLoss,
-			EntityID:   clientUUID,
-			Start:      start,
-			End:        end,
-			Order:      metric.OrderAsc,
-			Tags:       map[string]string{"task_id": fmt.Sprintf("%d", taskID)},
-		},
-		Aggregation:    metric.AggAvg,
-		Interval:       interval,
-		PreserveSeries: true,
-	}, end)
-	if err != nil {
-		return pingLossStats{}, err
-	}
-	return pingLossStatsFromPoints(points), nil
-}
-
-func pingLossStatsFromPoints(points []metric.AggregatePoint) pingLossStats {
-	var stats pingLossStats
-	for _, point := range points {
-		if point.Count <= 0 {
-			continue
-		}
-		count := int64(point.Count)
-		lost := int64(math.Round(point.Value * float64(point.Count)))
-		if lost < 0 {
-			lost = 0
-		} else if lost > count {
-			lost = count
-		}
-		stats.Total += count
-		stats.Lost += lost
-	}
-	return stats
+	return metricstore.QueryPingLossStats(ctx, store, clientUUID, taskID, start, end)
 }
 
 func evaluatePingLossNotification(notification models.PingLossNotification, stats pingLossStats, now time.Time) pingLossNotificationAction {

@@ -7,19 +7,8 @@ import (
 
 	"github.com/nuomiiiii/lite/database/models"
 	messageevent "github.com/nuomiiiii/lite/database/models/messageEvent"
-	"github.com/nuomiiiii/lite/pkg/metric"
 	"github.com/stretchr/testify/assert"
 )
-
-func TestPingLossStatsFromPoints(t *testing.T) {
-	stats := pingLossStatsFromPoints([]metric.AggregatePoint{
-		{Value: 0.1, Count: 20},
-		{Value: 0.25, Count: 4},
-	})
-	assert.Equal(t, int64(24), stats.Total)
-	assert.Equal(t, int64(3), stats.Lost)
-	assert.InDelta(t, 12.5, stats.LossRate(), 0.001)
-}
 
 func TestEvaluatePingLossNotification(t *testing.T) {
 	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)

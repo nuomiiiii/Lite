@@ -1,6 +1,7 @@
 package tasks
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
 	"github.com/nuomiiiii/lite/database/models"
 	messageevent "github.com/nuomiiiii/lite/database/models/messageEvent"
 	"github.com/nuomiiiii/lite/utils"
@@ -18,7 +20,7 @@ import (
 const (
 	mainlandOutcomeReachable     = "reachable"
 	mainlandOutcomeTruncated     = "route_truncated"
-	mainlandOutcomeIndeterminate  = "indeterminate"
+	mainlandOutcomeIndeterminate = "indeterminate"
 	mainlandOutcomeInvalid       = "invalid"
 
 	mainlandStateNormal           = "normal"
@@ -48,18 +50,28 @@ const (
 )
 
 type mainlandCarrierStat struct {
-	Carrier       string     `json:"carrier"`
-	Valid         int        `json:"valid"`
-	Failures      int        `json:"failures"`
-	FailRate      float64    `json:"fail_rate"`
-	Abnormal      bool       `json:"abnormal"`
-	HasBaseline   bool       `json:"has_baseline"`
-	LatestValidAt *time.Time `json:"latest_valid_at,omitempty"`
-	LastLine      string     `json:"last_line,omitempty"`
-	LastNote      string     `json:"last_note,omitempty"`
-	WindowSeconds int        `json:"window_seconds"`
-	Consecutive   int        `json:"consecutive"`
-	Recovered     bool       `json:"recovered"`
+	Carrier           string     `json:"carrier"`
+	Valid             int        `json:"valid"`
+	Failures          int        `json:"failures"`
+	FailRate          float64    `json:"fail_rate"`
+	Abnormal          bool       `json:"abnormal"`
+	HasBaseline       bool       `json:"has_baseline"`
+	LatestValidAt     *time.Time `json:"latest_valid_at,omitempty"`
+	LastLine          string     `json:"last_line,omitempty"`
+	LastNote          string     `json:"last_note,omitempty"`
+	WindowSeconds     int        `json:"window_seconds"`
+	Consecutive       int        `json:"consecutive"`
+	Recovered         bool       `json:"recovered"`
+	PathCandidate     bool       `json:"path_candidate"`
+	PingReady         bool       `json:"ping_ready"`
+	PingTaskID        uint       `json:"ping_task_id,omitempty"`
+	PingTaskName      string     `json:"ping_task_name,omitempty"`
+	PingType          string     `json:"ping_type,omitempty"`
+	PingTarget        string     `json:"ping_target,omitempty"`
+	PingTotal         int64      `json:"ping_total,omitempty"`
+	PingLost          int64      `json:"ping_lost,omitempty"`
+	PingLossRate      float64    `json:"ping_loss_rate"`
+	PingWindowSeconds int        `json:"ping_window_seconds,omitempty"`
 }
 
 type mainlandEvidenceBlob struct {
@@ -101,6 +113,120 @@ var mainlandClientOnline = utils.IsReturnRouteClientOnline
 
 var sendMainlandReachabilityEvent mainlandNotifyFunc = defaultSendMainlandReachabilityEvent
 
+var queryMainlandPingLoss = queryMainlandPingLossFromStore
+
+var mainlandPingLossTestHook func(client string, taskID uint, start, end time.Time) (metricstore.PingLossStats, error)
+
+func queryMainlandPingLossFromStore(client string, taskID uint, start, end time.Time) (metricstore.PingLossStats, error) {
+	if mainlandPingLossTestHook != nil {
+		return mainlandPingLossTestHook(client, taskID, start, end)
+	}
+	store := metricstore.GetStore()
+	if store == nil {
+		return metricstore.PingLossStats{}, nil
+	}
+	return metricstore.QueryPingLossStats(context.Background(), store, client, taskID, start, end)
+}
+
+func mainlandPingTaskID(task models.ReturnRouteTask) uint {
+	if task.MainlandReachabilityPingTaskID == nil {
+		return 0
+	}
+	return *task.MainlandReachabilityPingTaskID
+}
+
+func mainlandAssistWindow(returnInterval, pingInterval int) time.Duration {
+	window := mainlandWindow(returnInterval)
+	if pingInterval > 0 {
+		if pingWindow := time.Duration(pingInterval) * 2 * time.Second; pingWindow > window {
+			window = pingWindow
+		}
+	}
+	return window
+}
+
+func mainlandPingAssigned(ping models.PingTask, client string) bool {
+	return ping.Id > 0 && ping.AppliesToClient(client)
+}
+
+func hideInvalidMainlandPingAssociations(db *gorm.DB, tasks []models.ReturnRouteTask) error {
+	ids := make([]uint, 0, len(tasks))
+	seen := map[uint]bool{}
+	for _, task := range tasks {
+		id := mainlandPingTaskID(task)
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	var pings []models.PingTask
+	if err := db.Where("id IN ?", ids).Find(&pings).Error; err != nil {
+		return err
+	}
+	byID := make(map[uint]models.PingTask, len(pings))
+	for _, ping := range pings {
+		byID[ping.Id] = ping
+	}
+	for i := range tasks {
+		id := mainlandPingTaskID(tasks[i])
+		if id == 0 {
+			continue
+		}
+		ping, ok := byID[id]
+		if !ok || !mainlandPingAssigned(ping, tasks[i].Client) {
+			tasks[i].MainlandReachabilityPingTaskID = nil
+		}
+	}
+	return nil
+}
+
+func detachReturnRouteMainlandPing(tx *gorm.DB, pingIDs []uint, clients []string) ([]models.ReturnRouteTask, error) {
+	if len(pingIDs) == 0 || !tx.Migrator().HasTable(&models.ReturnRouteTask{}) {
+		return nil, nil
+	}
+	find := tx.Where("mainland_reachability_ping_task_id IN ?", pingIDs)
+	if len(clients) > 0 {
+		find = find.Where("client IN ?", clients)
+	}
+	var tasks []models.ReturnRouteTask
+	if err := find.Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+	upd := tx.Model(&models.ReturnRouteTask{}).Where("mainland_reachability_ping_task_id IN ?", pingIDs)
+	if len(clients) > 0 {
+		upd = upd.Where("client IN ?", clients)
+	}
+	if err := upd.Update("mainland_reachability_ping_task_id", nil).Error; err != nil {
+		return nil, err
+	}
+	for i := range tasks {
+		tasks[i].MainlandReachabilityPingTaskID = nil
+	}
+	return tasks, nil
+}
+
+func mainlandReachabilityCanSample(db *gorm.DB, task models.ReturnRouteTask) bool {
+	if !task.MainlandReachabilityEnabled {
+		return false
+	}
+	pingID := mainlandPingTaskID(task)
+	if pingID == 0 || db == nil {
+		return false
+	}
+	var ping models.PingTask
+	if err := db.Select("id", "clients").Where("id = ?", pingID).First(&ping).Error; err != nil {
+		return false
+	}
+	return mainlandPingAssigned(ping, task.Client)
+}
+
 func defaultSendMainlandReachabilityEvent(title, body string, event models.ReturnRouteEvent, client models.Client) error {
 	if client.UUID == "" {
 		client.UUID = event.Client
@@ -122,7 +248,7 @@ func mainlandWindow(interval int) time.Duration {
 }
 
 func writeMainlandProbeSample(tx *gorm.DB, task models.ReturnRouteTask, class mainlandProbeClassification, now time.Time) error {
-	if !task.MainlandReachabilityEnabled {
+	if !mainlandReachabilityCanSample(tx, task) {
 		return nil
 	}
 	sample := models.ReturnRouteProbeSample{
@@ -132,7 +258,7 @@ func writeMainlandProbeSample(tx *gorm.DB, task models.ReturnRouteTask, class ma
 		IPVersion:       task.IPVersion,
 		Outcome:         class.Outcome,
 		ClassifiedLine:  class.ClassifiedLine,
-		LineState:        class.LineState,
+		LineState:       class.LineState,
 		RouteSignature:  class.Signature,
 		TerminalTTL:     class.TerminalTTL,
 		TerminalAnchor:  class.TerminalAnchor,
@@ -396,13 +522,38 @@ func computeMainlandCarrierStats(db *gorm.DB, participating []models.ReturnRoute
 	taskByID := make(map[uint]models.ReturnRouteTask, len(participating))
 	taskIDs := make([]uint, 0, len(participating))
 	statuses := map[uint]models.ReturnRouteStatus{}
+	pingIDs := make([]uint, 0, len(participating))
+	seenPing := map[uint]bool{}
 
 	ids := make([]uint, 0, len(participating))
 	for _, task := range participating {
 		taskByID[task.Id] = task
 		taskIDs = append(taskIDs, task.Id)
 		ids = append(ids, task.Id)
-		if window := mainlandWindow(task.Interval); window > maxWindow {
+		if pingID := mainlandPingTaskID(task); pingID > 0 && !seenPing[pingID] {
+			seenPing[pingID] = true
+			pingIDs = append(pingIDs, pingID)
+		}
+	}
+
+	pingByID := map[uint]models.PingTask{}
+	if len(pingIDs) > 0 {
+		var pingRows []models.PingTask
+		if err := db.Where("id IN ?", pingIDs).Find(&pingRows).Error; err != nil {
+			return nil, nil, maxWindow, err
+		}
+		for _, ping := range pingRows {
+			pingByID[ping.Id] = ping
+		}
+	}
+
+	for _, task := range participating {
+		ping := pingByID[mainlandPingTaskID(task)]
+		pingInterval := 0
+		if mainlandPingAssigned(ping, task.Client) {
+			pingInterval = ping.Interval
+		}
+		if window := mainlandAssistWindow(task.Interval, pingInterval); window > maxWindow {
 			maxWindow = window
 		}
 	}
@@ -433,6 +584,13 @@ func computeMainlandCarrierStats(db *gorm.DB, participating []models.ReturnRoute
 		samplesByTask[sample.TaskId] = append(samplesByTask[sample.TaskId], sample)
 	}
 
+	type pingEvidence struct {
+		task     models.PingTask
+		stats    metricstore.PingLossStats
+		window   time.Duration
+		abnormal bool
+		queried  bool
+	}
 	type merged struct {
 		valid        int
 		failures     int
@@ -444,17 +602,38 @@ func computeMainlandCarrierStats(db *gorm.DB, participating []models.ReturnRoute
 		recoveryNeed int
 		consecutive  int
 		anyRecovered bool
+		pings        map[uint]*pingEvidence
 	}
 	mergedByCarrier := map[string]*merged{}
+	pingCache := map[string]metricstore.PingLossStats{}
+
+	lookupPing := func(client string, ping models.PingTask, window time.Duration) metricstore.PingLossStats {
+		key := fmt.Sprintf("%s/%d/%d", client, ping.Id, int(window.Seconds()))
+		if cached, ok := pingCache[key]; ok {
+			return cached
+		}
+		stats, err := queryMainlandPingLoss(client, ping.Id, now.Add(-window), now)
+		if err != nil {
+			stats = metricstore.PingLossStats{}
+		}
+		pingCache[key] = stats
+		return stats
+	}
 
 	for _, task := range participating {
-		window := mainlandWindow(task.Interval)
+		ping := pingByID[mainlandPingTaskID(task)]
+		pingInterval := 0
+		pingReady := mainlandPingAssigned(ping, task.Client)
+		if pingReady {
+			pingInterval = ping.Interval
+		}
+		window := mainlandAssistWindow(task.Interval, pingInterval)
 		status := statuses[task.Id]
 		hasBaseline := taskHasMainlandBaseline(status)
 		carrier := task.Carrier
 		item := mergedByCarrier[carrier]
 		if item == nil {
-			item = &merged{window: window, recoveryNeed: task.RecoveryConfirm}
+			item = &merged{window: window, recoveryNeed: task.RecoveryConfirm, pings: map[uint]*pingEvidence{}}
 			mergedByCarrier[carrier] = item
 		}
 		if window > item.window {
@@ -465,6 +644,20 @@ func computeMainlandCarrierStats(db *gorm.DB, participating []models.ReturnRoute
 		}
 		if hasBaseline {
 			item.hasBaseline = true
+		}
+		if pingReady {
+			evidence := item.pings[ping.Id]
+			if evidence == nil {
+				loss := lookupPing(task.Client, ping, window)
+				abnormal := loss.Total >= int64(mainlandMinValidSamples) && loss.LossRatio() >= mainlandFailRateThreshold
+				evidence = &pingEvidence{task: ping, stats: loss, window: window, abnormal: abnormal, queried: true}
+				item.pings[ping.Id] = evidence
+			} else if window > evidence.window {
+				loss := lookupPing(task.Client, ping, window)
+				evidence.stats = loss
+				evidence.window = window
+				evidence.abnormal = loss.Total >= int64(mainlandMinValidSamples) && loss.LossRatio() >= mainlandFailRateThreshold
+			}
 		}
 
 		taskSamples := samplesByTask[task.Id]
@@ -479,6 +672,9 @@ func computeMainlandCarrierStats(db *gorm.DB, participating []models.ReturnRoute
 		cutoff := now.Add(-window)
 		for _, sample := range taskSamples {
 			if sample.CheckedAt.Before(cutoff) {
+				continue
+			}
+			if sample.BaselineVersion != status.BaselineVersion {
 				continue
 			}
 			if sample.Outcome == mainlandOutcomeInvalid || sample.Outcome == mainlandOutcomeIndeterminate {
@@ -515,13 +711,25 @@ func computeMainlandCarrierStats(db *gorm.DB, participating []models.ReturnRoute
 		if item.valid > 0 {
 			failRate = float64(item.failures) / float64(item.valid)
 		}
-		abnormal := item.hasBaseline && item.valid >= mainlandMinValidSamples && failRate >= mainlandFailRateThreshold
+		pathCandidate := item.hasBaseline && item.valid >= mainlandMinValidSamples && failRate >= mainlandFailRateThreshold
+		pingAbnormal := false
+		var chosen *pingEvidence
+		for _, evidence := range item.pings {
+			if chosen == nil {
+				chosen = evidence
+			}
+			if evidence.abnormal {
+				pingAbnormal = true
+				chosen = evidence
+				break
+			}
+		}
 		stat := mainlandCarrierStat{
 			Carrier:       carrier,
 			Valid:         item.valid,
 			Failures:      item.failures,
 			FailRate:      failRate,
-			Abnormal:      abnormal,
+			Abnormal:      pathCandidate && pingAbnormal,
 			HasBaseline:   item.hasBaseline,
 			LatestValidAt: item.latestValid,
 			LastLine:      item.lastLine,
@@ -529,6 +737,18 @@ func computeMainlandCarrierStats(db *gorm.DB, participating []models.ReturnRoute
 			WindowSeconds: int(item.window.Seconds()),
 			Consecutive:   item.consecutive,
 			Recovered:     item.anyRecovered,
+			PathCandidate: pathCandidate,
+		}
+		if chosen != nil {
+			stat.PingReady = true
+			stat.PingTaskID = chosen.task.Id
+			stat.PingTaskName = chosen.task.Name
+			stat.PingType = chosen.task.Type
+			stat.PingTarget = chosen.task.Target
+			stat.PingTotal = chosen.stats.Total
+			stat.PingLost = chosen.stats.Lost
+			stat.PingLossRate = chosen.stats.LossRatio()
+			stat.PingWindowSeconds = int(chosen.window.Seconds())
 		}
 		stats[carrier] = stat
 		if item.lastLine != "" {
@@ -781,6 +1001,7 @@ func formatMainlandReachabilityNotification(
 			fmt.Sprintf("Agent 状态：%s", agent),
 			fmt.Sprintf("最后正常线路：%s", formatMainlandLastLines(abnormal, lastLines)),
 			fmt.Sprintf("路径证据：%s", formatMainlandPathEvidence(abnormal, stats, lastLines)),
+			fmt.Sprintf("辅助延迟：%s", formatMainlandPingEvidence(abnormal, stats)),
 			fmt.Sprintf("置信度：%s", confidence),
 			fmt.Sprintf("异常开始：%s", formatMainlandTime(started)),
 			fmt.Sprintf("判定时间：%s", formatMainlandTime(now)),
@@ -852,6 +1073,31 @@ func formatMainlandPathEvidence(carriers []string, stats map[string]mainlandCarr
 	}
 	if len(parts) == 0 {
 		return "参与运营商均未达到历史终点锚点"
+	}
+	return strings.Join(parts, "；")
+}
+
+func formatMainlandPingEvidence(carriers []string, stats map[string]mainlandCarrierStat) string {
+	parts := make([]string, 0, len(carriers))
+	for _, carrier := range carriers {
+		stat := stats[carrier]
+		if !stat.PingReady {
+			continue
+		}
+		short := strings.TrimPrefix(returnRouteCarrierName(carrier), "中国")
+		name := strings.TrimSpace(stat.PingTaskName)
+		if name == "" {
+			name = "延迟监测"
+		}
+		kind := strings.ToUpper(strings.TrimSpace(stat.PingType))
+		if kind == "" {
+			kind = "ICMP"
+		}
+		parts = append(parts, fmt.Sprintf("%s %s %s，丢包 %d/%d（%.0f%%）",
+			short, name, kind, stat.PingLost, stat.PingTotal, stat.PingLossRate*100))
+	}
+	if len(parts) == 0 {
+		return "-"
 	}
 	return strings.Join(parts, "；")
 }
@@ -988,16 +1234,8 @@ func CleanupMainlandReachabilityData() error {
 }
 
 func cleanupMainlandReachabilityData(db *gorm.DB, now time.Time) error {
-	if err := db.Where("checked_at < ?", now.Add(-mainlandSampleRetention)).
-		Delete(&models.ReturnRouteProbeSample{}).Error; err != nil {
-		return err
-	}
-	if err := db.Where(`NOT EXISTS (
-		SELECT 1 FROM return_route_tasks
-		WHERE return_route_tasks.id = return_route_probe_samples.task_id
-			AND return_route_tasks.enabled = ?
-			AND return_route_tasks.mainland_reachability_enabled = ?
-	)`, true, true).Delete(&models.ReturnRouteProbeSample{}).Error; err != nil {
+	cutoff := now.UTC().Add(-mainlandSampleRetention)
+	if err := db.Where("checked_at < ?", cutoff).Delete(&models.ReturnRouteProbeSample{}).Error; err != nil {
 		return err
 	}
 	return db.Where(`NOT EXISTS (

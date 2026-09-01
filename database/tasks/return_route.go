@@ -79,6 +79,7 @@ type ReturnRouteTaskBatchEdit struct {
 	MainlandReachabilityEnabled        bool   `json:"mainland_reachability_enabled"`
 	MainlandReachabilityNotify         bool   `json:"mainland_reachability_notify"`
 	MainlandReachabilityRecoveryNotify bool   `json:"mainland_reachability_recovery_notify"`
+	MainlandReachabilityPingTaskID     *uint  `json:"mainland_reachability_ping_task_id"`
 	Enabled                            bool   `json:"enabled"`
 }
 
@@ -165,6 +166,29 @@ func normalizeReturnRouteTaskWithDB(db *gorm.DB, task *models.ReturnRouteTask) e
 	if count == 0 {
 		return fmt.Errorf("client not found")
 	}
+	return normalizeMainlandPingAssociation(db, task)
+}
+
+func normalizeMainlandPingAssociation(db *gorm.DB, task *models.ReturnRouteTask) error {
+	if task.MainlandReachabilityPingTaskID != nil && *task.MainlandReachabilityPingTaskID == 0 {
+		task.MainlandReachabilityPingTaskID = nil
+	}
+	if task.MainlandReachabilityPingTaskID == nil {
+		if task.MainlandReachabilityEnabled {
+			return fmt.Errorf("开启疑似被墙判定时需选择辅助延迟监测任务")
+		}
+		return nil
+	}
+	var ping models.PingTask
+	if err := db.Where("id = ?", *task.MainlandReachabilityPingTaskID).First(&ping).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return fmt.Errorf("辅助延迟监测任务不存在")
+		}
+		return err
+	}
+	if !ping.AppliesToClient(task.Client) {
+		return fmt.Errorf("辅助延迟监测任务未分配给当前服务器")
+	}
 	return nil
 }
 
@@ -196,18 +220,42 @@ func AddReturnRouteTask(task *models.ReturnRouteTask) (uint, bool, error) {
 }
 
 func EditReturnRouteTask(task *models.ReturnRouteTask) error {
+	if err := editReturnRouteTask(dbcore.GetDBInstance(), task); err != nil {
+		return err
+	}
+	_ = ReloadReturnRouteSchedule()
+	return nil
+}
+
+func editReturnRouteTask(db *gorm.DB, task *models.ReturnRouteTask) error {
 	if task.Id == 0 {
 		return fmt.Errorf("task id is required")
 	}
-	if err := normalizeReturnRouteTask(task); err != nil {
+	if err := normalizeReturnRouteTaskWithDB(db, task); err != nil {
 		return err
 	}
-	db := dbcore.GetDBInstance()
 	var previous models.ReturnRouteTask
 	if err := db.First(&previous, task.Id).Error; err != nil {
 		return err
 	}
-	updates := map[string]any{
+	result := db.Model(&models.ReturnRouteTask{}).Where("id = ?", task.Id).Updates(returnRouteTaskColumnUpdates(*task))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	now := time.Now().UTC()
+	_ = recomputeMainlandReachabilityKeys(db, mainlandKeysFromTasks([]models.ReturnRouteTask{previous, *task}), now)
+	return nil
+}
+
+func returnRouteTaskColumnUpdates(task models.ReturnRouteTask) map[string]any {
+	var pingID any
+	if task.MainlandReachabilityPingTaskID != nil {
+		pingID = *task.MainlandReachabilityPingTaskID
+	}
+	return map[string]any{
 		"name": task.Name, "client": task.Client, "carrier": task.Carrier,
 		"region": task.Region, "target": task.Target, "ip_version": task.IPVersion,
 		"expected_line": task.ExpectedLine, "protocol": task.Protocol,
@@ -217,21 +265,8 @@ func EditReturnRouteTask(task *models.ReturnRouteTask) error {
 		"mainland_reachability_enabled":         task.MainlandReachabilityEnabled,
 		"mainland_reachability_notify":          task.MainlandReachabilityNotify,
 		"mainland_reachability_recovery_notify": task.MainlandReachabilityRecoveryNotify,
+		"mainland_reachability_ping_task_id":    pingID,
 	}
-	result := db.Model(&models.ReturnRouteTask{}).Where("id = ?", task.Id).Updates(updates)
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return gorm.ErrRecordNotFound
-	}
-	if !task.MainlandReachabilityEnabled {
-		_ = db.Where("task_id = ?", task.Id).Delete(&models.ReturnRouteProbeSample{}).Error
-	}
-	now := time.Now().UTC()
-	_ = recomputeMainlandReachabilityKeys(db, mainlandKeysFromTasks([]models.ReturnRouteTask{previous, *task}), now)
-	_ = ReloadReturnRouteSchedule()
-	return nil
 }
 
 func EditReturnRouteTasksBatch(params ReturnRouteTaskBatchEdit) error {
@@ -268,6 +303,7 @@ func editReturnRouteTasksBatch(db *gorm.DB, params ReturnRouteTaskBatchEdit) err
 			MainlandReachabilityEnabled:        params.MainlandReachabilityEnabled,
 			MainlandReachabilityNotify:         params.MainlandReachabilityNotify,
 			MainlandReachabilityRecoveryNotify: params.MainlandReachabilityRecoveryNotify,
+			MainlandReachabilityPingTaskID:     params.MainlandReachabilityPingTaskID,
 		}
 		if err := normalizeReturnRouteTaskWithDB(db, &candidate); err != nil {
 			return err
@@ -279,6 +315,10 @@ func editReturnRouteTasksBatch(db *gorm.DB, params ReturnRouteTaskBatchEdit) err
 		params.Protocol = candidate.Protocol
 	}
 
+	var pingID any
+	if params.MainlandReachabilityPingTaskID != nil {
+		pingID = *params.MainlandReachabilityPingTaskID
+	}
 	updates := map[string]any{
 		"carrier": params.Carrier, "region": params.Region, "target": params.Target,
 		"ip_version": params.IPVersion, "expected_line": params.ExpectedLine,
@@ -289,14 +329,10 @@ func editReturnRouteTasksBatch(db *gorm.DB, params ReturnRouteTaskBatchEdit) err
 		"mainland_reachability_enabled":         params.MainlandReachabilityEnabled,
 		"mainland_reachability_notify":          params.MainlandReachabilityNotify,
 		"mainland_reachability_recovery_notify": params.MainlandReachabilityRecoveryNotify,
+		"mainland_reachability_ping_task_id":    pingID,
 	}
 	if err := db.Model(&models.ReturnRouteTask{}).Where("id IN ?", ids).Updates(updates).Error; err != nil {
 		return err
-	}
-	if !params.MainlandReachabilityEnabled {
-		if err := db.Where("task_id IN ?", ids).Delete(&models.ReturnRouteProbeSample{}).Error; err != nil {
-			return err
-		}
 	}
 	keys := mainlandKeysFromTasks(existing)
 	if params.IPVersion == 4 || params.IPVersion == 6 {
@@ -432,6 +468,9 @@ func queryReturnRouteTasks(db *gorm.DB, params ReturnRouteTaskQuery) (ReturnRout
 		return result, err
 	}
 	if err := query.Preload("ClientInfo").Order("id ASC").Limit(pageSize).Offset((page - 1) * pageSize).Find(&result.Tasks).Error; err != nil {
+		return result, err
+	}
+	if err := hideInvalidMainlandPingAssociations(db, result.Tasks); err != nil {
 		return result, err
 	}
 	ids := make([]uint, 0, len(result.Tasks))
