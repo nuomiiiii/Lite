@@ -17,6 +17,16 @@ func CheckExpireScheduledWork() {
 	CheckExpire()
 }
 
+func CheckAutoRenewalScheduledWork() {
+	clients_all, err := clients.GetAllClientBasicInfo()
+	if err != nil {
+		return
+	}
+	for _, client := range clients_all {
+		renewal.CheckAndAutoRenewal(client)
+	}
+}
+
 func CheckExpire() {
 	cfg, err := config.GetMany(map[string]any{
 		config.ExpireNotificationEnabledKey:  false,

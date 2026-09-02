@@ -28,3 +28,22 @@ func TestFormatSystemDateReturnsEmptyForZeroTime(t *testing.T) {
 		t.Fatalf("formatted zero time = %q, want empty", got)
 	}
 }
+
+func TestBeijingDayReachedUsesChinaCalendarNotUTC(t *testing.T) {
+	expire := time.Date(2026, 9, 1, 16, 0, 0, 0, time.UTC) // 2026-09-02 00:00 Beijing
+	before := time.Date(2026, 9, 1, 15, 59, 0, 0, time.UTC)
+	atMidnight := time.Date(2026, 9, 1, 16, 0, 0, 0, time.UTC)
+	after := time.Date(2026, 9, 1, 17, 0, 0, 0, time.UTC) // 01:00 Beijing on 9.2
+	if BeijingDayReached(before, expire) {
+		t.Fatal("9.1 23:59 Beijing should not renew a 9.2 expiry")
+	}
+	if !BeijingDayReached(atMidnight, expire) {
+		t.Fatal("Beijing midnight on the expiry date should renew")
+	}
+	if !BeijingDayReached(after, expire) {
+		t.Fatal("01:00 Beijing on the expiry date should renew")
+	}
+	if FormatBeijingDate(expire) != "2026-09-02" {
+		t.Fatalf("beijing date = %q, want 2026-09-02", FormatBeijingDate(expire))
+	}
+}

@@ -23,6 +23,11 @@ const (
 	maxFXBodyBytes    = 1 << 20
 )
 
+// RequiredFXCurrencies are stored on every snapshot. Display is only CNY or USD,
+// so EUR/GBP/CAD quotes stay in the same snapshot and convert in one ratio
+// (native → CNY or native → USD), not by turning the amount into USD first.
+var RequiredFXCurrencies = []string{"USD", "CNY", "EUR", "GBP", "CAD"}
+
 var isoCurrencyPattern = regexp.MustCompile(`^[A-Z]{3}$`)
 
 type FXState struct {
@@ -124,7 +129,50 @@ func RefreshFX(ctx context.Context, db *gorm.DB, httpClient *http.Client, endpoi
 	if err := db.Create(&snapshot).Error; err != nil {
 		return nil, fmt.Errorf("save reference rates: %w", err)
 	}
+	if err := BackfillPriceVersionFX(db); err != nil {
+		return &snapshot, fmt.Errorf("backfill billing FX after refresh: %w", err)
+	}
 	return &snapshot, nil
+}
+
+// ApplyUpgradeFX locks the current rate onto any price version that never had one.
+// Versions that already stored a snapshot keep it. A fetch failure still stamps
+// whatever snapshot is already in the database.
+func ApplyUpgradeFX(ctx context.Context, db *gorm.DB, httpClient *http.Client, endpoint string) error {
+	fetch, err := shouldFetchUpgradeFX(db)
+	if err != nil {
+		return err
+	}
+	if fetch {
+		if _, refreshErr := RefreshFX(ctx, db, httpClient, endpoint); refreshErr == nil {
+			return nil
+		}
+	}
+	return BackfillPriceVersionFX(db)
+}
+
+func shouldFetchUpgradeFX(db *gorm.DB) (bool, error) {
+	var versions []models.BillingPriceVersion
+	if err := db.Where("fx_snapshot_id IS NULL AND price_micros > 0 AND currency_valid = ?", true).
+		Find(&versions).Error; err != nil {
+		return false, fmt.Errorf("list billing versions missing FX snapshots: %w", err)
+	}
+	if len(versions) == 0 {
+		return false, nil
+	}
+	_, rates, err := LatestFXSnapshot(db)
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return true, nil
+		}
+		return false, err
+	}
+	for _, version := range versions {
+		if _, convErr := ConvertMicros(version.PriceMicros, version.Currency, "USD", rates); convErr == nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func parseFXResponse(body []byte) (map[string]string, error) {
@@ -162,7 +210,21 @@ func parseFXResponse(body []byte) (map[string]string, error) {
 		}
 		rates[currency] = rate
 	}
+	if missing := missingRequiredRates(rates); len(missing) > 0 {
+		return nil, fmt.Errorf("reference-rate response is missing %s", strings.Join(missing, ", "))
+	}
 	return rates, nil
+}
+
+func missingRequiredRates(rates map[string]string) []string {
+	missing := make([]string, 0, len(RequiredFXCurrencies))
+	for _, currency := range RequiredFXCurrencies {
+		parsed, ok := new(big.Rat).SetString(rates[currency])
+		if !ok || parsed.Sign() <= 0 {
+			missing = append(missing, currency)
+		}
+	}
+	return missing
 }
 
 func loadFXSnapshotsByIDs(ctx context.Context, db *gorm.DB, ids []uint64) (map[uint64]map[string]string, error) {

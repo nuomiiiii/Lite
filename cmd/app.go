@@ -30,6 +30,7 @@ import (
 	"github.com/nuomiiiii/lite/pkg/corn"
 	"github.com/nuomiiiii/lite/pkg/metric"
 	"github.com/nuomiiiii/lite/pkg/migrations"
+	"github.com/nuomiiiii/lite/pkg/timeutil"
 	"github.com/nuomiiiii/lite/utils"
 	"github.com/nuomiiiii/lite/utils/cloudflared"
 	"github.com/nuomiiiii/lite/utils/geoip"
@@ -805,12 +806,19 @@ func registerScheduledWork() {
 	if err := corn.AddFunc("notifier:traffic", "@every 1m", notifier.CheckTraffic); err != nil {
 		logger.ErrorArgs("server", "Failed to add traffic notification task:", err)
 	}
-	if err := corn.AddFunc("notifier:expire", "0 0 9 * * *", notifier.CheckExpireScheduledWork); err != nil {
+	if err := corn.AddFuncInLocation("notifier:renewal", "0 1 0 * * *", timeutil.BeijingLocation, notifier.CheckAutoRenewalScheduledWork); err != nil {
+		logger.ErrorArgs("server", "Failed to add auto-renewal scheduled task:", err)
+	}
+	if err := corn.AddFuncInLocation("notifier:expire", "0 0 9 * * *", timeutil.BeijingLocation, notifier.CheckExpireScheduledWork); err != nil {
 		logger.ErrorArgs("server", "Failed to add expire notification scheduled task:", err)
 	}
 	if err := corn.AddContextFunc("billing:fx-refresh", "@every 6h", true, func(ctx context.Context) {
-		if _, refreshErr := billing.RefreshFX(ctx, dbcore.GetDBInstance(), nil, ""); refreshErr != nil {
+		db := dbcore.GetDBInstance()
+		if _, refreshErr := billing.RefreshFX(ctx, db, nil, ""); refreshErr != nil {
 			logger.Errorf("billing", "Failed to refresh reference rates: %v", refreshErr)
+		}
+		if backfillErr := billing.BackfillPriceVersionFX(db); backfillErr != nil {
+			logger.Errorf("billing", "Failed to backfill billing FX snapshots: %v", backfillErr)
 		}
 	}); err != nil {
 		logger.ErrorArgs("billing", "Failed to add reference-rate task:", err)
@@ -826,6 +834,7 @@ func registerScheduledWork() {
 
 	notifier.InitTrafficReportSchedule()
 	notifier.InitPingLossNotificationSchedule()
+	go notifier.CheckAutoRenewalScheduledWork()
 }
 
 const taskResultRetentionDays = 30

@@ -114,18 +114,14 @@ func convertLockedMicros(nativeAmount int64, version models.BillingPriceVersion,
 	if nativeAmount == 0 {
 		return 0, true
 	}
-	if version.USDPriceMicros == nil || version.FXSnapshotID == nil || version.PriceMicros == 0 {
+	if version.FXSnapshotID == nil {
 		return 0, false
 	}
 	rates := snapshots[*version.FXSnapshotID]
 	if len(rates) == 0 {
 		return 0, false
 	}
-	usd, err := multiplyRatio(*version.USDPriceMicros, nativeAmount, version.PriceMicros)
-	if err != nil {
-		return 0, false
-	}
-	converted, err := ConvertMicros(usd, "USD", to, rates)
+	converted, err := ConvertMicros(nativeAmount, version.Currency, to, rates)
 	return converted, err == nil
 }
 

@@ -36,6 +36,19 @@ func GetConnectedClients() map[string]*connection.SafeConn {
 	return clientsCopy
 }
 
+// IsPresent matches dashboard online: WebSocket or a live HTTP presence TTL.
+func IsPresent(uuid string) bool {
+	mu.RLock()
+	defer mu.RUnlock()
+	if _, ok := connectedClients[uuid]; ok {
+		return true
+	}
+	if presence, ok := presenceOnly[uuid]; ok && presence.expire.After(time.Now()) {
+		return true
+	}
+	return false
+}
+
 func SetConnectedClients(uuid string, conn *connection.SafeConn) {
 	if metricstore.EntityWritesBlocked(uuid) {
 		_ = conn.Close()

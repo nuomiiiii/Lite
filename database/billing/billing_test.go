@@ -454,6 +454,7 @@ func TestFXValidationTimeoutAndCacheFallback(t *testing.T) {
 	}{
 		{name: "invalid json", body: `{`},
 		{name: "negative rate", body: `{"base":"USD","rates":{"CNY":-7}}`},
+		{name: "missing euro", body: `{"base":"USD","rates":{"CAD":1.35,"CNY":7.2}}`},
 		{name: "timeout", wait: true},
 	}
 	for _, test := range tests {
@@ -518,6 +519,288 @@ func TestOverviewTrendUsesCurrentYearMonths(t *testing.T) {
 		"2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06",
 		"2026-07", "2026-08", "2026-09", "2026-10", "2026-11", "2026-12",
 	}, periods)
+}
+
+func TestBackfillStampsCurrentFXForMigratedVersions(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 26, 12, 0)
+	expiry := now.AddDate(0, 0, 15)
+	usd := saveClient(t, db, models.Client{
+		Name: "US-01", Price: 30, BillingCycle: 30, Currency: "USD", ExpiredAt: &expiry,
+	})
+	unsupported := saveClient(t, db, models.Client{
+		Name: "XX-01", Price: 10, BillingCycle: 30, Currency: "KRW",
+	})
+	require.NoError(t, db.Create(&models.BillingPriceVersion{
+		Client: unsupported.UUID, ClientName: unsupported.Name, PriceMicros: 10_000_000,
+		Currency: "KRW", CurrencyValid: true, BillingCycleDays: 30,
+		EffectiveFrom: now, Source: PriceSourceMigration,
+	}).Error)
+	require.NoError(t, db.Create(&models.BillingPriceVersion{
+		Client: usd.UUID, ClientName: usd.Name, PriceMicros: 30_000_000,
+		Currency: "USD", CurrencyValid: true, BillingCycleDays: 30,
+		ExpiredAt: &expiry, EffectiveFrom: now, Source: PriceSourceMigration,
+	}).Error)
+
+	snapshot := saveFX(t, db, now, "7.2", "1.35")
+	page, err := GetServers(context.Background(), db, ServerQuery{Currency: "CNY", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Items, 2)
+	byName := map[string]BillingServerRow{}
+	for _, row := range page.Items {
+		byName[row.Name] = row
+	}
+
+	var usdVersion models.BillingPriceVersion
+	require.NoError(t, db.Where("client = ?", usd.UUID).First(&usdVersion).Error)
+	require.NotNil(t, usdVersion.FXSnapshotID)
+	assert.Equal(t, snapshot.ID, *usdVersion.FXSnapshotID)
+	require.NotNil(t, usdVersion.USDPriceMicros)
+	assert.Equal(t, int64(30_000_000), *usdVersion.USDPriceMicros)
+	require.NotNil(t, byName["US-01"].DailyAverage)
+	assert.Equal(t, "7.200000", *byName["US-01"].DailyAverage)
+	require.NotNil(t, byName["US-01"].MonthlyAverage)
+	assert.Equal(t, "216.000000", *byName["US-01"].MonthlyAverage)
+	require.NotNil(t, byName["US-01"].RemainingValue)
+
+	var skipped models.BillingPriceVersion
+	require.NoError(t, db.Where("client = ?", unsupported.UUID).First(&skipped).Error)
+	assert.Nil(t, skipped.FXSnapshotID)
+}
+
+func fxServer(t *testing.T, cny string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(fmt.Sprintf(`{"base":"USD","rates":{"CAD":1.35,"CNY":%s,"EUR":0.92,"GBP":0.78}}`, cny)))
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func serverAverages(t *testing.T, rows []BillingServerRow) map[string]BillingServerRow {
+	t.Helper()
+	byName := map[string]BillingServerRow{}
+	for _, row := range rows {
+		byName[row.Name] = row
+	}
+	return byName
+}
+
+func TestUpgradeFromPreBillingLocksFXAtUpgrade(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.September, 2, 12, 0)
+	saveClient(t, db, models.Client{Name: "legacy-usd", Price: 30, BillingCycle: 30, Currency: "USD"})
+	saveClient(t, db, models.Client{Name: "legacy-cny", Price: 72, BillingCycle: 30, Currency: "CNY"})
+	saveClient(t, db, models.Client{Name: "legacy-eur", Price: 9.20, BillingCycle: 30, Currency: "EUR"})
+	saveClient(t, db, models.Client{Name: "legacy-cad", Price: 13.50, BillingCycle: 30, Currency: "CAD"})
+	saveClient(t, db, models.Client{Name: "legacy-gbp", Price: 7.80, BillingCycle: 30, Currency: "GBP"})
+	require.NoError(t, EnsureInitialPriceVersions(db, now))
+	require.NoError(t, ReconcileStoredCurrencies(db))
+
+	var unlocked int64
+	require.NoError(t, db.Model(&models.BillingPriceVersion{}).Where("fx_snapshot_id IS NULL").Count(&unlocked).Error)
+	assert.Equal(t, int64(5), unlocked)
+
+	require.NoError(t, ApplyUpgradeFX(context.Background(), db, nil, fxServer(t, "7.2").URL))
+
+	cnyPage, err := GetServers(context.Background(), db, ServerQuery{Currency: "CNY", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	cnyRows := serverAverages(t, cnyPage.Items)
+	require.NotNil(t, cnyRows["legacy-usd"].DailyAverage)
+	assert.Equal(t, "7.200000", *cnyRows["legacy-usd"].DailyAverage)
+	require.NotNil(t, cnyRows["legacy-usd"].MonthlyAverage)
+	assert.Equal(t, "216.000000", *cnyRows["legacy-usd"].MonthlyAverage)
+	require.NotNil(t, cnyRows["legacy-usd"].YearlyAverage)
+	assert.Equal(t, "2592.000000", *cnyRows["legacy-usd"].YearlyAverage)
+	require.NotNil(t, cnyRows["legacy-cny"].MonthlyAverage)
+	assert.Equal(t, "72.000000", *cnyRows["legacy-cny"].MonthlyAverage)
+	for _, name := range []string{"legacy-eur", "legacy-cad", "legacy-gbp"} {
+		require.NotNil(t, cnyRows[name].DailyAverage, name)
+		require.NotNil(t, cnyRows[name].MonthlyAverage, name)
+		require.NotNil(t, cnyRows[name].YearlyAverage, name)
+		assert.Equal(t, "72.000000", *cnyRows[name].MonthlyAverage, name)
+		assert.Equal(t, "864.000000", *cnyRows[name].YearlyAverage, name)
+	}
+
+	usdPage, err := GetServers(context.Background(), db, ServerQuery{Currency: "USD", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	usdRows := serverAverages(t, usdPage.Items)
+	require.NotNil(t, usdRows["legacy-usd"].MonthlyAverage)
+	assert.Equal(t, "30.000000", *usdRows["legacy-usd"].MonthlyAverage)
+	require.NotNil(t, usdRows["legacy-cny"].MonthlyAverage)
+	assert.Equal(t, "10.000000", *usdRows["legacy-cny"].MonthlyAverage)
+	for _, name := range []string{"legacy-eur", "legacy-cad", "legacy-gbp"} {
+		require.NotNil(t, usdRows[name].MonthlyAverage, name)
+		assert.Equal(t, "10.000000", *usdRows[name].MonthlyAverage, name)
+	}
+}
+
+func TestUpgradeFromBroken231LocksOnlyMissingFX(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.September, 2, 12, 0)
+	old := saveFX(t, db, now.Add(-time.Hour), "7.2", "1.35")
+	edited := saveClient(t, db, models.Client{Name: "already-locked", Price: 30, BillingCycle: 30, Currency: "USD"})
+	require.NoError(t, EnsureInitialPriceVersions(db, now.Add(-time.Hour)))
+	broken := saveClient(t, db, models.Client{Name: "broken-231", Price: 30, BillingCycle: 30, Currency: "USD"})
+	require.NoError(t, db.Create(&models.BillingPriceVersion{
+		Client: broken.UUID, ClientName: broken.Name, PriceMicros: 30_000_000,
+		Currency: "USD", CurrencyValid: true, BillingCycleDays: 30,
+		EffectiveFrom: now, Source: PriceSourceMigration,
+	}).Error)
+
+	require.NoError(t, ApplyUpgradeFX(context.Background(), db, nil, fxServer(t, "8.0").URL))
+
+	var locked, migrated models.BillingPriceVersion
+	require.NoError(t, db.Where("client = ?", edited.UUID).First(&locked).Error)
+	require.NoError(t, db.Where("client = ?", broken.UUID).First(&migrated).Error)
+	require.NotNil(t, locked.FXSnapshotID)
+	assert.Equal(t, old.ID, *locked.FXSnapshotID)
+	require.NotNil(t, migrated.FXSnapshotID)
+	assert.NotEqual(t, old.ID, *migrated.FXSnapshotID)
+
+	page, err := GetServers(context.Background(), db, ServerQuery{Currency: "CNY", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	rows := serverAverages(t, page.Items)
+	require.NotNil(t, rows["already-locked"].MonthlyAverage)
+	assert.Equal(t, "216.000000", *rows["already-locked"].MonthlyAverage)
+	require.NotNil(t, rows["broken-231"].MonthlyAverage)
+	assert.Equal(t, "240.000000", *rows["broken-231"].MonthlyAverage)
+}
+
+func TestUpgradeFXFallsBackToCachedSnapshotWhenFetchFails(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.September, 2, 12, 0)
+	cached := saveFX(t, db, now.Add(-time.Hour), "7.2", "1.35")
+	usd := saveClient(t, db, models.Client{Name: "broken-offline", Price: 30, BillingCycle: 30, Currency: "USD"})
+	require.NoError(t, db.Create(&models.BillingPriceVersion{
+		Client: usd.UUID, ClientName: usd.Name, PriceMicros: 30_000_000,
+		Currency: "USD", CurrencyValid: true, BillingCycleDays: 30,
+		EffectiveFrom: now, Source: PriceSourceMigration,
+	}).Error)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	require.NoError(t, ApplyUpgradeFX(context.Background(), db, nil, server.URL))
+	var version models.BillingPriceVersion
+	require.NoError(t, db.Where("client = ?", usd.UUID).First(&version).Error)
+	require.NotNil(t, version.FXSnapshotID)
+	assert.Equal(t, cached.ID, *version.FXSnapshotID)
+
+	page, err := GetServers(context.Background(), db, ServerQuery{Currency: "CNY", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.NotNil(t, page.Items[0].MonthlyAverage)
+	assert.Equal(t, "216.000000", *page.Items[0].MonthlyAverage)
+}
+
+func TestEditBillingLocksFXAtSaveTime(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.September, 2, 12, 0)
+	first := saveFX(t, db, now.Add(-time.Hour), "7.2", "1.35")
+	client := saveClient(t, db, models.Client{Name: "edited", Price: 30, BillingCycle: 30, Currency: "USD"})
+	require.NoError(t, EnsureInitialPriceVersions(db, now.Add(-time.Hour)))
+	second := saveFX(t, db, now, "8.0", "1.35")
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		var existing models.Client
+		if err := tx.First(&existing, "uuid = ?", client.UUID).Error; err != nil {
+			return err
+		}
+		return CapturePriceVersion(tx, existing, map[string]interface{}{"price": float64(60)}, PriceSourceClientEdit, now)
+	}))
+
+	var versions []models.BillingPriceVersion
+	require.NoError(t, db.Order("id").Where("client = ?", client.UUID).Find(&versions).Error)
+	require.Len(t, versions, 2)
+	require.NotNil(t, versions[0].FXSnapshotID)
+	assert.Equal(t, first.ID, *versions[0].FXSnapshotID)
+	require.NotNil(t, versions[0].EffectiveTo)
+	require.NotNil(t, versions[1].FXSnapshotID)
+	assert.Equal(t, second.ID, *versions[1].FXSnapshotID)
+
+	page, err := GetServers(context.Background(), db, ServerQuery{Currency: "CNY", Now: now, Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.NotNil(t, page.Items[0].MonthlyAverage)
+	assert.Equal(t, "480.000000", *page.Items[0].MonthlyAverage)
+}
+
+func TestApplyUpgradeFXDoesNotRewriteLockedSnapshots(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.September, 2, 12, 0)
+	first := saveFX(t, db, now.Add(-time.Hour), "7.2", "1.35")
+	saveClient(t, db, models.Client{Name: "locked", Price: 30, BillingCycle: 30, Currency: "USD"})
+	require.NoError(t, EnsureInitialPriceVersions(db, now.Add(-time.Hour)))
+	require.NoError(t, ApplyUpgradeFX(context.Background(), db, nil, fxServer(t, "8.0").URL))
+
+	var snapshots []models.BillingFXSnapshot
+	require.NoError(t, db.Order("id").Find(&snapshots).Error)
+	require.Len(t, snapshots, 1)
+	assert.Equal(t, first.ID, snapshots[0].ID)
+	var version models.BillingPriceVersion
+	require.NoError(t, db.First(&version).Error)
+	require.NotNil(t, version.FXSnapshotID)
+	assert.Equal(t, first.ID, *version.FXSnapshotID)
+}
+
+func TestLockedAveragesUseNativeRatesNotUSDHop(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.September, 2, 12, 0)
+	snapshot := saveFX(t, db, now, "7.2", "1.35")
+	wrongUSD := int64(1)
+	version := models.BillingPriceVersion{
+		PriceMicros: 9_200_000, Currency: "EUR", CurrencyValid: true,
+		BillingCycleDays: 30, FXSnapshotID: &snapshot.ID, USDPriceMicros: &wrongUSD,
+	}
+	rates, err := ParseRatesJSON(snapshot.RatesJSON)
+	require.NoError(t, err)
+	snapshots := map[uint64]map[string]string{snapshot.ID: rates}
+
+	cny, ok := convertLockedMicros(9_200_000, version, "CNY", snapshots)
+	require.True(t, ok)
+	assert.Equal(t, int64(72_000_000), cny)
+	usd, ok := convertLockedMicros(9_200_000, version, "USD", snapshots)
+	require.True(t, ok)
+	assert.Equal(t, int64(10_000_000), usd)
+
+	cad := version
+	cad.Currency = "CAD"
+	cad.PriceMicros = 13_500_000
+	cadCNY, ok := convertLockedMicros(13_500_000, cad, "CNY", snapshots)
+	require.True(t, ok)
+	assert.Equal(t, int64(72_000_000), cadCNY)
+
+	gbp := version
+	gbp.Currency = "GBP"
+	gbp.PriceMicros = 7_800_000
+	gbpCNY, ok := convertLockedMicros(7_800_000, gbp, "CNY", snapshots)
+	require.True(t, ok)
+	assert.Equal(t, int64(72_000_000), gbpCNY)
+}
+
+func TestRefreshFXBackfillsVersionsMissingSnapshots(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 26, 12, 0)
+	usd := saveClient(t, db, models.Client{Name: "US-02", Price: 30, BillingCycle: 30, Currency: "USD"})
+	require.NoError(t, db.Create(&models.BillingPriceVersion{
+		Client: usd.UUID, ClientName: usd.Name, PriceMicros: 30_000_000,
+		Currency: "USD", CurrencyValid: true, BillingCycleDays: 30,
+		EffectiveFrom: now, Source: PriceSourceMigration,
+	}).Error)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"base":"USD","rates":{"CAD":1.35,"CNY":7.2,"EUR":0.92,"GBP":0.78}}`))
+	}))
+	defer server.Close()
+
+	snapshot, err := RefreshFX(context.Background(), db, nil, server.URL)
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+
+	var version models.BillingPriceVersion
+	require.NoError(t, db.Where("client = ?", usd.UUID).First(&version).Error)
+	require.NotNil(t, version.FXSnapshotID)
+	assert.Equal(t, snapshot.ID, *version.FXSnapshotID)
 }
 
 func TestRecurringFeesStayOnLockedFXWhileRemainingValueUsesLatest(t *testing.T) {

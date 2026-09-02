@@ -181,6 +181,9 @@ func GetOverview(ctx context.Context, db *gorm.DB, currency string, now time.Tim
 	if err != nil {
 		return BillingOverview{}, err
 	}
+	if err := BackfillPriceVersionFX(db.WithContext(ctx)); err != nil {
+		return BillingOverview{}, err
+	}
 	entries, snapshots, coverage, err := queryCalculatedEntries(ctx, db, now, nil, nil, nil, "", "")
 	if err != nil {
 		return BillingOverview{}, err
@@ -308,6 +311,9 @@ func GetServers(ctx context.Context, db *gorm.DB, query ServerQuery) (ServerPage
 	query.Now = normalizedNow(query.Now)
 	currency, err := requireDisplayCurrency(query.Currency)
 	if err != nil {
+		return ServerPage{}, err
+	}
+	if err := BackfillPriceVersionFX(db.WithContext(ctx)); err != nil {
 		return ServerPage{}, err
 	}
 	query.Page, query.PageSize = normalizePage(query.Page, query.PageSize)
@@ -560,6 +566,9 @@ func normalizeMonthlyMonths(query *PeriodQuery) error {
 func getPeriods(ctx context.Context, db *gorm.DB, query PeriodQuery, monthly bool) (PeriodPage, error) {
 	currency, err := requireDisplayCurrency(query.Currency)
 	if err != nil {
+		return PeriodPage{}, err
+	}
+	if err := BackfillPriceVersionFX(db.WithContext(ctx)); err != nil {
 		return PeriodPage{}, err
 	}
 	query.Page, query.PageSize = normalizePage(query.Page, query.PageSize)
@@ -1065,14 +1074,14 @@ func convertedEntryAmount(entry models.BillingEntry, currency string, snapshots 
 	if entry.OriginalCurrency == currency {
 		return entry.OriginalAmountMicros, true
 	}
-	if entry.USDAmountMicros == nil || entry.FXSnapshotID == nil {
+	if entry.FXSnapshotID == nil {
 		return 0, false
 	}
 	rates := snapshots[*entry.FXSnapshotID]
 	if len(rates) == 0 {
 		return 0, false
 	}
-	value, err := ConvertMicros(*entry.USDAmountMicros, "USD", currency, rates)
+	value, err := ConvertMicros(entry.OriginalAmountMicros, entry.OriginalCurrency, currency, rates)
 	return value, err == nil
 }
 

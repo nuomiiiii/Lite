@@ -124,6 +124,9 @@ func attachPriceVersionFX(db *gorm.DB, version *models.BillingPriceVersion) erro
 	if db == nil || version.PriceMicros <= 0 || !version.CurrencyValid {
 		return nil
 	}
+	if version.FXSnapshotID != nil && version.USDPriceMicros != nil {
+		return nil
+	}
 	snapshotID, usd, err := SnapshotConversion(db, version.PriceMicros, version.Currency)
 	if err != nil {
 		return err
@@ -144,7 +147,7 @@ func BackfillPriceVersionFX(db *gorm.DB) error {
 			return fmt.Errorf("backfill billing FX for version %d: %w", version.ID, err)
 		}
 		if version.FXSnapshotID == nil {
-			return nil
+			continue
 		}
 		if err := db.Model(&models.BillingPriceVersion{}).Where("id = ?", version.ID).Updates(map[string]interface{}{
 			"fx_snapshot_id":   version.FXSnapshotID,
