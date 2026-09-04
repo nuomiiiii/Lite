@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/nuomiiiii/lite/web/remotectl"
 )
 
 func replaceRemoteSessions(t *testing.T, replacement map[string]*remoteSession) {
@@ -46,13 +47,13 @@ func TestAgentRemoteSessionIDIgnoresQueryParameter(t *testing.T) {
 	if got := agentRemoteSessionID(context); got != "" {
 		t.Fatalf("query session identifier was accepted: %q", got)
 	}
-	context.Request.Header.Set("X-Komari-Remote-Session", "header-session")
+	context.Request.Header.Set("X-Lite-Remote-Session", "header-session")
 	if got := agentRemoteSessionID(context); got != "header-session" {
-		t.Fatalf("komari header session identifier was rejected: %q", got)
-	}
-	context.Request.Header.Set("X-Lite-Remote-Session", "lite-session")
-	if got := agentRemoteSessionID(context); got != "lite-session" {
 		t.Fatalf("lite header session identifier was rejected: %q", got)
+	}
+	context.Request.Header.Set("X-Komari-Remote-Session", "komari-session")
+	if got := agentRemoteSessionID(context); got != "header-session" {
+		t.Fatalf("komari header overrode lite session identifier: %q", got)
 	}
 }
 
@@ -168,6 +169,33 @@ func TestPutSessionReturnsTypedLimitError(t *testing.T) {
 	}
 }
 
+func TestPutSessionEnforcesPerLoginLimit(t *testing.T) {
+	replaceRemoteSessions(t, make(map[string]*remoteSession))
+	now := time.Now()
+	for index := 0; index < maxRemoteSessionsPerLogin; index++ {
+		id := fmt.Sprintf("login-a-%02d", index)
+		if err := putSession(&remoteSession{
+			ID: id, UUID: "node-a", UserUUID: "user-a", LoginSession: "login-a",
+			ExpiresAt: now.Add(time.Minute), LastActivity: now,
+		}); err != nil {
+			t.Fatalf("login session %s: %v", id, err)
+		}
+	}
+	err := putSession(&remoteSession{
+		ID: "login-a-overflow", UUID: "node-a", UserUUID: "user-a", LoginSession: "login-a",
+		ExpiresAt: now.Add(time.Minute), LastActivity: now,
+	})
+	if !errors.Is(err, errLoginSessionLimit) {
+		t.Fatalf("putSession error=%v, want per-login limit", err)
+	}
+	if err := putSession(&remoteSession{
+		ID: "login-b-1", UUID: "node-b", UserUUID: "user-a", LoginSession: "login-b",
+		ExpiresAt: now.Add(time.Minute), LastActivity: now,
+	}); err != nil {
+		t.Fatalf("other login was blocked by a full login: %v", err)
+	}
+}
+
 func TestOwnedRemoteSessionsCanBeReleasedAcrossConsecutiveLaunches(t *testing.T) {
 	replaceRemoteSessions(t, make(map[string]*remoteSession))
 	now := time.Now()
@@ -195,7 +223,7 @@ func TestOwnedRemoteSessionsCanBeReleasedAcrossConsecutiveLaunches(t *testing.T)
 
 func TestConcurrentRemotePagesKeepIndependentSessions(t *testing.T) {
 	replaceRemoteSessions(t, make(map[string]*remoteSession))
-	const pageCount = 32
+	const pageCount = 16
 	now := time.Now()
 	var waitGroup sync.WaitGroup
 	errorsCh := make(chan error, pageCount)
@@ -271,5 +299,33 @@ func TestRemoteSessionCannotBeReleasedByAnotherLogin(t *testing.T) {
 	}
 	if getSession("session-a") == nil {
 		t.Fatal("unauthorized release removed the remote session")
+	}
+}
+
+func TestRevokeAllClosesPendingAndQueuedRemoteSessions(t *testing.T) {
+	pending := &remoteSession{
+		ID:           "pending",
+		UUID:         "node-a",
+		UserUUID:     "user-a",
+		LoginSession: "login-a",
+		ExpiresAt:    time.Now().Add(time.Minute),
+	}
+	queued := &remoteSession{
+		ID:           "queued",
+		UUID:         "node-b",
+		UserUUID:     "user-a",
+		LoginSession: "login-b",
+		ExpiresAt:    time.Now().Add(time.Minute),
+	}
+	replaceRemoteSessions(t, map[string]*remoteSession{
+		"pending": pending,
+		"queued":  queued,
+	})
+	remotectl.RevokeAll()
+	if !pending.closed || !queued.closed {
+		t.Fatalf("sessions after revoke: pending.closed=%t queued.closed=%t", pending.closed, queued.closed)
+	}
+	if getSession("pending") != nil || getSession("queued") != nil {
+		t.Fatal("revoked remote sessions remained registered")
 	}
 }

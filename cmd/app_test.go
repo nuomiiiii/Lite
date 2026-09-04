@@ -18,6 +18,98 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestCommitRestoreClearsSessionsBeforeCommit(t *testing.T) {
+	order := make([]string, 0, 3)
+	previousChecker := hasPendingRestoreFn
+	previousInvalidate := invalidateRestoredSessions
+	previousCommit := commitPendingRestoreFn
+	previousRevoke := revokeRemoteAfterRestore
+	t.Cleanup(func() {
+		hasPendingRestoreFn = previousChecker
+		invalidateRestoredSessions = previousInvalidate
+		commitPendingRestoreFn = previousCommit
+		revokeRemoteAfterRestore = previousRevoke
+	})
+	hasPendingRestoreFn = func() bool { return true }
+	invalidateRestoredSessions = func() error {
+		order = append(order, "sessions")
+		return nil
+	}
+	commitPendingRestoreFn = func() error {
+		order = append(order, "commit")
+		return nil
+	}
+	revokeRemoteAfterRestore = func() { order = append(order, "revoke") }
+	if err := (&App{}).CommitRestore(); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(order, ","); got != "sessions,commit,revoke" {
+		t.Fatalf("restore commit order = %q", got)
+	}
+}
+
+func TestCommitRestoreDoesNotCommitWhenSessionInvalidateFails(t *testing.T) {
+	committed := false
+	revoked := false
+	previousChecker := hasPendingRestoreFn
+	previousInvalidate := invalidateRestoredSessions
+	previousCommit := commitPendingRestoreFn
+	previousRevoke := revokeRemoteAfterRestore
+	t.Cleanup(func() {
+		hasPendingRestoreFn = previousChecker
+		invalidateRestoredSessions = previousInvalidate
+		commitPendingRestoreFn = previousCommit
+		revokeRemoteAfterRestore = previousRevoke
+	})
+	hasPendingRestoreFn = func() bool { return true }
+	invalidateRestoredSessions = func() error { return errors.New("session delete failed") }
+	commitPendingRestoreFn = func() error {
+		committed = true
+		return nil
+	}
+	revokeRemoteAfterRestore = func() { revoked = true }
+	err := (&App{}).CommitRestore()
+	if err == nil {
+		t.Fatal("expected session cleanup failure to abort restore commit")
+	}
+	if committed {
+		t.Fatal("CommitPendingRestore ran after session cleanup failed")
+	}
+	if revoked {
+		t.Fatal("remote revoke ran after session cleanup failed")
+	}
+}
+
+func TestCommitRestoreSkipsSessionCleanupWhenNothingPending(t *testing.T) {
+	invalidated := false
+	previousChecker := hasPendingRestoreFn
+	previousInvalidate := invalidateRestoredSessions
+	previousCommit := commitPendingRestoreFn
+	previousRevoke := revokeRemoteAfterRestore
+	t.Cleanup(func() {
+		hasPendingRestoreFn = previousChecker
+		invalidateRestoredSessions = previousInvalidate
+		commitPendingRestoreFn = previousCommit
+		revokeRemoteAfterRestore = previousRevoke
+	})
+	hasPendingRestoreFn = func() bool { return false }
+	invalidateRestoredSessions = func() error {
+		invalidated = true
+		return nil
+	}
+	commitPendingRestoreFn = func() error {
+		t.Fatal("commit should not run without a pending restore")
+		return nil
+	}
+	revokeRemoteAfterRestore = func() { t.Fatal("remote revoke should not run without a pending restore") }
+	if err := (&App{}).CommitRestore(); err != nil {
+		t.Fatal(err)
+	}
+	if invalidated {
+		t.Fatal("normal sessions were deleted without a pending restore")
+	}
+}
+
 func TestListenAndFinalizeStartupDoesNotCommitWhenPortIsOccupied(t *testing.T) {
 	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -96,6 +188,63 @@ func TestFirstRunInstallRedirect(t *testing.T) {
 				t.Fatalf("Location = %q, want %q", location, tt.wantLocation)
 			}
 		})
+	}
+}
+
+func TestMigrateAllowRemoteManagementUpgradeKeepsEnabled(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:migrate-remote-upgrade?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open config database: %v", err)
+	}
+	config.SetDb(db)
+	if err := config.Set(config.SitenameKey, "Existing Lite"); err != nil {
+		t.Fatalf("seed sitename: %v", err)
+	}
+	if err := migrateAllowRemoteManagement(); err != nil {
+		t.Fatalf("migrate upgrade: %v", err)
+	}
+	enabled, err := config.GetAs[bool](config.AllowRemoteManagementKey)
+	if err != nil || !enabled {
+		t.Fatalf("upgrade switch = %t, err %v; want true", enabled, err)
+	}
+}
+
+func TestMigrateAllowRemoteManagementNewInstallStaysOff(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:migrate-remote-new?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open config database: %v", err)
+	}
+	config.SetDb(db)
+	if err := migrateAllowRemoteManagement(); err != nil {
+		t.Fatalf("migrate new install: %v", err)
+	}
+	all, err := config.GetAll()
+	if err != nil {
+		t.Fatalf("get settings: %v", err)
+	}
+	if _, exists := all[config.AllowRemoteManagementKey]; exists {
+		t.Fatal("new install must not persist allow_remote_management; default stays off")
+	}
+}
+
+func TestMigrateAllowRemoteManagementPreservesExistingValue(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:migrate-remote-existing?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open config database: %v", err)
+	}
+	config.SetDb(db)
+	if err := config.SetMany(map[string]any{
+		config.SitenameKey:              "Existing Lite",
+		config.AllowRemoteManagementKey: false,
+	}); err != nil {
+		t.Fatalf("seed existing switch: %v", err)
+	}
+	if err := migrateAllowRemoteManagement(); err != nil {
+		t.Fatalf("migrate existing: %v", err)
+	}
+	enabled, err := config.GetAs[bool](config.AllowRemoteManagementKey)
+	if err != nil || enabled {
+		t.Fatalf("existing closed switch overwritten: %t, err %v", enabled, err)
 	}
 }
 

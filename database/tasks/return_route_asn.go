@@ -135,7 +135,7 @@ func lookupASNRIPEStat(ctx context.Context, ip net.IP) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	request.Header.Set("User-Agent", "Komari-Return-Route")
+	request.Header.Set("User-Agent", "Lite-Return-Route (+https://github.com/nuomiiiii/Lite)")
 	response, err := returnRouteASNHTTPClient.Do(request)
 	if err != nil {
 		return 0, err
@@ -167,7 +167,7 @@ func lookupASNBGPView(ctx context.Context, ip net.IP) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	request.Header.Set("User-Agent", "Komari-Return-Route")
+	request.Header.Set("User-Agent", "Lite-Return-Route (+https://github.com/nuomiiiii/Lite)")
 	response, err := returnRouteASNHTTPClient.Do(request)
 	if err != nil {
 		return 0, err

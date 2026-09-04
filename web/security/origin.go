@@ -45,6 +45,48 @@ func OriginMatchesRequest(origin string, r *http.Request) bool {
 	return false
 }
 
+// RemoteOriginAllowed rejects empty, opaque, and cross-site Origins.
+// Loopback Vite (5273) talking to a loopback Lite process is an explicit
+// local-development exception and does not trust forwarded Host headers.
+func RemoteOriginAllowed(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" || strings.EqualFold(origin, "null") {
+		return false
+	}
+	if OriginMatchesRequest(origin, r) {
+		return true
+	}
+	return loopbackDevOrigin(origin, r)
+}
+
+func loopbackDevOrigin(origin string, r *http.Request) bool {
+	if !RequestIsLoopback(r) {
+		return false
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	host := parsed.Hostname()
+	ip := net.ParseIP(host)
+	return (ip != nil && ip.IsLoopback()) || strings.EqualFold(host, "localhost")
+}
+
+func RequestIsLoopback(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	host := strings.TrimSpace(r.RemoteAddr)
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	}
+	ip := net.ParseIP(strings.Trim(host, "[]"))
+	return ip != nil && ip.IsLoopback()
+}
+
 func OriginInAllowlist(origin, rawAllowlist string) bool {
 	normalizedOrigin, originHost, ok := normalizeOrigin(origin)
 	if !ok {

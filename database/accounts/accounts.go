@@ -1,8 +1,6 @@
 package accounts
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -13,7 +11,9 @@ import (
 	"gorm.io/gorm"
 )
 
-const constantSalt = "06Wm4Jv1Hkxx"
+// OnUserSecurityChanged closes remote grants and sessions after password or
+// 2FA changes. remotectl registers this to avoid an import cycle.
+var OnUserSecurityChanged func(userUUID string)
 
 var allowedPreferenceLanguages = map[string]struct{}{
 	"en-US": {},
@@ -33,25 +33,74 @@ var allowedPreferenceColors = map[string]struct{}{
 
 // CheckPassword 检查密码是否正确
 //
-// 如果密码正确，返回用户的 UUID 和 true；否则返回空字符串和 false
+// 如果密码正确，返回用户的 UUID 和 true；否则返回空字符串和 false。
+// 登录接口请使用 AuthenticatePassword，以便区分密码错误与系统繁忙。
 func CheckPassword(username, passwd string) (uuid string, success bool) {
+	uuid, err := AuthenticatePassword(username, passwd, "")
+	return uuid, err == nil
+}
+
+func AuthenticatePassword(username, passwd, clientIP string) (uuid string, err error) {
+	if loginThrottled(clientIP, username) {
+		return "", ErrPasswordBusy
+	}
 	db := dbcore.GetDBInstance()
 	var user models.User
 	result := db.Where("username = ?", username).First(&user)
 	if result.Error != nil {
-		// 静默处理错误，不显示日志
-		return "", false
+		recordLoginFailure(clientIP, username)
+		return "", ErrPasswordInvalid
 	}
-	if hashPasswd(passwd) != user.Passwd {
-		return "", false
+	ok, verifyErr := verifyPasswordLimited(passwd, user.Passwd)
+	if verifyErr != nil {
+		return "", verifyErr
 	}
-	return user.UUID, true
+	if !ok {
+		recordLoginFailure(clientIP, username)
+		return "", ErrPasswordInvalid
+	}
+	maybeUpgradeLegacyPassword(user.UUID, passwd, user.Passwd)
+	return user.UUID, nil
+}
+
+func maybeUpgradeLegacyPassword(uuid, passwd, encoded string) {
+	if !isLegacyPasswordHash(encoded) {
+		return
+	}
+	hashed, err := hashPasswd(passwd)
+	if err != nil {
+		return
+	}
+	_ = dbcore.GetDBInstance().Model(&models.User{}).Where("uuid = ?", uuid).Update("passwd", hashed).Error
+}
+
+func VerifyPasswordForUUID(uuid, passwd string) error {
+	if uuid == "" || passwd == "" {
+		return ErrPasswordInvalid
+	}
+	user, err := GetUserByUUID(uuid)
+	if err != nil || user.Passwd == "" {
+		return ErrPasswordInvalid
+	}
+	ok, verifyErr := verifyPasswordLimited(passwd, user.Passwd)
+	if verifyErr != nil {
+		return verifyErr
+	}
+	if !ok {
+		return ErrPasswordInvalid
+	}
+	maybeUpgradeLegacyPassword(uuid, passwd, user.Passwd)
+	return nil
 }
 
 // ForceResetPassword 强制重置用户密码
 func ForceResetPassword(username, passwd string) (err error) {
+	hashed, err := hashPasswd(passwd)
+	if err != nil {
+		return err
+	}
 	db := dbcore.GetDBInstance()
-	result := db.Model(&models.User{}).Where("username = ?", username).Update("passwd", hashPasswd(passwd))
+	result := db.Model(&models.User{}).Where("username = ?", username).Update("passwd", hashed)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -62,20 +111,15 @@ func ForceResetPassword(username, passwd string) (err error) {
 }
 
 // hashPasswd 对密码进行加盐哈希
-func hashPasswd(passwd string) string {
-	saltedPassword := passwd + constantSalt
-	hash := sha256.New()
-	hash.Write([]byte(saltedPassword))
-	hashedPassword := base64.StdEncoding.EncodeToString(hash.Sum(nil))
-	return hashedPassword
-}
-
 func CreateAccount(username, passwd string) (user models.User, err error) {
 	return CreateAccountWithDB(dbcore.GetDBInstance(), username, passwd)
 }
 
 func CreateAccountWithDB(db *gorm.DB, username, passwd string) (user models.User, err error) {
-	hashedPassword := hashPasswd(passwd)
+	hashedPassword, err := hashPasswd(passwd)
+	if err != nil {
+		return models.User{}, err
+	}
 	user = models.User{
 		UUID:     uuid.New().String(),
 		Username: username,
@@ -154,7 +198,11 @@ func UpdateUser(uuid string, name, password, sso_type *string) error {
 		updates["username"] = *name
 	}
 	if password != nil {
-		updates["passwd"] = hashPasswd(*password)
+		hashed, hashErr := hashPasswd(*password)
+		if hashErr != nil {
+			return hashErr
+		}
+		updates["passwd"] = hashed
 	}
 	if sso_type != nil {
 		updates["sso_type"] = *sso_type
@@ -166,6 +214,9 @@ func UpdateUser(uuid string, name, password, sso_type *string) error {
 	}
 	if password != nil {
 		DeleteAllSessions()
+		if OnUserSecurityChanged != nil {
+			OnUserSecurityChanged(uuid)
+		}
 	}
 	return nil
 }

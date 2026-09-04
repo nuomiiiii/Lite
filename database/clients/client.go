@@ -238,6 +238,7 @@ func saveClientInfoWithAutoOrder(db *gorm.DB, update map[string]interface{}, aut
 		return fmt.Errorf("no fields to update")
 	}
 
+	delete(update, "remote_control_protected")
 	update["updated_at"] = time.Now().UTC()
 
 	toFloat64 := func(value interface{}) (float64, bool) {
@@ -314,6 +315,11 @@ func saveClientInfoWithAutoOrder(db *gorm.DB, update map[string]interface{}, aut
 
 	if err := verify(update); err != nil {
 		return err
+	}
+	if value, exists := update["remote_protocol"]; exists {
+		if numericValue, ok := toFloat64(value); ok {
+			update["remote_protocol"] = int(numericValue)
+		}
 	}
 
 	detectedRegion, _ := update["region"].(string)
@@ -509,6 +515,48 @@ func GetClientByUUID(uuid string) (client models.Client, err error) {
 	}
 	applyClientDisplayFields(&client, time.Now().UTC())
 	return client, nil
+}
+
+const uuidQueryChunkSize = 400
+
+func GetClientsByUUIDs(uuids []string) (map[string]models.Client, error) {
+	return getClientsByUUIDs(dbcore.GetDBInstance(), uuids)
+}
+
+func getClientsByUUIDs(db *gorm.DB, uuids []string) (map[string]models.Client, error) {
+	out := make(map[string]models.Client, len(uuids))
+	if len(uuids) == 0 {
+		return out, nil
+	}
+	seen := make(map[string]struct{}, len(uuids))
+	unique := make([]string, 0, len(uuids))
+	for _, uuid := range uuids {
+		if uuid == "" {
+			continue
+		}
+		if _, ok := seen[uuid]; ok {
+			continue
+		}
+		seen[uuid] = struct{}{}
+		unique = append(unique, uuid)
+	}
+	for i := 0; i < len(unique); i += uuidQueryChunkSize {
+		end := i + uuidQueryChunkSize
+		if end > len(unique) {
+			end = len(unique)
+		}
+		var rows []models.Client
+		err := db.Select("uuid", "remote_protocol", "remote_control_enabled").
+			Where("uuid IN ?", unique[i:end]).
+			Find(&rows).Error
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			out[row.UUID] = row
+		}
+	}
+	return out, nil
 }
 
 func GetClientTokenByUUID(uuid string) (token string, err error) {

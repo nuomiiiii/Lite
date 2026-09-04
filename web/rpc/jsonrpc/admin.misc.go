@@ -2,6 +2,7 @@ package jsonrpc
 
 import (
 	"context"
+	"errors"
 	"math"
 	"strconv"
 	"strings"
@@ -15,6 +16,9 @@ import (
 	"github.com/nuomiiiii/lite/database/tasks"
 	"github.com/nuomiiiii/lite/pkg/config"
 	"github.com/nuomiiiii/lite/pkg/rpc"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
+	agent "github.com/nuomiiiii/lite/web/agent"
+	"github.com/nuomiiiii/lite/web/remotectl"
 )
 
 // admin.misc.go
@@ -69,8 +73,8 @@ func adminGetSessions(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.Jso
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to retrieve sessions: "+err.Error(), nil)
 	}
 	current := ""
-	if meta := rpc.MetaFromContext(ctx); meta != nil {
-		current = meta.SessionToken
+	if meta := rpc.MetaFromContext(ctx); meta != nil && meta.SessionToken != "" {
+		current = accounts.SessionLookupKey(meta.SessionToken)
 	}
 	return map[string]any{"current": current, "data": ss}, nil
 }
@@ -86,6 +90,7 @@ func adminDeleteSession(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc
 	if err := accounts.DeleteSession(params.Session); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to delete session: "+err.Error(), nil)
 	}
+	remotectl.RevokeLogin(params.Session)
 	actor, ip := auditActor(ctx)
 	auditlog.Log(ip, actor, "delete session", "info")
 	return nil, nil
@@ -95,6 +100,7 @@ func adminDeleteAllSessions(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *r
 	if err := accounts.DeleteAllSessions(); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to delete all sessions: "+err.Error(), nil)
 	}
+	remotectl.RevokeAll()
 	actor, ip := auditActor(ctx)
 	auditlog.Log(ip, actor, "delete all sessions", "warn")
 	return nil, nil
@@ -169,9 +175,8 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 	delete(cfg, config.ReduceMotionKey)
 	delete(cfg, metricstore.MetricDownsamplingEnabledKey)
 
-	// 若本次修改涉及 metrics 数据库配置，则在落库前先用「当前配置 + 本次改动」
-	// 合并出的目标配置做一次连接测试。metric store 始终启用，只要触及 metrics
-	// 相关键就做连接测试，避免把明显无效的连接串保存给用户。
+	previousRemote, _ := config.GetAs[bool](config.AllowRemoteManagementKey, false)
+
 	touchedMetric := metricKeysTouched(cfg)
 	if touchedMetric {
 		// 数据库类型不再由前端显式选择，而是根据 DSN 自动推断后写回配置，
@@ -201,6 +206,15 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 
 	if err := config.SetMany(cfg); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to update settings: "+err.Error(), nil)
+	}
+	if raw, ok := cfg[config.AllowRemoteManagementKey]; ok && previousRemote && !toBool(raw, false) {
+		removed := agent.DrainRemoteDelivery(func() []agent.RemovedV2Event {
+			remotectl.RevokeAll()
+			return agent.RemoveAllV2EventsByMethods(v2.MethodAgentRemote, v2.MethodAgentExec)
+		})
+		if err := cancelUndeliveredRemoteExec(removed); err != nil {
+			return nil, rpc.MakeError(rpc.InternalError, "远程管理已关闭，但未能写入已取消任务结果: "+err.Error(), nil)
+		}
 	}
 	// 配置已落库，热重载 metric store（无需重启）。连接已在上面验证过，
 	// 这里再次失败属异常情况，回报给用户。
@@ -297,6 +311,38 @@ func toInt(v any, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+var cancelUndeliveredTaskResult = tasks.CancelUndeliveredTaskResult
+
+func cancelUndeliveredRemoteExec(removed []agent.RemovedV2Event) error {
+	var errs []error
+	for _, item := range removed {
+		if item.Event.Method != v2.MethodAgentExec {
+			continue
+		}
+		taskID := agent.ExecTaskID(item.Event)
+		if taskID == "" {
+			continue
+		}
+		if err := cancelUndeliveredTaskResult(taskID, item.UUID, v2.RemoteManagementClosedTaskResult); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func cancelExecTaskClients(taskID string, clients []string) error {
+	var errs []error
+	for _, uuid := range clients {
+		if uuid == "" {
+			continue
+		}
+		if err := cancelUndeliveredTaskResult(taskID, uuid, v2.RemoteManagementClosedTaskResult); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func adminClearAllRecords(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {

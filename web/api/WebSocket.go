@@ -28,9 +28,7 @@ func EnableWebSocketCompression(upgrader *websocket.Upgrader) {
 // high-entropy browser ticket before it can attach to a session.
 func RequireRemoteBrowserOrigin(upgrader *websocket.Upgrader) {
 	upgrader.CheckOrigin = func(r *http.Request) bool {
-		origin := strings.TrimSpace(r.Header.Get("Origin"))
-		return origin == "" || strings.EqualFold(origin, "null") ||
-			security.OriginMatchesRequest(origin, r)
+		return security.RemoteOriginAllowed(r)
 	}
 }
 

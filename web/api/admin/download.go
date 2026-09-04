@@ -17,6 +17,7 @@ import (
 	"github.com/nuomiiiii/lite/cmd/flags"
 	"github.com/nuomiiiii/lite/database/dbcore"
 	"github.com/nuomiiiii/lite/database/metricstore"
+	"github.com/nuomiiiii/lite/utils/instancekey"
 	"github.com/nuomiiiii/lite/web/api"
 	"github.com/nuomiiiii/lite/web/backup"
 )
@@ -141,6 +142,17 @@ func copyPersistentFiles(contentDir string) error {
 		}
 	}
 	return nil
+}
+
+func copyInstanceKey(contentDir string) error {
+	encoded, err := instancekey.ReadEncoded()
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(contentDir, instancekey.FileName), []byte(encoded), 0o600)
 }
 
 func backupMainSQLite(destination string) error {
@@ -320,6 +332,9 @@ func writeDirectoryToZip(writer *zip.Writer, contentDir string) error {
 			return nil
 		}
 		name := filepath.ToSlash(relative)
+		if strings.EqualFold(filepath.Base(name), instancekey.FileName) && name != instancekey.FileName {
+			return nil
+		}
 		if info.IsDir() {
 			_, err := writer.CreateHeader(&zip.FileHeader{Name: name + "/", Method: zip.Deflate, Modified: info.ModTime()})
 			return err
@@ -404,6 +419,10 @@ func DownloadBackup(c *gin.Context) {
 	}
 	if err := copyPersistentFiles(contentDir); err != nil {
 		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("复制持久化配置失败: %v", err))
+		return
+	}
+	if err := copyInstanceKey(contentDir); err != nil {
+		api.RespondError(c, http.StatusInternalServerError, fmt.Sprintf("复制实例密钥失败: %v", err))
 		return
 	}
 

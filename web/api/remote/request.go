@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/nuomiiiii/lite/database/accounts"
 	"github.com/nuomiiiii/lite/database/auditlog"
 	"github.com/nuomiiiii/lite/database/clients"
 	"github.com/nuomiiiii/lite/pkg/rpc"
@@ -13,6 +14,7 @@ import (
 	"github.com/nuomiiiii/lite/utils"
 	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 	"github.com/nuomiiiii/lite/web/api"
+	"github.com/nuomiiiii/lite/web/remotectl"
 )
 
 type browserAuthorization struct {
@@ -25,49 +27,62 @@ type cancelSessionRequest struct {
 	SessionID string `json:"session_id" binding:"required"`
 }
 
+type revokeGrantRequest struct {
+	Grant string `json:"grant"`
+}
+
 func (authorization browserAuthorization) valid() bool {
 	return authorization.Type == "auth" && authorization.SessionID != "" && authorization.Ticket != ""
 }
 
 func CreateSession(c *gin.Context) {
+	noStore(c)
+	if !rejectIfRemoteOriginDenied(c) {
+		return
+	}
 	principal := api.GetPrincipal(c)
 	if principal == nil || principal.Type != rpc.PrincipalUser {
 		api.RespondError(c, http.StatusForbidden, "Remote control requires an administrator session")
 		return
 	}
+	loginSession, _ := c.Cookie("session_token")
+	if loginSession == "" {
+		api.RespondError(c, http.StatusForbidden, "Remote control requires an administrator session")
+		return
+	}
 	var request struct {
-		UUID      string `json:"uuid" binding:"required"`
-		TwoFACode string `json:"2fa_code"`
+		UUID   string `json:"uuid" binding:"required"`
+		Grant  string `json:"grant"`
+		PageID string `json:"page_id"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
 		api.RespondError(c, http.StatusBadRequest, "Client UUID is required")
 		return
 	}
-	if request.TwoFACode != "" {
-		c.Set("2fa_code", request.TwoFACode)
+	if err := remotectl.ConsumeGrant(request.Grant, principal.UserUUID, loginSession, remotectl.ScopeRemote, request.PageID); err != nil {
+		respondGrantError(c, err)
+		return
 	}
-	uuid := request.UUID
-	_, err := clients.GetClientByUUID(uuid)
+	client, err := clients.GetClientByUUID(request.UUID)
 	if err != nil {
 		api.RespondError(c, http.StatusNotFound, "Client not found")
 		return
 	}
-	if !agent_runtime.IsAgentOnline(uuid) {
+	if !agent_runtime.IsAgentOnline(request.UUID) {
 		api.RespondError(c, http.StatusConflict, "Client is offline")
 		return
 	}
-	loginSession, _ := c.Cookie("session_token")
-	if err := verifyRemoteAccess(c, loginSession); err != nil {
-		api.RespondError(c, http.StatusUnauthorized, err.Error())
+	if err := ensureRemoteAllowed(client); err != nil {
+		api.RespondError(c, remotePolicyStatus(err), err.Error())
 		return
 	}
 
 	now := time.Now()
 	session := &remoteSession{
 		ID:            utils.GenerateRandomString(32),
-		UUID:          uuid,
+		UUID:          request.UUID,
 		UserUUID:      principal.UserUUID,
-		LoginSession:  loginSession,
+		LoginSession:  accounts.SessionLookupKey(loginSession),
 		RequesterIP:   c.ClientIP(),
 		BrowserTicket: utils.GenerateRandomString(32),
 		AgentTicket:   utils.GenerateRandomString(32),
@@ -79,15 +94,19 @@ func CreateSession(c *gin.Context) {
 		api.RespondError(c, http.StatusInternalServerError, "Failed to create secure remote session")
 		return
 	}
-	if err := putSession(session); err != nil {
-		if errors.Is(err, errRemoteSessionLimit) {
+	if err := putSessionUnderDeliveryGate(session); err != nil {
+		if errors.Is(err, errRemoteManagementDisabled) {
+			api.RespondError(c, remotePolicyStatus(err), err.Error())
+			return
+		}
+		if errors.Is(err, errRemoteSessionLimit) || errors.Is(err, errLoginSessionLimit) {
 			api.RespondError(c, http.StatusTooManyRequests, "远程会话数量已满，请关闭不用的终端后重试")
 		} else {
 			api.RespondError(c, http.StatusConflict, err.Error())
 		}
 		return
 	}
-	auditlog.Log(session.RequesterIP, session.UserUUID, "request remote session, client:"+uuid, "terminal")
+	auditlog.Log(session.RequesterIP, session.UserUUID, "request remote session, client:"+request.UUID, "terminal")
 	time.AfterFunc(pendingSessionTTL, func() {
 		session.mu.Lock()
 		pending := session.StartedAt.IsZero()
@@ -103,26 +122,78 @@ func CreateSession(c *gin.Context) {
 	})
 }
 
-// Authorize verifies the remote-management step-up before the browser creates
-// a terminal tab. This keeps the 2FA prompt independent from xterm startup and
-// avoids creating a pending remote session solely to discover that 2FA is due.
 func Authorize(c *gin.Context) {
+	noStore(c)
+	if !rejectIfRemoteOriginDenied(c) {
+		return
+	}
+	principal := api.GetPrincipal(c)
+	if principal == nil || principal.IsAPIKey || principal.Type == rpc.PrincipalAPIKey {
+		api.RespondError(c, http.StatusForbidden, remotectl.ErrAPIKeyForbidden.Error())
+		return
+	}
+	if principal.Type != rpc.PrincipalUser {
+		api.RespondError(c, http.StatusForbidden, "Remote control requires an administrator session")
+		return
+	}
+	loginSession, _ := c.Cookie("session_token")
+	if loginSession == "" {
+		api.RespondError(c, http.StatusForbidden, "Remote control requires an administrator session")
+		return
+	}
+	var request struct {
+		Password string `json:"password"`
+		OTP      string `json:"otp"`
+		TwoFA    string `json:"2fa_code"`
+		Scope    string `json:"scope"`
+		PageID   string `json:"page_id"`
+	}
+	_ = c.ShouldBindJSON(&request)
+	otp := request.OTP
+	if otp == "" {
+		otp = request.TwoFA
+	}
+	scope := request.Scope
+	if scope == "" {
+		scope = remotectl.ScopeRemote
+	}
+	if err := remotectl.Reauthorize(principal.UserUUID, request.Password, otp, c.ClientIP()); err != nil {
+		respondGrantError(c, err)
+		return
+	}
+	grant, expires, err := remotectl.IssueGrant(principal.UserUUID, loginSession, scope, request.PageID)
+	if err != nil {
+		respondGrantError(c, err)
+		return
+	}
+	api.RespondSuccess(c, gin.H{
+		"grant":      grant,
+		"expires_at": expires.UTC(),
+		"scope":      scope,
+	})
+}
+
+func RevokeGrant(c *gin.Context) {
+	noStore(c)
+	if !rejectIfRemoteOriginDenied(c) {
+		return
+	}
 	principal := api.GetPrincipal(c)
 	if principal == nil || principal.Type != rpc.PrincipalUser {
 		api.RespondError(c, http.StatusForbidden, "Remote control requires an administrator session")
 		return
 	}
-	loginSession, _ := c.Cookie("session_token")
-	if err := verifyRemoteAccess(c, loginSession); err != nil {
-		api.RespondError(c, http.StatusUnauthorized, err.Error())
-		return
-	}
-	api.RespondSuccess(c, gin.H{"authorized": true})
+	var request revokeGrantRequest
+	_ = c.ShouldBindJSON(&request)
+	remotectl.RevokeGrant(request.Grant)
+	api.RespondSuccess(c, gin.H{"revoked": true})
 }
 
-// CancelSession releases a browser-owned remote session immediately. The
-// operation is idempotent so page unload and WebSocket close may race safely.
 func CancelSession(c *gin.Context) {
+	noStore(c)
+	if !rejectIfRemoteOriginDenied(c) {
+		return
+	}
 	principal := api.GetPrincipal(c)
 	if principal == nil || principal.Type != rpc.PrincipalUser {
 		api.RespondError(c, http.StatusForbidden, "Remote control requires an administrator session")
@@ -141,18 +212,10 @@ func CancelSession(c *gin.Context) {
 	api.RespondSuccess(c, gin.H{"released": true})
 }
 
-func verifyRemoteAccess(c *gin.Context, loginSession string) error {
-	if hasFreshStepUp(loginSession) {
-		return nil
-	}
-	if err := api.VerifySensitive2FA(c); err != nil {
-		return err
-	}
-	rememberStepUp(loginSession)
-	return nil
-}
-
 func ConnectBrowser(c *gin.Context) {
+	if !rejectIfRemoteOriginDenied(c) {
+		return
+	}
 	principal := api.GetPrincipal(c)
 	loginSession, _ := c.Cookie("session_token")
 	if principal == nil || principal.Type != rpc.PrincipalUser || loginSession == "" {
@@ -171,7 +234,8 @@ func ConnectBrowser(c *gin.Context) {
 		return
 	}
 	session := getSession(auth.SessionID)
-	if session == nil || principal.UserUUID != session.UserUUID || loginSession != session.LoginSession ||
+	if session == nil || principal.UserUUID != session.UserUUID ||
+		accounts.SessionLookupKey(loginSession) != session.LoginSession ||
 		time.Now().After(session.ExpiresAt) {
 		_ = conn.WriteJSON(gin.H{"type": "remote.error", "message": "Remote session authorization failed"})
 		_ = conn.Close()
@@ -188,27 +252,62 @@ func ConnectBrowser(c *gin.Context) {
 	_ = conn.SetReadDeadline(time.Time{})
 	_ = conn.WriteJSON(gin.H{"type": "remote.status", "status": "waiting"})
 	params := v2.RemoteRequestParams{RequestID: session.ID, Ticket: agentTicket}
-	if !dispatchRemoteRequest(session.UUID, params) {
-		_ = conn.WriteJSON(gin.H{"type": "remote.error", "message": "Client is offline"})
+	if err := dispatchRemoteRequest(session.UUID, params); err != nil {
+		_ = conn.WriteJSON(gin.H{"type": "remote.error", "message": err.Error()})
 		deleteSession(session.ID)
 	}
 }
 
-func dispatchRemoteRequest(uuid string, params v2.RemoteRequestParams) bool {
-	if conn := agent_runtime.GetConnectedClients()[uuid]; conn != nil {
-		var payload any = gin.H{
-			"message":       "remote",
-			"request_id":    params.RequestID,
-			"remote_ticket": params.Ticket,
-		}
-		if agent_runtime.IsV2Client(uuid) {
-			payload = v2.Request{JSONRPC: v2.Version, Method: v2.MethodAgentRemote, Params: params}
-		}
-		return conn.WriteJSON(payload) == nil
+func dispatchRemoteRequest(uuid string, params v2.RemoteRequestParams) error {
+	var dispatchErr error
+	accepted := agent_runtime.GuardRemoteDelivery(RemoteManagementEnabled, func() {
+		dispatchErr = enqueueOrSendRemoteRequest(uuid, params)
+	})
+	if !accepted {
+		return errRemoteManagementDisabled
 	}
-	if !agent_runtime.IsV2Client(uuid) {
-		return false
+	return dispatchErr
+}
+
+func enqueueOrSendRemoteRequest(uuid string, params v2.RemoteRequestParams) error {
+	if conn := agent_runtime.GetConnectedClient(uuid); conn != nil {
+		payload := v2.Request{JSONRPC: v2.Version, Method: v2.MethodAgentRemote, Params: params}
+		if conn.WriteJSON(payload) == nil {
+			return nil
+		}
 	}
-	agent_runtime.EnqueueV2Event(uuid, v2.MethodAgentRemote, params)
-	return true
+	if !agent_runtime.IsAgentOnline(uuid) {
+		return errRemoteClientOffline
+	}
+	event := agent_runtime.EnqueueV2Event(uuid, v2.MethodAgentRemote, params)
+	if event.ID == "" {
+		return errRemoteQueueFull
+	}
+	return nil
+}
+
+func putSessionUnderDeliveryGate(session *remoteSession) error {
+	var putErr error
+	accepted := agent_runtime.GuardRemoteDelivery(RemoteManagementEnabled, func() {
+		putErr = putSession(session)
+	})
+	if !accepted {
+		return errRemoteManagementDisabled
+	}
+	return putErr
+}
+
+func noStore(c *gin.Context) {
+	c.Header("Cache-Control", "no-store, private")
+}
+
+func respondGrantError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, remotectl.ErrRateLimited), accounts.IsPasswordBusy(err):
+		api.RespondError(c, http.StatusTooManyRequests, err.Error())
+	case errors.Is(err, remotectl.ErrAPIKeyForbidden), errors.Is(err, remotectl.ErrSSOReauth):
+		api.RespondError(c, http.StatusForbidden, err.Error())
+	default:
+		api.RespondError(c, http.StatusUnauthorized, err.Error())
+	}
 }

@@ -14,7 +14,6 @@ import (
 	"math/big"
 	"mime/multipart"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -285,15 +284,8 @@ func TestChunkedThemeUploadThroughBuiltInHTTPSRedirect(t *testing.T) {
 	plainServer := httptest.NewServer(manager.HTTPRedirectHandler(router))
 	defer plainServer.Close()
 
-	jar, err := cookiejar.New(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plainURL, err := url.Parse(plainServer.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	jar.SetCookies(plainURL, []*http.Cookie{{Name: "session_token", Value: "built-in-https-session", Path: "/"}})
+	jar := &redirectCookieJar{}
+	jar.SetCookies(nil, []*http.Cookie{{Name: "session_token", Value: "built-in-https-session", Path: "/"}})
 	client := &http.Client{
 		Jar: jar,
 		Transport: &http.Transport{TLSClientConfig: &tls.Config{
@@ -372,4 +364,18 @@ func TestChunkedThemeUploadThroughBuiltInHTTPSRedirect(t *testing.T) {
 	if err != nil || string(content) != "installed through built-in HTTPS" {
 		t.Fatalf("theme installed through HTTPS content=%q err=%v", content, err)
 	}
+}
+
+// redirectCookieJar keeps cookies across HTTP→HTTPS redirects without
+// depending on the local Go tree shipping net/http/cookiejar sources.
+type redirectCookieJar struct {
+	cookies []*http.Cookie
+}
+
+func (j *redirectCookieJar) SetCookies(_ *url.URL, cookies []*http.Cookie) {
+	j.cookies = append(append([]*http.Cookie{}, j.cookies...), cookies...)
+}
+
+func (j *redirectCookieJar) Cookies(_ *url.URL) []*http.Cookie {
+	return j.cookies
 }

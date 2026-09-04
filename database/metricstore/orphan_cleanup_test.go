@@ -9,7 +9,7 @@ import (
 
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/pkg/metric"
-	v1 "github.com/nuomiiiii/lite/protocol/v1"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -132,7 +132,7 @@ func TestBlockedTargetsCannotRecreateDeletedMetrics(t *testing.T) {
 		_ = StopReportBatcher(stopCtx)
 	})
 
-	report := v1.Report{UUID: "deleted-client", UpdatedAt: time.Now().UTC(), CPU: v1.CPUReport{Usage: 25}}
+	report := v2.Report{UUID: "deleted-client", UpdatedAt: time.Now().UTC(), CPU: v2.CPUReport{Usage: 25}}
 	_, err := WriteReport(ctx, report)
 	require.NoError(t, err)
 	BlockEntityWrites(report.UUID)

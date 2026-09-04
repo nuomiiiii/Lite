@@ -10,7 +10,7 @@ import (
 	"github.com/nuomiiiii/lite/database/dbcore"
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/database/trafficledger"
-	"github.com/nuomiiiii/lite/protocol/v1"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
 	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 )
 
@@ -55,11 +55,11 @@ func GetClients(c *gin.Context) {
 	for {
 		var resp struct {
 			Online []string             `json:"online"` // 已建立连接的客户端uuid列表
-			Data   map[string]v1.Report `json:"data"`   // 最后上报的数据
+			Data   map[string]v2.Report `json:"data"`   // 最后上报的数据
 		}
 
 		resp.Online = []string{}
-		resp.Data = map[string]v1.Report{}
+		resp.Data = map[string]v2.Report{}
 
 		_, data, err := conn.ReadMessage()
 		if err != nil {

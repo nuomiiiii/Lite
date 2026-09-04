@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -45,7 +46,7 @@ func CallFromGin(c *gin.Context, method string, params any) *rpc.JsonRpcResponse
 //
 // 2FA code 按"每请求"提取:优先取自本条 RPC 请求的 params(2fa_code/two_factor_code/otp),
 // 这对 WebSocket 长连接尤其重要——每条敏感消息携带新鲜的 TOTP 码,避免连接级握手码过期或被复用;
-// 缺失时回退到 X-2FA-Code / X-Two-Factor-Code 请求头与 query(REST/直连场景)。
+// 缺失时回退到 X-2FA-Code / X-Two-Factor-Code 请求头（REST/直连场景）。
 //
 // 若请求已被 RequireSensitive2FA 中间件校验过(sensitive_2fa_verified),则跳过,避免重复校验。
 func dispatchWithSensitive(ctx context.Context, c *gin.Context, meta *rpc.ContextMeta, req *rpc.JsonRpcRequest) *rpc.JsonRpcResponse {
@@ -80,11 +81,6 @@ func headerOrQueryTwoFACode(c *gin.Context) string {
 	}
 	if code := c.GetHeader("X-Two-Factor-Code"); code != "" {
 		return code
-	}
-	for _, key := range []string{"2fa_code", "two_factor_code", "otp"} {
-		if code := c.Query(key); code != "" {
-			return code
-		}
 	}
 	return ""
 }
@@ -135,6 +131,7 @@ func servePost(c *gin.Context) {
 
 	responses := make([]*rpc.JsonRpcResponse, 0, len(requests))
 	for _, rreq := range requests {
+		applyTokenResponseHeaders(c, rreq.Method)
 		responses = append(responses, dispatchWithSensitive(c.Request.Context(), c, meta, rreq))
 	}
 	// 单条直接对象，批量数组（符合 JSON-RPC 2.0）。
@@ -174,12 +171,8 @@ func buildContextMeta(c *gin.Context) *rpc.ContextMeta {
 		}
 	case rpc.PrincipalAgent:
 		meta.ClientUUID = p.ClientUUID
-		// 尝试提取 client token(用于某些 handler 需要原始 token 的场景)。
-		// 优先查询参数 ?Authorization=<token>，再尝试 Bearer header。
-		if token := c.Query("Authorization"); token != "" {
-			meta.ClientToken = token
-		} else if auth := c.GetHeader("Authorization"); auth != "" && len(auth) > len("Bearer ") {
-			meta.ClientToken = auth[len("Bearer "):]
+		if auth := c.GetHeader("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			meta.ClientToken = strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
 		}
 	}
 

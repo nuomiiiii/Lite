@@ -646,7 +646,11 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	serveIndex := func(c *gin.Context) {
 		reqPath := c.Request.URL.Path
 		// index.html contains live site metadata and must never be served stale.
-		setNoStoreHeaders(c)
+		if isPrivateApplicationPath(reqPath) {
+			applyPrivilegedPageHeaders(c)
+		} else {
+			setNoStoreHeaders(c)
+		}
 		cfg := getConfig()
 
 		privateApplication := isPrivateApplicationPath(reqPath)
@@ -746,6 +750,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			return
 		}
 		setStaticCacheHeaders(c, c.Request.URL.Path)
+		applySystemScriptWorkerPolicy(c, c.Request.URL.Path, mimeType)
 		c.Data(http.StatusOK, mimeType, content)
 	})
 
@@ -802,6 +807,11 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		}()
 		reqPath := c.Request.URL.Path
 		cfg := getConfig()
+		if isRootServiceWorkerPath(reqPath) {
+			setNoStoreHeaders(c)
+			c.Status(http.StatusNotFound)
+			return
+		}
 		// index.html is a live document, not a static asset. It must pass
 		// through serveIndex so site metadata and custom Head/Body content
 		// are applied even when a browser requests the file explicitly.
@@ -819,6 +829,7 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 			content, mimeType, exists = getPublicFileContent(cfg[config.ThemeKey].(string), distPath)
 		}
 		if exists {
+			applyThemeScriptWorkerPolicy(c, reqPath, mimeType)
 			setStaticCacheHeaders(c, reqPath)
 			c.Data(http.StatusOK, mimeType, content)
 			return
@@ -840,6 +851,14 @@ func setNoStoreHeaders(c *gin.Context) {
 	c.Header("Expires", "0")
 }
 
+func applyPrivilegedPageHeaders(c *gin.Context) {
+	c.Header("Cache-Control", "no-store, private")
+	c.Header("Pragma", "no-cache")
+	c.Header("Expires", "0")
+	c.Header("Content-Security-Policy", "frame-ancestors 'none'")
+	c.Header("X-Frame-Options", "DENY")
+}
+
 func isPrivateApplicationPath(requestPath string) bool {
 	for _, prefix := range []string{"/admin", "/terminal", "/install", "/manage"} {
 		if requestPath == prefix || strings.HasPrefix(requestPath, prefix+"/") {
@@ -849,8 +868,47 @@ func isPrivateApplicationPath(requestPath string) bool {
 	return false
 }
 
+func isTerminalApplicationPath(requestPath string) bool {
+	return requestPath == "/terminal" || strings.HasPrefix(requestPath, "/terminal/")
+}
+
 func isAdminApplicationPath(requestPath string) bool {
 	return requestPath == "/admin" || strings.HasPrefix(requestPath, "/admin/")
+}
+
+const themeServiceWorkerAllowed = "/__lite_theme_sw/"
+
+func isRootServiceWorkerPath(requestPath string) bool {
+	switch strings.ToLower(path.Clean("/" + strings.TrimPrefix(requestPath, "/"))) {
+	case "/sw.js", "/service-worker.js", "/registersw.js":
+		return true
+	default:
+		return false
+	}
+}
+
+func isJavaScriptPath(requestPath, mimeType string) bool {
+	if strings.Contains(strings.ToLower(mimeType), "javascript") {
+		return true
+	}
+	switch strings.ToLower(filepath.Ext(requestPath)) {
+	case ".js", ".mjs", ".cjs":
+		return true
+	default:
+		return false
+	}
+}
+
+func applyThemeScriptWorkerPolicy(c *gin.Context, requestPath, mimeType string) {
+	if isJavaScriptPath(requestPath, mimeType) {
+		c.Header("Service-Worker-Allowed", themeServiceWorkerAllowed)
+	}
+}
+
+func applySystemScriptWorkerPolicy(c *gin.Context, requestPath, mimeType string) {
+	if isJavaScriptPath(requestPath, mimeType) {
+		c.Header("Service-Worker-Allowed", "/system-assets/")
+	}
 }
 
 func setStaticCacheHeaders(c *gin.Context, requestPath string) {

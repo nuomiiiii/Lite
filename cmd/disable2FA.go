@@ -17,7 +17,10 @@ var Disable2FA = &cobra.Command{
 		db := dbcore.GetDBInstance()
 		err := db.Transaction(func(tx *gorm.DB) error {
 			return tx.Model(&models.User{}).Where("two_factor != ?", "").
-				Update("two_factor", "").Error
+				Updates(map[string]interface{}{
+					"two_factor":         "",
+					"two_factor_counter": 0,
+				}).Error
 		})
 		if err != nil {
 			cmd.Println("Error:", err)

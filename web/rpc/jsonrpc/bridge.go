@@ -68,6 +68,7 @@ func Bind(method string, opts ...BindOption) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "message": "Invalid or missing request body"})
 			return
 		}
+		applyTokenResponseHeaders(c, method)
 		resp := CallFromGin(c, method, params)
 		renderResponse(c, cfg, resp)
 	}

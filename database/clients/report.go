@@ -7,7 +7,7 @@ import (
 
 	"github.com/nuomiiiii/lite/database/dbcore"
 	"github.com/nuomiiiii/lite/database/models"
-	v1 "github.com/nuomiiiii/lite/protocol/v1"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
 	"gorm.io/gorm"
 )
 
@@ -38,7 +38,7 @@ func getClientUUIDByToken(db *gorm.DB, token string, now time.Time) (clientUUID 
 }
 
 // 检查数据防止异常数据导致数据库损坏
-func ReportVerify(report v1.Report) error {
+func ReportVerify(report v2.Report) error {
 	// 防止输入不合理范围
 	if report.CPU.Usage < 0 || report.CPU.Usage > 100 {
 		return fmt.Errorf("CPU.Usage must be between 0 and 100")

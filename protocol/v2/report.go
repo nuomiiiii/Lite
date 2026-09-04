@@ -1,18 +1,6 @@
-package v1
+package v2
 
 import "time"
-
-type Message struct {
-	Type      string `json:"type"`
-	Content   string `json:"content"`
-	Sender    string `json:"sender"`
-	Timestamp int64  `json:"timestamp"`
-}
-
-type IPAddress struct {
-	Ipv4 string `json:"ipv4"`
-	Ipv6 string `json:"ipv6"`
-}
 
 type Report struct {
 	UUID        string            `json:"uuid,omitempty"`
@@ -50,12 +38,6 @@ type GPUDeviceInfo struct {
 	MemoryUsed  int64   `json:"memory_used"`
 	Utilization float64 `json:"utilization"`
 	Temperature int     `json:"temperature"`
-}
-
-// GPUReport is the legacy v1 single-GPU shape kept for wire compatibility.
-type GPUReport struct {
-	Name  string  `json:"name,omitempty"`
-	Usage float64 `json:"usage,omitempty"`
 }
 
 type RamReport struct {

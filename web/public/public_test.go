@@ -270,6 +270,7 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		{path: "/index.html", wantCustom: true},
 		{path: "/admin"},
 		{path: "/admin/settings"},
+		{path: "/admin/exec"},
 		{path: "/terminal"},
 		{path: "/terminal/session"},
 		{path: "/install"},
@@ -313,8 +314,26 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		} else if strings.Contains(body, documentTitleSyncMarker) {
 			t.Fatalf("GET %s private system document contains the public title synchronizer", tt.path)
 		}
-		if got := recorder.Header().Get("Cache-Control"); got != "no-store, no-cache, must-revalidate" {
+		if got := recorder.Header().Get("Cache-Control"); isPrivateApplicationPath(tt.path) {
+			if got != "no-store, private" {
+				t.Fatalf("GET %s Cache-Control = %q", tt.path, got)
+			}
+			if got := recorder.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
+				t.Fatalf("GET %s CSP = %q", tt.path, got)
+			}
+			if got := recorder.Header().Get("X-Frame-Options"); got != "DENY" {
+				t.Fatalf("GET %s X-Frame-Options = %q", tt.path, got)
+			}
+		} else if got != "no-store, no-cache, must-revalidate" {
 			t.Fatalf("GET %s Cache-Control = %q", tt.path, got)
+		}
+		if isTerminalApplicationPath(tt.path) {
+			if got := recorder.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
+				t.Fatalf("GET %s CSP = %q", tt.path, got)
+			}
+			if got := recorder.Header().Get("X-Frame-Options"); got != "DENY" {
+				t.Fatalf("GET %s X-Frame-Options = %q", tt.path, got)
+			}
 		}
 	}
 }

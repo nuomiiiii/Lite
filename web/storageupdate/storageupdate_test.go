@@ -56,7 +56,7 @@ func TestRestrictedControllerRoutes(t *testing.T) {
 			t.Fatalf("required restricted route is missing: %s", route)
 		}
 	}
-	if routes["GET /api/public"] || routes["GET /api/rpc2"] || routes["POST /api/clients/report"] {
+	if routes["GET /api/public"] || routes["GET /api/rpc2"] || routes["POST /api/clients/v2/rpc"] {
 		t.Fatalf("ordinary APIs leaked into storage migration routes: %#v", routes)
 	}
 

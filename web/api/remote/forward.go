@@ -2,7 +2,6 @@ package remote
 
 import (
 	"encoding/json"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -69,6 +68,10 @@ func forwardSession(session *remoteSession) {
 		case <-timer.C:
 			waiting = false
 		case now := <-pingTicker.C:
+			if !loginStillValid(session.UserUUID, session.LoginSession) {
+				waiting = false
+				continue
+			}
 			deadline := now.Add(5 * time.Second)
 			if err := browser.WriteControl(websocket.PingMessage, nil, deadline); err != nil {
 				waiting = false
@@ -101,36 +104,15 @@ func isRemoteHeartbeat(messageType int, data []byte) bool {
 
 func fileOperationAuditDetail(data []byte) string {
 	var request struct {
-		Type        string `json:"type"`
-		Path        string `json:"path"`
-		Destination string `json:"destination"`
+		Type string `json:"type"`
 	}
 	if json.Unmarshal(data, &request) != nil {
 		return ""
 	}
 	switch request.Type {
 	case "file.create", "file.mkdir", "file.copy", "file.delete", "file.rename", "file.upload.start":
+		return "operation:" + request.Type
 	default:
 		return ""
 	}
-	detail := "operation:" + request.Type + ", path:" + sanitizeAuditPath(request.Path)
-	if request.Destination != "" {
-		detail += ", destination:" + sanitizeAuditPath(request.Destination)
-	}
-	return detail
-}
-
-func sanitizeAuditPath(value string) string {
-	value = strings.Map(func(character rune) rune {
-		if character < 0x20 || character == 0x7f {
-			return ' '
-		}
-		return character
-	}, strings.TrimSpace(value))
-	const maxLength = 320
-	characters := []rune(value)
-	if len(characters) > maxLength {
-		value = string(characters[:maxLength]) + "..."
-	}
-	return value
 }

@@ -7,17 +7,20 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/nuomiiiii/lite/database/accounts"
 	"github.com/nuomiiiii/lite/database/metricstore"
+	agent_runtime "github.com/nuomiiiii/lite/web/agent"
+	"github.com/nuomiiiii/lite/web/remotectl"
 )
 
 const (
-	pendingSessionTTL  = 45 * time.Second
-	remoteIdleTimeout  = 45 * time.Second
-	remotePingInterval = 15 * time.Second
-	remoteStepUpTTL    = 10 * time.Minute
-	remoteMaxDuration  = 2 * time.Hour
-	remoteReadLimit    = 2 << 20
-	maxRemoteSessions  = 64
+	pendingSessionTTL         = 45 * time.Second
+	remoteIdleTimeout         = 45 * time.Second
+	remotePingInterval        = 15 * time.Second
+	remoteMaxDuration         = 2 * time.Hour
+	remoteReadLimit           = 2 << 20
+	maxRemoteSessions         = 64
+	maxRemoteSessionsPerLogin = 16
 )
 
 type remoteSession struct {
@@ -39,7 +42,16 @@ type remoteSession struct {
 	closed        bool
 }
 
-var errRemoteSessionLimit = errors.New("too many active remote sessions")
+var (
+	errRemoteSessionLimit = errors.New("too many active remote sessions")
+	errLoginSessionLimit  = errors.New("too many remote sessions for this login")
+)
+
+func init() {
+	remotectl.CloseLoginSessions = CloseLoginSessions
+	remotectl.CloseUserSessions = CloseUserSessions
+	remotectl.CloseAllSessions = CloseAllRemoteSessions
+}
 
 func (session *remoteSession) attachBrowser(ticket string, connection *websocket.Conn, now time.Time) bool {
 	session.mu.Lock()
@@ -86,6 +98,10 @@ func (session *remoteSession) touch(now time.Time) {
 func (session *remoteSession) stale(now time.Time) bool {
 	session.mu.Lock()
 	defer session.mu.Unlock()
+	return session.isStaleLocked(now)
+}
+
+func (session *remoteSession) isStaleLocked(now time.Time) bool {
 	if session.closed {
 		return true
 	}
@@ -108,36 +124,61 @@ func (session *remoteSession) pendingAgentTicket() string {
 var (
 	sessionsMu sync.RWMutex
 	sessions   = make(map[string]*remoteSession)
-	stepUpMu   sync.Mutex
-	stepUps    = make(map[string]time.Time)
 )
 
 func putSession(session *remoteSession) error {
-	pruneStaleSessions(time.Now())
+	if session != nil {
+		session.LoginSession = accounts.SessionLookupKey(session.LoginSession)
+	}
 	sessionsMu.Lock()
-	defer sessionsMu.Unlock()
-	if metricstore.EntityWritesBlocked(session.UUID) {
+	now := time.Now()
+	pruned := takeStaleSessionsLocked(now)
+	blocked := metricstore.EntityWritesBlocked(session.UUID)
+	loginCount := 0
+	if !blocked {
+		for _, existing := range sessions {
+			if existing != nil && existing.LoginSession == session.LoginSession {
+				loginCount++
+			}
+		}
+	}
+	overGlobal := len(sessions) >= maxRemoteSessions
+	overLogin := loginCount >= maxRemoteSessionsPerLogin
+	if !blocked && !overGlobal && !overLogin {
+		sessions[session.ID] = session
+	}
+	sessionsMu.Unlock()
+	closeTakenSessions(pruned)
+	if blocked {
 		return errors.New("client is being deleted")
 	}
-	if len(sessions) >= maxRemoteSessions {
+	if overGlobal {
 		return errRemoteSessionLimit
 	}
-	sessions[session.ID] = session
+	if overLogin {
+		return errLoginSessionLimit
+	}
 	return nil
 }
 
 func pruneStaleSessions(now time.Time) {
-	sessionsMu.RLock()
-	ids := make([]string, 0)
+	sessionsMu.Lock()
+	pruned := takeStaleSessionsLocked(now)
+	sessionsMu.Unlock()
+	closeTakenSessions(pruned)
+}
+
+func takeStaleSessionsLocked(now time.Time) []*remoteSession {
+	pruned := make([]*remoteSession, 0)
 	for id, session := range sessions {
 		if session == nil || session.stale(now) {
-			ids = append(ids, id)
+			delete(sessions, id)
+			if session != nil {
+				pruned = append(pruned, session)
+			}
 		}
 	}
-	sessionsMu.RUnlock()
-	for _, id := range ids {
-		deleteSession(id)
-	}
+	return pruned
 }
 
 func getSession(id string) *remoteSession {
@@ -151,23 +192,30 @@ func deleteSession(id string) {
 	session := sessions[id]
 	delete(sessions, id)
 	sessionsMu.Unlock()
-	if session == nil {
-		return
-	}
-	session.mu.Lock()
-	if session.closed {
+	closeTakenSessions([]*remoteSession{session})
+}
+
+func closeTakenSessions(taken []*remoteSession) {
+	for _, session := range taken {
+		if session == nil {
+			continue
+		}
+		agent_runtime.RemoveV2RemoteRequest(session.UUID, session.ID)
+		session.mu.Lock()
+		if session.closed {
+			session.mu.Unlock()
+			continue
+		}
+		session.closed = true
+		browser := session.Browser
+		agent := session.Agent
 		session.mu.Unlock()
-		return
-	}
-	session.closed = true
-	browser := session.Browser
-	agent := session.Agent
-	session.mu.Unlock()
-	if browser != nil {
-		_ = browser.Close()
-	}
-	if agent != nil {
-		_ = agent.Close()
+		if browser != nil {
+			_ = browser.Close()
+		}
+		if agent != nil {
+			_ = agent.Close()
+		}
 	}
 }
 
@@ -177,7 +225,7 @@ func deleteOwnedSession(id, userUUID, loginSession string) bool {
 		return true
 	}
 	session.mu.Lock()
-	owned := !session.closed && session.UserUUID == userUUID && session.LoginSession == loginSession
+	owned := !session.closed && session.UserUUID == userUUID && session.LoginSession == accounts.SessionLookupKey(loginSession)
 	session.mu.Unlock()
 	if !owned {
 		return false
@@ -187,10 +235,38 @@ func deleteOwnedSession(id, userUUID, loginSession string) bool {
 }
 
 func CloseClientSessions(uuid string) {
+	closeMatching(func(session *remoteSession) bool {
+		return session.UUID == uuid
+	})
+}
+
+func CloseLoginSessions(loginSession string) {
+	if loginSession == "" {
+		return
+	}
+	closeMatching(func(session *remoteSession) bool {
+		return session.LoginSession == accounts.SessionLookupKey(loginSession)
+	})
+}
+
+func CloseUserSessions(userUUID string) {
+	if userUUID == "" {
+		return
+	}
+	closeMatching(func(session *remoteSession) bool {
+		return session.UserUUID == userUUID
+	})
+}
+
+func CloseAllRemoteSessions() {
+	closeMatching(func(*remoteSession) bool { return true })
+}
+
+func closeMatching(match func(*remoteSession) bool) {
 	sessionsMu.RLock()
 	ids := make([]string, 0)
 	for id, session := range sessions {
-		if session.UUID == uuid {
+		if session != nil && match(session) {
 			ids = append(ids, id)
 		}
 	}
@@ -207,26 +283,6 @@ func ticketsEqual(left, right string) bool {
 	return subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
 }
 
-func hasFreshStepUp(loginSession string) bool {
-	if loginSession == "" {
-		return false
-	}
-	now := time.Now()
-	stepUpMu.Lock()
-	defer stepUpMu.Unlock()
-	for token, expiresAt := range stepUps {
-		if !expiresAt.After(now) {
-			delete(stepUps, token)
-		}
-	}
-	return stepUps[loginSession].After(now)
-}
-
-func rememberStepUp(loginSession string) {
-	if loginSession == "" {
-		return
-	}
-	stepUpMu.Lock()
-	stepUps[loginSession] = time.Now().Add(remoteStepUpTTL)
-	stepUpMu.Unlock()
+func loginStillValid(userUUID, loginSession string) bool {
+	return accounts.SessionStillValid(userUUID, loginSession)
 }

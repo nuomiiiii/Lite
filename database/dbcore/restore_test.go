@@ -415,8 +415,5 @@ func TestRestoreStagedBackupFallsBackWhenDataDirCannotBeRenamed(t *testing.T) {
 
 func writeFakeSQLite(t *testing.T, path, payload string) {
 	t.Helper()
-	data := append([]byte("SQLite format 3\x00"), payload...)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	createRestoreSQLite(t, path, payload)
 }
