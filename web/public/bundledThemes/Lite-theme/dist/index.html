@@ -13,6 +13,11 @@
       } catch (e) {
         document.documentElement.classList.add("light")
       }
+      const standalone =
+        window.matchMedia?.("(display-mode: standalone)").matches ||
+        window.matchMedia?.("(display-mode: fullscreen)").matches ||
+        window.navigator.standalone === true
+      document.documentElement.classList.toggle("lite-standalone", Boolean(standalone))
     </script>
     <style>
       /* Prevent FOUC in Safari */
@@ -105,8 +110,8 @@
       })()
     </script>
     <meta charset="UTF-8" />
-    <link rel="icon" href="/favicon.png?v=lite-icon-mark1" type="image/png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.png?v=lite-icon-0e86dd" type="image/png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Lite</title>
     <meta name="description" content="Lite server monitor." />
     <!-- PWA -->
@@ -114,14 +119,14 @@
     <meta name="theme-color" content="hsl(0 0% 98%)" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Lite" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap" rel="stylesheet" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=lite-icon-mark1" />
-    <script type="module" crossorigin src="/assets/index.BSPNwcPW.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index.Bp-C3e6c.css">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=lite-icon-0e86dd" />
+    <script type="module" crossorigin src="/assets/index.ByzvVV7V.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index.Dpvgc7wQ.css">
   </head>
   <body>
     <div id="root"></div>

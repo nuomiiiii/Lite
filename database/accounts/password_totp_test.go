@@ -10,7 +10,7 @@ import (
 )
 
 func TestArgon2idPasswordRoundTripAndLegacy(t *testing.T) {
-	encoded, err := hashPasswd("LiteTest9a")
+	encoded, err := hashPasswd("correctpassword")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,17 +20,17 @@ func TestArgon2idPasswordRoundTripAndLegacy(t *testing.T) {
 	if !strings.Contains(encoded, "m=32768,t=3,p=1") {
 		t.Fatalf("new hash params = %q, want m=32768,t=3,p=1", encoded)
 	}
-	if !verifyPasswd("LiteTest9a", encoded) {
+	if !verifyPasswd("correctpassword", encoded) {
 		t.Fatal("argon2id verify failed")
 	}
 	if verifyPasswd("wrong", encoded) {
 		t.Fatal("wrong password accepted")
 	}
-	legacy := hashLegacySHA256("LiteTest9a")
+	legacy := hashLegacySHA256("correctpassword")
 	if !isLegacyPasswordHash(legacy) {
 		t.Fatal("legacy hash not detected")
 	}
-	if !verifyPasswd("LiteTest9a", legacy) {
+	if !verifyPasswd("correctpassword", legacy) {
 		t.Fatal("legacy password rejected")
 	}
 }

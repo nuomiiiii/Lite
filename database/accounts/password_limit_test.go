@@ -17,7 +17,7 @@ import (
 
 func TestExistingArgon2idKeepsRecordedParams(t *testing.T) {
 	username := "ag-" + uuid.NewString()[:8]
-	encoded := encodeArgon2id("LiteTest9a", 2, 64*1024, 1, 32)
+	encoded := encodeArgon2id("correctpassword", 2, 64*1024, 1, 32)
 	require.Contains(t, encoded, "m=65536,t=2,p=1")
 	user := models.User{
 		UUID:     uuid.NewString(),
@@ -27,7 +27,7 @@ func TestExistingArgon2idKeepsRecordedParams(t *testing.T) {
 	require.NoError(t, dbcore.GetDBInstance().Create(&user).Error)
 	t.Cleanup(func() { _ = DeleteAccountByUsername(username) })
 
-	got, err := AuthenticatePassword(username, "LiteTest9a", "")
+	got, err := AuthenticatePassword(username, "correctpassword", "")
 	require.NoError(t, err)
 	require.Equal(t, user.UUID, got)
 	stored, err := GetUserByUUID(user.UUID)
@@ -52,7 +52,7 @@ func TestParseArgon2idRejectsOversizedAndMalformed(t *testing.T) {
 		if _, _, _, _, _, _, ok := parseArgon2id(encoded); ok {
 			t.Fatalf("accepted oversized or malformed hash %q", encoded)
 		}
-		if verifyArgon2id("LiteTest9a", encoded) {
+		if verifyArgon2id("correctpassword", encoded) {
 			t.Fatalf("verified oversized or malformed hash %q", encoded)
 		}
 	}
@@ -60,7 +60,7 @@ func TestParseArgon2idRejectsOversizedAndMalformed(t *testing.T) {
 
 func TestArgon2VerifyConcurrencyRejectsWithoutQueue(t *testing.T) {
 	username := "busy-" + uuid.NewString()[:8]
-	user, err := CreateAccount(username, "LiteTest9a")
+	user, err := CreateAccount(username, "correctpassword")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = DeleteAccountByUsername(username) })
 
@@ -69,12 +69,12 @@ func TestArgon2VerifyConcurrencyRejectsWithoutQueue(t *testing.T) {
 	defer release()
 
 	start := time.Now()
-	_, err = AuthenticatePassword(username, "LiteTest9a", "")
+	_, err = AuthenticatePassword(username, "correctpassword", "")
 	require.ErrorIs(t, err, ErrPasswordBusy)
 	if time.Since(start) > 200*time.Millisecond {
 		t.Fatalf("busy password check queued instead of returning immediately: %s", time.Since(start))
 	}
-	require.ErrorIs(t, VerifyPasswordForUUID(user.UUID, "LiteTest9a"), ErrPasswordBusy)
+	require.ErrorIs(t, VerifyPasswordForUUID(user.UUID, "correctpassword"), ErrPasswordBusy)
 }
 
 func TestLoginLimitAppliesBeforeArgon2AndHasCapacityAndExpiry(t *testing.T) {
@@ -82,7 +82,7 @@ func TestLoginLimitAppliesBeforeArgon2AndHasCapacityAndExpiry(t *testing.T) {
 	t.Cleanup(ResetLoginLimitsForTest)
 
 	username := "lim-" + uuid.NewString()[:8]
-	_, err := CreateAccount(username, "LiteTest9a")
+	_, err := CreateAccount(username, "correctpassword")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = DeleteAccountByUsername(username) })
 
@@ -94,7 +94,7 @@ func TestLoginLimitAppliesBeforeArgon2AndHasCapacityAndExpiry(t *testing.T) {
 	started := 0
 	SetArgon2VerifyObserverForTest(func() { started++ })
 	t.Cleanup(func() { SetArgon2VerifyObserverForTest(nil) })
-	_, err = AuthenticatePassword(username, "LiteTest9a", ip)
+	_, err = AuthenticatePassword(username, "correctpassword", ip)
 	require.ErrorIs(t, err, ErrPasswordBusy)
 	require.Equal(t, 0, started)
 
@@ -139,7 +139,7 @@ func TestLoginLimitDoesNotScanWholeTableOnEveryRequest(t *testing.T) {
 
 func TestArgon2GenerateAndVerifyShareSingleSlot(t *testing.T) {
 	username := "slot-" + uuid.NewString()[:8]
-	_, err := CreateAccount(username, "LiteTest9a")
+	_, err := CreateAccount(username, "correctpassword")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = DeleteAccountByUsername(username) })
 
@@ -158,15 +158,15 @@ func TestArgon2GenerateAndVerifyShareSingleSlot(t *testing.T) {
 
 	go func() {
 		defer close(finished)
-		_, _ = hashPasswd("LiteTest9a")
+		_, _ = hashPasswd("correctpassword")
 	}()
 	<-started
 	start := time.Now()
-	_, err = hashPasswd("LiteTest9a")
+	_, err = hashPasswd("correctpassword")
 	require.ErrorIs(t, err, ErrPasswordBusy)
-	_, err = AuthenticatePassword(username, "LiteTest9a", "")
+	_, err = AuthenticatePassword(username, "correctpassword", "")
 	require.ErrorIs(t, err, ErrPasswordBusy)
-	_, err = CreateAccount("busy-create-"+uuid.NewString()[:8], "LiteTest9a")
+	_, err = CreateAccount("busy-create-"+uuid.NewString()[:8], "correctpassword")
 	require.ErrorIs(t, err, ErrPasswordBusy)
 	if time.Since(start) > 200*time.Millisecond {
 		t.Fatalf("argon2 generate/verify queued instead of returning immediately: %s", time.Since(start))
@@ -180,7 +180,7 @@ func TestLegacyPasswordUpgradeSkippedWhenArgon2Busy(t *testing.T) {
 	user := models.User{
 		UUID:     uuid.NewString(),
 		Username: username,
-		Passwd:   hashLegacySHA256("LiteTest9a"),
+		Passwd:   hashLegacySHA256("correctpassword"),
 	}
 	require.NoError(t, dbcore.GetDBInstance().Create(&user).Error)
 	t.Cleanup(func() { _ = DeleteAccountByUsername(username) })
@@ -189,7 +189,7 @@ func TestLegacyPasswordUpgradeSkippedWhenArgon2Busy(t *testing.T) {
 	require.True(t, ok)
 	defer release()
 
-	got, err := AuthenticatePassword(username, "LiteTest9a", "")
+	got, err := AuthenticatePassword(username, "correctpassword", "")
 	require.NoError(t, err)
 	require.Equal(t, user.UUID, got)
 	stored, err := GetUserByUUID(user.UUID)
@@ -214,7 +214,7 @@ func encodeArgon2id(passwd string, timeCost, memory uint32, threads uint8, keyLe
 
 func TestSessionStillValidUsesOneQuery(t *testing.T) {
 	username := "sv-" + uuid.NewString()[:8]
-	user, err := CreateAccount(username, "LiteTest9a")
+	user, err := CreateAccount(username, "correctpassword")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = DeleteAllSessions()
@@ -261,7 +261,7 @@ func TestSessionStillValidUsesOneQuery(t *testing.T) {
 
 func TestSessionStillValidRejectsExpiredAndMissingUser(t *testing.T) {
 	username := "sx-" + uuid.NewString()[:8]
-	user, err := CreateAccount(username, "LiteTest9a")
+	user, err := CreateAccount(username, "correctpassword")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = DeleteAllSessions()

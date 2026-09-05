@@ -15,7 +15,7 @@ import (
 )
 
 func TestTOTPReplayIsSharedAcrossLoginAndRemoteReauth(t *testing.T) {
-	user, err := accounts.CreateAccount("tx-"+uuid.NewString()[:8], "LiteTest9a")
+	user, err := accounts.CreateAccount("tx-"+uuid.NewString()[:8], "correctpassword")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -34,19 +34,19 @@ func TestLegacyPasswordMigratesOnLogin(t *testing.T) {
 	user := models.User{
 		UUID:     uuid.NewString(),
 		Username: username,
-		Passwd:   hashLegacySHA256("LiteTest9a"),
+		Passwd:   hashLegacySHA256("correctpassword"),
 	}
 	require.NoError(t, dbcore.GetDBInstance().Create(&user).Error)
 	t.Cleanup(func() { _ = DeleteAccountByUsername(username) })
 
-	uuid, ok := CheckPassword(username, "LiteTest9a")
+	uuid, ok := CheckPassword(username, "correctpassword")
 	require.True(t, ok)
 	require.Equal(t, user.UUID, uuid)
 	stored, err := GetUserByUUID(uuid)
 	require.NoError(t, err)
 	require.True(t, stringsHasArgonPrefix(stored.Passwd))
 	require.Contains(t, stored.Passwd, "m=32768,t=3,p=1")
-	require.True(t, verifyPasswd("LiteTest9a", stored.Passwd))
+	require.True(t, verifyPasswd("correctpassword", stored.Passwd))
 }
 
 func stringsHasArgonPrefix(value string) bool {
@@ -55,7 +55,7 @@ func stringsHasArgonPrefix(value string) bool {
 
 func TestHashedSessionCannotBeUsedAsCookie(t *testing.T) {
 	username := "ss-" + uuid.NewString()[:8]
-	user, err := CreateAccount(username, "LiteTest9a")
+	user, err := CreateAccount(username, "correctpassword")
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = DeleteAllSessions()
@@ -88,7 +88,7 @@ func TestHashedSessionCannotBeUsedAsCookie(t *testing.T) {
 
 func TestInvalidateAllSessionsDropsRestoredCookies(t *testing.T) {
 	username := "rs-" + uuid.NewString()[:8]
-	user, err := CreateAccount(username, "LiteTest9a")
+	user, err := CreateAccount(username, "correctpassword")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = DeleteAccountByUsername(username) })
 
@@ -102,7 +102,7 @@ func TestInvalidateAllSessionsDropsRestoredCookies(t *testing.T) {
 
 func TestTOTPCounterReplayAcrossLoginAndReauth(t *testing.T) {
 	username := "tp-" + uuid.NewString()[:8]
-	user, err := CreateAccount(username, "LiteTest9a")
+	user, err := CreateAccount(username, "correctpassword")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = DeleteAccountByUsername(username) })
 
@@ -132,7 +132,7 @@ func TestTOTPCounterReplayAcrossLoginAndReauth(t *testing.T) {
 
 func TestConcurrentTOTPReplayOnlySucceedsOnce(t *testing.T) {
 	username := "tc-" + uuid.NewString()[:8]
-	user, err := CreateAccount(username, "LiteTest9a")
+	user, err := CreateAccount(username, "correctpassword")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = DeleteAccountByUsername(username) })
 
