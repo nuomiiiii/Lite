@@ -56,9 +56,6 @@ func (m *returnRouteTaskManager) Reload(tasks []models.ReturnRouteTask) error {
 }
 
 func DispatchReturnRouteTask(task models.ReturnRouteTask) bool {
-	if !agentRuntime.IsV2Client(task.Client) {
-		return false
-	}
 	dispatched := agentRuntime.DispatchV2Event(task.Client, v2.MethodAgentRoute, v2.RouteParams{
 		TaskID: task.Id, Protocol: task.Protocol, Target: task.Target,
 		IPVersion: task.IPVersion, MaxHops: 30,
@@ -125,5 +122,5 @@ func ReloadReturnRouteSchedule(tasks []models.ReturnRouteTask) error {
 // IsReturnRouteClientOnline reports whether the agent still has a live connection
 // to Lite. V2 pull-only presence is not enough for mainland reachability.
 func IsReturnRouteClientOnline(uuid string) bool {
-	return agentRuntime.GetConnectedClients()[uuid] != nil
+	return agentRuntime.GetConnectedClient(uuid) != nil
 }

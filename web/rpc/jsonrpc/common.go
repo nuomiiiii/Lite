@@ -17,7 +17,7 @@ import (
 	"github.com/nuomiiiii/lite/pkg/config"
 	"github.com/nuomiiiii/lite/pkg/rpc"
 	"github.com/nuomiiiii/lite/pkg/selfupdate"
-	"github.com/nuomiiiii/lite/protocol/v1"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
 	"github.com/nuomiiiii/lite/utils"
 	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 
@@ -227,53 +227,20 @@ func getNodes(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcEr
 	req.BindParams(&params)
 	cinfo, err := clients.GetAllClientBasicInfo()
 	if err != nil {
-		return nil, rpc.MakeError(rpc.InternalError, "Failed to get client info", cinfo)
+		return nil, rpc.MakeError(rpc.InternalError, "Failed to get client info", err.Error())
 	}
-	applyThemeTrafficCompatibility(cinfo)
 	meta := rpc.MetaFromContext(ctx)
-
-	SendIpAddrToGuest, _ := config.GetAs[bool](config.SendIpAddrToGuestKey)
-	if meta.Principal == nil || !meta.Principal.HasRole(rpc.RoleAdmin) {
-		// 过滤 Hidden 节点并隐藏敏感字段
-		filtered := make([]models.Client, 0, len(cinfo))
-		for _, node := range cinfo {
-			if node.Hidden { // 非 admin 不显示隐藏节点
-				continue
-			}
-			if SendIpAddrToGuest {
-				if node.IPv4 != "" {
-					node.IPv4 = strings.Split(node.IPv4, ".")[0] + ".*.*.*"
-				}
-				if node.IPv6 != "" {
-					node.IPv6 = strings.Split(node.IPv6, ":")[0] + ":*:*:*:*:*:*:*"
-				}
-			} else {
-				node.IPv4 = ""
-				node.IPv6 = ""
-			}
-
-			node.Remark = ""
-			node.Version = ""
-			node.Token = ""
-			filtered = append(filtered, node)
-		}
-		cinfo = filtered
-	}
+	isAdmin := meta != nil && meta.Principal != nil && meta.Principal.HasRole(rpc.RoleAdmin)
+	sendIPAddrToGuest, _ := config.GetAs[bool](config.SendIpAddrToGuestKey)
+	nodes := presentThemeNodes(cinfo, isAdmin, sendIPAddrToGuest)
 	if params.UUID != "" {
-		for _, node := range cinfo {
-			if node.UUID == params.UUID {
-				return node, nil
-			}
+		node, ok := themeNodeByUUID(nodes, params.UUID)
+		if !ok {
+			return nil, rpc.MakeError(rpc.InvalidParams, "Node not found", params.UUID)
 		}
-		return nil, rpc.MakeError(rpc.InvalidParams, "Node not found", params.UUID)
+		return node, nil
 	}
-
-	// 返回以 uuid 为键的字典（每个 value 自身也包含 uuid 字段）
-	nodeMap := make(map[string]models.Client, len(cinfo))
-	for _, node := range cinfo {
-		nodeMap[node.UUID] = node
-	}
-	return nodeMap, nil
+	return themeNodeMap(nodes), nil
 }
 
 func getPublicInfo(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
@@ -293,7 +260,7 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 	req.BindParams(&params)
 
 	meta := rpc.MetaFromContext(ctx)
-	latest := agent_runtime.GetLatestReport() // map[string]*v1.Report (copy)
+	latest := agent_runtime.GetLatestReport() // map[string]*v2.Report (copy)
 	// The compact admin view also shows billing-cycle usage. This helper is
 	// cached for 15 seconds, so the 5-second status poll does not rescan SQLite.
 	calibrated, _ := trafficledger.CurrentCalibratedCycleUsages(ctx, dbcore.GetDBInstance(), time.Now().UTC())
@@ -364,7 +331,7 @@ func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 		pingTasks, _ = tasks.GetAllPingTasks()
 	}
 
-	appendOne := func(uuid string, rep *v1.Report) {
+	appendOne := func(uuid string, rep *v2.Report) {
 		if rep == nil {
 			return
 		}

@@ -11,6 +11,7 @@ import (
 	"github.com/nuomiiiii/lite/database/auditlog"
 	"github.com/nuomiiiii/lite/utils/geoip"
 	"github.com/nuomiiiii/lite/web/api"
+	"github.com/nuomiiiii/lite/web/remotectl"
 )
 
 // update.go
@@ -49,8 +50,15 @@ func UpdateUser(c *gin.Context) {
 		}
 	}
 	if err := accounts.UpdateUser(req.Uuid, req.Name, req.Password, req.SsoType); err != nil {
+		if accounts.IsPasswordBusy(err) {
+			api.RespondError(c, http.StatusTooManyRequests, err.Error())
+			return
+		}
 		api.RespondError(c, 500, "Failed to update user: "+err.Error())
 		return
+	}
+	if req.Password != nil {
+		remotectl.RevokeUser(req.Uuid)
 	}
 	uuid, _ := c.Get("uuid")
 	auditlog.Log(c.ClientIP(), uuid.(string), "User updated", "warn")

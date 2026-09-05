@@ -2,7 +2,10 @@ package admin
 
 import (
 	"archive/zip"
+	"errors"
 	"testing"
+
+	"github.com/nuomiiiii/lite/pkg/themehttp"
 )
 
 func TestParseThemeMarketCatalogShapes(t *testing.T) {
@@ -58,8 +61,21 @@ func TestThemeMarketPreviewRejectsPrivateURL(t *testing.T) {
 	if err := validateThemeMarketURLSyntax("http://127.0.0.1/preview.png"); err != nil {
 		t.Fatalf("syntax should allow loopback URL before private-IP check: %v", err)
 	}
-	if !isPrivateIP("127.0.0.1") {
-		t.Fatal("127.0.0.1 should be treated as a private preview host")
+	_, err := downloadThemeMarketURL("http://127.0.0.1/preview.png", themehttp.MaxPreview)
+	if !errors.Is(err, themehttp.ErrPrivateAddress) && (err == nil || err.Error() != "requests to private or reserved addresses are not allowed") {
+		t.Fatalf("127.0.0.1 should be rejected as a private preview host, got %v", err)
+	}
+}
+
+func TestThemeMarketDownloadCapIs128MiB(t *testing.T) {
+	if marketThemeMaxSize != 128<<20 {
+		t.Fatalf("marketThemeMaxSize = %d, want 128 MiB", marketThemeMaxSize)
+	}
+	if marketThemeMaxSize != themehttp.MaxArchive {
+		t.Fatalf("market ZIP download cap must match themehttp.MaxArchive")
+	}
+	if maxThemeArchiveSize != themehttp.MaxArchive {
+		t.Fatalf("local upload cap %d must match download cap %d", maxThemeArchiveSize, themehttp.MaxArchive)
 	}
 }
 

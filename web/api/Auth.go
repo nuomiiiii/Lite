@@ -1,10 +1,7 @@
 package api
 
 import (
-	"bytes"
 	"database/sql"
-	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -165,40 +162,12 @@ func hasTempAccess(c *gin.Context) bool {
 }
 
 func extractClientToken(c *gin.Context) string {
-	token := c.Query("token")
-	if token != "" {
-		return token
-	}
 	authorization := strings.TrimSpace(c.GetHeader("Authorization"))
 	if strings.HasPrefix(authorization, "Bearer ") && !isApiKeyValid(authorization) {
 		if token := strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")); token != "" {
 			return token
 		}
 	}
-	// rpc2 约定:agent 经 ?Authorization=<token> 传入 client token。
-	if token := c.Query("Authorization"); token != "" {
-		return token
-	}
-
-	if c.Request.Method != http.MethodGet {
-		bodyBytes, err := io.ReadAll(c.Request.Body)
-		if err != nil {
-			return ""
-		}
-		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-
-		var bodyMap map[string]interface{}
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, &bodyMap); err == nil {
-				if tokenVal, exists := bodyMap["token"]; exists {
-					if str, ok := tokenVal.(string); ok && str != "" {
-						return str
-					}
-				}
-			}
-		}
-	}
-
 	return ""
 }
 

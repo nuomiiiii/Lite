@@ -42,7 +42,9 @@ type Client struct {
 	Tags                   string     `json:"tags" gorm:"type:text"` // split by ';'
 	Bandwidth              string     `json:"bandwidth" gorm:"type:varchar(64);not null;default:''"`
 	Hidden                 bool       `json:"hidden" gorm:"default:false"`
-	RemoteControlProtected bool       `json:"remote_control_protected" gorm:"default:false"`
+	RemoteProtocol         int        `json:"remote_protocol" gorm:"default:0"`
+	RemoteControlEnabled   bool       `json:"remote_control_enabled" gorm:"default:false"`
+	RemoteControlProtected bool       `json:"-" gorm:"column:remote_control_protected;default:false"`
 	TrafficLimit           int64      `json:"traffic_limit" gorm:"type:bigint"`
 	TrafficLimitType       string     `json:"traffic_limit_type" gorm:"type:varchar(10);default:'sum'"` // 流量阈值类型：sum max min up down
 	TrafficResetDay        *int       `json:"traffic_reset_day,omitempty" gorm:"type:int"`              // nil: follow agent; 0: disabled; 1-31: monthly reset day
@@ -73,17 +75,18 @@ type ClientDeploymentProfile struct {
 
 // User represents an authenticated user
 type User struct {
-	UUID      string    `json:"uuid,omitempty" gorm:"type:varchar(36);primaryKey"`
-	Username  string    `json:"username" gorm:"type:varchar(50);unique;not null"`
-	Passwd    string    `json:"passwd,omitempty" gorm:"type:varchar(255);not null"` // Hashed password
-	SSOType   string    `json:"sso_type" gorm:"type:varchar(20)"`                   // e.g., "github", "google"
-	SSOID     string    `json:"sso_id" gorm:"type:varchar(100)"`                    // OAuth provider's user ID
-	TwoFactor string    `json:"two_factor,omitempty" gorm:"type:varchar(255)"`      // 2FA secret
-	Language  string    `json:"language,omitempty" gorm:"type:varchar(32);not null;default:''"`
-	Color     string    `json:"color,omitempty" gorm:"type:varchar(16);not null;default:''"`
-	Sessions  []Session `json:"sessions,omitempty" gorm:"foreignKey:UUID;references:UUID;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	UUID             string    `json:"uuid,omitempty" gorm:"type:varchar(36);primaryKey"`
+	Username         string    `json:"username" gorm:"type:varchar(50);unique;not null"`
+	Passwd           string    `json:"passwd,omitempty" gorm:"type:varchar(255);not null"` // Argon2id or legacy SHA-256
+	SSOType          string    `json:"sso_type" gorm:"type:varchar(20)"`                   // e.g., "github", "google"
+	SSOID            string    `json:"sso_id" gorm:"type:varchar(100)"`                    // OAuth provider's user ID
+	TwoFactor        string    `json:"-" gorm:"type:varchar(512)"`                         // Encrypted TOTP secret
+	TwoFactorCounter int64     `json:"-" gorm:"not null;default:0"`                        // Last accepted TOTP counter
+	Language         string    `json:"language,omitempty" gorm:"type:varchar(32);not null;default:''"`
+	Color            string    `json:"color,omitempty" gorm:"type:varchar(16);not null;default:''"`
+	Sessions         []Session `json:"sessions,omitempty" gorm:"foreignKey:UUID;references:UUID;constraint:OnDelete:CASCADE,OnUpdate:CASCADE"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // Session manages user sessions

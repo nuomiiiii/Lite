@@ -41,12 +41,12 @@ type DeploymentDeliveryState struct {
 // are retained solely to regenerate an installation command.
 type DeploymentProfile struct {
 	Platform                 string  `json:"platform"`
-	DisableWebSSH            bool    `json:"disable_web_ssh"`
 	DisableAutoUpdate        bool    `json:"disable_auto_update"`
 	IgnoreUnsafeCert         bool    `json:"ignore_unsafe_cert"`
 	GetIPAddrFromNIC         bool    `json:"get_ip_addr_from_nic"`
 	MemoryIncludeCache       bool    `json:"memory_include_cache"`
 	EnableGPU                bool    `json:"enable_gpu"`
+	EnableRemoteControl      bool    `json:"enable_remote_control"`
 	EnableGHProxy            bool    `json:"enable_ghproxy"`
 	GHProxy                  string  `json:"ghproxy"`
 	EnableCustomDir          bool    `json:"enable_custom_dir"`
@@ -63,6 +63,35 @@ type DeploymentProfile struct {
 	Interval                 float64 `json:"interval"`
 	EnableMonthRotate        bool    `json:"enable_month_rotate"`
 	MonthRotate              int     `json:"month_rotate"`
+}
+
+func (profile *DeploymentProfile) UnmarshalJSON(data []byte) error {
+	type profileJSON DeploymentProfile
+	var decoded profileJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*profile = DeploymentProfile(decoded)
+
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(data, &keys); err != nil {
+		return err
+	}
+	_, hasNew := keys["enable_remote_control"]
+	_, hasOld := keys["disable_web_ssh"]
+	if hasNew && hasOld {
+		return fmt.Errorf("config conflict: enable_remote_control and disable_web_ssh cannot both be set")
+	}
+	if !hasNew && hasOld {
+		var legacy struct {
+			DisableWebSSH bool `json:"disable_web_ssh"`
+		}
+		if err := json.Unmarshal(data, &legacy); err != nil {
+			return err
+		}
+		profile.EnableRemoteControl = !legacy.DisableWebSSH
+	}
+	return nil
 }
 
 func defaultDeploymentProfile(client models.Client) DeploymentProfile {

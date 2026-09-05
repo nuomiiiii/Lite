@@ -32,6 +32,7 @@ type Settings struct {
 	VisitorAuditEnabled    bool   `json:"visitor_audit_enabled" default:"false"`               // 是否允许公开访客事件写入审计日志，默认 false
 	EulaAccepted           bool   `json:"eula_accepted" default:"false"`
 	BaseScriptsURLKey      string `json:"base_scripts_url" default:""`
+	AllowRemoteManagement  bool   `json:"allow_remote_management" default:"false"`
 	// GeoIP 配置
 	GeoIpEnabled  bool   `json:"geo_ip_enabled" default:"true"`
 	GeoIpProvider string `json:"geo_ip_provider" default:"ipinfo"` // empty, mmdb, ip-api, geojs
@@ -93,6 +94,7 @@ const (
 	SiteFactoryDefaultsKey   = "site_factory_defaults_v2"
 	EulaAcceptedKey          = "eula_accepted"
 	BaseScriptsURLKey        = "base_scripts_url"
+	AllowRemoteManagementKey = "allow_remote_management"
 	GeoIpEnabledKey          = "geo_ip_enabled"
 	GeoIpProviderKey         = "geo_ip_provider"
 	OAuthEnabledKey          = "o_auth_enabled"

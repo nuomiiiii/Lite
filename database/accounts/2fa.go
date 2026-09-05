@@ -1,7 +1,9 @@
 package accounts
 
 import (
+	"errors"
 	"image"
+	"time"
 
 	"github.com/nuomiiiii/lite/database/dbcore"
 	"github.com/nuomiiiii/lite/database/models"
@@ -9,27 +11,49 @@ import (
 )
 
 var (
-	TwoFactorIssuer = "Lite"
+	TwoFactorIssuer     = "Lite"
+	ErrTwoFactorInvalid = errors.New("Invalid 2FA code")
+	ErrTwoFactorClosed  = errors.New("2FA is unavailable")
 )
 
 func Generate2Fa() (string, image.Image, error) {
-	otp, err := totp.Generate(totp.GenerateOpts{
+	otpKey, err := totp.Generate(totp.GenerateOpts{
 		Issuer:      TwoFactorIssuer,
 		AccountName: "lite",
 	})
 	if err != nil {
 		return "", nil, err
 	}
-	img, err := otp.Image(250, 250)
+	img, err := otpKey.Image(250, 250)
 	if err != nil {
 		return "", nil, err
 	}
-	return otp.Secret(), img, nil
+	return otpKey.Secret(), img, nil
 }
 
-func Enable2Fa(uuid, secret string) error {
+func Enable2Fa(uuid, secret, code string) error {
+	if secret == "" || code == "" {
+		return ErrTwoFactorInvalid
+	}
+	counter, ok := matchingTOTPCounter(secret, code, 0, time.Now())
+	if !ok {
+		return ErrTwoFactorInvalid
+	}
+	encrypted, err := encryptTOTPSecret(secret)
+	if err != nil {
+		return err
+	}
 	db := dbcore.GetDBInstance()
-	return db.Model(&models.User{}).Where("uuid = ?", uuid).Update("two_factor", secret).Error
+	if err := db.Model(&models.User{}).Where("uuid = ?", uuid).Updates(map[string]interface{}{
+		"two_factor":         encrypted,
+		"two_factor_counter": counter,
+	}).Error; err != nil {
+		return err
+	}
+	if OnUserSecurityChanged != nil {
+		OnUserSecurityChanged(uuid)
+	}
+	return nil
 }
 
 func Verify2Fa(uuid, code string) (bool, error) {
@@ -39,20 +63,31 @@ func Verify2Fa(uuid, code string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-
 	if user.TwoFactor == "" {
-		return false, nil // 用户未启用2FA
-	}
-
-	valid := totp.Validate(code, user.TwoFactor)
-	if !valid {
 		return false, nil
 	}
-
-	return true, nil
+	secret, err := decryptTOTPSecret(user.TwoFactor)
+	if err != nil {
+		return false, ErrTwoFactorClosed
+	}
+	ok, err := consumeTOTPCounter(uuid, code, secret, user.TwoFactorCounter)
+	if err != nil {
+		return false, ErrTwoFactorClosed
+	}
+	return ok, nil
 }
 
 func Disable2Fa(uuid string) error {
 	db := dbcore.GetDBInstance()
-	return db.Model(&models.User{}).Where("uuid = ?", uuid).Update("two_factor", "").Error
+	err := db.Model(&models.User{}).Where("uuid = ?", uuid).Updates(map[string]interface{}{
+		"two_factor":         "",
+		"two_factor_counter": 0,
+	}).Error
+	if err != nil {
+		return err
+	}
+	if OnUserSecurityChanged != nil {
+		OnUserSecurityChanged(uuid)
+	}
+	return nil
 }

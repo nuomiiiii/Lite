@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/nuomiiiii/lite/database/accounts"
 	"github.com/nuomiiiii/lite/database/auditlog"
 	"github.com/nuomiiiii/lite/pkg/config"
 	"github.com/nuomiiiii/lite/utils"
 	"github.com/nuomiiiii/lite/web/api"
+	"github.com/nuomiiiii/lite/web/remotectl"
 
 	"github.com/gin-gonic/gin"
 )
@@ -57,36 +59,50 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	uuid, success := accounts.CheckPassword(data.Username, data.Password)
-	if !success {
+	uuid, err := accounts.AuthenticatePassword(data.Username, data.Password, c.ClientIP())
+	if accounts.IsPasswordBusy(err) {
+		api.RespondError(c, http.StatusTooManyRequests, err.Error())
+		return
+	}
+	if err != nil || uuid == "" {
 		api.RespondError(c, http.StatusUnauthorized, "Invalid credentials")
 		return
 	}
-	// 2FA
-	user, _ := accounts.GetUserByUUID(uuid)
-	if user.TwoFactor != "" { // 开启了2FA
-		if data.TwoFa == "" {
+	user, err := accounts.GetUserByUUID(uuid)
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, "Failed to verify login")
+		return
+	}
+	if user.TwoFactor != "" {
+		if strings.TrimSpace(data.TwoFa) == "" {
 			api.RespondError(c, http.StatusUnauthorized, "2FA code is required")
 			return
 		}
-		if ok, err := accounts.Verify2Fa(uuid, data.TwoFa); err != nil || !ok {
-			api.RespondError(c, http.StatusUnauthorized, "Invalid 2FA code")
+		ok, verifyErr := accounts.Verify2Fa(uuid, data.TwoFa)
+		if verifyErr != nil {
+			api.RespondError(c, http.StatusInternalServerError, "Failed to verify login")
+			return
+		}
+		if !ok {
+			accounts.RecordLoginFailure(c.ClientIP(), data.Username)
+			api.RespondError(c, http.StatusUnauthorized, "Invalid credentials")
 			return
 		}
 	}
-	// Create session
 	session, err := accounts.CreateSession(uuid, sessionCookieMaxAge, c.Request.UserAgent(), c.ClientIP(), "password")
 	if err != nil {
 		api.RespondError(c, http.StatusInternalServerError, "Failed to create session: "+err.Error())
 		return
 	}
 	setSessionCookie(c, session, sessionCookieMaxAge)
+	accounts.ClearLoginFailures(c.ClientIP(), data.Username)
 	auditlog.Log(c.ClientIP(), uuid, "logged in (password)", "login")
-	api.RespondSuccess(c, gin.H{"set-cookie": gin.H{"session_token": session}})
+	api.RespondSuccess(c, gin.H{})
 }
 func Logout(c *gin.Context) {
 	session, _ := c.Cookie("session_token")
 	accounts.DeleteSession(session)
+	remotectl.RevokeLogin(session)
 	setSessionCookie(c, "", -1)
 	auditlog.Log(c.ClientIP(), "", "logged out", "logout")
 	c.Redirect(302, "/")

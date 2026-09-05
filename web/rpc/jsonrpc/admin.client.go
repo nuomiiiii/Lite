@@ -15,7 +15,6 @@ import (
 	"github.com/nuomiiiii/lite/utils/notifier"
 	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 	remote_api "github.com/nuomiiiii/lite/web/api/remote"
-	terminal_api "github.com/nuomiiiii/lite/web/api/terminal"
 )
 
 // admin.client.go
@@ -68,6 +67,7 @@ func init() {
 		},
 		Returns: "{ token: string }",
 	})
+	rpc.MarkSensitive("admin:getClientToken")
 	RegisterWithGroupAndMeta("rotateClientToken", rpc.RoleAdmin, adminRotateClientToken, &rpc.MethodMeta{
 		Name:    "admin:rotateClientToken",
 		Summary: "Rotate a client token with a transition period",
@@ -76,12 +76,18 @@ func init() {
 		},
 		Returns: "{ token: string, previous_token_expires_at: string }",
 	})
+	rpc.MarkSensitive("admin:rotateClientToken")
 	RegisterWithGroupAndMeta("clearRecords", rpc.RoleAdmin, adminClearRecords, &rpc.MethodMeta{
 		Name:    "admin:clearRecords",
 		Summary: "Delete all load records",
 		Returns: "null",
 	})
 }
+
+var (
+	lookupAdminClient = clients.GetClientByUUID
+	listAdminClients  = clients.GetAllClientBasicInfo
+)
 
 // auditActor 从上下文提取审计用的 actor UUID 与来源 IP。
 func auditActor(ctx context.Context) (uuid, ip string) {
@@ -155,14 +161,12 @@ func adminRemoveClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 	}
 	metricstore.BlockEntityWrites(params.UUID)
 	remote_api.CloseClientSessions(params.UUID)
-	terminal_api.CloseClientSessions(params.UUID)
 	agent_runtime.DeleteConnectedClients(params.UUID)
 	notifier.ForgetClient(params.UUID)
 	if err := clients.DeleteClient(params.UUID); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to delete client: "+err.Error(), nil)
 	}
 	remote_api.CloseClientSessions(params.UUID)
-	terminal_api.CloseClientSessions(params.UUID)
 	agent_runtime.DeleteConnectedClients(params.UUID)
 	if err := d_notification.ReloadLoadNotificationSchedule(); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Client deleted but failed to reload load notification schedule: "+err.Error(), nil)
@@ -181,22 +185,22 @@ func adminGetClient(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonR
 	if params.UUID == "" {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid or missing UUID", nil)
 	}
-	result, err := clients.GetClientByUUID(params.UUID)
+	result, err := lookupAdminClient(params.UUID)
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
-	return result, nil
+	return clientWithoutToken(result), nil
 }
 
 func adminListClients(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
-	cls, err := clients.GetAllClientBasicInfo()
+	cls, err := listAdminClients()
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
-	return cls, nil
+	return clientsWithoutTokens(cls), nil
 }
 
-func adminGetClientToken(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+func adminGetClientToken(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	var params struct {
 		UUID string `json:"uuid"`
 	}
@@ -208,6 +212,8 @@ func adminGetClientToken(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
+	actor, ip := auditActor(ctx)
+	auditlog.Log(ip, actor, "view client token:"+params.UUID, "info")
 	return map[string]any{"token": token}, nil
 }
 

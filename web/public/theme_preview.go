@@ -73,6 +73,7 @@ func serveThemeFile(c *gin.Context, themeID, relativePath string) {
 	}
 
 	setThemeStaticCacheHeaders(c, servePath)
+	applyThemeScriptWorkerPolicy(c, "/"+filepath.ToSlash(cleanPath), contentTypeForPath(servePath))
 	c.File(servePath)
 }
 

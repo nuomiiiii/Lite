@@ -73,11 +73,6 @@ func get2FACode(c *gin.Context) string {
 	if code := c.GetHeader("X-Two-Factor-Code"); code != "" {
 		return code
 	}
-	for _, key := range []string{"2fa_code", "two_factor_code", "otp"} {
-		if code := c.Query(key); code != "" {
-			return code
-		}
-	}
 	if c.Request.Body == nil || c.Request.Method == http.MethodGet {
 		return ""
 	}

@@ -1031,6 +1031,16 @@ func TestRemainingValueSkipsLongTermExpiry(t *testing.T) {
 	assert.Nil(t, days)
 }
 
+func TestRemainingDaysUsesNearestDayLikeTheme(t *testing.T) {
+	now := time.Date(2026, time.September, 4, 9, 20, 0, 0, time.UTC)
+	expire := now.Add(251*24*time.Hour + 7*time.Hour)
+	_, days := remainingValue(models.BillingPriceVersion{
+		PriceMicros: 30_000_000, Currency: "CNY", BillingCycleDays: 30, ExpiredAt: &expire,
+	}, "CNY", nil, now)
+	require.NotNil(t, days)
+	assert.Equal(t, 251, *days)
+}
+
 func TestRemainingValueSummaryExcludesAlreadyExpiredServers(t *testing.T) {
 	db := billingTestDB(t)
 	now := beijingTime(2026, time.August, 25, 12, 0)

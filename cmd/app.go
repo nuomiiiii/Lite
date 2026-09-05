@@ -38,10 +38,12 @@ import (
 	logger "github.com/nuomiiiii/lite/utils/log"
 	"github.com/nuomiiiii/lite/utils/messageSender"
 	"github.com/nuomiiiii/lite/utils/notifier"
+	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 	"github.com/nuomiiiii/lite/web/api"
 	installweb "github.com/nuomiiiii/lite/web/install"
 	"github.com/nuomiiiii/lite/web/oauth"
 	frontendpublic "github.com/nuomiiiii/lite/web/public"
+	"github.com/nuomiiiii/lite/web/remotectl"
 	"github.com/nuomiiiii/lite/web/router"
 	"github.com/nuomiiiii/lite/web/security"
 	storageupdateweb "github.com/nuomiiiii/lite/web/storageupdate"
@@ -111,6 +113,9 @@ func (a *App) Bootstrap() error {
 	if err := dbcore.Initialize(); err != nil {
 		return fmt.Errorf("failed to initialize database: %w", err)
 	}
+	if err := accounts.MigrateStoredSecrets(); err != nil {
+		return fmt.Errorf("failed to migrate account secrets: %w", err)
+	}
 	a.dbReady = true
 	a.addCleanup("database", func(context.Context) error {
 		return dbcore.Close()
@@ -126,6 +131,9 @@ func (a *App) Bootstrap() error {
 	}
 	if err := normalizeSiteFactoryDefaults(); err != nil {
 		return fmt.Errorf("failed to normalize site factory defaults: %w", err)
+	}
+	if err := migrateAllowRemoteManagement(); err != nil {
+		return fmt.Errorf("failed to migrate remote management setting: %w", err)
 	}
 
 	conf, err := config.GetManyAs[config.Settings]()
@@ -165,6 +173,22 @@ func normalizeSiteFactoryDefaults() error {
 		updates[config.SiteFactoryDefaultsKey] = true
 	}
 	return config.SetMany(updates)
+}
+
+// migrateAllowRemoteManagement keeps remote management on for existing
+// installations and leaves new databases at the Settings default (off).
+func migrateAllowRemoteManagement() error {
+	all, err := config.GetAll()
+	if err != nil {
+		return err
+	}
+	if _, exists := all[config.AllowRemoteManagementKey]; exists {
+		return nil
+	}
+	if _, hasSite := all[config.SitenameKey]; hasSite {
+		return config.Set(config.AllowRemoteManagementKey, true)
+	}
+	return nil
 }
 
 func configValueAsInt(value any) (int, bool) {
@@ -258,14 +282,28 @@ func processPendingMetricCleanupAtStartup(db *gorm.DB) {
 	}
 }
 
+var (
+	hasPendingRestoreFn        = dbcore.HasPendingRestore
+	invalidateRestoredSessions = accounts.InvalidateAllSessions
+	commitPendingRestoreFn     = dbcore.CommitPendingRestore
+	revokeRemoteAfterRestore   = remotectl.RevokeAll
+)
+
 // CommitRestore marks a staged backup as fully usable only after the main
 // database, metric store, providers, and router all initialized. Background
 // tasks start afterwards so a candidate restore cannot emit notifications or
 // perform scheduled writes before it becomes durable.
 func (a *App) CommitRestore() error {
-	if err := dbcore.CommitPendingRestore(); err != nil {
+	if !hasPendingRestoreFn() {
+		return nil
+	}
+	if err := invalidateRestoredSessions(); err != nil {
+		return fmt.Errorf("invalidate restored login sessions: %w", err)
+	}
+	if err := commitPendingRestoreFn(); err != nil {
 		return fmt.Errorf("commit verified backup restore: %w", err)
 	}
+	revokeRemoteAfterRestore()
 	return nil
 }
 
@@ -569,6 +607,12 @@ func (a *App) StartBackground() error {
 		return nil
 	})
 
+	stopExecTimeoutSweep := startExpiredExecEventSweep()
+	a.addCleanup("exec-event-timeout", func(context.Context) error {
+		stopExecTimeoutSweep()
+		return nil
+	})
+
 	registerScheduledWork()
 	a.addCleanup("scheduler", func(context.Context) error {
 		corn.StopAll()
@@ -583,6 +627,28 @@ func (a *App) StartBackground() error {
 		return nil
 	})
 	return nil
+}
+
+func startExpiredExecEventSweep() func() {
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				agent_runtime.SweepExpiredV2Events()
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+	}
 }
 
 // registerReloadHandlers 把此前散落各处的 config.Subscribe 统一登记到 reload 管理器。

@@ -2,15 +2,14 @@ package jsonrpc
 
 import (
 	"context"
-	"encoding/json"
 	"net"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/nuomiiiii/lite/database/accounts"
 	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/database/clients"
 	"github.com/nuomiiiii/lite/database/dbcore"
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/database/tasks"
@@ -21,8 +20,11 @@ import (
 	"github.com/nuomiiiii/lite/utils"
 	"github.com/nuomiiiii/lite/utils/cloudflared"
 	"github.com/nuomiiiii/lite/utils/geoip"
+	logger "github.com/nuomiiiii/lite/utils/log"
 	"github.com/nuomiiiii/lite/utils/messageSender"
 	agent_runtime "github.com/nuomiiiii/lite/web/agent"
+	"github.com/nuomiiiii/lite/web/api/remote"
+	"github.com/nuomiiiii/lite/web/remotectl"
 	"gorm.io/gorm"
 )
 
@@ -50,8 +52,12 @@ func init() {
 
 	reg("testSendMessage", adminTestSendMessage, "Send a test notification")
 	reg("testGeoip", adminTestGeoip, "Test GeoIP lookup")
-	// 远程命令执行属敏感操作：除 admin 角色外，还需通过敏感操作二次验证。
-	rpc.MarkSensitive("admin:exec")
+
+	agent_runtime.SetExpiredV2ExecHandler(func(uuid, taskID string) {
+		if err := persistIncomingTaskResult(taskID, uuid, v2.DeliveryTimeoutTaskResult, "", -1, time.Now().UTC()); err != nil {
+			logger.Errorf("rpc", "failed to persist exec delivery timeout for task %s client %s: %v", taskID, uuid, err)
+		}
+	})
 }
 
 func adminGetLogs(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
@@ -173,70 +179,204 @@ func adminRemoveCloudflaredToken(ctx context.Context, _ *rpc.JsonRpcRequest) (an
 }
 
 func adminExec(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	meta := rpc.MetaFromContext(ctx)
+	if meta == nil || meta.Principal == nil || meta.Principal.Type != rpc.PrincipalUser || meta.SessionToken == "" {
+		return nil, rpc.MakeError(rpc.PermissionDenied, "Remote execution requires an administrator session", nil)
+	}
+	if meta.Principal.IsAPIKey || meta.Principal.Type == rpc.PrincipalAPIKey {
+		return nil, rpc.MakeError(rpc.PermissionDenied, remotectl.ErrAPIKeyForbidden.Error(), nil)
+	}
+	if !remote.RemoteManagementEnabled() {
+		return nil, rpc.MakeError(rpc.PermissionDenied, "站点未启用远程管理", nil)
+	}
+
 	var params struct {
 		Command string   `json:"command"`
 		Clients []string `json:"clients"`
+		Grant   string   `json:"grant"`
+		PageID  string   `json:"page_id"`
 	}
-
 	req.BindParams(&params)
-	if strings.TrimSpace(params.Command) == "" {
+	command := params.Command
+	if strings.TrimSpace(command) == "" {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Command cannot be empty", nil)
+	}
+	if len(command) > maxExecCommandBytes {
+		return nil, rpc.MakeError(rpc.InvalidParams, "Command is too long", nil)
 	}
 	if len(params.Clients) == 0 {
 		return nil, rpc.MakeError(rpc.InvalidParams, "clients is required", nil)
 	}
-	var onlineClients, queuedClients, offlineClients []string
-	for _, uuid := range params.Clients {
-		if client := agent_runtime.GetConnectedClients()[uuid]; client != nil {
-			onlineClients = append(onlineClients, uuid)
-		} else if agent_runtime.IsAgentOnline(uuid) {
-			queuedClients = append(queuedClients, uuid)
-		} else {
-			offlineClients = append(offlineClients, uuid)
+	expires, err := remotectl.TakeExecGrant(params.Grant, meta.Principal.UserUUID, meta.SessionToken, params.PageID)
+	if err != nil {
+		if remotectl.IsRateLimited(err) {
+			return nil, rpc.MakeError(rpc.PermissionDenied, err.Error(), nil)
 		}
+		return nil, rpc.MakeError(rpc.PermissionDenied, err.Error(), nil)
 	}
-	if len(onlineClients) == 0 && len(queuedClients) == 0 {
+
+	uuids := uniqueUUIDs(params.Clients)
+	known, err := clients.GetClientsByUUIDs(uuids)
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, "Failed to load clients: "+err.Error(), nil)
+	}
+	classified := classifyRemoteExecTargets(uuids, known, func(uuid string) bool {
+		return agent_runtime.GetConnectedClient(uuid) != nil
+	}, agent_runtime.IsAgentOnline)
+	if len(classified.live) == 0 && len(classified.queued) == 0 {
 		return nil, rpc.MakeError(rpc.InvalidParams, "No clients connected", nil)
 	}
 	taskId := utils.GenerateRandomString(16)
-	taskClients := append(append([]string{}, onlineClients...), queuedClients...)
-	taskClients = append(taskClients, offlineClients...)
-	if err := tasks.CreateTask(taskId, taskClients, params.Command); err != nil {
+	taskClients := make([]string, 0, len(classified.live)+len(classified.queued)+len(classified.offline)+len(classified.unavailable))
+	taskClients = append(taskClients, classified.live...)
+	taskClients = append(taskClients, classified.queued...)
+	taskClients = append(taskClients, classified.offline...)
+	taskClients = append(taskClients, classified.unavailable...)
+	if err := tasks.CreateTask(taskId, taskClients, command); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to create task: "+err.Error(), nil)
 	}
-	for _, uuid := range onlineClients {
-		legacy := struct {
-			Message string `json:"message"`
-			Command string `json:"command"`
-			TaskId  string `json:"task_id"`
-		}{Message: "exec", Command: params.Command, TaskId: taskId}
-		payload, _ := json.Marshal(legacy)
-		if agent_runtime.IsV2Client(uuid) {
-			payload, _ = json.Marshal(v2.Request{JSONRPC: v2.Version, Method: v2.MethodAgentExec, Params: v2.ExecParams{TaskID: taskId, Command: params.Command}})
+
+	payload := v2.ExecParams{TaskID: taskId, Command: command}
+	var actuallySent, actuallyQueued, deliveryFailed []string
+	delivered := agent_runtime.GuardRemoteDelivery(remote.RemoteManagementEnabled, func() {
+		for _, uuid := range classified.live {
+			queued, notified := agent_runtime.DispatchV2ExecEvent(uuid, payload)
+			if !queued {
+				deliveryFailed = append(deliveryFailed, uuid)
+				continue
+			}
+			if notified {
+				actuallySent = append(actuallySent, uuid)
+				continue
+			}
+			actuallyQueued = append(actuallyQueued, uuid)
 		}
-		client := agent_runtime.GetConnectedClients()[uuid]
-		if client == nil {
-			return nil, rpc.MakeError(rpc.InvalidParams, "Client connection is null: "+uuid, nil)
+		for _, uuid := range classified.queued {
+			queued, notified := agent_runtime.DispatchV2ExecEvent(uuid, payload)
+			if !queued {
+				deliveryFailed = append(deliveryFailed, uuid)
+				continue
+			}
+			if notified {
+				actuallySent = append(actuallySent, uuid)
+				continue
+			}
+			actuallyQueued = append(actuallyQueued, uuid)
 		}
-		if err := client.WriteMessage(websocket.TextMessage, payload); err != nil {
-			return nil, rpc.MakeError(rpc.InvalidParams, "Client connection is broke: "+uuid, nil)
+	})
+	if !delivered {
+		if err := cancelExecTaskClients(taskId, taskClients); err != nil {
+			return nil, rpc.MakeError(rpc.InternalError, "远程管理已关闭，但未能写入已取消任务结果: "+err.Error(), nil)
 		}
+		return nil, rpc.MakeError(rpc.PermissionDenied, "站点未启用远程管理", nil)
 	}
-	for _, uuid := range queuedClients {
-		agent_runtime.DispatchV2Event(uuid, v2.MethodAgentExec, v2.ExecParams{TaskID: taskId, Command: params.Command})
+	finishedAt := time.Now().UTC()
+	result := map[string]any{
+		"task_id":         taskId,
+		"clients":         actuallySent,
+		"queued_clients":  actuallyQueued,
+		"offline_clients": classified.offline,
+		"failed_clients":  uniqueStrings(append(append([]string{}, classified.unavailable...), deliveryFailed...), actuallySent, actuallyQueued),
+	}
+	if err := persistExecTerminalResults(taskId, classified.offline, deliveryFailed, classified.unavailable, finishedAt); err != nil {
+		logger.Errorf("rpc", "failed to persist terminal exec results for task %s: %v", taskId, err)
+		result["persist_error"] = err.Error()
 	}
 	actor, ip := auditActor(ctx)
 	auditlog.Log(ip, actor, "REC, task id: "+taskId, "warn")
-	if len(offlineClients) > 0 {
-		for _, uuid := range offlineClients {
-			tasks.SaveTaskResult(taskId, uuid, "Client offline!", -1, time.Now().UTC())
+	if nextGrant, nextExpires, rotateErr := remotectl.RotateExecGrant(meta.Principal.UserUUID, meta.SessionToken, params.PageID, expires); rotateErr == nil {
+		result["next_grant"] = nextGrant
+		result["expires_at"] = nextExpires.UTC()
+	}
+	return result, nil
+}
+
+var persistTaskResults = tasks.SaveTaskResults
+var persistIncomingTaskResult = tasks.SaveIncomingTaskResult
+
+func persistExecTerminalResults(taskId string, offline, deliveryFailed, unavailable []string, finishedAt time.Time) error {
+	var first error
+	save := func(ids []string, result string) {
+		if err := persistTaskResults(taskId, ids, result, -1, finishedAt); err != nil && first == nil {
+			first = err
 		}
 	}
-	return map[string]any{
-		"task_id":        taskId,
-		"clients":        onlineClients,
-		"queued_clients": queuedClients,
-	}, nil
+	save(offline, "Client offline!")
+	save(deliveryFailed, "delivery failed")
+	save(unavailable, "remote control unavailable")
+	return first
+}
+
+const maxExecCommandBytes = 64 << 10
+
+type remoteExecTargets struct {
+	live        []string
+	queued      []string
+	offline     []string
+	unavailable []string
+}
+
+func uniqueUUIDs(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+func classifyRemoteExecTargets(uuids []string, known map[string]models.Client, connected, online func(string) bool) remoteExecTargets {
+	var classified remoteExecTargets
+	for _, uuid := range uuids {
+		client, ok := known[uuid]
+		if !ok {
+			classified.unavailable = append(classified.unavailable, uuid)
+			continue
+		}
+		if err := remote.AgentRemoteAllowed(client); err != nil {
+			classified.unavailable = append(classified.unavailable, uuid)
+			continue
+		}
+		if connected(uuid) {
+			classified.live = append(classified.live, uuid)
+			continue
+		}
+		if online(uuid) {
+			classified.queued = append(classified.queued, uuid)
+			continue
+		}
+		classified.offline = append(classified.offline, uuid)
+	}
+	return classified
+}
+
+func uniqueStrings(values []string, exclude ...[]string) []string {
+	skip := make(map[string]struct{})
+	for _, group := range exclude {
+		for _, value := range group {
+			skip[value] = struct{}{}
+		}
+	}
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := skip[value]; ok {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
 }
 
 func adminTestSendMessage(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {

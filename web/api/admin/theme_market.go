@@ -1,13 +1,13 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,13 +17,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/themehttp"
 	"github.com/nuomiiiii/lite/web/api"
 )
 
 const (
 	defaultThemeMarketURL = "https://raw.githubusercontent.com/komari-monitor/theme-market/main/v1.json"
-	marketCatalogMaxSize  = 2 << 20
-	marketThemeMaxSize    = 100 << 20
+	marketCatalogMaxSize  = themehttp.MaxCatalog
+	marketThemeMaxSize    = themehttp.MaxArchive
 	marketCacheTTL        = 10 * time.Minute
 )
 
@@ -312,30 +313,14 @@ func InstallThemeFromMarket(c *gin.Context) {
 		api.RespondError(c, http.StatusBadRequest, "This theme does not provide an installable package")
 		return
 	}
-	data, err := downloadThemeMarketURL(selected.Download, marketThemeMaxSize)
+	tempPath, sum, err := downloadThemeMarketFile(selected.Download, marketThemeMaxSize)
 	if err != nil {
 		api.RespondError(c, http.StatusBadRequest, "Failed to download theme: "+err.Error())
 		return
 	}
-	digest := sha256.Sum256(data)
-	if !strings.EqualFold(hex.EncodeToString(digest[:]), selected.SHA256) {
-		api.RespondError(c, http.StatusBadRequest, "Theme SHA-256 checksum does not match the market catalog")
-		return
-	}
-	tempFile, err := os.CreateTemp("", "lite-market-theme-*.zip")
-	if err != nil {
-		api.RespondError(c, http.StatusInternalServerError, "Failed to create temporary theme file")
-		return
-	}
-	tempPath := tempFile.Name()
 	defer os.Remove(tempPath)
-	if _, err := tempFile.Write(data); err != nil {
-		tempFile.Close()
-		api.RespondError(c, http.StatusInternalServerError, "Failed to save temporary theme file")
-		return
-	}
-	if err := tempFile.Close(); err != nil {
-		api.RespondError(c, http.StatusInternalServerError, "Failed to save temporary theme file")
+	if !strings.EqualFold(hex.EncodeToString(sum), selected.SHA256) {
+		api.RespondError(c, http.StatusBadRequest, "Theme SHA-256 checksum does not match the market catalog")
 		return
 	}
 	manifest, err := peekThemeFromZip(tempPath)
@@ -465,47 +450,50 @@ func validateThemeMarketURLSyntax(rawURL string) error {
 }
 
 func downloadThemeMarketURL(rawURL string, maxSize int64) ([]byte, error) {
-	validate := func(candidate string) error {
-		parsed, err := url.Parse(candidate)
-		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Hostname() == "" || parsed.User != nil {
-			return errors.New("only public HTTP and HTTPS URLs are allowed")
-		}
-		if isPrivateIP(parsed.Hostname()) {
-			return errors.New("requests to private or internal addresses are not allowed")
-		}
-		return nil
-	}
-	if err := validate(rawURL); err != nil {
-		return nil, err
-	}
-	client := &http.Client{
-		Timeout: 45 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("too many redirects")
-			}
-			return validate(req.URL.String())
-		},
-	}
-	resp, err := client.Get(rawURL)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	data, err := themehttp.DownloadBytes(ctx, rawURL, maxSize)
 	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP status %d", resp.StatusCode)
-	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxSize+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > maxSize {
-		return nil, fmt.Errorf("response exceeds the %d byte limit", maxSize)
-	}
-	if len(data) == 0 {
-		return nil, errors.New("empty response")
+		return nil, marketFetchError(err)
 	}
 	return data, nil
+}
+
+func downloadThemeMarketFile(rawURL string, maxSize int64) (string, []byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	path, sum, err := themehttp.DownloadFile(ctx, rawURL, maxSize, "lite-market-theme")
+	if err != nil {
+		return "", nil, marketFetchError(err)
+	}
+	return path, sum, nil
+}
+
+func marketFetchError(err error) error {
+	switch {
+	case errors.Is(err, themehttp.ErrInvalidURL):
+		return errors.New("invalid URL")
+	case errors.Is(err, themehttp.ErrUnsupportedScheme):
+		return errors.New("only public HTTP and HTTPS URLs are allowed")
+	case errors.Is(err, themehttp.ErrPrivateAddress):
+		return errors.New("requests to private or reserved addresses are not allowed")
+	case errors.Is(err, themehttp.ErrDNS):
+		return errors.New("DNS lookup failed")
+	case errors.Is(err, themehttp.ErrRedirect), errors.Is(err, themehttp.ErrTooManyRedirects):
+		return errors.New("redirect was rejected")
+	case errors.Is(err, themehttp.ErrTimeout):
+		return errors.New("download timed out")
+	case errors.Is(err, themehttp.ErrHTTPStatus):
+		return err
+	case errors.Is(err, themehttp.ErrEmpty):
+		return errors.New("empty response")
+	case errors.Is(err, themehttp.ErrTooLarge):
+		return errors.New("response exceeds the size limit")
+	case errors.Is(err, themehttp.ErrTempFile):
+		return errors.New("failed to write temporary file")
+	default:
+		return err
+	}
 }
 
 func invalidateThemeMarketCache(rawURL string) {

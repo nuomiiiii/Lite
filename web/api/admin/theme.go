@@ -2,11 +2,11 @@ package admin
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,6 +20,7 @@ import (
 	"github.com/nuomiiiii/lite/database/dbcore"
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/themehttp"
 	"github.com/nuomiiiii/lite/pkg/thememanifest"
 	logger "github.com/nuomiiiii/lite/utils/log"
 	"github.com/nuomiiiii/lite/web/api"
@@ -30,7 +31,7 @@ import (
 
 const (
 	maxThemeArchiveFiles  = 10000
-	maxThemeArchiveSize   = 128 << 20
+	maxThemeArchiveSize   = themehttp.MaxArchive
 	maxThemeFileSize      = 128 << 20
 	maxThemeExtractedSize = 512 << 20
 	maxThemeManifestSize  = 1 << 20
@@ -39,21 +40,6 @@ const (
 var (
 	themeMutationMu         sync.Mutex
 	errThemeArchiveTooLarge = errors.New("theme archive too large")
-	themeHTTPClient         = &http.Client{
-		Timeout: 30 * time.Second,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("too many redirects")
-			}
-			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
-				return errors.New("redirected to an unsupported URL scheme")
-			}
-			if isPrivateIP(req.URL.Hostname()) {
-				return errors.New("redirected to a private/internal address")
-			}
-			return nil
-		},
-	}
 )
 
 func temporaryThemeArchive(data []byte, prefix string) (string, error) {
@@ -468,67 +454,53 @@ func isValidThemeShort(short string) bool {
 	return true
 }
 
-// downloadThemeFromURL 从URL下载主题文件
-// isPrivateIP checks if the resolved IP addresses are private/internal
-func isPrivateIP(host string) bool {
-	ips, err := net.LookupHost(host)
-	if err != nil {
-		return true // fail closed
+func themeFetchError(err error) error {
+	switch {
+	case errors.Is(err, themehttp.ErrInvalidURL):
+		return errors.New("无效的下载地址")
+	case errors.Is(err, themehttp.ErrUnsupportedScheme):
+		return errors.New("仅支持 HTTP 和 HTTPS 地址")
+	case errors.Is(err, themehttp.ErrPrivateAddress):
+		return errors.New("不允许访问私有或保留地址")
+	case errors.Is(err, themehttp.ErrDNS):
+		return errors.New("无法解析下载地址")
+	case errors.Is(err, themehttp.ErrRedirect), errors.Is(err, themehttp.ErrTooManyRedirects):
+		return errors.New("下载跳转被拒绝")
+	case errors.Is(err, themehttp.ErrTimeout):
+		return errors.New("下载超时")
+	case errors.Is(err, themehttp.ErrHTTPStatus):
+		return fmt.Errorf("下载失败: %v", err)
+	case errors.Is(err, themehttp.ErrEmpty):
+		return errors.New("下载的主题文件为空")
+	case errors.Is(err, themehttp.ErrTooLarge):
+		return fmt.Errorf("%w: 主题压缩包超过 %d 字节限制", errThemeArchiveTooLarge, themehttp.MaxArchive)
+	case errors.Is(err, themehttp.ErrTempFile):
+		return errors.New("保存临时文件失败")
+	default:
+		return err
 	}
-	for _, ipStr := range ips {
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-			return true
-		}
-	}
-	return false
 }
 
-func downloadThemeFromURL(rawURL string) ([]byte, error) {
-	// SSRF protection: block requests to private/internal IPs
-	parsedURL, err := url.Parse(rawURL)
+func downloadThemeArchive(rawURL string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	path, _, err := themehttp.DownloadFile(ctx, rawURL, themehttp.MaxArchive, "lite-theme")
 	if err != nil {
-		return nil, fmt.Errorf("invalid URL: %v", err)
+		return "", themeFetchError(err)
 	}
-	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
-		return nil, fmt.Errorf("only http and https schemes are allowed")
-	}
-	if isPrivateIP(parsedURL.Hostname()) {
-		return nil, fmt.Errorf("requests to private/internal addresses are not allowed")
-	}
+	return path, nil
+}
 
-	// 发送HTTP GET请求
-	resp, err := themeHTTPClient.Get(rawURL)
+func fetchThemeJSON(rawURL string, maxBytes int64) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	data, err := themehttp.DownloadBytes(ctx, rawURL, maxBytes)
 	if err != nil {
-		return nil, fmt.Errorf("下载主题文件失败: %v", err)
+		if errors.Is(err, themehttp.ErrTooLarge) {
+			return nil, errors.New("响应超过大小限制")
+		}
+		return nil, themeFetchError(err)
 	}
-	defer resp.Body.Close()
-
-	// 检查响应状态码
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("下载主题文件失败，HTTP状态码: %d", resp.StatusCode)
-	}
-	if resp.ContentLength > maxThemeArchiveSize {
-		return nil, fmt.Errorf("%w: 主题压缩包超过 %d 字节限制", errThemeArchiveTooLarge, maxThemeArchiveSize)
-	}
-
-	// 读取响应内容
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxThemeArchiveSize+1))
-	if err != nil {
-		return nil, fmt.Errorf("读取主题文件内容失败: %v", err)
-	}
-	if len(data) > maxThemeArchiveSize {
-		return nil, fmt.Errorf("%w: 主题压缩包超过 %d 字节限制", errThemeArchiveTooLarge, maxThemeArchiveSize)
-	}
-
-	// 检查文件大小
-	if len(data) == 0 {
-		return nil, errors.New("下载的主题文件为空")
-	}
-
 	return data, nil
 }
 
@@ -547,32 +519,19 @@ func getGitHubReleaseDownloadURL(owner, repo string) (string, error) {
 		return "", errors.New("GitHub仓库所有者和仓库名称不能为空")
 	}
 
-	// 构建GitHub API URL
-	// 使用GitHub API获取最新release信息
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", owner, repo)
-
-	// 发送HTTP GET请求
-	resp, err := themeHTTPClient.Get(apiURL)
+	data, err := fetchThemeJSON(apiURL, themehttp.MaxGitHubJSON)
 	if err != nil {
 		return "", fmt.Errorf("获取GitHub release信息失败: %v", err)
 	}
-	defer resp.Body.Close()
 
-	// 检查响应状态码
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("获取GitHub release信息失败，HTTP状态码: %d", resp.StatusCode)
-	}
-
-	// 解析JSON响应
-	// GitHub API返回的JSON包含assets数组，每个asset包含browser_download_url字段
 	var releaseInfo struct {
 		Assets []struct {
 			BrowserDownloadURL string `json:"browser_download_url"`
 		} `json:"assets"`
 	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&releaseInfo); err != nil {
-		return "", fmt.Errorf("解析GitHub API响应失败: %v", err)
+	if err := json.Unmarshal(data, &releaseInfo); err != nil {
+		return "", errors.New("解析GitHub API响应失败")
 	}
 
 	// 检查是否有可下载的资源
@@ -677,114 +636,80 @@ func UpdateTheme(c *gin.Context) {
 
 	// 方式1和方式4: 尝试从原始URL下载主题
 	// 如果原始URL是GitHub仓库地址，则自动获取最新release
-	var themeData []byte
-	// 不保存下载链接，更新后由主题覆盖
-	//var downloadURL string
-	// var err2 error
+	var themeFile string
+	defer func() {
+		if themeFile != "" {
+			_ = os.Remove(themeFile)
+		}
+	}()
+	tryDownload := func(rawURL string) bool {
+		path, err := downloadThemeArchive(rawURL)
+		if err != nil {
+			return false
+		}
+		if themeFile != "" {
+			_ = os.Remove(themeFile)
+		}
+		themeFile = path
+		return true
+	}
 
 	if themeInfo.URL != "" {
-		// 检查原始URL是否是GitHub仓库地址
-		// 例如: https://github.com/owner/repo
 		isGitHub, owner, repo := isGitHubRepoURL(themeInfo.URL)
 		if isGitHub {
-			// 方式4: 如果原始URL是GitHub仓库地址，自动获取最新release
-			// 这是本次需求的核心功能：当主题文件中现有的url地址如果是github仓库的路径，则直接引用该url地址去下载最新的release
 			gitHubURL, err := getGitHubReleaseDownloadURL(owner, repo)
 			if err == nil {
-				// 使用获取到的GitHub release下载链接下载主题
-				themeData, _ = downloadThemeFromURL(gitHubURL)
-				//if err2 == nil {
-				// 注意：这里我们保存的是release的下载链接，而不是GitHub仓库地址
-				// 这样做是为了在下载成功后，将这个具体的release下载链接保存到主题配置中
-				// 但在下次更新时，我们仍然会检测到这是一个GitHub仓库，并获取最新的release
-				// downloadURL = gitHubURL
-				//}
+				_ = tryDownload(gitHubURL)
 			}
 		} else {
-			// 原始URL不是GitHub仓库地址，直接尝试下载（方式1）
-			themeData, _ = downloadThemeFromURL(themeInfo.URL)
-			//if err2 == nil {
-			// downloadURL = themeInfo.URL
-			//}
+			_ = tryDownload(themeInfo.URL)
 		}
 	}
 
-	// 如果原始URL下载失败，尝试其他方式下载
-	if themeData == nil || len(themeData) == 0 {
-		// 方式3: 如果提供了GitHub仓库信息，尝试从GitHub最新release下载
-		// 这种方式允许用户只需提供owner和repo信息，系统会自动获取最新release的下载链接
+	if themeFile == "" {
 		if req.GitOwner != "" && req.GitRepo != "" {
-			// 从GitHub API获取下载链接
-			// 相当于: DOWNLOAD_URL=$(curl -s https://api.github.com/repos/owner/repo/releases/latest | jq -r ".assets[0].browser_download_url")
 			gitHubURL, err := getGitHubReleaseDownloadURL(req.GitOwner, req.GitRepo)
 			if err != nil {
 				api.RespondError(c, http.StatusBadRequest, "从GitHub获取下载链接失败: "+err.Error())
 				return
 			}
-
-			// 使用获取到的链接下载主题
-			themeData, err = downloadThemeFromURL(gitHubURL)
+			path, err := downloadThemeArchive(gitHubURL)
 			if err != nil {
 				api.RespondError(c, http.StatusBadRequest, "从GitHub下载主题失败: "+err.Error())
 				return
 			}
-			// 保存下载链接，稍后更新到主题配置中
-			// downloadURL = gitHubURL
+			themeFile = path
 		} else if req.URL != "" {
-			// 方式2: 如果提供了新URL，尝试从新URL下载
-			// 检查新URL是否是GitHub仓库地址
 			isGitHub, owner, repo := isGitHubRepoURL(req.URL)
 			if isGitHub {
-				// 如果新URL是GitHub仓库地址，获取最新release
-				// 这里也应用了自动检测GitHub仓库并下载最新release的功能
 				gitHubURL, err := getGitHubReleaseDownloadURL(owner, repo)
 				if err != nil {
 					api.RespondError(c, http.StatusBadRequest, "从GitHub获取下载链接失败: "+err.Error())
 					return
 				}
-
-				// 使用获取到的链接下载主题
-				themeData, err = downloadThemeFromURL(gitHubURL)
+				path, err := downloadThemeArchive(gitHubURL)
 				if err != nil {
 					api.RespondError(c, http.StatusBadRequest, "从GitHub下载主题失败: "+err.Error())
 					return
 				}
-				// 保存GitHub仓库URL，而不是release下载链接，以便将来可以获取最新版本
-				// 这是一个重要的设计决策：我们保存的是GitHub仓库URL，而不是具体的release下载链接
-				// 这样在下次更新时，系统会再次检测到这是GitHub仓库，并自动获取最新的release
-				// downloadURL = req.URL
+				themeFile = path
 			} else {
-				// 新URL不是GitHub仓库地址，直接尝试下载
-				themeData, err = downloadThemeFromURL(req.URL)
+				path, err := downloadThemeArchive(req.URL)
 				if err != nil {
 					api.RespondError(c, http.StatusBadRequest, "从新URL下载主题失败: "+err.Error())
 					return
 				}
-				// downloadURL = req.URL
+				themeFile = path
 			}
 		}
 	}
 
-	// 如果没有成功下载主题数据
-	if themeData == nil || len(themeData) == 0 {
+	if themeFile == "" {
 		api.RespondError(c, http.StatusBadRequest, "无法下载主题，请提供有效的URL或GitHub仓库信息")
 		return
 	}
 
-	// 到这里，我们已经成功获取了主题数据，可能是通过以下四种方式之一：
-	// 1. 原始URL直接下载
-	// 2. 原始URL是GitHub仓库，自动获取最新release下载
-	// 3. 用户提供的新URL下载
-	// 4. 用户提供的GitHub仓库信息，获取最新release下载
-
-	tempFile, err := temporaryThemeArchive(themeData, "downloaded-theme")
-	if err != nil {
-		api.RespondError(c, http.StatusInternalServerError, "保存文件失败: "+err.Error())
-		return
-	}
-	defer os.Remove(tempFile)
-
-	downloadedTheme, err := peekThemeFromZip(tempFile)
+	downloadedTheme, err := peekThemeFromZip(themeFile)
 	if err != nil {
 		api.RespondError(c, http.StatusBadRequest, err.Error())
 		return
@@ -793,29 +718,11 @@ func UpdateTheme(c *gin.Context) {
 		api.RespondError(c, http.StatusBadRequest, "更新包主题标识与当前主题不一致")
 		return
 	}
-	updatedThemeInfo, err := extractAndValidateTheme(tempFile)
+	updatedThemeInfo, err := extractAndValidateTheme(themeFile)
 	if err != nil {
 		api.RespondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	// 如果下载URL与原始URL不同，更新主题配置中的URL
-	// if downloadURL != themeInfo.URL {
-	// 	updatedThemeInfo.URL = downloadURL
-
-	// 	// 更新主题配置文件
-	// 	updatedConfigPath := filepath.Join("./data/theme", updatedThemeInfo.Short, thememanifest.File)
-	// 	updatedConfigData, err := json.MarshalIndent(updatedThemeInfo, "", "  ")
-	// 	if err != nil {
-	// 		api.RespondError(c, http.StatusInternalServerError, "生成主题配置失败: "+err.Error())
-	// 		return
-	// 	}
-
-	// 	if err := os.WriteFile(updatedConfigPath, updatedConfigData, 0644); err != nil {
-	// 		api.RespondError(c, http.StatusInternalServerError, "更新主题配置文件失败: "+err.Error())
-	// 		return
-	// 	}
-	// }
 
 	api.RespondSuccessMessage(c, "主题更新成功", updatedThemeInfo)
 }
@@ -899,16 +806,9 @@ func ImportTheme(c *gin.Context) {
 		downloadURL = gitHubURL
 	}
 
-	// 下载主题ZIP
-	themeData, err := downloadThemeFromURL(downloadURL)
+	tempFile, err := downloadThemeArchive(downloadURL)
 	if err != nil {
 		api.RespondError(c, http.StatusBadRequest, "下载主题失败: "+err.Error())
-		return
-	}
-
-	tempFile, err := temporaryThemeArchive(themeData, "import-theme")
-	if err != nil {
-		api.RespondError(c, http.StatusInternalServerError, "保存文件失败: "+err.Error())
 		return
 	}
 	defer os.Remove(tempFile)

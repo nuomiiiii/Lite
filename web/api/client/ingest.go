@@ -8,18 +8,17 @@ import (
 	"github.com/nuomiiiii/lite/database/metricstore"
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/database/tasks"
-	v1 "github.com/nuomiiiii/lite/protocol/v1"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
 	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 )
 
 // ingest.go
-// agent 上报数据的传输无关处理逻辑。v1 (REST/WS) 与 v2 (JSON-RPC) 两套上报入口
-// 经过各自的协议解析后，统一调用这里的函数落库并更新运行时状态，消除重复。
+// agent 上报数据的传输无关处理逻辑。JSON-RPC 入口解析后统一调用这里落库并更新运行时状态。
 
 // ingestReport 保存一次负载上报并刷新运行时状态。
-// protocolVersion 标记上报所用协议（1 或 2），用于运行时区分客户端能力。
+// 节点身份只能来自已认证的 Token（调用方传入的 uuid），不能信任上报正文中的 UUID。
 // markPresence 为 true 时按 POST 上报会话刷新在线状态（WS 连接自行管理在线状态，应传 false）。
-func ingestReport(uuid string, report v1.Report, protocolVersion int, markPresence bool) error {
+func ingestReport(uuid string, report v2.Report, markPresence bool) error {
 	report.UUID = uuid
 	report.UpdatedAt = time.Now().UTC()
 	if err := clients.ReportVerify(report); err != nil {
@@ -30,7 +29,6 @@ func ingestReport(uuid string, report v1.Report, protocolVersion int, markPresen
 		return err
 	}
 	agent_runtime.RecordReport(savedReport)
-	agent_runtime.SetClientProtocolVersion(uuid, protocolVersion)
 	if markPresence {
 		refreshPostPresence(uuid)
 	}
@@ -53,4 +51,12 @@ func ingestPingResult(uuid string, taskID uint, value int) error {
 		Value:  value,
 		Time:   time.Now().UTC(),
 	})
+}
+
+func ingestTaskResult(uuid string, params v2.TaskResultParams) error {
+	finishedAt := params.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now().UTC()
+	}
+	return tasks.SaveIncomingTaskResult(params.TaskID, uuid, params.Result, params.Status, params.ExitCode, finishedAt)
 }

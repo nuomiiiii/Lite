@@ -41,3 +41,8 @@ komari
 
 # Cursor editor rules stay on this machine.
 .cursor/
+
+# Instance keys are per-machine runtime secrets, never source.
+lite-instance.key
+**/data/lite-instance.key
+

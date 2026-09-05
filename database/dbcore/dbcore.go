@@ -3,6 +3,7 @@ package dbcore
 import (
 	"archive/zip"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,58 +19,63 @@ import (
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/pkg/config"
 	"github.com/nuomiiiii/lite/pkg/migrations"
+	"github.com/nuomiiiii/lite/utils/instancekey"
 	logger "github.com/nuomiiiii/lite/utils/log"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
-// zipDirectoryExcluding 将 srcDir 打包为 dstZip，exclude 是绝对路径集合需要排除
+// zipDirectoryExcluding 将 srcDir 打包为 dstZip，exclude 是绝对路径集合需要排除。
+// 实例密钥只以 zip 根目录 lite-instance.key 出现一次，内容来自当前实例密钥路径。
 func zipDirectoryExcluding(srcDir, dstZip string, exclude map[string]struct{}) error {
-	// 规范化排除路径为绝对路径
 	normExclude := make(map[string]struct{}, len(exclude))
 	for p := range exclude {
 		abs, _ := filepath.Abs(p)
 		normExclude[abs] = struct{}{}
 	}
 
-	out, err := os.Create(dstZip)
+	tmpZip := dstZip + ".partial"
+	_ = os.Remove(tmpZip)
+	out, err := os.Create(tmpZip)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	failed := true
+	defer func() {
+		out.Close()
+		if failed {
+			_ = os.Remove(tmpZip)
+			_ = os.Remove(dstZip)
+		}
+	}()
 
 	zw := zip.NewWriter(out)
-	defer zw.Close()
-
 	absSrc, _ := filepath.Abs(srcDir)
 	walkErr := filepath.Walk(absSrc, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		// 排除 backup.zip 本身
 		if _, ok := normExclude[path]; ok {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		// 计算 zip 内相对路径
 		rel, err := filepath.Rel(absSrc, path)
 		if err != nil {
 			return err
 		}
-		// 根目录跳过
+		if strings.EqualFold(filepath.Base(rel), instancekey.FileName) {
+			return nil
+		}
 		if rel == "." {
 			return nil
 		}
-		// 替换为正斜杠
 		zipName := filepath.ToSlash(rel)
-
 		if info.IsDir() {
 			_, err := zw.Create(zipName + "/")
 			return err
 		}
-		// 普通文件
 		fh, err := os.Open(path)
 		if err != nil {
 			return err
@@ -79,17 +85,61 @@ func zipDirectoryExcluding(srcDir, dstZip string, exclude map[string]struct{}) e
 			fh.Close()
 			return err
 		}
-		if _, err := io.Copy(w, fh); err != nil {
-			fh.Close()
-			return err
+		_, copyErr := io.Copy(w, fh)
+		closeErr := fh.Close()
+		if copyErr != nil {
+			return copyErr
 		}
-		fh.Close()
-		return nil
+		return closeErr
 	})
 	if walkErr != nil {
+		zw.Close()
 		return walkErr
 	}
-	return zw.Close()
+	encoded, err := instanceKeyForArchive(srcDir)
+	if err != nil {
+		zw.Close()
+		return err
+	}
+	if encoded != "" {
+		w, err := zw.Create(instancekey.FileName)
+		if err != nil {
+			zw.Close()
+			return err
+		}
+		if _, err := w.Write([]byte(encoded)); err != nil {
+			zw.Close()
+			return err
+		}
+	}
+	if err := zw.Close(); err != nil {
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	if err := replaceCompletedFile(tmpZip, dstZip); err != nil {
+		return err
+	}
+	failed = false
+	return nil
+}
+
+func replaceCompletedFile(tmp, dest string) error {
+	if err := os.Rename(tmp, dest); err == nil {
+		return nil
+	} else if !shouldFallbackDirectoryMove(err) {
+		return err
+	}
+	info, err := os.Stat(tmp)
+	perm := os.FileMode(0o600)
+	if err == nil {
+		perm = info.Mode().Perm()
+	}
+	if err := copyFile(tmp, dest, perm); err != nil {
+		return err
+	}
+	return os.Remove(tmp)
 }
 
 // removeAllInDirExcept 删除 dir 下除 exclude 指定绝对路径外的所有文件和文件夹
@@ -145,6 +195,9 @@ func unzipToDir(zipPath, dstDir string) error {
 			}
 			continue
 		}
+		if strings.EqualFold(filepath.Base(cleanName), "lite-instance.key") {
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
 			return err
 		}
@@ -173,15 +226,39 @@ func validateRestoredSQLite(path, label string) error {
 	if err != nil {
 		return fmt.Errorf("open restored %s: %w", label, err)
 	}
-	defer file.Close()
 	header := make([]byte, 16)
-	if _, err := io.ReadFull(file, header); err != nil {
-		return fmt.Errorf("read restored %s header: %w", label, err)
+	_, headerErr := io.ReadFull(file, header)
+	file.Close()
+	if headerErr != nil {
+		return fmt.Errorf("read restored %s header: %w", label, headerErr)
 	}
 	if string(header) != "SQLite format 3\x00" {
 		return fmt.Errorf("restored %s is not a valid SQLite database", label)
 	}
+	db, err := sql.Open("sqlite3", sqliteReadOnlyDSN(path))
+	if err != nil {
+		return fmt.Errorf("open restored %s: %w", label, err)
+	}
+	defer db.Close()
+	if err := db.Ping(); err != nil {
+		return fmt.Errorf("open restored %s: %w", label, err)
+	}
+	var check string
+	if err := db.QueryRow(`PRAGMA quick_check(1)`).Scan(&check); err != nil {
+		return fmt.Errorf("inspect restored %s: %w", label, err)
+	}
+	if check != "ok" {
+		return fmt.Errorf("restored %s failed integrity check: %s", label, check)
+	}
 	return nil
+}
+
+func sqliteReadOnlyDSN(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	return "file:" + filepath.ToSlash(abs) + "?mode=ro"
 }
 
 // restoreStagedBackup extracts and validates the entire archive before it
@@ -194,6 +271,7 @@ type stagedRestore struct {
 	preRestorePath  string
 	pendingMarker   string
 	committedMarker string
+	previousKeyPath string
 	finished        bool
 	mu              sync.Mutex
 }
@@ -210,9 +288,10 @@ const (
 )
 
 type restoreJournal struct {
-	DataDir     string `json:"data_dir"`
-	PreviousDir string `json:"previous_dir"`
-	StageDir    string `json:"stage_dir"`
+	DataDir         string `json:"data_dir"`
+	PreviousDir     string `json:"previous_dir"`
+	StageDir        string `json:"stage_dir"`
+	PreviousKeyFile string `json:"previous_key_file,omitempty"`
 }
 
 func restoreMarkerPaths(dataDir string) (string, string, string, error) {
@@ -284,6 +363,11 @@ func readRestoreJournal(path, dataDir string) (restoreJournal, string, string, e
 		}
 		return journal, "", "", err
 	}
+	if journal.PreviousKeyFile != "" {
+		if _, err := resolveRestoreJournalPath(parent, journal.PreviousKeyFile, restorePreviousKeyPrefix); err != nil {
+			return journal, "", "", err
+		}
+	}
 	return journal, previousDir, stageDir, nil
 }
 
@@ -329,9 +413,13 @@ func recoverInterruptedRestore(dataDir string) error {
 		}
 	}
 
-	_, previousDir, stageDir, err := readRestoreJournal(pendingMarker, absDataDir)
+	journal, previousDir, stageDir, err := readRestoreJournal(pendingMarker, absDataDir)
 	if err != nil {
 		return err
+	}
+	previousKeyPath := ""
+	if journal.PreviousKeyFile != "" {
+		previousKeyPath = filepath.Join(filepath.Dir(absDataDir), journal.PreviousKeyFile)
 	}
 	if _, err := os.Stat(committedMarker); err == nil {
 		if err := os.RemoveAll(previousDir); err != nil {
@@ -339,6 +427,9 @@ func recoverInterruptedRestore(dataDir string) error {
 		}
 		if err := os.RemoveAll(stageDir); err != nil {
 			return fmt.Errorf("remove committed restore staging directory: %w", err)
+		}
+		if previousKeyPath != "" {
+			_ = os.Remove(previousKeyPath)
 		}
 		removeRestoreMarkers(pendingMarker, committedMarker)
 		logger.Infof("dbcore", "[restore] completed cleanup for a restore committed before interruption")
@@ -356,6 +447,9 @@ func recoverInterruptedRestore(dataDir string) error {
 		}
 		if err := os.RemoveAll(stageDir); err != nil {
 			return fmt.Errorf("remove unpublished restore staging directory: %w", err)
+		}
+		if previousKeyPath != "" {
+			_ = os.Remove(previousKeyPath)
 		}
 		removeRestoreMarkers(pendingMarker, committedMarker)
 		return nil
@@ -383,6 +477,13 @@ func recoverInterruptedRestore(dataDir string) error {
 		}
 		return fmt.Errorf("recover previous data after interrupted restore: %w", err)
 	}
+	if previousKeyPath != "" {
+		if err := restoreExternalInstanceKey(previousKeyPath); err != nil {
+			logger.Errorf("dbcore", "[restore] previous data recovered but instance key could not be restored")
+		}
+		_ = os.Remove(previousKeyPath)
+	}
+	instancekey.Reload()
 	retireInterruptedRestoreArchive(absDataDir)
 	if activeMoved {
 		if err := os.RemoveAll(failedDir); err != nil {
@@ -410,6 +511,11 @@ func (r *stagedRestore) Commit() error {
 		return fmt.Errorf("persist committed restore state: %w", err)
 	}
 	r.finished = true
+	if r.previousKeyPath != "" {
+		if err := os.Remove(r.previousKeyPath); err != nil && !os.IsNotExist(err) {
+			logger.Errorf("dbcore", "[restore] backup was verified and committed, but the previous instance key backup could not be removed")
+		}
+	}
 	if err := os.RemoveAll(r.previousDir); err != nil {
 		logger.Errorf("dbcore", "[restore] backup was verified and committed, but the previous staging directory could not be removed: %v", err)
 		return nil
@@ -442,6 +548,13 @@ func (r *stagedRestore) Rollback() error {
 		_ = relocateDirectory(failedDir, r.dataDir)
 		return fmt.Errorf("restore previous data directory: %w", err)
 	}
+	if r.previousKeyPath != "" {
+		if err := restoreExternalInstanceKey(r.previousKeyPath); err != nil {
+			logger.Errorf("dbcore", "[restore] previous data restored but instance key could not be restored")
+		}
+		_ = os.Remove(r.previousKeyPath)
+	}
+	instancekey.Reload()
 	failedArchive := filepath.Join(r.dataDir, "backup.failed-"+time.Now().UTC().Format("20060102-150405")+".zip")
 	if err := os.Rename(filepath.Join(r.dataDir, "backup.zip"), failedArchive); err != nil && !os.IsNotExist(err) {
 		logger.Errorf("dbcore", "[restore] previous data restored but failed package could not be renamed: %v", err)
@@ -477,6 +590,10 @@ func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
 			_ = os.RemoveAll(stageDir)
 		}
 	}()
+	encodedKey, err := inspectArchiveInstanceKey(backupZipPath)
+	if err != nil {
+		return nil, err
+	}
 	if err := unzipToDir(backupZipPath, stageDir); err != nil {
 		return nil, fmt.Errorf("extract backup into staging directory: %w", err)
 	}
@@ -486,6 +603,12 @@ func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
 	}
 	if err := validateRestoredSQLite(mainDB, filepath.Base(mainDB)); err != nil {
 		return nil, err
+	}
+	if err := validateStagedBackupSecrets(mainDB, encodedKey); err != nil {
+		return nil, err
+	}
+	if err := stageRestoredInstanceKey(stageDir, dataDir, encodedKey); err != nil {
+		return nil, fmt.Errorf("stage restored instance key: %w", err)
 	}
 	metricsPath := filepath.Join(stageDir, "metrics.db")
 	if _, err := os.Stat(metricsPath); err == nil {
@@ -522,20 +645,30 @@ func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
 	if err != nil {
 		return nil, err
 	}
+	previousKeyPath, err := backupExternalInstanceKey(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("preserve current instance key: %w", err)
+	}
 	journal := restoreJournal{
 		DataDir:     filepath.Base(absDataDir),
 		PreviousDir: filepath.Base(oldDir),
 		StageDir:    filepath.Base(stageDir),
 	}
+	if previousKeyPath != "" {
+		journal.PreviousKeyFile = filepath.Base(previousKeyPath)
+	}
 	journalData, err := json.Marshal(journal)
 	if err != nil {
+		_ = os.Remove(previousKeyPath)
 		return nil, fmt.Errorf("encode restore transaction journal: %w", err)
 	}
 	if err := writeRestoreMarker(pendingMarker, journalData); err != nil {
+		_ = os.Remove(previousKeyPath)
 		return nil, fmt.Errorf("persist restore transaction journal: %w", err)
 	}
 	if err := relocateDirectory(dataDir, oldDir); err != nil {
 		removeRestoreMarkers(pendingMarker, committedMarker)
+		_ = os.Remove(previousKeyPath)
 		return nil, fmt.Errorf("move current data aside: %w", err)
 	}
 	if err := relocateDirectory(stageDir, dataDir); err != nil {
@@ -544,8 +677,20 @@ func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
 			return nil, fmt.Errorf("publish restored data: %v; restore previous data: %w", err, rollbackErr)
 		}
 		removeRestoreMarkers(pendingMarker, committedMarker)
+		_ = os.Remove(previousKeyPath)
 		return nil, fmt.Errorf("publish restored data: %w", err)
 	}
+	if err := publishExternalInstanceKey(dataDir, encodedKey, previousKeyPath); err != nil {
+		rollbackErr := relocateDirectory(oldDir, dataDir)
+		if rollbackErr != nil {
+			return nil, fmt.Errorf("publish restored instance key: %v; restore previous data: %w", err, rollbackErr)
+		}
+		removeRestoreMarkers(pendingMarker, committedMarker)
+		_ = os.Remove(previousKeyPath)
+		instancekey.Reload()
+		return nil, fmt.Errorf("publish restored instance key: %w", err)
+	}
+	instancekey.Reload()
 	stagePublished = true
 	logger.Infof("dbcore", "[restore] backup published for startup validation; previous data remains available")
 	return &stagedRestore{
@@ -555,6 +700,7 @@ func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
 		preRestorePath:  preRestorePath,
 		pendingMarker:   pendingMarker,
 		committedMarker: committedMarker,
+		previousKeyPath: previousKeyPath,
 	}, nil
 }
 
@@ -743,6 +889,10 @@ func CommitPendingRestore() error {
 	}
 	pendingRestore = nil
 	return nil
+}
+
+func HasPendingRestore() bool {
+	return pendingRestore != nil
 }
 
 func RollbackPendingRestore() error {

@@ -15,7 +15,7 @@ import (
 func TestDeploymentProfileRuntimeConfigExcludesInstallationOnlyFields(t *testing.T) {
 	profile := DeploymentProfile{
 		Platform:                "linux",
-		DisableWebSSH:           true,
+		EnableRemoteControl:     true,
 		DisableAutoUpdate:       true,
 		IgnoreUnsafeCert:        true,
 		GetIPAddrFromNIC:        true,
@@ -37,6 +37,7 @@ func TestDeploymentProfileRuntimeConfigExcludesInstallationOnlyFields(t *testing
 	}
 	payload := string(encoded)
 	for _, forbidden := range []string{
+		"enable_remote_control",
 		"disable_web_ssh",
 		"disable_auto_update",
 		"ignore_unsafe_cert",
@@ -51,6 +52,25 @@ func TestDeploymentProfileRuntimeConfigExcludesInstallationOnlyFields(t *testing
 	}
 	if !strings.Contains(payload, `"interval":15`) {
 		t.Fatalf("runtime config is missing interval: %s", payload)
+	}
+}
+
+func TestDeploymentProfileMigratesDisableWebSSH(t *testing.T) {
+	var profile DeploymentProfile
+	if err := json.Unmarshal([]byte(`{"platform":"linux","disable_web_ssh":true}`), &profile); err != nil {
+		t.Fatalf("migrate closed remote control: %v", err)
+	}
+	if profile.EnableRemoteControl {
+		t.Fatal("disable_web_ssh true must become enable_remote_control false")
+	}
+	if err := json.Unmarshal([]byte(`{"platform":"linux","disable_web_ssh":false}`), &profile); err != nil {
+		t.Fatalf("migrate open remote control: %v", err)
+	}
+	if !profile.EnableRemoteControl {
+		t.Fatal("disable_web_ssh false must become enable_remote_control true")
+	}
+	if err := json.Unmarshal([]byte(`{"platform":"linux","enable_remote_control":true,"disable_web_ssh":false}`), &profile); err == nil {
+		t.Fatal("expected a config conflict when both keys are present")
 	}
 }
 
@@ -264,7 +284,7 @@ func TestDeploymentConfigDeliveryTracksOnlyRuntimeChangesAndRejectsStaleResults(
 		t.Fatalf("complete revision 1 = %v, %v", completed, err)
 	}
 
-	profile.DisableWebSSH = true
+	profile.EnableRemoteControl = true
 	_, state, runtimeChanged, err = saveDeploymentProfileForDispatch(db, "node-delivery", profile)
 	if err != nil {
 		t.Fatalf("save installation-only change: %v", err)

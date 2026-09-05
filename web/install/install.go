@@ -187,6 +187,10 @@ func (c *Controller) complete(ctx *gin.Context) {
 
 	if err := c.createAccountAndSettings(&request, cfg); err != nil {
 		c.fail()
+		if accounts.IsPasswordBusy(err) {
+			api.RespondError(ctx, http.StatusTooManyRequests, err.Error())
+			return
+		}
 		api.RespondError(ctx, http.StatusInternalServerError, "failed to save installation settings")
 		return
 	}

@@ -2,8 +2,6 @@ package v2
 
 import (
 	"time"
-
-	v1 "github.com/nuomiiiii/lite/protocol/v1"
 )
 
 const (
@@ -18,7 +16,6 @@ const (
 	MethodAgentRoute        = "agent.route"
 	MethodAgentMessage      = "agent.message"
 	MethodAgentEvent        = "agent.event"
-	MethodAgentTerminal     = "agent.terminal.request"
 	MethodAgentRemote       = "agent.remote.request"
 	MethodAgentConfig       = "agent.config"
 	MethodAgentConfigResult = "agent.configResult"
@@ -54,8 +51,24 @@ type RPCError struct {
 }
 
 type ReportParams struct {
-	Report      v1.Report `json:"report"`
-	AckEventIDs []string  `json:"ack_event_ids,omitempty"`
+	Report      Report   `json:"report"`
+	AckEventIDs []string `json:"ack_event_ids,omitempty"`
+}
+
+const (
+	TaskResultStatusFinished         = "finished"
+	TaskResultStatusInterrupted      = "interrupted"
+	InterruptedTaskResultText        = "execution status unknown"
+	DeliveryTimeoutTaskResult        = "delivery timeout"
+	RemoteManagementClosedTaskResult = "远程管理已关闭，任务未投递/已取消"
+)
+
+type TaskResultParams struct {
+	TaskID     string    `json:"task_id"`
+	Result     string    `json:"result"`
+	ExitCode   int       `json:"exit_code"`
+	FinishedAt time.Time `json:"finished_at"`
+	Status     string    `json:"status,omitempty"`
 }
 
 type BasicInfoParams struct {
@@ -84,8 +97,8 @@ type RouteResultParams struct {
 	Protocol         string     `json:"protocol"`
 	Target           string     `json:"target"`
 	IPVersion        int        `json:"ip_version"`
-	Hops             []RouteHop  `json:"hops,omitempty"`
-	Error            string      `json:"error,omitempty"`
+	Hops             []RouteHop `json:"hops,omitempty"`
+	Error            string     `json:"error,omitempty"`
 	ResolvedTargetIP string     `json:"resolved_target_ip,omitempty"`
 	TargetReached    bool       `json:"target_reached,omitempty"`
 	FinishedAt       time.Time  `json:"finished_at"`
@@ -125,10 +138,6 @@ type MessageParams struct {
 type EventParams struct {
 	Type string `json:"type"`
 	Data any    `json:"data,omitempty"`
-}
-
-type TerminalRequestParams struct {
-	RequestID string `json:"request_id"`
 }
 
 type RemoteRequestParams struct {

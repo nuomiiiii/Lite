@@ -10,7 +10,7 @@ import (
 
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/pkg/metric"
-	v1 "github.com/nuomiiiii/lite/protocol/v1"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
 )
 
 func TestDashboardTrafficBatchMatchesPerClientSeries(t *testing.T) {
@@ -179,20 +179,20 @@ func TestWriteReportStoresRawMetricsAndResetAwareTraffic(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	base := now.Add(-30 * time.Minute)
 
-	report := v1.Report{
+	report := v2.Report{
 		UUID:        "node-a",
 		UpdatedAt:   base,
-		CPU:         v1.CPUReport{Usage: 12.5},
-		Ram:         v1.RamReport{Used: 100, Total: 1000},
-		Swap:        v1.RamReport{Used: 20, Total: 200},
-		Load:        v1.LoadReport{Load1: 0.5},
-		Disk:        v1.DiskReport{Used: 300, Total: 3000},
-		Network:     v1.NetworkReport{Up: 3, Down: 4, TotalUp: 100, TotalDown: 200},
+		CPU:         v2.CPUReport{Usage: 12.5},
+		Ram:         v2.RamReport{Used: 100, Total: 1000},
+		Swap:        v2.RamReport{Used: 20, Total: 200},
+		Load:        v2.LoadReport{Load1: 0.5},
+		Disk:        v2.DiskReport{Used: 300, Total: 3000},
+		Network:     v2.NetworkReport{Up: 3, Down: 4, TotalUp: 100, TotalDown: 200},
 		Process:     7,
-		Connections: v1.ConnectionsReport{TCP: 8, UDP: 9},
-		GPU: &v1.GPUDetailReport{
+		Connections: v2.ConnectionsReport{TCP: 8, UDP: 9},
+		GPU: &v2.GPUDetailReport{
 			AverageUsage: 25,
-			DetailedInfo: []v1.GPUDeviceInfo{{
+			DetailedInfo: []v2.GPUDeviceInfo{{
 				Name: "GPU 0", MemoryUsed: 400, MemoryTotal: 800, Utilization: 30, Temperature: 55,
 			}},
 		},
@@ -252,11 +252,11 @@ func TestWriteReportRebasesTrafficAfterAgentRestart(t *testing.T) {
 	ctx := context.Background()
 	s := useReportTestStore(t, nil)
 	base := time.Now().UTC().Truncate(time.Minute).Add(5 * time.Second)
-	report := v1.Report{
+	report := v2.Report{
 		UUID:      "restarted-node",
 		UpdatedAt: base,
 		Uptime:    1000,
-		Network:   v1.NetworkReport{TotalUp: 100, TotalDown: 200},
+		Network:   v2.NetworkReport{TotalUp: 100, TotalDown: 200},
 	}
 	if _, err := WriteReport(ctx, report); err != nil {
 		t.Fatalf("write first report: %v", err)
@@ -294,7 +294,7 @@ func TestWriteReportSkipsMetricsWithoutAgentData(t *testing.T) {
 	ctx := context.Background()
 	s := useReportTestStore(t, nil)
 	timestamp := time.Now().UTC()
-	if _, err := WriteReport(ctx, v1.Report{
+	if _, err := WriteReport(ctx, v2.Report{
 		UUID: "node-without-gpu", UpdatedAt: timestamp,
 	}); err != nil {
 		t.Fatalf("write report: %v", err)
@@ -322,11 +322,11 @@ func TestReportBatcherFlushesQueuedReports(t *testing.T) {
 	})
 
 	base := time.Now().UTC().Truncate(time.Second)
-	first := v1.Report{
+	first := v2.Report{
 		UUID:      "batched-node",
 		UpdatedAt: base,
-		CPU:       v1.CPUReport{Usage: 10},
-		Network:   v1.NetworkReport{TotalUp: 100, TotalDown: 200},
+		CPU:       v2.CPUReport{Usage: 10},
+		Network:   v2.NetworkReport{TotalUp: 100, TotalDown: 200},
 	}
 	second := first
 	second.UpdatedAt = base.Add(3 * time.Second)
@@ -365,12 +365,12 @@ func TestReportBatcherFlushesQueuedReports(t *testing.T) {
 func TestFullReportQueueRejectsNewReportWithoutDroppingData(t *testing.T) {
 	ctx := context.Background()
 	worker := &reportBatchWorker{
-		queue:    make(chan v1.Report, 1),
+		queue:    make(chan v2.Report, 1),
 		requests: make(chan reportBatchRequest, 1),
 		done:     make(chan struct{}),
 	}
-	worker.queue <- v1.Report{UUID: "already-queued"}
-	report := v1.Report{
+	worker.queue <- v2.Report{UUID: "already-queued"}
+	report := v2.Report{
 		UUID:      "realtime-node",
 		UpdatedAt: time.Now().UTC(),
 	}
@@ -380,7 +380,7 @@ func TestFullReportQueueRejectsNewReportWithoutDroppingData(t *testing.T) {
 }
 
 func TestDrainReportQueueUsesCurrentDepthAndHonorsLimit(t *testing.T) {
-	empty := make(chan v1.Report, 8_192)
+	empty := make(chan v2.Report, 8_192)
 	if got := drainReportQueue(empty, 8_192); got != nil {
 		t.Fatalf("empty queue drain = %#v, want nil", got)
 	}
@@ -390,9 +390,9 @@ func TestDrainReportQueueUsesCurrentDepthAndHonorsLimit(t *testing.T) {
 		t.Fatalf("empty queue drain allocations = %v, want 0", allocations)
 	}
 
-	queue := make(chan v1.Report, 8_192)
+	queue := make(chan v2.Report, 8_192)
 	for _, uuid := range []string{"a", "b", "c"} {
-		queue <- v1.Report{UUID: uuid}
+		queue <- v2.Report{UUID: uuid}
 	}
 	got := drainReportQueue(queue, 2)
 	if len(got) != 2 || cap(got) != 2 || got[0].UUID != "a" || got[1].UUID != "b" {
@@ -541,11 +541,11 @@ func TestWriteReportNormalizesReceiveTimeToUTC(t *testing.T) {
 	s := useReportTestStore(t, nil)
 	local := time.FixedZone("UTC+8", 8*60*60)
 	receiveTime := time.Date(2026, 7, 17, 9, 30, 0, 123456789, local)
-	report := v1.Report{
+	report := v2.Report{
 		UUID:      "utc-report",
 		UpdatedAt: receiveTime,
-		CPU:       v1.CPUReport{Usage: 10},
-		Network:   v1.NetworkReport{TotalUp: 1, TotalDown: 2},
+		CPU:       v2.CPUReport{Usage: 10},
+		Network:   v2.NetworkReport{TotalUp: 1, TotalDown: 2},
 	}
 
 	saved, err := WriteReport(ctx, report)

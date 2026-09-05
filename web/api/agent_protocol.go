@@ -7,16 +7,10 @@ import (
 )
 
 const (
-	LiteTerminalSessionHeader   = "X-Lite-Terminal-Session"
-	KomariTerminalSessionHeader = "X-Komari-Terminal-Session"
-	LiteRemoteSessionHeader     = "X-Lite-Remote-Session"
-	KomariRemoteSessionHeader   = "X-Komari-Remote-Session"
-	LiteRemoteTicketHeader      = "X-Lite-Remote-Ticket"
-	KomariRemoteTicketHeader    = "X-Komari-Remote-Ticket"
+	LiteRemoteSessionHeader = "X-Lite-Remote-Session"
+	LiteRemoteTicketHeader  = "X-Lite-Remote-Ticket"
 )
 
-// AgentProtocolHeader reads Lite headers first, then Komari headers.
-// Lite-agent 2.3.0.0 speaks Lite natively; Komari headers stay for older agents.
 func AgentProtocolHeader(c *gin.Context, names ...string) string {
 	if c == nil || c.Request == nil {
 		return ""
@@ -29,14 +23,10 @@ func AgentProtocolHeader(c *gin.Context, names ...string) string {
 	return ""
 }
 
-func AgentTerminalSessionHeader(c *gin.Context) string {
-	return AgentProtocolHeader(c, LiteTerminalSessionHeader, KomariTerminalSessionHeader)
-}
-
 func AgentRemoteSessionHeader(c *gin.Context) string {
-	return AgentProtocolHeader(c, LiteRemoteSessionHeader, KomariRemoteSessionHeader)
+	return AgentProtocolHeader(c, LiteRemoteSessionHeader)
 }
 
 func AgentRemoteTicketHeader(c *gin.Context) string {
-	return AgentProtocolHeader(c, LiteRemoteTicketHeader, KomariRemoteTicketHeader)
+	return AgentProtocolHeader(c, LiteRemoteTicketHeader)
 }

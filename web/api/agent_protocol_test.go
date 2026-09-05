@@ -7,35 +7,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func TestAgentProtocolHeadersAcceptLiteAndKomari(t *testing.T) {
+func TestAgentProtocolHeadersAcceptLiteOnly(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-
-	context, _ := gin.CreateTestContext(httptest.NewRecorder())
-	context.Request = httptest.NewRequest("GET", "/api/clients/terminal", nil)
-	if AgentTerminalSessionHeader(context) != "" {
-		t.Fatal("empty headers returned a session id")
-	}
-
-	context.Request.Header.Set(KomariTerminalSessionHeader, "komari-session")
-	if got := AgentTerminalSessionHeader(context); got != "komari-session" {
-		t.Fatalf("komari terminal header = %q", got)
-	}
-
-	context.Request.Header.Set(LiteTerminalSessionHeader, "lite-session")
-	if got := AgentTerminalSessionHeader(context); got != "lite-session" {
-		t.Fatalf("lite terminal header should win, got %q", got)
-	}
 
 	remote, _ := gin.CreateTestContext(httptest.NewRecorder())
 	remote.Request = httptest.NewRequest("GET", "/api/clients/remote", nil)
-	remote.Request.Header.Set(KomariRemoteSessionHeader, "komari-remote")
-	remote.Request.Header.Set(KomariRemoteTicketHeader, "komari-ticket")
-	if AgentRemoteSessionHeader(remote) != "komari-remote" || AgentRemoteTicketHeader(remote) != "komari-ticket" {
-		t.Fatal("komari remote headers were not accepted")
+	remote.Request.Header.Set("X-Komari-Remote-Session", "komari-remote")
+	remote.Request.Header.Set("X-Komari-Remote-Ticket", "komari-ticket")
+	if AgentRemoteSessionHeader(remote) != "" || AgentRemoteTicketHeader(remote) != "" {
+		t.Fatal("komari remote headers must be ignored")
 	}
 	remote.Request.Header.Set(LiteRemoteSessionHeader, "lite-remote")
 	remote.Request.Header.Set(LiteRemoteTicketHeader, "lite-ticket")
 	if AgentRemoteSessionHeader(remote) != "lite-remote" || AgentRemoteTicketHeader(remote) != "lite-ticket" {
-		t.Fatal("lite remote headers should win")
+		t.Fatal("lite remote headers should be accepted")
 	}
 }

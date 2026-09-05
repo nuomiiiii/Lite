@@ -6,7 +6,7 @@ import (
 
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/pkg/rpc"
-	v1 "github.com/nuomiiiii/lite/protocol/v1"
+	v2 "github.com/nuomiiiii/lite/protocol/v2"
 	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -185,11 +185,11 @@ func TestDashboardResourceRankingUsesLatestReportsAndBoundedTopN(t *testing.T) {
 	for index := 0; index < 7; index++ {
 		uuid := "dashboard-ranking-" + string(rune('a'+index))
 		clients = append(clients, models.Client{UUID: uuid, Name: "node-" + string(rune('a'+index))})
-		agent_runtime.RecordReport(v1.Report{
+		agent_runtime.RecordReport(v2.Report{
 			UUID:      uuid,
-			CPU:       v1.CPUReport{Usage: float64(index * 10)},
-			Ram:       v1.RamReport{Used: int64(index + 1), Total: 10},
-			Disk:      v1.DiskReport{Used: int64(7 - index), Total: 10},
+			CPU:       v2.CPUReport{Usage: float64(index * 10)},
+			Ram:       v2.RamReport{Used: int64(index + 1), Total: 10},
+			Disk:      v2.DiskReport{Used: int64(7 - index), Total: 10},
 			UpdatedAt: time.Now().UTC(),
 		})
 		defer agent_runtime.DeleteLatestReport(uuid)

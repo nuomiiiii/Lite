@@ -52,7 +52,7 @@ func handleV2RPC(uuid string, req v2.Request, allowWait bool) v2.Response {
 		if err := bindV2Params(req.Params, &params); err != nil {
 			return v2.Error(req.ID, -32602, "invalid report params", err.Error())
 		}
-		if err := ingestReport(uuid, params.Report, 2, true); err != nil {
+		if err := ingestReport(uuid, params.Report, true); err != nil {
 			return v2.Error(req.ID, -32000, "failed to save report", err.Error())
 		}
 		return v2.Success(req.ID, gin.H{
@@ -100,6 +100,18 @@ func handleV2RPC(uuid string, req v2.Request, allowWait bool) v2.Response {
 			return v2.Error(req.ID, -32000, "failed to save ping result", err.Error())
 		}
 		return v2.Success(req.ID, gin.H{"status": "success"})
+	case v2.MethodAgentTaskResult:
+		var params v2.TaskResultParams
+		if err := bindV2Params(req.Params, &params); err != nil {
+			return v2.Error(req.ID, -32602, "invalid task result params", err.Error())
+		}
+		if params.TaskID == "" {
+			return v2.Error(req.ID, -32602, "invalid task result params", "task_id is required")
+		}
+		if err := ingestTaskResult(uuid, params); err != nil {
+			return v2.Error(req.ID, -32000, "failed to save task result", err.Error())
+		}
+		return v2.Success(req.ID, gin.H{"status": "success"})
 	case v2.MethodAgentRouteResult:
 		var params v2.RouteResultParams
 		if err := bindV2Params(req.Params, &params); err != nil {
@@ -115,7 +127,6 @@ func handleV2RPC(uuid string, req v2.Request, allowWait bool) v2.Response {
 			return v2.Error(req.ID, -32602, "invalid pull params", err.Error())
 		}
 		refreshPostPresence(uuid)
-		agent_runtime.SetClientProtocolVersion(uuid, 2)
 		timeout := 0 * time.Second
 		if allowWait {
 			timeout = 25 * time.Second
@@ -171,11 +182,10 @@ func WebSocketV2RPC(c *gin.Context) {
 		conn.WriteJSON(v2.Error(nil, -32001, "invalid token", nil))
 		return
 	}
-	if oldConn, exists := agent_runtime.GetConnectedClients()[uuid]; exists {
+	if oldConn := agent_runtime.GetConnectedClient(uuid); oldConn != nil {
 		go oldConn.Close()
 	}
 	agent_runtime.SetConnectedClients(uuid, conn)
-	agent_runtime.SetClientProtocolVersion(uuid, 2)
 	go notifierOnline(uuid, conn.ID)
 	defer func() {
 		agent_runtime.DeleteClientConditionally(uuid, conn)
@@ -249,12 +259,7 @@ func clientUUIDFromContext(c *gin.Context) (string, bool) {
 			return uuid, true
 		}
 	}
-	token := c.Query("token")
-	if token == "" {
-		return "", false
-	}
-	uuid, err := clients.GetClientUUIDByToken(token)
-	return uuid, err == nil && uuid != ""
+	return "", false
 }
 
 func notifierOnline(uuid string, connID int64) {

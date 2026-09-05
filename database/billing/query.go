@@ -3,6 +3,7 @@ package billing
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -1254,7 +1255,7 @@ func remainingValue(version models.BillingPriceVersion, currency string, rates m
 		return nil, nil
 	}
 	remaining := version.ExpiredAt.Sub(now)
-	days := int(remaining.Hours() / 24)
+	days := int(math.Round(remaining.Hours() / 24))
 	if remaining <= 0 {
 		days = 0
 		value := "0.000000"
