@@ -9,7 +9,7 @@ Lite 是一款轻量、自托管的服务器监控与运维管理工具。服务
 
 本项目基于 [komari-monitor/komari](https://github.com/nuomiiiii/lite) 持续开发，重点改善低配置主控上的数据库占用、历史查询和维护负载，同时补充更完整的流量管理、备份迁移、接入安全与双端后台体验。
 
-**当前正式版：[`2.3.1`](https://github.com/nuomiiiii/lite/releases/tag/2.3.1)**
+**当前正式版：[`2.3.2`](https://github.com/nuomiiiii/lite/releases/tag/2.3.2)**
 
 > [!IMPORTANT]
 > 从 `2.2.1` 开始，系统 Web UI 与公开大屏主题已经解耦：Lite Web 只负责管理后台、远程终端等系统页面，主题只影响公开大屏。默认和保底主题都是 [Lite-Theme](https://github.com/nuomiiiii/Lite-theme)，可独立更新，并在已有其他可用主题时删除；主题管理始终要求至少保留一个可用主题。原经典主题已拆分为独立的 [komari-Classic](https://github.com/nuomiiiii/lite-Classic)，不再随 Lite 内置。从 Nezha / 旧默认主题升级时会迁到 Lite-Theme。
@@ -19,7 +19,7 @@ Lite 是一款轻量、自托管的服务器监控与运维管理工具。服务
 > [!WARNING]
 > Lite 只能部署在你拥有或已获得授权管理的设备上。请勿将其用于未经授权的访问、持久化、命令执行或其他滥用行为。管理员应启用 HTTPS 与双因素认证，并妥善保护 Agent Token 和备份文件。
 
-## 2.3.1 稳定版能力摘要
+## 2.3.2 稳定版能力摘要
 
 - **产品更名为 Lite**：新安装使用 Lite 程序、数据目录和在线更新清单；管理后台、安装脚本和 Docker 镜像与此对齐。从 Komari、Komari Lite 或 Lite 2.2.x 升级时，会沿用原来的监听端口、站点设置、账号、主题和节点数据。
 - **成本中心**：集中查看服务器资费、到期时间、本月/本年费用、一次性费用、附加费用和剩余价值，支持按币种汇总、筛选和作废冲销。剩余价值只按服务器基础费用估算。
@@ -70,7 +70,7 @@ docker run -d \
   ghcr.io/nuomiiiii/lite:latest
 ```
 
-固定使用当前正式版时，将镜像标签改为 `ghcr.io/nuomiiiii/lite:2.3.1`。
+固定使用当前正式版时，将镜像标签改为 `ghcr.io/nuomiiiii/lite:2.3.2`。
 
 更新 Docker 部署前请先备份 `data` 目录，然后拉取新镜像并使用原来的端口和数据挂载重新创建容器：
 
