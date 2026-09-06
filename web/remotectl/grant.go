@@ -38,7 +38,6 @@ type storedGrant struct {
 	userUUID     string
 	loginSession string
 	scope        string
-	pageID       string
 	expiresAt    time.Time
 }
 
@@ -59,9 +58,7 @@ func issueGrant(userUUID, loginSession, scope, pageID string, expires time.Time)
 	if scope != ScopeRemote && scope != ScopeExec {
 		return "", time.Time{}, ErrGrantScope
 	}
-	if scope == ScopeRemote && pageID == "" {
-		return "", time.Time{}, ErrGrantWorkspace
-	}
+	_ = pageID
 	if !expires.After(time.Now()) {
 		return "", time.Time{}, ErrGrantExpired
 	}
@@ -78,7 +75,6 @@ func issueGrant(userUUID, loginSession, scope, pageID string, expires time.Time)
 		userUUID:     userUUID,
 		loginSession: loginSession,
 		scope:        scope,
-		pageID:       pageID,
 		expiresAt:    expires,
 	}
 	grantMu.Unlock()
@@ -125,9 +121,7 @@ func lookupGrant(plain, userUUID, loginSession, scope, pageID string, consume bo
 	if stored.scope != scope {
 		return storedGrant{}, ErrGrantScope
 	}
-	if stored.pageID != "" && stored.pageID != pageID {
-		return storedGrant{}, ErrGrantWorkspace
-	}
+	_ = pageID
 	if !stored.expiresAt.After(now) {
 		delete(grants, key)
 		return storedGrant{}, ErrGrantExpired

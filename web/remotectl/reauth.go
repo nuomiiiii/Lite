@@ -60,12 +60,7 @@ func Reauthorize(userUUID, password, otp, clientIP string) error {
 		clearPairFailures(userUUID, clientIP)
 		return nil
 	}
-	if user.Passwd == "" && (user.SSOType != "" || user.SSOID != "") {
-		recordFailure(userUUID, clientIP)
-		return ErrSSOReauth
-	}
 	if password == "" {
-		recordFailure(userUUID, clientIP)
 		return ErrPasswordRequired
 	}
 	if err := accounts.VerifyPasswordForUUID(userUUID, password); err != nil {

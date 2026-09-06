@@ -135,6 +135,6 @@ r.GET("/api/admin/client/:uuid", jsonRpc.Bind("admin:getClient", jsonRpc.WithPat
 ### 保留为 REST 的接口（不走 RPC 桥）
 
 二进制/流/重定向/特殊鉴权类，集中在 `web/api/admin`（2fa/theme/backup/update/oauth 绑定）、
-`web/api/public`（login/logout/oauth/mjpeg）、`web/api/client`（v2 RPC、terminal、AutoDiscovery 注册）。
+`web/api/public`（login/logout/oauth/mjpeg）、`web/api/client`（v2 RPC、terminal）。
 
 agent 上报的核心逻辑已统一到 `web/api/client/ingest.go`。

@@ -13,23 +13,23 @@ const (
 )
 
 type Settings struct {
-	ID                     uint   `json:"id,omitempty"`                                        // 1
-	Sitename               string `json:"sitename" default:"Lite"`                      // 站点名称，默认 "Lite"
+	ID                     uint   `json:"id,omitempty"`                                             // 1
+	Sitename               string `json:"sitename" default:"Lite"`                                  // 站点名称，默认 "Lite"
 	Description            string `json:"description" default:"All your servers, one simple view."` // 站点描述
-	AdminDefaultPageSize   int    `json:"admin_default_page_size" default:"20"`                // 后台列表默认每页条数
-	ReduceMotion           bool   `json:"reduce_motion" default:"false"`                       // 兼容旧库；界面不再提供关闭动效的开关
-	AutoOrderNewClients    bool   `json:"auto_order_new_clients_by_region" default:"false"`    // 新服务器首次识别国家\地区后自动排到同组同国家\地区节点后面，默认关闭
-	CorsOriginCheckEnabled bool   `json:"cors_origin_check_enabled" default:"true"`            // 是否启用 API CORS 跨域请求校验，默认 true
-	CorsAllowedOrigins     string `json:"cors_allowed_origins" default:""`                     // API 跨域允许列表
-	WsOriginCheckEnabled   bool   `json:"ws_origin_check_enabled" default:"true"`              // 是否校验 WebSocket Origin
-	WsAllowedOrigins       string `json:"ws_allowed_origins" default:""`                       // WebSocket Origin 允许列表
-	Theme                  string `json:"theme" default:"lite-theme"`                          // 新安装默认使用 Lite-Theme 公共主题
-	PrivateSite            bool   `json:"private_site" default:"false"`                        // 是否为私有站点，默认 false
-	ApiKey                 string `json:"api_key" default:""`                                  // API 密钥，默认空字符串
-	AutoDiscoveryKey       string `json:"auto_discovery_key" default:""`                       // 自动发现密钥
-	ScriptDomain           string `json:"script_domain" default:""`                            // 自定义脚本域名
-	SendIpAddrToGuest      bool   `json:"send_ip_addr_to_guest" default:"false"`               // 是否向访客页面发送 IP 地址，默认 false
-	VisitorAuditEnabled    bool   `json:"visitor_audit_enabled" default:"false"`               // 是否允许公开访客事件写入审计日志，默认 false
+	AdminDefaultPageSize   int    `json:"admin_default_page_size" default:"20"`                     // 后台列表默认每页条数
+	ReduceMotion           bool   `json:"reduce_motion" default:"false"`                            // 兼容旧库；界面不再提供关闭动效的开关
+	AutoOrderNewClients    bool   `json:"auto_order_new_clients_by_region" default:"false"`         // 新服务器首次识别国家\地区后自动排到同组同国家\地区节点后面，默认关闭
+	CorsOriginCheckEnabled bool   `json:"cors_origin_check_enabled" default:"true"`                 // 是否启用 API CORS 跨域请求校验，默认 true
+	CorsAllowedOrigins     string `json:"cors_allowed_origins" default:""`                          // API 跨域允许列表
+	WsOriginCheckEnabled   bool   `json:"ws_origin_check_enabled" default:"true"`                   // 是否校验 WebSocket Origin
+	WsAllowedOrigins       string `json:"ws_allowed_origins" default:""`                            // WebSocket Origin 允许列表
+	Theme                  string `json:"theme" default:"lite-theme"`                               // 新安装默认使用 Lite-Theme 公共主题
+	PrivateSite            bool   `json:"private_site" default:"false"`                             // 是否为私有站点，默认 false
+	ApiKey                 string `json:"api_key" default:""`                                       // API 密钥，默认空字符串
+	AutoDiscoveryKey       string `json:"auto_discovery_key"`                                       // Historical; leftover DB value is unused and not shown in admin settings
+	ScriptDomain           string `json:"script_domain" default:""`                                 // 自定义脚本域名
+	SendIpAddrToGuest      bool   `json:"send_ip_addr_to_guest" default:"false"`                    // 是否向访客页面发送 IP 地址，默认 false
+	VisitorAuditEnabled    bool   `json:"visitor_audit_enabled" default:"false"`                    // 是否允许公开访客事件写入审计日志，默认 false
 	EulaAccepted           bool   `json:"eula_accepted" default:"false"`
 	BaseScriptsURLKey      string `json:"base_scripts_url" default:""`
 	AllowRemoteManagement  bool   `json:"allow_remote_management" default:"false"`

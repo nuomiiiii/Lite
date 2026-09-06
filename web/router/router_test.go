@@ -88,3 +88,15 @@ func TestRegisterRemovesLegacyAgentAndTerminalRoutes(t *testing.T) {
 		t.Fatal("remote grant routes are missing")
 	}
 }
+
+func TestRegisterDoesNotExposeAutoDiscoveryRegister(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	Register(engine)
+
+	for _, route := range engine.Routes() {
+		if route.Path == "/api/clients/register" || route.Path == "/clients/register" {
+			t.Fatalf("auto-discovery register route is still registered: %s %s", route.Method, route.Path)
+		}
+	}
+}

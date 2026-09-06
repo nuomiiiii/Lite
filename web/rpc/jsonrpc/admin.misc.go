@@ -111,11 +111,16 @@ func adminGetSettings(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonR
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to get settings: "+err.Error(), nil)
 	}
+	stripRetiredAdminSettings(cst)
+	return cst, nil
+}
+
+func stripRetiredAdminSettings(cst map[string]any) {
 	delete(cst, config.CloudflareTunnelTokenKey)
 	delete(cst, config.LowResourceModeKey)
 	delete(cst, config.SiteFactoryDefaultsKey)
 	delete(cst, metricstore.MetricDownsamplingEnabledKey)
-	return cst, nil
+	delete(cst, config.AutoDiscoveryKeyKey)
 }
 
 // metricStoreConfigKeys 是与 metrics 独立数据库相关、需要触发连接测试 + 热重载的配置键。
@@ -174,6 +179,7 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 	delete(cfg, config.SiteFactoryDefaultsKey)
 	delete(cfg, config.ReduceMotionKey)
 	delete(cfg, metricstore.MetricDownsamplingEnabledKey)
+	delete(cfg, config.AutoDiscoveryKeyKey)
 
 	previousRemote, _ := config.GetAs[bool](config.AllowRemoteManagementKey, false)
 

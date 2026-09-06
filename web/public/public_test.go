@@ -837,3 +837,32 @@ func TestActiveThemeNavigationPrefersLiteManifest(t *testing.T) {
 		t.Fatalf("preferred navigation URL = %q", got)
 	}
 }
+
+func TestRetiredRegisterPOSTReturns404(t *testing.T) {
+	t.Chdir(t.TempDir())
+	gin.SetMode(gin.TestMode)
+	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.SetDb(db)
+
+	router := gin.New()
+	Static(router.Group("/"), router.NoRoute)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/clients/register", nil)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/clients/register status = %d, want 404", recorder.Code)
+	}
+	if strings.Contains(recorder.Body.String(), "<html") {
+		t.Fatalf("POST /api/clients/register returned HTML:\n%s", recorder.Body.String())
+	}
+
+	unknown := httptest.NewRecorder()
+	router.ServeHTTP(unknown, httptest.NewRequest(http.MethodGet, "/api/not-a-real-endpoint", nil))
+	if unknown.Code == http.StatusNotFound && !strings.Contains(unknown.Body.String(), "<html") {
+		t.Fatal("unknown GET /api path should keep the previous SPA fallback, not a new API 404")
+	}
+}

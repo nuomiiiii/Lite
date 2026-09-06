@@ -64,6 +64,32 @@ func loadClientBillingMeta(ctx context.Context, db *gorm.DB, clients []string) (
 	return result, nil
 }
 
+func loadClientNames(ctx context.Context, db *gorm.DB, clients []string) (map[string]string, error) {
+	query := db.WithContext(ctx).Model(&models.Client{}).Select("uuid", "name")
+	if len(clients) > 0 {
+		query = query.Where("uuid IN ?", clients)
+	}
+	var rows []models.Client
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(rows))
+	for _, row := range rows {
+		result[row.UUID] = row.Name
+	}
+	return result, nil
+}
+
+func applyLiveClientNames(rows []BillingEntryRow, names map[string]string) {
+	for index := range rows {
+		name, ok := names[rows[index].Client]
+		if !ok {
+			continue
+		}
+		rows[index].ClientName = name
+	}
+}
+
 func billingCycleMonths(days int) int {
 	switch days {
 	case 30:

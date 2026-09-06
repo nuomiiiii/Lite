@@ -33,15 +33,19 @@ func TestIssueAndLookupGrant(t *testing.T) {
 	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeExec, "page-a"); !errors.Is(err, ErrGrantScope) {
 		t.Fatalf("cross-scope grant error = %v", err)
 	}
-	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-b"); !errors.Is(err, ErrGrantWorkspace) {
-		t.Fatalf("cross-page grant error = %v", err)
+	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-b"); err != nil {
+		t.Fatalf("grant should not be bound to a page instance: %v", err)
 	}
 }
 
-func TestIssueRemoteGrantRequiresPage(t *testing.T) {
+func TestIssueRemoteGrantDoesNotRequirePage(t *testing.T) {
 	ResetForTest()
-	if _, _, err := IssueGrant("user-a", "login-a", ScopeRemote, ""); !errors.Is(err, ErrGrantWorkspace) {
+	plain, _, err := IssueGrant("user-a", "login-a", ScopeRemote, "")
+	if err != nil {
 		t.Fatalf("empty page error = %v", err)
+	}
+	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-b"); err != nil {
+		t.Fatalf("login-scoped grant rejected: %v", err)
 	}
 }
 

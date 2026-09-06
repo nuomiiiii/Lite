@@ -1190,3 +1190,36 @@ func TestGetEntriesShowsCommittedBaseInsteadOfDailyAccrual(t *testing.T) {
 		assert.NotEqual(t, EntryTypeBaseAccrual, row.Type)
 	}
 }
+
+func TestGetEntriesUsesCurrentClientNameAfterRename(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 25, 12, 0)
+	client := saveClient(t, db, models.Client{Name: "old-name", Price: 30, BillingCycle: 30, Currency: "CNY"})
+	require.NoError(t, EnsureInitialPriceVersions(db, beijingTime(2026, time.August, 1, 0, 0)))
+	require.NoError(t, db.Create(&models.BillingEntry{
+		EntryKey: "rename-addon", Client: client.UUID, ClientName: "old-name",
+		Type: EntryTypeTrafficReset, Day: "2026-08-10", OccurredAt: beijingTime(2026, time.August, 10, 9, 0),
+		OriginalAmountMicros: 5_000_000, OriginalCurrency: "CNY",
+	}).Error)
+	require.NoError(t, db.Model(&models.Client{}).Where("uuid = ?", client.UUID).Update("name", "new-name").Error)
+
+	page, err := GetEntries(context.Background(), db, EntryQuery{
+		Currency: "CNY", From: "2026-08-01", To: "2026-08-31", Page: 1, PageSize: 100, Now: now,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Items)
+	for _, row := range page.Items {
+		assert.Equal(t, "new-name", row.ClientName)
+	}
+
+	named, err := GetEntries(context.Background(), db, EntryQuery{
+		Currency: "CNY", From: "2026-08-01", To: "2026-08-31", Q: "new-name", Page: 1, PageSize: 100, Now: now,
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, named.Items)
+	stale, err := GetEntries(context.Background(), db, EntryQuery{
+		Currency: "CNY", From: "2026-08-01", To: "2026-08-31", Q: "old-name", Page: 1, PageSize: 100, Now: now,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, stale.Items)
+}

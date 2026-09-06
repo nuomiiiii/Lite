@@ -782,6 +782,11 @@ func GetEntries(ctx context.Context, db *gorm.DB, query EntryQuery) (EntryPage, 
 		}
 		return rows[i].OccurredAt.After(rows[j].OccurredAt)
 	})
+	names, err := loadClientNames(ctx, db, clients)
+	if err != nil {
+		return EntryPage{}, err
+	}
+	applyLiveClientNames(rows, names)
 	if needle := strings.ToLower(strings.TrimSpace(query.Q)); needle != "" {
 		filtered := make([]BillingEntryRow, 0, len(rows))
 		for _, row := range rows {
