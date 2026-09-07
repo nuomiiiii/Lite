@@ -207,7 +207,7 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 		`<title>Nomi &amp; Friends</title>`,
 		`<meta name="apple-mobile-web-app-title" content="Nomi &amp; Friends" />`,
 		`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
-		`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
+		`<meta name="apple-mobile-web-app-status-bar-style" content="default" />`,
 		`<link rel="icon" href="/favicon.ico" />`,
 		`<link rel="apple-touch-icon" href="/favicon.ico" />`,
 	} {
@@ -232,8 +232,8 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 	if strings.Count(got, publicThemeColorSyncMarker) != 1 {
 		t.Fatalf("public theme-color sync count = %d, want 1", strings.Count(got, publicThemeColorSyncMarker))
 	}
-	if strings.Contains(got, `apple-mobile-web-app-status-bar-style" content="default"`) {
-		t.Fatalf("renderApplicationIdentity() forced an opaque public status bar: %q", got)
+	if strings.Contains(got, `content="black-translucent"`) {
+		t.Fatalf("renderApplicationIdentity() kept a translucent status bar: %q", got)
 	}
 	if rerendered := renderApplicationIdentity(got, `Nomi & Friends`); strings.Count(rerendered, publicThemeColorSyncMarker) != 1 {
 		t.Fatalf("public theme-color sync was injected more than once: %q", rerendered)
@@ -247,6 +247,9 @@ func TestPublicThemeColorSyncDoesNotObserveHead(t *testing.T) {
 	}
 	if strings.Contains(script, "apply(true)") {
 		t.Fatal("theme-color sync must not force-replace an unchanged theme-color")
+	}
+	if !strings.Contains(script, "apply(0)") || !strings.Contains(script, "apply(1)") {
+		t.Fatal("theme-color sync must keep the first paint tag and only replace it after class changes")
 	}
 }
 
@@ -326,10 +329,7 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		if isAdminApplicationPath(tt.path) {
 			expectedTitle = adminApplicationTitle
 		}
-		statusBar := `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`
-		if isPrivateApplicationPath(tt.path) {
-			statusBar = `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
-		}
+		statusBar := `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
 		for _, want := range []string{
 			`<title>` + expectedTitle + `</title>`,
 			`<meta name="apple-mobile-web-app-title" content="` + expectedTitle + `" />`,

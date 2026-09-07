@@ -50,7 +50,7 @@ const (
 
 const themeBundleMigrationKey = "theme_bundle_migration_v1"
 
-const currentThemeBundleMigration = 11
+const currentThemeBundleMigration = 12
 
 const adminApplicationTitle = "Lite"
 
@@ -152,7 +152,7 @@ func renderPublicDocumentTitle(htmlStr, title string) string {
 }
 
 func publicThemeColorSyncScript() string {
-	return `<script ` + publicThemeColorSyncMarker + `>(()=>{try{const light="#FFFFFF";const dark="#161C24";let applying=false;const color=()=>document.documentElement.classList.contains("dark")?dark:light;const apply=()=>{if(applying||!document.head)return;const hex=color();const current=document.querySelector('meta[name="theme-color"]');if(current&&(current.getAttribute("content")||"").toLowerCase()===hex.toLowerCase())return;applying=true;document.querySelectorAll('meta[name="theme-color"]').forEach((el)=>el.remove());const meta=document.createElement("meta");meta.setAttribute("name","theme-color");meta.setAttribute("content",hex);document.head.appendChild(meta);applying=false;};const schedule=()=>{apply();requestAnimationFrame(apply);};schedule();new MutationObserver(schedule).observe(document.documentElement,{attributes:true,attributeFilter:["class"]});document.addEventListener("visibilitychange",()=>{if(!document.hidden)schedule();});window.addEventListener("pageshow",schedule);window.addEventListener("load",schedule);}catch(e){}})();</script>`
+	return `<script ` + publicThemeColorSyncMarker + `>(()=>{try{const light="#FFFFFF";const dark="#161C24";let applying=false;const isDark=()=>{const root=document.documentElement;const body=document.body;return root.classList.contains("dark")||root.getAttribute("data-theme")==="dark"||!!(body&&(body.classList.contains("dark")||body.getAttribute("data-theme")==="dark"));};const color=()=>isDark()?dark:light;const apply=(replaceTag)=>{if(applying||!document.head)return;const hex=color();const current=document.querySelector('meta[name="theme-color"]');if(current&&(current.getAttribute("content")||"").toLowerCase()===hex.toLowerCase())return;applying=true;if(!replaceTag&&current){current.setAttribute("content",hex);applying=false;return;}document.querySelectorAll('meta[name="theme-color"]').forEach((el)=>el.remove());const meta=document.createElement("meta");meta.setAttribute("name","theme-color");meta.setAttribute("content",hex);document.head.appendChild(meta);applying=false;};const watch=(node)=>{if(!node)return;new MutationObserver(()=>apply(1)).observe(node,{attributes:true,attributeFilter:["class","data-theme"]});};apply(0);watch(document.documentElement);if(document.body)watch(document.body);else document.addEventListener("DOMContentLoaded",()=>{apply(0);watch(document.body);},{once:true});document.addEventListener("visibilitychange",()=>{if(!document.hidden)apply(1);});window.addEventListener("pageshow",()=>apply(1));}catch(e){}})();</script>`
 }
 
 func injectPublicThemeColorSync(htmlStr string) string {
@@ -170,9 +170,8 @@ func injectPublicThemeColorSync(htmlStr string) string {
 }
 
 const (
-	mobileViewportTag       = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
-	appleStatusBarTag       = `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`
-	systemAppleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
+	mobileViewportTag = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
+	appleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
 )
 
 func replaceOrInsertHeadTag(htmlStr, tag string, pattern *regexp.Regexp) string {
@@ -196,13 +195,10 @@ func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle 
 		title = "Lite"
 	}
 
-	statusBar := appleStatusBarTag
-	if !synchronizeTitle {
-		// Admin, terminal, and install share the system UI. Keep the status bar
-		// opaque so a home-screen shortcut does not draw under the signal bar.
-		statusBar = systemAppleStatusBarTag
-	}
-	htmlStr = renderMobileChromeMeta(htmlStr, statusBar)
+	// Opaque status bar so iOS follows live theme-color updates on public
+	// themes as well as the system UI. Translucent bars ignore the change
+	// until the next navigation.
+	htmlStr = renderMobileChromeMeta(htmlStr, appleStatusBarTag)
 	if synchronizeTitle {
 		htmlStr = renderPublicDocumentTitle(htmlStr, title)
 	} else {
