@@ -152,7 +152,7 @@ func renderPublicDocumentTitle(htmlStr, title string) string {
 }
 
 func publicThemeColorSyncScript() string {
-	return `<script ` + publicThemeColorSyncMarker + `>(()=>{const light="#FFFFFF";const dark="#161C24";let applying=false;const rgbToHex=(value)=>{const m=String(value||"").match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)$/i);if(!m)return"";if(m[4]!==undefined&&Number(m[4])===0)return"";return"#"+[m[1],m[2],m[3]].map((n)=>Number(n).toString(16).padStart(2,"0")).join("");};const color=()=>{const fallback=document.documentElement.classList.contains("dark")?dark:light;const root=rgbToHex(getComputedStyle(document.documentElement).backgroundColor);if(root)return root;if(document.body){const body=rgbToHex(getComputedStyle(document.body).backgroundColor);if(body)return body;}return fallback;};const apply=()=>{if(applying||!document.head)return;const hex=color();const current=document.querySelector('meta[name="theme-color"]');if(current&&(current.getAttribute("content")||"").toLowerCase()===hex.toLowerCase())return;applying=true;document.querySelectorAll('meta[name="theme-color"]').forEach((el)=>el.remove());const meta=document.createElement("meta");meta.setAttribute("name","theme-color");meta.setAttribute("content",hex);document.head.appendChild(meta);applying=false;};const schedule=()=>{apply();requestAnimationFrame(apply);};schedule();new MutationObserver(schedule).observe(document.documentElement,{attributes:true,attributeFilter:["class"]});if(document.head){new MutationObserver(schedule).observe(document.head,{childList:true,subtree:true,attributes:true,attributeFilter:["content"]});}document.addEventListener("visibilitychange",()=>{if(!document.hidden)schedule();});window.addEventListener("pageshow",schedule);window.addEventListener("load",schedule);})();</script>`
+	return `<script ` + publicThemeColorSyncMarker + `>(()=>{const light="#FFFFFF";const dark="#161C24";let applying=false;const color=()=>document.documentElement.classList.contains("dark")?dark:light;const apply=(force)=>{if(applying||!document.head)return;const hex=color();const current=document.querySelector('meta[name="theme-color"]');if(!force&&current&&(current.getAttribute("content")||"").toLowerCase()===hex.toLowerCase())return;applying=true;document.querySelectorAll('meta[name="theme-color"]').forEach((el)=>el.remove());const meta=document.createElement("meta");meta.setAttribute("name","theme-color");meta.setAttribute("content",hex);document.head.appendChild(meta);applying=false;};const schedule=()=>{apply(true);requestAnimationFrame(()=>apply(true));setTimeout(()=>apply(true),50);setTimeout(()=>apply(true),200);};schedule();new MutationObserver(schedule).observe(document.documentElement,{attributes:true,attributeFilter:["class"]});if(document.head){new MutationObserver(schedule).observe(document.head,{childList:true,subtree:true,attributes:true,attributeFilter:["content"]});}document.addEventListener("visibilitychange",()=>{if(!document.hidden)schedule();});window.addEventListener("pageshow",schedule);window.addEventListener("load",schedule);})();</script>`
 }
 
 func injectPublicThemeColorSync(htmlStr string) string {
@@ -170,9 +170,8 @@ func injectPublicThemeColorSync(htmlStr string) string {
 }
 
 const (
-	mobileViewportTag       = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
-	appleStatusBarTag       = `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`
-	systemAppleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
+	mobileViewportTag = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
+	appleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
 )
 
 func replaceOrInsertHeadTag(htmlStr, tag string, pattern *regexp.Regexp) string {
@@ -196,13 +195,9 @@ func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle 
 		title = "Lite"
 	}
 
-	statusBar := appleStatusBarTag
-	if !synchronizeTitle {
-		// Admin, terminal, and install share the system UI. Keep the status bar
-		// opaque so a home-screen shortcut does not draw under the signal bar.
-		statusBar = systemAppleStatusBarTag
-	}
-	htmlStr = renderMobileChromeMeta(htmlStr, statusBar)
+	// Public themes and the system UI both use an opaque status bar. iOS only
+	// follows live theme-color updates when the bar is not translucent.
+	htmlStr = renderMobileChromeMeta(htmlStr, appleStatusBarTag)
 	if synchronizeTitle {
 		htmlStr = renderPublicDocumentTitle(htmlStr, title)
 	} else {
