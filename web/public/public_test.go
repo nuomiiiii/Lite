@@ -242,6 +242,12 @@ func TestRenderSystemApplicationIdentityLeavesRuntimeTitleOwnershipToReact(t *te
 	if !strings.Contains(got, `<link rel="icon" href="/favicon.ico" />`) || strings.Contains(got, `href="favicon.ico"`) {
 		t.Fatalf("system document did not receive a route-safe favicon: %q", got)
 	}
+	if !strings.Contains(got, `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`) {
+		t.Fatalf("system document did not keep an opaque status bar: %q", got)
+	}
+	if strings.Contains(got, `content="black-translucent"`) {
+		t.Fatalf("system document kept a translucent status bar: %q", got)
+	}
 }
 
 func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
@@ -295,11 +301,15 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		if isAdminApplicationPath(tt.path) {
 			expectedTitle = adminApplicationTitle
 		}
+		statusBar := `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`
+		if isPrivateApplicationPath(tt.path) {
+			statusBar = `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
+		}
 		for _, want := range []string{
 			`<title>` + expectedTitle + `</title>`,
 			`<meta name="apple-mobile-web-app-title" content="` + expectedTitle + `" />`,
 			`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
-			`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
+			statusBar,
 			`<link rel="icon" href="/favicon.ico" />`,
 			`<link rel="apple-touch-icon" href="/favicon.ico" />`,
 		} {

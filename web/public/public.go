@@ -152,6 +152,7 @@ func renderPublicDocumentTitle(htmlStr, title string) string {
 const (
 	mobileViewportTag = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
 	appleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`
+	systemAppleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
 )
 
 func replaceOrInsertHeadTag(htmlStr, tag string, pattern *regexp.Regexp) string {
@@ -164,9 +165,9 @@ func replaceOrInsertHeadTag(htmlStr, tag string, pattern *regexp.Regexp) string 
 	return tag + htmlStr
 }
 
-func renderMobileChromeMeta(htmlStr string) string {
+func renderMobileChromeMeta(htmlStr, appleStatusBar string) string {
 	htmlStr = replaceOrInsertHeadTag(htmlStr, mobileViewportTag, viewportMetaPattern)
-	return replaceOrInsertHeadTag(htmlStr, appleStatusBarTag, appleStatusBarPattern)
+	return replaceOrInsertHeadTag(htmlStr, appleStatusBar, appleStatusBarPattern)
 }
 
 func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle bool) string {
@@ -175,7 +176,13 @@ func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle 
 		title = "Lite"
 	}
 
-	htmlStr = renderMobileChromeMeta(htmlStr)
+	statusBar := appleStatusBarTag
+	if !synchronizeTitle {
+		// Admin, terminal, and install share the system UI. Keep the status bar
+		// opaque so a home-screen shortcut does not draw under the signal bar.
+		statusBar = systemAppleStatusBarTag
+	}
+	htmlStr = renderMobileChromeMeta(htmlStr, statusBar)
 	if synchronizeTitle {
 		htmlStr = renderPublicDocumentTitle(htmlStr, title)
 	} else {
