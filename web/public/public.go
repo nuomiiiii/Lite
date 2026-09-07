@@ -170,8 +170,9 @@ func injectPublicThemeColorSync(htmlStr string) string {
 }
 
 const (
-	mobileViewportTag = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
-	appleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
+	mobileViewportTag       = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
+	appleStatusBarTag       = `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`
+	systemAppleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
 )
 
 func replaceOrInsertHeadTag(htmlStr, tag string, pattern *regexp.Regexp) string {
@@ -195,9 +196,13 @@ func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle 
 		title = "Lite"
 	}
 
-	// Public themes and the system UI both use an opaque status bar. iOS only
-	// follows live theme-color updates when the bar is not translucent.
-	htmlStr = renderMobileChromeMeta(htmlStr, appleStatusBarTag)
+	statusBar := appleStatusBarTag
+	if !synchronizeTitle {
+		// Admin, terminal, and install share the system UI. Keep the status bar
+		// opaque so a home-screen shortcut does not draw under the signal bar.
+		statusBar = systemAppleStatusBarTag
+	}
+	htmlStr = renderMobileChromeMeta(htmlStr, statusBar)
 	if synchronizeTitle {
 		htmlStr = renderPublicDocumentTitle(htmlStr, title)
 	} else {
