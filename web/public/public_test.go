@@ -240,6 +240,16 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 	}
 }
 
+func TestPublicThemeColorSyncDoesNotObserveHead(t *testing.T) {
+	script := publicThemeColorSyncScript()
+	if strings.Contains(script, "observe(document.head") {
+		t.Fatal("theme-color sync must not observe head mutations")
+	}
+	if strings.Contains(script, "apply(true)") {
+		t.Fatal("theme-color sync must not force-replace an unchanged theme-color")
+	}
+}
+
 func TestRenderSystemApplicationIdentityLeavesRuntimeTitleOwnershipToReact(t *testing.T) {
 	got := renderSystemApplicationIdentity(
 		`<html><head><title>Lite</title><link rel="shortcut icon" href="favicon.ico" /></head><body></body></html>`,
