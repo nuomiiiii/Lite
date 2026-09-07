@@ -58,6 +58,8 @@ const themeChangeReloadScript = `<script>(()=>{window.addEventListener("storage"
 
 const documentTitleSyncMarker = "data-lite-title-sync"
 
+const publicThemeColorSyncMarker = "data-lite-theme-color-sync"
+
 type webAppManifest struct {
 	ID              string               `json:"id"`
 	Name            string               `json:"name"`
@@ -149,9 +151,27 @@ func renderPublicDocumentTitle(htmlStr, title string) string {
 	return htmlStr + script
 }
 
+func publicThemeColorSyncScript() string {
+	return `<script ` + publicThemeColorSyncMarker + `>(()=>{const light="#FFFFFF";const dark="#161C24";let applying=false;const rgbToHex=(value)=>{const m=String(value||"").match(/^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)$/i);if(!m)return"";if(m[4]!==undefined&&Number(m[4])===0)return"";return"#"+[m[1],m[2],m[3]].map((n)=>Number(n).toString(16).padStart(2,"0")).join("");};const color=()=>{const fallback=document.documentElement.classList.contains("dark")?dark:light;const root=rgbToHex(getComputedStyle(document.documentElement).backgroundColor);if(root)return root;if(document.body){const body=rgbToHex(getComputedStyle(document.body).backgroundColor);if(body)return body;}return fallback;};const apply=()=>{if(applying||!document.head)return;const hex=color();const current=document.querySelector('meta[name="theme-color"]');if(current&&(current.getAttribute("content")||"").toLowerCase()===hex.toLowerCase())return;applying=true;document.querySelectorAll('meta[name="theme-color"]').forEach((el)=>el.remove());const meta=document.createElement("meta");meta.setAttribute("name","theme-color");meta.setAttribute("content",hex);document.head.appendChild(meta);applying=false;};const schedule=()=>{apply();requestAnimationFrame(apply);};schedule();new MutationObserver(schedule).observe(document.documentElement,{attributes:true,attributeFilter:["class"]});if(document.head){new MutationObserver(schedule).observe(document.head,{childList:true,subtree:true,attributes:true,attributeFilter:["content"]});}document.addEventListener("visibilitychange",()=>{if(!document.hidden)schedule();});window.addEventListener("pageshow",schedule);window.addEventListener("load",schedule);})();</script>`
+}
+
+func injectPublicThemeColorSync(htmlStr string) string {
+	if strings.Contains(htmlStr, publicThemeColorSyncMarker) {
+		return htmlStr
+	}
+	script := publicThemeColorSyncScript()
+	if location := headClosePattern.FindStringIndex(htmlStr); location != nil {
+		return htmlStr[:location[0]] + script + htmlStr[location[0]:]
+	}
+	if location := bodyClosePattern.FindStringIndex(htmlStr); location != nil {
+		return htmlStr[:location[0]] + script + htmlStr[location[0]:]
+	}
+	return htmlStr + script
+}
+
 const (
-	mobileViewportTag = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
-	appleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`
+	mobileViewportTag       = `<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`
+	appleStatusBarTag       = `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`
 	systemAppleStatusBarTag = `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
 )
 
@@ -203,6 +223,11 @@ func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle 
 	icons := `<link rel="icon" href="/favicon.ico" /><link rel="apple-touch-icon" href="/favicon.ico" />`
 	if location := headClosePattern.FindStringIndex(htmlStr); location != nil {
 		htmlStr = htmlStr[:location[0]] + icons + htmlStr[location[0]:]
+	}
+	if synchronizeTitle {
+		// Public themes often write theme-color as hsl() or only on first paint.
+		// iOS follows a hex theme-color tag that is replaced on appearance changes.
+		htmlStr = injectPublicThemeColorSync(htmlStr)
 	}
 	return htmlStr
 }

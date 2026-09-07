@@ -226,6 +226,15 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 	if strings.Contains(got, "relative-favicon.ico") {
 		t.Fatalf("renderApplicationIdentity() retained a route-relative favicon: %q", got)
 	}
+	if !strings.Contains(got, publicThemeColorSyncMarker) {
+		t.Fatalf("renderApplicationIdentity() missing public theme-color sync: %q", got)
+	}
+	if got := strings.Count(got, publicThemeColorSyncMarker); got != 1 {
+		t.Fatalf("public theme-color sync count = %d, want 1", got)
+	}
+	if rerendered := renderApplicationIdentity(got, `Nomi & Friends`); strings.Count(rerendered, publicThemeColorSyncMarker) != 1 {
+		t.Fatalf("public theme-color sync was injected more than once: %q", rerendered)
+	}
 }
 
 func TestRenderSystemApplicationIdentityLeavesRuntimeTitleOwnershipToReact(t *testing.T) {
@@ -236,7 +245,10 @@ func TestRenderSystemApplicationIdentityLeavesRuntimeTitleOwnershipToReact(t *te
 	if !strings.Contains(got, `<title>My Lite</title>`) {
 		t.Fatalf("system document did not receive its initial title: %q", got)
 	}
-	if strings.Contains(got, documentTitleSyncMarker) || strings.Contains(got, "MutationObserver") {
+	if strings.Contains(got, documentTitleSyncMarker) || strings.Contains(got, publicThemeColorSyncMarker) {
+		t.Fatalf("system document retained a public-page synchronizer: %q", got)
+	}
+	if strings.Contains(got, "MutationObserver") {
 		t.Fatalf("system document retained the public title synchronizer: %q", got)
 	}
 	if !strings.Contains(got, `<link rel="icon" href="/favicon.ico" />`) || strings.Contains(got, `href="favicon.ico"`) {
@@ -321,8 +333,11 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 			if !strings.Contains(body, documentTitleSyncMarker) {
 				t.Fatalf("GET %s public document has no title synchronizer", tt.path)
 			}
-		} else if strings.Contains(body, documentTitleSyncMarker) {
-			t.Fatalf("GET %s private system document contains the public title synchronizer", tt.path)
+			if !strings.Contains(body, publicThemeColorSyncMarker) {
+				t.Fatalf("GET %s public document has no theme-color synchronizer", tt.path)
+			}
+		} else if strings.Contains(body, documentTitleSyncMarker) || strings.Contains(body, publicThemeColorSyncMarker) {
+			t.Fatalf("GET %s private system document contains a public-page synchronizer", tt.path)
 		}
 		if got := recorder.Header().Get("Cache-Control"); isPrivateApplicationPath(tt.path) {
 			if got != "no-store, private" {
