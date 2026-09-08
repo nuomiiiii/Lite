@@ -251,6 +251,9 @@ func TestPublicThemeColorSyncDoesNotObserveHead(t *testing.T) {
 	if !strings.Contains(script, "apply(0)") || !strings.Contains(script, "apply(1)") {
 		t.Fatal("theme-color sync must keep the first paint tag and only replace it after class changes")
 	}
+	if strings.Contains(script, "visibilitychange") || strings.Contains(script, "pageshow") {
+		t.Fatal("theme-color sync must not rebuild the tag on pageshow or visibility")
+	}
 }
 
 func TestRenderSystemApplicationIdentityLeavesRuntimeTitleOwnershipToReact(t *testing.T) {

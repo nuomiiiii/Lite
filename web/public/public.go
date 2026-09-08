@@ -152,7 +152,11 @@ func renderPublicDocumentTitle(htmlStr, title string) string {
 }
 
 func publicThemeColorSyncScript() string {
-	return `<script ` + publicThemeColorSyncMarker + `>(()=>{try{const light="#FFFFFF";const dark="#161C24";let applying=false;const isDark=()=>{const root=document.documentElement;const body=document.body;return root.classList.contains("dark")||root.getAttribute("data-theme")==="dark"||!!(body&&(body.classList.contains("dark")||body.getAttribute("data-theme")==="dark"));};const color=()=>isDark()?dark:light;const apply=(replaceTag)=>{if(applying||!document.head)return;const hex=color();const current=document.querySelector('meta[name="theme-color"]');if(current&&(current.getAttribute("content")||"").toLowerCase()===hex.toLowerCase())return;applying=true;if(!replaceTag&&current){current.setAttribute("content",hex);applying=false;return;}document.querySelectorAll('meta[name="theme-color"]').forEach((el)=>el.remove());const meta=document.createElement("meta");meta.setAttribute("name","theme-color");meta.setAttribute("content",hex);document.head.appendChild(meta);applying=false;};const watch=(node)=>{if(!node)return;new MutationObserver(()=>apply(1)).observe(node,{attributes:true,attributeFilter:["class","data-theme"]});};apply(0);watch(document.documentElement);if(document.body)watch(document.body);else document.addEventListener("DOMContentLoaded",()=>{apply(0);watch(document.body);},{once:true});document.addEventListener("visibilitychange",()=>{if(!document.hidden)apply(1);});window.addEventListener("pageshow",()=>apply(1));}catch(e){}})();</script>`
+	// First paint keeps the existing tag. Class/data-theme changes replace it so
+	// iOS 18 can pick up a live hex theme-color. Do not rebuild on pageshow or
+	// visibility — that spends the one replace iOS 18 honors before the user
+	// toggles appearance. iOS 26 ignores theme-color.
+	return `<script ` + publicThemeColorSyncMarker + `>(()=>{try{const light="#FFFFFF";const dark="#161C24";let applying=false;const isDark=()=>{const root=document.documentElement;const body=document.body;return root.classList.contains("dark")||root.getAttribute("data-theme")==="dark"||!!(body&&(body.classList.contains("dark")||body.getAttribute("data-theme")==="dark"));};const color=()=>isDark()?dark:light;const apply=(replaceTag)=>{if(applying||!document.head)return;const hex=color();const current=document.querySelector('meta[name="theme-color"]');if(current&&(current.getAttribute("content")||"").toLowerCase()===hex.toLowerCase())return;applying=true;if(!replaceTag&&current){current.setAttribute("content",hex);applying=false;return;}document.querySelectorAll('meta[name="theme-color"]').forEach((el)=>el.remove());const meta=document.createElement("meta");meta.setAttribute("name","theme-color");meta.setAttribute("content",hex);document.head.appendChild(meta);applying=false;};const watch=(node)=>{if(!node)return;new MutationObserver(()=>apply(1)).observe(node,{attributes:true,attributeFilter:["class","data-theme"]});};apply(0);watch(document.documentElement);if(document.body)watch(document.body);else document.addEventListener("DOMContentLoaded",()=>{apply(0);watch(document.body);},{once:true});}catch(e){}})();</script>`
 }
 
 func injectPublicThemeColorSync(htmlStr string) string {
@@ -195,9 +199,9 @@ func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle 
 		title = "Lite"
 	}
 
-	// Opaque status bar so iOS follows live theme-color updates on public
-	// themes as well as the system UI. Translucent bars ignore the change
-	// until the next navigation.
+	// Opaque status bar so iOS 18 can follow live hex theme-color on public
+	// pages. Translucent bars ignore the change until the next navigation.
+	// iOS 26 ignores theme-color; the bundled glass header is left as-is.
 	htmlStr = renderMobileChromeMeta(htmlStr, appleStatusBarTag)
 	if synchronizeTitle {
 		htmlStr = renderPublicDocumentTitle(htmlStr, title)
@@ -222,7 +226,7 @@ func renderApplicationIdentityWithTitle(htmlStr, title string, synchronizeTitle 
 	}
 	if synchronizeTitle {
 		// Public themes often write theme-color as hsl() or only on first paint.
-		// iOS follows a hex theme-color tag that is replaced on appearance changes.
+		// iOS 18 follows a hex theme-color tag that is replaced on appearance changes.
 		htmlStr = injectPublicThemeColorSync(htmlStr)
 	}
 	return htmlStr
