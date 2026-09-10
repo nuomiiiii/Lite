@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-09-10T00:17:46.689635Z",
+  "generated_at": "2026-09-10T07:21:30.727248Z",
   "source": "bgp.tools/table.jsonl + maintained overrides",
   "prefix_groups": {
     "cmin2": [
@@ -510,9 +510,7 @@
       "2a04:f580:9270::/48",
       "2a04:f580:9280::/48",
       "2a04:f580:9290::/48",
-      "2c0f:f7a8:9020::/48",
-      "2c0f:f7a8:9041::/48",
-      "2c0f:f7a8:9220::/48"
+      "2c0f:f7a8:9041::/48"
     ],
     "telecom_163": [
       "1.48.0.0/15",
