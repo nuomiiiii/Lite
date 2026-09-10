@@ -404,6 +404,27 @@ func TestCreateOneTimeFeeEntry(t *testing.T) {
 	assert.Equal(t, "线路升级补差", page.Items[0].Note)
 }
 
+func TestCreateOneTimeFeeEntryAllowsZero(t *testing.T) {
+	db := billingTestDB(t)
+	now := beijingTime(2026, time.August, 26, 12, 0)
+	saveFX(t, db, now.Add(-time.Hour), "7", "1.3")
+	client := saveClient(t, db, models.Client{Name: "zero-fee-node", Currency: "USD"})
+	entry, err := CreateOneTimeFeeEntry(context.Background(), db, TrafficResetInput{
+		Client: client.UUID, Amount: "0", Currency: "USD", IdempotencyKey: "fee-zero",
+		OccurredAt: now,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), entry.OriginalAmountMicros)
+
+	_, err = CreateOneTimeFeeEntry(context.Background(), db, TrafficResetInput{
+		Client: client.UUID, Amount: "-1", Currency: "USD", IdempotencyKey: "fee-neg",
+		OccurredAt: now,
+	})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidInput)
+	assert.Contains(t, err.Error(), "amount must not be negative")
+}
+
 func TestCommittedMonthlyUsesTrafficResetDayAndStopsAtExpiry(t *testing.T) {
 	db := billingTestDB(t)
 	resetDay := 15

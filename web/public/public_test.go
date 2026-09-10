@@ -207,7 +207,7 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 		`<title>Nomi &amp; Friends</title>`,
 		`<meta name="apple-mobile-web-app-title" content="Nomi &amp; Friends" />`,
 		`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
-		`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
+		`<meta name="apple-mobile-web-app-status-bar-style" content="default" />`,
 		`<link rel="icon" href="/favicon.ico" />`,
 		`<link rel="apple-touch-icon" href="/favicon.ico" />`,
 	} {
@@ -226,6 +226,34 @@ func TestRenderApplicationIdentityUsesBackendNameAndFavicon(t *testing.T) {
 	if strings.Contains(got, "relative-favicon.ico") {
 		t.Fatalf("renderApplicationIdentity() retained a route-relative favicon: %q", got)
 	}
+	if !strings.Contains(got, publicThemeColorSyncMarker) {
+		t.Fatalf("renderApplicationIdentity() missing public theme-color sync: %q", got)
+	}
+	if strings.Count(got, publicThemeColorSyncMarker) != 1 {
+		t.Fatalf("public theme-color sync count = %d, want 1", strings.Count(got, publicThemeColorSyncMarker))
+	}
+	if strings.Contains(got, `content="black-translucent"`) {
+		t.Fatalf("renderApplicationIdentity() kept a translucent status bar: %q", got)
+	}
+	if rerendered := renderApplicationIdentity(got, `Nomi & Friends`); strings.Count(rerendered, publicThemeColorSyncMarker) != 1 {
+		t.Fatalf("public theme-color sync was injected more than once: %q", rerendered)
+	}
+}
+
+func TestPublicThemeColorSyncDoesNotObserveHead(t *testing.T) {
+	script := publicThemeColorSyncScript()
+	if strings.Contains(script, "observe(document.head") {
+		t.Fatal("theme-color sync must not observe head mutations")
+	}
+	if strings.Contains(script, "apply(true)") {
+		t.Fatal("theme-color sync must not force-replace an unchanged theme-color")
+	}
+	if !strings.Contains(script, "apply(0)") || !strings.Contains(script, "apply(1)") {
+		t.Fatal("theme-color sync must keep the first paint tag and only replace it after class changes")
+	}
+	if strings.Contains(script, "visibilitychange") || strings.Contains(script, "pageshow") {
+		t.Fatal("theme-color sync must not rebuild the tag on pageshow or visibility")
+	}
 }
 
 func TestRenderSystemApplicationIdentityLeavesRuntimeTitleOwnershipToReact(t *testing.T) {
@@ -236,11 +264,20 @@ func TestRenderSystemApplicationIdentityLeavesRuntimeTitleOwnershipToReact(t *te
 	if !strings.Contains(got, `<title>My Lite</title>`) {
 		t.Fatalf("system document did not receive its initial title: %q", got)
 	}
-	if strings.Contains(got, documentTitleSyncMarker) || strings.Contains(got, "MutationObserver") {
+	if strings.Contains(got, documentTitleSyncMarker) || strings.Contains(got, publicThemeColorSyncMarker) {
+		t.Fatalf("system document retained a public-page synchronizer: %q", got)
+	}
+	if strings.Contains(got, "MutationObserver") {
 		t.Fatalf("system document retained the public title synchronizer: %q", got)
 	}
 	if !strings.Contains(got, `<link rel="icon" href="/favicon.ico" />`) || strings.Contains(got, `href="favicon.ico"`) {
 		t.Fatalf("system document did not receive a route-safe favicon: %q", got)
+	}
+	if !strings.Contains(got, `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`) {
+		t.Fatalf("system document did not keep an opaque status bar: %q", got)
+	}
+	if strings.Contains(got, `content="black-translucent"`) {
+		t.Fatalf("system document kept a translucent status bar: %q", got)
 	}
 }
 
@@ -295,11 +332,12 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		if isAdminApplicationPath(tt.path) {
 			expectedTitle = adminApplicationTitle
 		}
+		statusBar := `<meta name="apple-mobile-web-app-status-bar-style" content="default" />`
 		for _, want := range []string{
 			`<title>` + expectedTitle + `</title>`,
 			`<meta name="apple-mobile-web-app-title" content="` + expectedTitle + `" />`,
 			`<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />`,
-			`<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />`,
+			statusBar,
 			`<link rel="icon" href="/favicon.ico" />`,
 			`<link rel="apple-touch-icon" href="/favicon.ico" />`,
 		} {
@@ -311,8 +349,11 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 			if !strings.Contains(body, documentTitleSyncMarker) {
 				t.Fatalf("GET %s public document has no title synchronizer", tt.path)
 			}
-		} else if strings.Contains(body, documentTitleSyncMarker) {
-			t.Fatalf("GET %s private system document contains the public title synchronizer", tt.path)
+			if !strings.Contains(body, publicThemeColorSyncMarker) {
+				t.Fatalf("GET %s public document has no theme-color synchronizer", tt.path)
+			}
+		} else if strings.Contains(body, documentTitleSyncMarker) || strings.Contains(body, publicThemeColorSyncMarker) {
+			t.Fatalf("GET %s private system document contains a public-page synchronizer", tt.path)
 		}
 		if got := recorder.Header().Get("Cache-Control"); isPrivateApplicationPath(tt.path) {
 			if got != "no-store, private" {

@@ -47,8 +47,11 @@ func createAddonEntry(ctx context.Context, db *gorm.DB, input TrafficResetInput,
 		return result, invalidInputf("client and idempotency_key are required")
 	}
 	amount, err := ParseAmountMicros(input.Amount)
-	if err != nil || amount <= 0 {
-		return result, invalidInputf("amount must be greater than zero")
+	if err != nil {
+		return result, invalidInputf("%s", err.Error())
+	}
+	if amount < 0 {
+		return result, invalidInputf("amount must not be negative")
 	}
 	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		entryKey := keyPrefix + input.Client + ":" + input.IdempotencyKey
