@@ -55,7 +55,7 @@ func adminCreateClipboard(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to create clipboard: "+err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "create clipboard:"+strconv.Itoa(cb.Id), "info")
+	auditlog.Event(ip, actor, "info", "audit.clipboard_create", map[string]string{"id": strconv.Itoa(cb.Id)})
 	return cb, nil
 }
 
@@ -75,7 +75,7 @@ func adminUpdateClipboard(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to update clipboard: "+err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "update clipboard:"+strconv.Itoa(id), "info")
+	auditlog.Event(ip, actor, "info", "audit.clipboard_update", map[string]string{"id": strconv.Itoa(id)})
 	return nil, nil
 }
 
@@ -92,7 +92,7 @@ func adminDeleteClipboard(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to delete clipboard: "+err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "delete clipboard:"+strconv.Itoa(id), "warn")
+	auditlog.Event(ip, actor, "warn", "audit.clipboard_delete", map[string]string{"id": strconv.Itoa(id)})
 	return nil, nil
 }
 
@@ -108,6 +108,6 @@ func adminBatchDeleteClipboard(ctx context.Context, req *rpc.JsonRpcRequest) (an
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to batch delete clipboard: "+err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "batch delete clipboard: "+strconv.Itoa(len(params.IDs))+" items", "warn")
+	auditlog.Event(ip, actor, "warn", "audit.clipboard_batch_delete", map[string]string{"count": strconv.Itoa(len(params.IDs))})
 	return nil, nil
 }

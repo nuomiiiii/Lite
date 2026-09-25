@@ -63,7 +63,7 @@ func UpdateUser(c *gin.Context) {
 		remotectl.RevokeUser(req.Uuid)
 	}
 	uuid, _ := c.Get("uuid")
-	auditlog.Log(c.ClientIP(), uuid.(string), "User updated", "warn")
+	auditlog.Event(c.ClientIP(), uuid.(string), "warn", "audit.user_update", nil)
 	api.RespondSuccess(c, gin.H{"uuid": req.Uuid})
 }
 
@@ -73,7 +73,7 @@ func UpdateMmdbGeoIP(c *gin.Context) {
 		return
 	}
 	uuid, _ := c.Get("uuid")
-	auditlog.Log(c.ClientIP(), uuid.(string), "GeoIP database updated", "info")
+	auditlog.Event(c.ClientIP(), uuid.(string), "info", "audit.geoip_update", nil)
 	api.RespondSuccess(c, nil)
 }
 
@@ -93,7 +93,7 @@ func UploadFavicon(c *gin.Context) {
 		return
 	}
 	uuid, _ := c.Get("uuid")
-	auditlog.Log(c.ClientIP(), uuid.(string), "Favicon uploaded", "info")
+	auditlog.Event(c.ClientIP(), uuid.(string), "info", "audit.favicon_upload", nil)
 	api.RespondSuccess(c, nil)
 }
 
@@ -105,6 +105,6 @@ func DeleteFavicon(c *gin.Context) {
 		}
 	}
 	uuid, _ := c.Get("uuid")
-	auditlog.Log(c.ClientIP(), uuid.(string), "Favicon restored to default", "info")
+	auditlog.Event(c.ClientIP(), uuid.(string), "info", "audit.favicon_restore", nil)
 	api.RespondSuccess(c, nil)
 }

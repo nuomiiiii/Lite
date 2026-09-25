@@ -8,9 +8,14 @@ import (
 	"time"
 )
 
+func consumeGrant(plain, userUUID, loginSession, scope, pageID string) error {
+	_, err := lookupGrant(plain, userUUID, loginSession, scope, pageID, true)
+	return err
+}
+
 func TestConsumeGrantRejectsEmpty(t *testing.T) {
 	ResetForTest()
-	if err := ConsumeGrant("", "user-a", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantRequired) {
+	if err := consumeGrant("", "user-a", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantRequired) {
 		t.Fatalf("empty grant error = %v", err)
 	}
 }
@@ -21,22 +26,22 @@ func TestIssueAndLookupGrant(t *testing.T) {
 	if err != nil || plain == "" || !expires.After(time.Now()) {
 		t.Fatalf("IssueGrant() = %q %v %v", plain, expires, err)
 	}
-	if err := ConsumeGrant(plain, "user-b", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantPrincipal) {
+	if err := consumeGrant(plain, "user-b", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantPrincipal) {
 		t.Fatalf("cross-user grant error = %v", err)
 	}
-	if err := ConsumeGrant(plain, "user-a", "login-b", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantPrincipal) {
+	if err := consumeGrant(plain, "user-a", "login-b", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantPrincipal) {
 		t.Fatalf("cross-login grant error = %v", err)
 	}
-	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeExec, "page-a"); !errors.Is(err, ErrGrantScope) {
+	if err := consumeGrant(plain, "user-a", "login-a", ScopeExec, "page-a"); !errors.Is(err, ErrGrantScope) {
 		t.Fatalf("cross-scope grant error = %v", err)
 	}
-	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-b"); !errors.Is(err, ErrGrantWorkspace) {
+	if err := consumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-b"); !errors.Is(err, ErrGrantWorkspace) {
 		t.Fatalf("cross-page grant error = %v", err)
 	}
-	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-a"); err != nil {
+	if err := consumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-a"); err != nil {
 		t.Fatalf("valid grant rejected: %v", err)
 	}
-	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantInvalid) {
+	if err := consumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantInvalid) {
 		t.Fatalf("consumed grant error = %v", err)
 	}
 }
@@ -61,13 +66,13 @@ func TestConsumeAndRotateGrantKeepsPageAndExpiry(t *testing.T) {
 	if !nextExpires.Equal(expires) {
 		t.Fatalf("rotated expiry = %v, want %v", nextExpires, expires)
 	}
-	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantInvalid) {
+	if err := consumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantInvalid) {
 		t.Fatalf("old grant after rotate error = %v", err)
 	}
 	if _, _, err := ConsumeAndRotateGrant(next, "user-a", "login-a", ScopeRemote, "page-b"); !errors.Is(err, ErrGrantWorkspace) {
 		t.Fatalf("rotated grant on other page error = %v", err)
 	}
-	if err := ConsumeGrant(next, "user-a", "login-a", ScopeRemote, "page-a"); err != nil {
+	if err := consumeGrant(next, "user-a", "login-a", ScopeRemote, "page-a"); err != nil {
 		t.Fatalf("rotated grant rejected: %v", err)
 	}
 }
@@ -79,7 +84,7 @@ func TestRevokeGrantAndLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	RevokeGrant(plain)
-	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantInvalid) {
+	if err := consumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantInvalid) {
 		t.Fatalf("revoked grant error = %v", err)
 	}
 	plain, _, err = IssueGrant("user-a", "login-a", ScopeExec, "page-a")
@@ -87,7 +92,7 @@ func TestRevokeGrantAndLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	RevokeLogin("login-a")
-	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeExec, "page-a"); !errors.Is(err, ErrGrantInvalid) {
+	if err := consumeGrant(plain, "user-a", "login-a", ScopeExec, "page-a"); !errors.Is(err, ErrGrantInvalid) {
 		t.Fatalf("login-revoked grant error = %v", err)
 	}
 }
@@ -104,7 +109,7 @@ func TestGrantExpiry(t *testing.T) {
 		grants[key] = stored
 	}
 	grantMu.Unlock()
-	if err := ConsumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantExpired) && !errors.Is(err, ErrGrantInvalid) {
+	if err := consumeGrant(plain, "user-a", "login-a", ScopeRemote, "page-a"); !errors.Is(err, ErrGrantExpired) && !errors.Is(err, ErrGrantInvalid) {
 		t.Fatalf("expired grant error = %v", err)
 	}
 }

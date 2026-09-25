@@ -151,10 +151,6 @@ func trafficResetClientUpdates(profile DeploymentProfile) map[string]any {
 	}
 }
 
-func GetDeploymentProfile(clientUUID string) (DeploymentProfile, bool, error) {
-	return getDeploymentProfile(dbcore.GetDBInstance(), clientUUID)
-}
-
 func GetDeploymentProfileWithDelivery(clientUUID string) (DeploymentProfile, bool, DeploymentDeliveryState, error) {
 	return getDeploymentProfileWithDelivery(dbcore.GetDBInstance(), clientUUID)
 }
@@ -297,18 +293,8 @@ func getDeploymentProfile(db *gorm.DB, clientUUID string) (DeploymentProfile, bo
 	return profile, true, nil
 }
 
-func SaveDeploymentProfile(clientUUID string, profile DeploymentProfile) (DeploymentProfile, error) {
-	profile, _, _, err := saveDeploymentProfileForDispatch(dbcore.GetDBInstance(), clientUUID, profile)
-	return profile, err
-}
-
 func SaveDeploymentProfileForDispatch(clientUUID string, profile DeploymentProfile) (DeploymentProfile, DeploymentDeliveryState, bool, error) {
 	return saveDeploymentProfileForDispatch(dbcore.GetDBInstance(), clientUUID, profile)
-}
-
-func saveDeploymentProfile(db *gorm.DB, clientUUID string, profile DeploymentProfile) (DeploymentProfile, error) {
-	profile, _, _, err := saveDeploymentProfileForDispatch(db, clientUUID, profile)
-	return profile, err
 }
 
 func saveDeploymentProfileForDispatch(db *gorm.DB, clientUUID string, profile DeploymentProfile) (DeploymentProfile, DeploymentDeliveryState, bool, error) {

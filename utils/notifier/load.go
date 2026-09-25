@@ -276,10 +276,6 @@ func getRecordsForClient(clientUUID string, start, end time.Time, metric string)
 }
 
 // checkMetricThreshold 检查指标是否达到阈值
-func checkMetricThreshold(records []models.Record, task models.LoadNotification, client *models.Client) bool {
-	active, _, _ := evaluateMetricThreshold(records, task, client)
-	return active
-}
 
 func evaluateMetricThreshold(records []models.Record, task models.LoadNotification, client *models.Client) (bool, float64, int) {
 	if len(records) == 0 {

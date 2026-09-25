@@ -61,7 +61,7 @@ func UpdateHTTPSSettings(c *gin.Context) {
 		c.Header("Connection", "close")
 	}
 	uuid, _ := c.Get("uuid")
-	auditlog.Log(c.ClientIP(), fmt.Sprint(uuid), "updated built-in HTTPS settings", "warn")
+	auditlog.Event(c.ClientIP(), fmt.Sprint(uuid), "warn", "audit.https_update", nil)
 	api.RespondSuccess(c, gin.H{
 		"settings":     normalized,
 		"status":       httpsserver.Default.Status(),
@@ -76,6 +76,6 @@ func ReloadHTTPSCertificate(c *gin.Context) {
 		return
 	}
 	uuid, _ := c.Get("uuid")
-	auditlog.Log(c.ClientIP(), fmt.Sprint(uuid), "reloaded built-in HTTPS certificate", "info")
+	auditlog.Event(c.ClientIP(), fmt.Sprint(uuid), "info", "audit.https_reload", nil)
 	api.RespondSuccess(c, gin.H{"status": httpsserver.Default.Status()})
 }

@@ -315,7 +315,7 @@ func TestDeleteMetricRemovesRollups(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	base := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
-	if err := s.Write(ctx, Point{MetricName: "gone", EntityID: "agent-001", Timestamp: base, Value: 1}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "gone", EntityID: "agent-001", Timestamp: base, Value: 1}}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if _, err := s.Compact(ctx, base.Add(time.Hour)); err != nil {

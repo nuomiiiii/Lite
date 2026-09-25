@@ -86,7 +86,7 @@ func adminSaveClientDeploymentProfile(ctx context.Context, req *rpc.JsonRpcReque
 	}
 
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "save client deployment profile:"+params.UUID, "info")
+	auditlog.Event(ip, actor, "info", "audit.deployment_save", map[string]string{"name": clients.DisplayName(params.UUID)})
 	return map[string]any{
 		"profile":         profile,
 		"delivery":        delivery,

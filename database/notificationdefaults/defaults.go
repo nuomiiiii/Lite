@@ -207,16 +207,6 @@ func applyDefaultsToNewClient(db *gorm.DB, clientUUID string) (bool, error) {
 }
 
 // ApplyPingLossDefaultsToTaskClients 把已保存的延迟监测告警默认配置套到新的任务/服务器组合上，已有告警行保持不变。
-func ApplyPingLossDefaultsToTaskClients(db *gorm.DB, taskID uint, clients []string) error {
-	if db == nil || taskID == 0 || len(clients) == 0 {
-		return nil
-	}
-	cfg, err := GetPingLossNotificationDefaultConfig()
-	if err != nil {
-		return fmt.Errorf("load ping loss notification default: %w", err)
-	}
-	return ApplyLoadedPingLossDefaultsToTaskClients(db, cfg, taskID, clients)
-}
 
 // ApplyLoadedPingLossDefaultsToTaskClients 使用已经读好的默认配置写入新的任务/服务器组合。
 // 调用方必须在事务外完成 GetPingLossNotificationDefaultConfig，避免 SQLite 单连接卡死。

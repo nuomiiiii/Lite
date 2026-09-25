@@ -241,7 +241,7 @@ func configValueAsInt(value any) (int, bool) {
 // metrics 目标库的数据搬运到当前目标。迁移失败同样让启动失败，并打印明确错误。
 func (a *App) InitStores() error {
 	if err := metricstore.InitializeStore(); err != nil {
-		auditlog.EventLog("error", fmt.Sprintf("Failed to initialize metric store: %v", err))
+		auditlog.Event("", "", "error", "audit.metric_init_fail", map[string]string{"error": err.Error()})
 		return fmt.Errorf("failed to initialize metric store: %w", err)
 	}
 	a.addCleanup("metric-store", func(ctx context.Context) error {
@@ -252,13 +252,13 @@ func (a *App) InitStores() error {
 		DB:    dbcore.GetDBInstance(),
 		Store: metricstore.GetStore(),
 	}); err != nil {
-		auditlog.EventLog("error", fmt.Sprintf("Metric store one-shot migrations failed: %v", err))
+		auditlog.Event("", "", "error", "audit.metric_oneshot_fail", map[string]string{"error": err.Error()})
 		return fmt.Errorf("metric store one-shot migrations failed: %w", err)
 	}
 
 	// 存储后端切换时把上一个 metrics 目标库的数据搬运到当前目标（失败即启动失败）。
 	if err := metricstore.RunStartupMigration(); err != nil {
-		auditlog.EventLog("error", fmt.Sprintf("Metrics startup migration failed: %v", err))
+		auditlog.Event("", "", "error", "audit.metric_startup_fail", map[string]string{"error": err.Error()})
 
 		return fmt.Errorf("metrics startup migration failed: %w", err)
 	}
@@ -360,7 +360,7 @@ func (a *App) initOAuth() {
 	if err := oauth.Initialize(); err != nil {
 		// Keep password login available when an OAuth provider is misconfigured.
 		logger.Errorf("server", "Failed to initialize OAuth provider: %v", err)
-		auditlog.EventLog("error", fmt.Sprintf("Failed to initialize OAuth provider: %v", err))
+		auditlog.Event("", "", "error", "audit.oauth_init_fail", map[string]string{"error": err.Error()})
 	}
 	a.oauthReady = true
 	a.addCleanup("oauth", func(context.Context) error {
@@ -687,7 +687,7 @@ func (a *App) registerReloadHandlers(cors *security.CorsController) {
 			}
 			logger.Infof("server", "Using %s as OIDC provider", oidcProvider.Name)
 			if err := oauth.LoadProvider(oidcProvider.Name, oidcProvider.Addition); err != nil {
-				auditlog.EventLog("error", fmt.Sprintf("Failed to load OIDC provider: %v", err))
+				auditlog.Event("", "", "error", "audit.oidc_load_fail", map[string]string{"error": err.Error()})
 			}
 		}
 	})
@@ -829,7 +829,7 @@ func listenAndFinalizeStartup(
 // Shutdown 优雅关闭：先停止接收新请求，再反序执行已登记的清理函数。
 func (a *App) Shutdown() error {
 	if a.dbReady {
-		auditlog.Log("", "", "server is shutting down", "info")
+		auditlog.Event("", "", "info", "audit.server_shutdown", nil)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -855,7 +855,7 @@ func (a *App) Shutdown() error {
 // onFatal 处理 HTTP 服务致命错误：尽力释放已登记资源。
 func (a *App) onFatal(err error) {
 	if a.dbReady {
-		auditlog.Log("", "", "server encountered a fatal error: "+err.Error(), "error")
+		auditlog.Event("", "", "error", "audit.server_fatal", map[string]string{"error": err.Error()})
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

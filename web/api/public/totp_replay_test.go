@@ -16,11 +16,11 @@ import (
 )
 
 func TestTOTPReplayIsSharedAcrossLoginAndRemoteReauth(t *testing.T) {
-	user, err := accounts.CreateAccount("tx-"+uuid.NewString()[:8], "correctpassword")
+	user, err := accounts.CreateAccountWithDB(dbcore.GetDBInstance(), "tx-"+uuid.NewString()[:8], "correctpassword")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = accounts.DeleteAccountByUsername(user.Username) })
+	t.Cleanup(func() { _ = accounts.DeleteAccountByUsernameWithDB(dbcore.GetDBInstance(), user.Username) })
 
 	key, err := totp.Generate(totp.GenerateOpts{Issuer: "Lite", AccountName: user.Username})
 	if err != nil {
@@ -78,11 +78,11 @@ func TestTOTPReplayIsSharedAcrossLoginAndRemoteReauth(t *testing.T) {
 }
 
 func TestReauthorizeSSOWithoutLocalPassword(t *testing.T) {
-	user, err := accounts.CreateAccount("sso-"+uuid.NewString()[:8], "unused-password")
+	user, err := accounts.CreateAccountWithDB(dbcore.GetDBInstance(), "sso-"+uuid.NewString()[:8], "unused-password")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = accounts.DeleteAccountByUsername(user.Username) })
+	t.Cleanup(func() { _ = accounts.DeleteAccountByUsernameWithDB(dbcore.GetDBInstance(), user.Username) })
 	if err := dbcore.GetDBInstance().Model(&models.User{}).Where("uuid = ?", user.UUID).Updates(map[string]any{
 		"passwd":   "",
 		"sso_type": "github",
@@ -127,11 +127,11 @@ func TestReauthorizeSSOWithoutLocalPassword(t *testing.T) {
 }
 
 func TestReauthorizePasswordAccountStillNeedsPassword(t *testing.T) {
-	user, err := accounts.CreateAccount("pw-"+uuid.NewString()[:8], "correctpassword")
+	user, err := accounts.CreateAccountWithDB(dbcore.GetDBInstance(), "pw-"+uuid.NewString()[:8], "correctpassword")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = accounts.DeleteAccountByUsername(user.Username) })
+	t.Cleanup(func() { _ = accounts.DeleteAccountByUsernameWithDB(dbcore.GetDBInstance(), user.Username) })
 	remotectl.ResetForTest()
 	if err := remotectl.Reauthorize(user.UUID, "", "", "127.0.0.1"); !errors.Is(err, remotectl.ErrPasswordRequired) {
 		t.Fatalf("password account error = %v", err)

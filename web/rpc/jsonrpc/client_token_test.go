@@ -93,11 +93,11 @@ func TestTokenAuditLogsOmitSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(source, []byte(`auditlog.Log(ip, actor, "view client token:"+params.UUID, "info")`)) {
-		t.Fatal("view token audit log should record UUID only")
+	if !bytes.Contains(source, []byte(`"audit.client_token_view"`)) {
+		t.Fatal("view token audit log should record the server without the secret")
 	}
-	if !bytes.Contains(source, []byte(`auditlog.Log(ip, actor, "rotate client token:"+params.UUID, "warn")`)) {
-		t.Fatal("rotate token audit log should record UUID only")
+	if !bytes.Contains(source, []byte(`"audit.client_token_rotate"`)) {
+		t.Fatal("rotate token audit log should record the server without the secret")
 	}
 	if bytes.Contains(source, []byte(`"view client token:"+token`)) || bytes.Contains(source, []byte("view client token:\"+token")) {
 		t.Fatal("view token audit log must not include the secret")
@@ -119,7 +119,7 @@ func TestAdminGetClientTokenRejectsAPIKey(t *testing.T) {
 		Principal:  rpc.NewAPIKeyPrincipal(),
 		Permission: rpc.RoleAdmin,
 	})
-	_, rpcErr := adminGetClientToken(ctx, rpc.NewRequest(1, "admin:getClientToken", map[string]any{"uuid": "node-1"}))
+	_, rpcErr := adminGetClientToken(ctx, &rpc.JsonRpcRequest{Version: rpc.RPC_VERSION, ID: 1, Method: "admin:getClientToken", Params: map[string]any{"uuid": "node-1"}})
 	if rpcErr == nil || rpcErr.Code != rpc.PermissionDenied {
 		t.Fatalf("API key token read error = %#v", rpcErr)
 	}
@@ -136,7 +136,7 @@ func TestAdminGetClientOmitsTokenFromHandlerResult(t *testing.T) {
 		return original, nil
 	}
 
-	result, rpcErr := adminGetClient(context.Background(), rpc.NewRequest(1, "admin:getClient", map[string]any{"uuid": "node-1"}))
+	result, rpcErr := adminGetClient(context.Background(), &rpc.JsonRpcRequest{Version: rpc.RPC_VERSION, ID: 1, Method: "admin:getClient", Params: map[string]any{"uuid": "node-1"}})
 	if rpcErr != nil {
 		t.Fatalf("adminGetClient: %v", rpcErr)
 	}
@@ -166,7 +166,7 @@ func TestAdminListClientsOmitsTokenFromHandlerResult(t *testing.T) {
 		return []models.Client{original}, nil
 	}
 
-	result, rpcErr := adminListClients(context.Background(), rpc.NewRequest(1, "admin:listClients", nil))
+	result, rpcErr := adminListClients(context.Background(), &rpc.JsonRpcRequest{Version: rpc.RPC_VERSION, ID: 1, Method: "admin:listClients"})
 	if rpcErr != nil {
 		t.Fatalf("adminListClients: %v", rpcErr)
 	}

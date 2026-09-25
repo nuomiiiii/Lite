@@ -185,7 +185,7 @@ func PasskeyRegisterVerify(c *gin.Context) {
 		api.RespondError(c, http.StatusInternalServerError, "Failed to save passkey")
 		return
 	}
-	auditlog.Log(c.ClientIP(), uuidStr, "added passkey "+summary.Name, "info")
+	auditlog.Event(c.ClientIP(), uuidStr, "info", "audit.passkey_add", map[string]string{"name": summary.Name})
 	api.RespondSuccess(c, summary)
 }
 
@@ -235,7 +235,7 @@ func DeletePasskey(c *gin.Context) {
 		api.RespondError(c, http.StatusInternalServerError, "Failed to delete passkey")
 		return
 	}
-	auditlog.Log(c.ClientIP(), uuidStr, "removed a passkey", "warn")
+	auditlog.Event(c.ClientIP(), uuidStr, "warn", "audit.passkey_remove", nil)
 	api.RespondSuccess(c, nil)
 }
 

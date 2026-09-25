@@ -68,10 +68,6 @@ func cycleClosedEnd(schedule trafficreset.Schedule, cycleStart time.Time) time.T
 	return next.Add(-time.Nanosecond)
 }
 
-func trafficCycleInclusiveEnd(start time.Time, resetDay int) time.Time {
-	return NextCycleStart(start, resetDay).AddDate(0, 0, -1)
-}
-
 func isBeijingMidnight(t time.Time) bool {
 	return !t.IsZero() && t.In(BeijingLocation).Equal(BeijingDay(t))
 }
@@ -92,18 +88,6 @@ func NormalizedResetDay(resetDay *int) int {
 	return *resetDay
 }
 
-func CycleContaining(resetDay int, at time.Time) time.Time {
-	return scheduleForDay(resetDay).Last(at)
-}
-
-func NextCycleStart(start time.Time, resetDay int) time.Time {
-	return scheduleForDay(resetDay).Next(start)
-}
-
-func CurrentTrafficCycle(resetDay *int, now time.Time) (time.Time, string, error) {
-	return CurrentTrafficCycleFor(models.Client{TrafficResetDay: resetDay}, now)
-}
-
 func CurrentTrafficCycleFor(client models.Client, now time.Time) (time.Time, string, error) {
 	schedule := clientSchedule(client)
 	if !schedule.Active() {
@@ -111,11 +95,6 @@ func CurrentTrafficCycleFor(client models.Client, now time.Time) (time.Time, str
 	}
 	start := schedule.Last(now)
 	return start, schedule.CycleKey(now), nil
-}
-
-func calibrationAppliesToCurrentCycle(resetDay *int, cycle string, now time.Time) bool {
-	_, currentCycle, err := CurrentTrafficCycle(resetDay, now)
-	return err == nil && cycle == currentCycle
 }
 
 func LoadCalibrationSnapshot(ctx context.Context, db *gorm.DB, client models.Client, now time.Time) (CalibrationSnapshot, error) {

@@ -96,9 +96,6 @@ func GetTaskResultsByTaskId(taskId string) ([]models.TaskResult, error) {
 	}
 	return results, nil
 }
-func SaveTaskResult(taskId, clientId, result string, exitCode int, timestamp time.Time) error {
-	return SaveTaskResults(taskId, []string{clientId}, result, exitCode, timestamp)
-}
 
 func CancelUndeliveredTaskResult(taskId, clientId, result string) error {
 	if taskId == "" || clientId == "" {
@@ -162,20 +159,6 @@ func isWeakIncomingTaskResult(result, status string) bool {
 		return true
 	}
 	return result == "execution status unknown"
-}
-
-func isStrongStoredTaskResult(existing *models.TaskResult) bool {
-	if existing == nil || existing.FinishedAt == nil {
-		return false
-	}
-	if existing.Result == "" || existing.Result == "execution status unknown" {
-		return false
-	}
-	return true
-}
-
-func shouldKeepExistingTaskResult(existing *models.TaskResult, result, status string) bool {
-	return isStrongStoredTaskResult(existing) && isWeakIncomingTaskResult(result, status)
 }
 
 func SaveTaskResults(taskId string, clientIDs []string, result string, exitCode int, timestamp time.Time) error {

@@ -368,7 +368,7 @@ func TestCustomHTMLIsLimitedToPublicPages(t *testing.T) {
 		} else if got != "no-store, no-cache, must-revalidate" {
 			t.Fatalf("GET %s Cache-Control = %q", tt.path, got)
 		}
-		if isTerminalApplicationPath(tt.path) {
+		if tt.path == "/terminal" || strings.HasPrefix(tt.path, "/terminal/") {
 			if got := recorder.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
 				t.Fatalf("GET %s CSP = %q", tt.path, got)
 			}

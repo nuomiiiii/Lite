@@ -2,6 +2,10 @@ package rpc
 
 import "testing"
 
+func newMCPDelegationPrincipal(leaseID string) *Principal {
+	return &Principal{Type: PrincipalMCPDelegation, LeaseID: leaseID}
+}
+
 func TestPrincipalConstructors(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -14,7 +18,7 @@ func TestPrincipalConstructors(t *testing.T) {
 		{"agent", NewAgentPrincipal("c-uuid"), PrincipalAgent, RoleClient, false},
 		{"user", NewUserPrincipal("u-uuid"), PrincipalUser, RoleAdmin, false},
 		{"apikey", NewAPIKeyPrincipal(), PrincipalAPIKey, RoleAdmin, true},
-		{"mcp", NewMCPDelegationPrincipal("lease-1"), PrincipalMCPDelegation, RoleGuest, false},
+		{"mcp", newMCPDelegationPrincipal("lease-1"), PrincipalMCPDelegation, RoleGuest, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -65,7 +69,7 @@ func TestHasRole(t *testing.T) {
 	if p.HasRole(RoleClient) {
 		t.Error("user principal should not have client role")
 	}
-	mcp := NewMCPDelegationPrincipal("lease-1")
+	mcp := newMCPDelegationPrincipal("lease-1")
 	if mcp.HasRole(RoleAdmin) || mcp.HasRole(RoleClient) {
 		t.Error("MCP delegation must not receive admin or client roles")
 	}
@@ -96,9 +100,9 @@ func TestCheckPrincipal(t *testing.T) {
 		// api key 主体:等同 admin 能力
 		{"apikey->admin", NewAPIKeyPrincipal(), "admin:addClient", true},
 		{"apikey->client", NewAPIKeyPrincipal(), "client:report", false},
-		{"mcp->admin", NewMCPDelegationPrincipal("lease-1"), "admin:addClient", false},
-		{"mcp->client", NewMCPDelegationPrincipal("lease-1"), "client:report", false},
-		{"mcp->common", NewMCPDelegationPrincipal("lease-1"), "common:getNodes", true},
+		{"mcp->admin", newMCPDelegationPrincipal("lease-1"), "admin:addClient", false},
+		{"mcp->client", newMCPDelegationPrincipal("lease-1"), "client:report", false},
+		{"mcp->common", newMCPDelegationPrincipal("lease-1"), "common:getNodes", true},
 		// 匿名主体:仅公共方法
 		{"anon->common", NewAnonymousPrincipal(), "common:getNodes", true},
 		{"anon->admin", NewAnonymousPrincipal(), "admin:addClient", false},
@@ -115,4 +119,3 @@ func TestCheckPrincipal(t *testing.T) {
 		})
 	}
 }
-

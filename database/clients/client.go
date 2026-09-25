@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"math"
 	"strings"
 	"sync"
 	"time"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 
 	"github.com/nuomiiiii/lite/database/billing"
 	"github.com/nuomiiiii/lite/database/dbcore"
@@ -225,10 +226,6 @@ func autoOrderNewClientsEnabled() bool {
 		return false
 	}
 	return enabled
-}
-
-func saveClientInfo(db *gorm.DB, update map[string]interface{}) error {
-	return saveClientInfoWithAutoOrder(db, update, true)
 }
 
 func saveClientInfoWithAutoOrder(db *gorm.DB, update map[string]interface{}, autoOrder bool) error {
@@ -526,6 +523,21 @@ func GetClientByUUID(uuid string) (client models.Client, err error) {
 	return client, nil
 }
 
+// DisplayName is the server name shown in the admin UI.
+// A server without a name is identified by its UUID.
+func DisplayName(uuid string) string {
+	uuid = strings.TrimSpace(uuid)
+	if uuid == "" {
+		return ""
+	}
+	var client models.Client
+	err := dbcore.GetDBInstance().Select("name").Where("uuid = ?", uuid).Take(&client).Error
+	if err != nil || strings.TrimSpace(client.Name) == "" {
+		return uuid
+	}
+	return strings.TrimSpace(client.Name)
+}
+
 const uuidQueryChunkSize = 400
 
 func GetClientsByUUIDs(uuids []string) (map[string]models.Client, error) {
@@ -674,16 +686,8 @@ func applyClientDeploymentStatuses(db *gorm.DB, clientList []models.Client) erro
 	return nil
 }
 
-func SaveClient(updates map[string]interface{}) error {
-	return SaveClientWithSource(updates, billing.PriceSourceClientEdit)
-}
-
 func SaveClientForDispatch(updates map[string]interface{}) (ClientDispatch, error) {
 	return saveClientWithDispatch(dbcore.GetDBInstance(), updates, billing.PriceSourceClientEdit)
-}
-
-func saveClient(db *gorm.DB, updates map[string]interface{}) error {
-	return saveClientWithSource(db, updates, billing.PriceSourceClientEdit)
 }
 
 func SaveClientWithSource(updates map[string]interface{}, source string) error {

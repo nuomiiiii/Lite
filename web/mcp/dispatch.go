@@ -56,7 +56,3 @@ func DrainMCPDelivery() []agent_runtime.RemovedV2Event {
 		return agent_runtime.RemoveAllV2EventsByMethods(mcpMethods()...)
 	})
 }
-
-func DrainWithRemote() []agent_runtime.RemovedV2Event {
-	return agent_runtime.RemoveAllV2EventsByMethods(append([]string{v2.MethodAgentRemote, v2.MethodAgentExec}, mcpMethods()...)...)
-}

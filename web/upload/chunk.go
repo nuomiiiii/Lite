@@ -331,12 +331,6 @@ func (s *Store) cancelLocked(owner, uploadID string) error {
 	return nil
 }
 
-func (s *Store) CleanupExpired() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.cleanupExpiredLocked()
-}
-
 // CleanupAll removes interrupted sessions from a previous process. Browsers
 // cannot safely resume them after a server restart because authentication and
 // finalization state may have changed.

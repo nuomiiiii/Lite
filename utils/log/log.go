@@ -138,9 +138,6 @@ func logArgs(component string, args []any) []any {
 	return append([]any{"component", component}, args...)
 }
 
-func Debug(component, message string, args ...any) {
-	logger().Debug(message, logArgs(component, args)...)
-}
 func Info(component, message string, args ...any) {
 	logger().Info(message, logArgs(component, args)...)
 }
@@ -151,13 +148,12 @@ func Error(component, message string, args ...any) {
 	logger().Error(message, logArgs(component, args)...)
 }
 
-func Debugf(component, format string, args ...any) { Debug(component, fmt.Sprintf(format, args...)) }
 func Infof(component, format string, args ...any)  { Info(component, fmt.Sprintf(format, args...)) }
 func Warnf(component, format string, args ...any)  { Warn(component, fmt.Sprintf(format, args...)) }
 func Errorf(component, format string, args ...any) { Error(component, fmt.Sprintf(format, args...)) }
 
-func InfoArgs(component string, args ...any)  { Info(component, fmt.Sprint(args...)) }
-func WarnArgs(component string, args ...any)  { Warn(component, fmt.Sprint(args...)) }
+func InfoArgs(component string, args ...any) { Info(component, fmt.Sprint(args...)) }
+
 func ErrorArgs(component string, args ...any) { Error(component, fmt.Sprint(args...)) }
 
 func Fatalf(component, format string, args ...any) {

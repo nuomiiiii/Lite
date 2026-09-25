@@ -45,13 +45,6 @@ func (navigation ThemeNavigation) ServerDetailURL(uuid string, taskID uint) stri
 	return navigation.serverURL(navigation.serverDetailTemplate, uuid, taskID)
 }
 
-func (navigation ThemeNavigation) ServerNetworkURL(uuid string) string {
-	if validThemeServerRouteTemplate(navigation.serverNetworkTemplate, true) {
-		return navigation.serverURL(navigation.serverNetworkTemplate, uuid, 0)
-	}
-	return navigation.ServerDetailURL(uuid, 0)
-}
-
 func (navigation ThemeNavigation) serverURL(template, uuid string, taskID uint) string {
 	if !validThemeServerRouteTemplate(template, true) || strings.TrimSpace(uuid) == "" {
 		return "/"

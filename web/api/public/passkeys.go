@@ -103,6 +103,6 @@ func PasskeyLoginVerify(c *gin.Context) {
 	setSessionCookie(c, session, sessionCookieMaxAgeSeconds())
 	accounts.ClearLoginFailures(c.ClientIP(), accounts.PasskeyThrottleBucket)
 	accounts.ClearLoginFailures(c.ClientIP(), accounts.PasskeyOptionsBucket)
-	auditlog.Log(c.ClientIP(), userUUID, "logged in (passkey)", "login")
+	auditlog.Event(c.ClientIP(), userUUID, "login", "audit.login_passkey", nil)
 	api.RespondSuccess(c, gin.H{})
 }

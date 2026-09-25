@@ -904,10 +904,6 @@ func isPrivateApplicationPath(requestPath string) bool {
 	return false
 }
 
-func isTerminalApplicationPath(requestPath string) bool {
-	return requestPath == "/terminal" || strings.HasPrefix(requestPath, "/terminal/")
-}
-
 func isAdminApplicationPath(requestPath string) bool {
 	return requestPath == "/admin" || strings.HasPrefix(requestPath, "/admin/")
 }

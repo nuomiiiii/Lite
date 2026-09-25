@@ -2,13 +2,14 @@ package geoip // 与 geoip.go 保持相同的包名，表示它们是同一个�
 
 import (
 	"fmt"
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath" // 新增导入，用于处理文件路径
 	"sync"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 
 	"github.com/nuomiiiii/lite/database/auditlog"
 	"github.com/oschwald/maxminddb-golang"
@@ -55,21 +56,21 @@ func NewMaxMindGeoIPService() (*MaxMindGeoIPService, error) {
 
 	// 确保数据目录存在
 	if err := os.MkdirAll(filepath.Dir(dbFilePath), os.ModePerm); err != nil {
-		auditlog.Log("", "", "Failed to create data directory for MaxMind database: "+err.Error(), "error")
+		auditlog.Event("", "", "error", "audit.mmdb_dir", map[string]string{"error": err.Error()})
 		return nil, fmt.Errorf("failed to create data directory for MaxMind database: %w", err)
 	}
 
 	// 检查数据库文件是否存在，如果不存在则尝试下载
 	if _, err := os.Stat(dbFilePath); os.IsNotExist(err) {
 		if err := service.UpdateDatabase(); err != nil {
-			auditlog.Log("", "", "Failed to download initial MaxMind database: "+err.Error(), "error")
+			auditlog.Event("", "", "error", "audit.mmdb_download", map[string]string{"error": err.Error()})
 			return nil, fmt.Errorf("failed to download initial MaxMind database: %w", err)
 		}
 	}
 
 	// 初始化或重新加载 MaxMind 数据库。
 	if err := service.initialize(); err != nil {
-		auditlog.Log("", "", "Failed to initialize MaxMind database: "+err.Error(), "error")
+		auditlog.Event("", "", "error", "audit.mmdb_init", map[string]string{"error": err.Error()})
 		return nil, fmt.Errorf("failed to initialize MaxMind database: %w", err)
 	}
 	return service, nil

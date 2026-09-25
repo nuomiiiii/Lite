@@ -3,12 +3,13 @@ package migrations
 import (
 	"database/sql"
 	"fmt"
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"math"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 
 	appconfig "github.com/nuomiiiii/lite/pkg/config"
 	"gorm.io/gorm"

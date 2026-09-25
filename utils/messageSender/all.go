@@ -10,6 +10,3 @@ import (
 	_ "github.com/nuomiiiii/lite/utils/messageSender/telegram"
 	_ "github.com/nuomiiiii/lite/utils/messageSender/webhook"
 )
-
-func All() {
-}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/database/clients"
 	v2 "github.com/nuomiiiii/lite/protocol/v2"
 	"github.com/nuomiiiii/lite/utils"
 	agent_runtime "github.com/nuomiiiii/lite/web/agent"
@@ -172,7 +173,7 @@ func forwardMCPSession(session *remoteSession) {
 		deleteSession(session.ID)
 		return
 	}
-	auditlog.Log(session.RequesterIP, session.UserUUID, "established MCP terminal, client:"+session.UUID, "terminal")
+	auditlog.Event(session.RequesterIP, session.UserUUID, "terminal", "audit.mcp_terminal_open", map[string]string{"name": clients.DisplayName(session.UUID)})
 	_ = agent.SetReadDeadline(session.ExpiresAt)
 	errCh := make(chan error, 1)
 	go func() {
@@ -219,5 +220,8 @@ func forwardMCPSession(session *remoteSession) {
 	session.mcpClosed = true
 	session.mu.Unlock()
 	deleteSession(session.ID)
-	auditlog.Log(session.RequesterIP, session.UserUUID, "disconnected MCP terminal, client:"+session.UUID+", duration:"+time.Since(startedAt).String(), "terminal")
+	auditlog.Event(session.RequesterIP, session.UserUUID, "terminal", "audit.mcp_terminal_close", map[string]string{
+		"name":     clients.DisplayName(session.UUID),
+		"duration": time.Since(startedAt).String(),
+	})
 }

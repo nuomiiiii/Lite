@@ -6,16 +6,6 @@ import (
 )
 
 // ParseRequest 解析单个 JSON-RPC 请求。返回请求与错误（解析层面）。
-func ParseRequest(data []byte) (*JsonRpcRequest, *JsonRpcError) {
-	requests, err := ParseRequests(data)
-	if err != nil {
-		return nil, err
-	}
-	if len(requests) == 0 {
-		return nil, &JsonRpcError{Code: InvalidRequest, Message: "no requests found"}
-	}
-	return requests[0], nil
-}
 
 // ParseRequests 解析单个或批量 JSON-RPC 请求。返回请求切片与错误（解析层面），
 // 若是批量空数组则返回 InvalidRequest 错误（协议要求）。

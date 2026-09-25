@@ -21,10 +21,6 @@ func normalizeTrafficType(value string) (string, error) {
 	}
 }
 
-func currentTrafficCycle(resetDay *int, now time.Time) string {
-	return currentTrafficCycleAt(resetDay, "", "", now)
-}
-
 func currentTrafficCycleAt(resetDay *int, clock, timezone string, now time.Time) string {
 	return trafficreset.FromFields(resetDay, clock, timezone).CycleKey(now)
 }

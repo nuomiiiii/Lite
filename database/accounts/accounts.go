@@ -141,9 +141,6 @@ func ForceResetPassword(username, passwd string) (err error) {
 }
 
 // hashPasswd 对密码进行加盐哈希
-func CreateAccount(username, passwd string) (user models.User, err error) {
-	return CreateAccountWithDB(dbcore.GetDBInstance(), username, passwd)
-}
 
 func CreateAccountWithDB(db *gorm.DB, username, passwd string) (user models.User, err error) {
 	hashedPassword, err := hashPasswd(passwd)
@@ -160,10 +157,6 @@ func CreateAccountWithDB(db *gorm.DB, username, passwd string) (user models.User
 		return models.User{}, err
 	}
 	return user, nil
-}
-
-func DeleteAccountByUsername(username string) (err error) {
-	return DeleteAccountByUsernameWithDB(dbcore.GetDBInstance(), username)
 }
 
 func DeleteAccountByUsernameWithDB(db *gorm.DB, username string) (err error) {

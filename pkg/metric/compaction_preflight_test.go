@@ -76,7 +76,7 @@ func TestIncrementalCompactionStillProcessesEligibleAndLatePoints(t *testing.T) 
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
-	if err := store.Write(ctx, Point{MetricName: metricName, EntityID: "node-a", Timestamp: now.Add(-time.Minute), Value: 10}); err != nil {
+	if err := store.WriteBatch(ctx, []Point{Point{MetricName: metricName, EntityID: "node-a", Timestamp: now.Add(-time.Minute), Value: 10}}); err != nil {
 		t.Fatal(err)
 	}
 	if written, err := store.CompactMetric(ctx, metricName, now); err != nil || written != 0 {
@@ -100,7 +100,7 @@ func TestIncrementalCompactionStillProcessesEligibleAndLatePoints(t *testing.T) 
 	}
 
 	lateTime := now.Add(-2 * time.Hour)
-	if err := store.Write(ctx, Point{MetricName: metricName, EntityID: "node-a", Timestamp: lateTime, Value: 20}); err != nil {
+	if err := store.WriteBatch(ctx, []Point{Point{MetricName: metricName, EntityID: "node-a", Timestamp: lateTime, Value: 20}}); err != nil {
 		t.Fatal(err)
 	}
 	if written, err := store.CompactMetric(ctx, metricName, future.Add(time.Minute)); err != nil || written == 0 {
@@ -128,7 +128,7 @@ func TestSmallRollupTailDoesNotCauseRepeatedWrites(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
-	if err := store.Write(ctx, Point{MetricName: metricName, EntityID: "node-a", Timestamp: now.Add(-time.Hour), Value: 1}); err != nil {
+	if err := store.WriteBatch(ctx, []Point{Point{MetricName: metricName, EntityID: "node-a", Timestamp: now.Add(-time.Hour), Value: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	if written, err := store.CompactMetric(ctx, metricName, now); err != nil || written != 1 {

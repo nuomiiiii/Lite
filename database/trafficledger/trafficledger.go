@@ -311,24 +311,6 @@ func EnsureRange(ctx context.Context, db *gorm.DB, clientIDs []string, startDay,
 	return ensureRangeWithDailyCalculator(ctx, db, clientIDs, startDay, endDay, MetricUsagesByDay)
 }
 
-func ensureRangeWithCalculator(ctx context.Context, db *gorm.DB, clientIDs []string, startDay, endDay time.Time, calculate usageCalculator) error {
-	if calculate == nil {
-		return fmt.Errorf("traffic ledger calculator is nil")
-	}
-	return ensureRangeWithDailyCalculator(ctx, db, clientIDs, startDay, endDay,
-		func(ctx context.Context, clientID string, start, end time.Time) (map[string]Usage, error) {
-			result := make(map[string]Usage)
-			for day := BeijingDay(start); day.Before(BeijingDay(end)); day = day.AddDate(0, 0, 1) {
-				usage, err := calculate(ctx, clientID, day.UTC(), day.AddDate(0, 0, 1).UTC().Add(-time.Nanosecond))
-				if err != nil {
-					return nil, err
-				}
-				result[dayKey(day)] = usage
-			}
-			return result, nil
-		})
-}
-
 func ensureRangeWithDailyCalculator(ctx context.Context, db *gorm.DB, clientIDs []string, startDay, endDay time.Time, calculate dailyUsageCalculator) error {
 	start, end, err := normalizeRange(startDay, endDay)
 	if err != nil {
@@ -463,16 +445,6 @@ func MetricUsage(ctx context.Context, clientID string, start, end time.Time) (Us
 
 // MetricUsageByHour calculates the exact total and hourly increments in one
 // metric-store scan. Hour boundaries use Beijing time to match traffic reports.
-func MetricUsageByHour(ctx context.Context, clientID string, start, end time.Time) (Usage, []HourlyUsage, error) {
-	if end.Before(start) {
-		return Usage{}, nil, fmt.Errorf("traffic metric range end precedes start")
-	}
-	records, previous, err := metricRecordsAndBaseline(ctx, clientID, start, end)
-	if err != nil {
-		return Usage{}, nil, err
-	}
-	return usageByHourFromRecords(records, previous)
-}
 
 // MetricUsageByHourBatch calculates the same per-client totals as
 // MetricUsageByHour while sharing the underlying metric scans across clients.

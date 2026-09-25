@@ -92,10 +92,10 @@ func TestNormalizeXtermJSThemeRoundTrip(t *testing.T) {
 
 func TestXtermjsPermission(t *testing.T) {
 	// xtermjs 方法属于 admin 命名空间。
-	if rpc.CheckPermission(rpc.RoleGuest, "admin:getXtermjsSettings") {
+	if rpc.CheckPrincipal(rpc.PrincipalFromRole(rpc.RoleGuest), "admin:getXtermjsSettings") {
 		t.Error("guest must not access admin:getXtermjsSettings")
 	}
-	if !rpc.CheckPermission(rpc.RoleAdmin, "admin:setXtermjsSettings") {
+	if !rpc.CheckPrincipal(rpc.PrincipalFromRole(rpc.RoleAdmin), "admin:setXtermjsSettings") {
 		t.Error("admin must access admin:setXtermjsSettings")
 	}
 }

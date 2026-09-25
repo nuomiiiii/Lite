@@ -882,14 +882,6 @@ func decodeSQLiteV4StoredRollupBlock(codec, expectedCount int, expectedChecksum 
 	return records, nil
 }
 
-func decodeSQLiteV4EncodedRollupBlock(encoded sqliteV4EncodedRollupBlock, needDigest bool) ([]sqliteV4RollupRecord, error) {
-	return decodeSQLiteV4StoredRollupBlock(
-		encoded.codec, encoded.count, encoded.checksum, encoded.payload,
-		encoded.axisCodec, encoded.axisChecksum, encoded.axisPayload,
-		encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, needDigest,
-	)
-}
-
 func sqliteV4RollupRecordDataEqual(left, right sqliteV4RollupRecord) bool {
 	return left.bucketNano == right.bucketNano && left.count == right.count && left.lossCount == right.lossCount &&
 		left.sumBits == right.sumBits && left.sumSqBits == right.sumSqBits &&

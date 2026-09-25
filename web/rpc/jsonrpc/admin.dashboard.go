@@ -227,48 +227,6 @@ func adminGetClientTrafficDaily(ctx context.Context, req *rpc.JsonRpcRequest) (a
 	}, nil
 }
 
-func buildDashboard(ctx context.Context, now time.Time, sections dashboardSummarySections, rankingLimit int) (dashboardResponse, error) {
-	result := dashboardResponse{GeneratedAt: now}
-	needsClients := sections&(dashboardSectionServers|dashboardSectionResources|dashboardSectionAlerts) != 0
-	var clientList []models.Client
-	var err error
-	if needsClients {
-		clientList, err = clients.GetAllClientBasicInfo()
-		if err != nil {
-			return dashboardResponse{}, fmt.Errorf("list dashboard clients: %w", err)
-		}
-	}
-	if sections&dashboardSectionServers != 0 {
-		result.Servers = buildDashboardServers(clientList)
-	}
-	if sections&dashboardSectionResources != 0 {
-		result.Resources = buildDashboardResources(clientList, rankingLimit)
-	}
-	if sections&dashboardSectionStorage != 0 {
-		main := mainDatabaseStatus()
-		monitoring := monitoringDatabaseStatus(ctx)
-		legacySize := int64(0)
-		if main.Size != nil {
-			legacySize = *main.Size
-		}
-		result.Database = databaseStatusResponse{
-			Type:       main.Driver,
-			Size:       legacySize,
-			Main:       main,
-			Monitoring: monitoring,
-			LocalTotal: localDatabaseTotal(main, monitoring),
-		}
-		result.Storage = buildDashboardStorage(ctx, main, monitoring)
-	}
-	if sections&dashboardSectionReturnRoute != 0 {
-		result.ReturnRoute = buildDashboardReturnRoute()
-	}
-	if sections&dashboardSectionAlerts != 0 {
-		result.Alerts = buildDashboardAlerts(clientList, now)
-	}
-	return result, nil
-}
-
 func dashboardChartNeedsPingTasks(sections dashboardChartSections) bool {
 	return sections&(dashboardChartLatency|dashboardChartLatencyJitter|dashboardChartPacketLoss) != 0
 }
@@ -278,56 +236,6 @@ func loadDashboardPingTasks(sections dashboardChartSections) ([]models.PingTask,
 		return nil, nil
 	}
 	return tasks.GetAllPingTasks()
-}
-
-func buildDashboardCharts(ctx context.Context, now time.Time, sections dashboardChartSections, rankingLimit int) dashboardChartsResponse {
-	result := dashboardChartsResponse{GeneratedAt: now}
-	if sections == 0 {
-		return result
-	}
-	clientList, err := clients.GetAllClientBasicInfo()
-	if err != nil {
-		message := fmt.Sprintf("list dashboard clients: %v", err)
-		if sections&dashboardChartTraffic != 0 {
-			result.Traffic.Error = message
-		}
-		if sections&dashboardChartLatency != 0 {
-			result.Latency.Error = message
-		}
-		if sections&dashboardChartLatencyJitter != 0 {
-			result.Latency.JitterError = message
-		}
-		if sections&dashboardChartPacketLoss != 0 {
-			result.PacketLoss.Error = message
-		}
-		return result
-	}
-	pingTasks, pingErr := loadDashboardPingTasks(sections)
-	if sections&dashboardChartTraffic != 0 {
-		if result.Traffic, err = loadDashboardTraffic(ctx, clientList, now, rankingLimit); err != nil {
-			result.Traffic = dashboardTrafficSummary{Error: err.Error()}
-		}
-	}
-	if sections&dashboardChartLatency != 0 {
-		if result.Latency, err = loadDashboardLatency(ctx, clientList, pingTasks, now, rankingLimit); err != nil {
-			result.Latency.Error = err.Error()
-		}
-	}
-	if sections&dashboardChartLatencyJitter != 0 {
-		if pingErr != nil {
-			result.Latency.JitterError = pingErr.Error()
-		} else if result.Latency.JitterRanking, err = loadDashboardLatencyJitter(ctx, clientList, pingTasks, now, rankingLimit); err != nil {
-			result.Latency.JitterError = err.Error()
-		}
-	}
-	if sections&dashboardChartPacketLoss != 0 {
-		if pingErr != nil {
-			result.PacketLoss = dashboardPacketLossSummary{Error: pingErr.Error()}
-		} else if result.PacketLoss, err = loadDashboardPacketLoss(ctx, clientList, pingTasks, now, rankingLimit); err != nil {
-			result.PacketLoss.Error = err.Error()
-		}
-	}
-	return result
 }
 
 func parseDashboardSummaryRequest(req *rpc.JsonRpcRequest) (dashboardSummarySections, int) {

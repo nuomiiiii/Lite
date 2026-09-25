@@ -63,14 +63,6 @@ func hashLegacySHA256(passwd string) string {
 	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
-func verifyPasswd(passwd, encoded string) bool {
-	if strings.HasPrefix(encoded, argonPrefix) {
-		return verifyArgon2id(passwd, encoded)
-	}
-	legacy := hashLegacySHA256(passwd)
-	return subtle.ConstantTimeCompare([]byte(legacy), []byte(encoded)) == 1
-}
-
 func verifyPasswordLimited(passwd, encoded string) (bool, error) {
 	if strings.HasPrefix(encoded, argonPrefix) {
 		return verifyArgon2idLimited(passwd, encoded)

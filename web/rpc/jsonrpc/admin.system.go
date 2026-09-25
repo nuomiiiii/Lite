@@ -175,10 +175,6 @@ func filterAdminLogs(query *gorm.DB, q adminLogQuery) *gorm.DB {
 	return filterAdminLogsBySearch(query, q.Search)
 }
 
-func filterAdminLogsByMessageType(query *gorm.DB, msgType string) *gorm.DB {
-	return filterAdminLogsByValues(query, "msg_type", parseAdminLogCSV(msgType))
-}
-
 func filterAdminLogsByValues(query *gorm.DB, column string, values []string) *gorm.DB {
 	if len(values) == 0 {
 		return query
@@ -245,7 +241,7 @@ func adminStartCloudflared(ctx context.Context, req *rpc.JsonRpcRequest) (any, *
 		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "started cloudflared tunnel", "warn")
+	auditlog.Event(ip, actor, "warn", "audit.cloudflare_start", nil)
 	return cloudflared.Status(), nil
 }
 
@@ -280,7 +276,7 @@ func adminStopCloudflared(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to stop cloudflared: "+err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "stopped cloudflared tunnel", "warn")
+	auditlog.Event(ip, actor, "warn", "audit.cloudflare_stop", nil)
 	return cloudflared.Status(), nil
 }
 
@@ -289,7 +285,7 @@ func adminRemoveCloudflaredToken(ctx context.Context, _ *rpc.JsonRpcRequest) (an
 		return nil, rpc.MakeError(rpc.InvalidParams, "Failed to remove Cloudflare Tunnel token: "+err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "removed cloudflared tunnel token", "warn")
+	auditlog.Event(ip, actor, "warn", "audit.cloudflare_token_remove", nil)
 	return cloudflared.Status(), nil
 }
 
@@ -398,7 +394,7 @@ func adminExec(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcE
 		result["persist_error"] = err.Error()
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "REC, task id: "+taskId, "warn")
+	auditlog.Event(ip, actor, "warn", "audit.terminal_task", map[string]string{"id": taskId})
 	if nextGrant, nextExpires, rotateErr := remotectl.RotateExecGrant(meta.Principal.UserUUID, meta.SessionToken, params.PageID, expires); rotateErr == nil {
 		result["next_grant"] = nextGrant
 		result["expires_at"] = nextExpires.UTC()

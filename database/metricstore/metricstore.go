@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/pkg/config"
@@ -294,16 +295,10 @@ func openStoreWithDefaultRetentionAndProgress(ctx context.Context, cfg *MetricSt
 // OpenStore opens an isolated metric store using the supplied configuration.
 // It is used by the pre-start upgrade flow before the process-wide store is
 // initialized. The caller owns the returned store and must close it.
-func OpenStore(ctx context.Context, cfg *MetricStoreConfig) (*metric.Store, error) {
-	return openStore(ctx, cfg)
-}
 
 // OpenStoreForMigration opens an isolated target and uses the legacy data span
 // as the initial retention for definitions that do not exist yet. Existing
 // definitions keep their configured retention, including an explicit zero.
-func OpenStoreForMigration(ctx context.Context, cfg *MetricStoreConfig, legacyRetentionDays int) (*metric.Store, error) {
-	return OpenStoreForMigrationWithProgress(ctx, cfg, legacyRetentionDays, nil)
-}
 
 // OpenStoreForMigrationWithProgress is OpenStoreForMigration with observable
 // SQLite schema migration progress.
@@ -500,69 +495,6 @@ func summarizeRetentionDefinitions(defs []metric.Definition) RetentionSummary {
 		}
 	}
 	return summary
-}
-
-func Compact(ctx context.Context, now time.Time) (int, error) {
-	if !compactOperations.TryAcquire() {
-		return 0, ErrCompactInProgress
-	}
-	defer compactOperations.Release()
-	if err := storeOperations.AcquireShared(ctx); err != nil {
-		return 0, fmt.Errorf("wait for metric store operation before compaction: %w", err)
-	}
-	defer storeOperations.ReleaseShared()
-
-	storeMu.RLock()
-	defer storeMu.RUnlock()
-	activeStore := store
-	if activeStore == nil {
-		return 0, fmt.Errorf("metric store not initialized")
-	}
-
-	defs, err := activeStore.ListMetrics(ctx)
-	if err != nil {
-		return 0, err
-	}
-	defs = compactableMetricDefinitions(activeStore, defs)
-	if len(defs) == 0 {
-		compactAt = 0
-		return 0, nil
-	}
-	if compactAt >= len(defs) {
-		compactAt = 0
-	}
-
-	total := 0
-	start := compactAt
-	failedAt := -1
-	var compactErrors []error
-	for i := 0; i < len(defs); i++ {
-		idx := (start + i) % len(defs)
-		metricName := defs[idx].Name
-		n, err := activeStore.CompactMetric(ctx, metricName, now)
-		if metric.IsDigestHandoffDeferred(err) {
-			handleDigestHandoffDeferred(metricName, err, time.Now().UTC())
-			continue
-		}
-		if err != nil {
-			if failedAt < 0 {
-				failedAt = idx
-			}
-			compactErrors = append(compactErrors, fmt.Errorf("compact metric %q: %w", metricName, err))
-			continue
-		}
-		clearDigestHandoffDeferred(metricName)
-		total += n
-	}
-	if err := finishCompactCycle(ctx, activeStore, now, true); err != nil {
-		compactErrors = append(compactErrors, err)
-	}
-	if failedAt >= 0 {
-		compactAt = failedAt
-	} else {
-		compactAt = start
-	}
-	return total, errors.Join(compactErrors...)
 }
 
 func handleDigestHandoffDeferred(metricName string, err error, at time.Time) {
@@ -903,9 +835,6 @@ func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
 }
 
 // GetRecordsByClientAndTime 从 metric store 查询记录并重构为 models.Record
-func GetRecordsByClientAndTime(ctx context.Context, clientUUID string, start, end time.Time) ([]models.Record, error) {
-	return GetRecordsByClientAndTimeForLoadType(ctx, clientUUID, start, end, "all")
-}
 
 // GetRecordsByClientAndTimeForLoadType reads only the metric families needed
 // by a projected legacy record response. Fields outside that family remain at
@@ -1102,15 +1031,9 @@ func applyDashboardTrafficMetricValue(record *DashboardTrafficRecord, metricName
 }
 
 // GetRecordsByTime 从 metric store 查询所有客户端在时间范围内的记录
-func GetRecordsByTime(ctx context.Context, start, end time.Time) ([]models.Record, error) {
-	return GetRecordsByTimeForLoadType(ctx, start, end, "all")
-}
 
 // GetRecordsByTimeForLoadType is the all-client counterpart of
 // GetRecordsByClientAndTimeForLoadType.
-func GetRecordsByTimeForLoadType(ctx context.Context, start, end time.Time, loadType string) ([]models.Record, error) {
-	return GetRecordsByTimeForLoadTypeMaxPoints(ctx, start, end, loadType, -1)
-}
 
 // GetRecordsByTimeForLoadTypeMaxPoints applies a global response budget before
 // reconstructing per-node records. A two-times oversampling margin preserves
@@ -1662,13 +1585,6 @@ func DeleteEntity(ctx context.Context, entityID string) error {
 
 // DeleteEntityAsync clears one agent's metric history without delaying the
 // client deletion response.
-func DeleteEntityAsync(entityID string) {
-	go func() {
-		if err := DeleteEntity(context.Background(), entityID); err != nil {
-			logger.Errorf("metricstore", "Failed to delete metric records for entity %s: %v", entityID, err)
-		}
-	}()
-}
 
 // DeleteMetricDataAsync clears disabled metric history without delaying an
 // admin retention-policy update response.

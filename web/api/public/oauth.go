@@ -96,7 +96,7 @@ func OAuthCallback(c *gin.Context) {
 			redirectOAuthAccountError(c, "bind_failed")
 			return
 		}
-		auditlog.Log(c.ClientIP(), user.UUID, "bound external account (OAuth)"+fmt.Sprintf(",sso_id: %s", sso_id), "login")
+		auditlog.Event(c.ClientIP(), user.UUID, "login", "audit.sso_bind", nil)
 		c.Redirect(302, "/admin/settings/account-security?tab=github")
 		return
 	}
@@ -118,7 +118,7 @@ func OAuthCallback(c *gin.Context) {
 		}
 		token := passkey.PutConfirmGrant(user.UUID)
 		c.SetCookie("passkey_confirm_ok", token, int(passkeyConfirmCookieSeconds), "/", "", false, true)
-		auditlog.Log(c.ClientIP(), user.UUID, "confirmed account via SSO for passkey", "info")
+		auditlog.Event(c.ClientIP(), user.UUID, "info", "audit.sso_passkey", nil)
 		c.Redirect(302, "/admin/settings/account-security?tab=passkeys&passkey_confirm=ok")
 		return
 	}
@@ -142,7 +142,7 @@ func OAuthCallback(c *gin.Context) {
 
 	// 设置cookie并返回
 	setSessionCookie(c, session, sessionCookieMaxAgeSeconds())
-	auditlog.Log(c.ClientIP(), user.UUID, "logged in (OAuth)", "login")
+	auditlog.Event(c.ClientIP(), user.UUID, "login", "audit.login_oauth", nil)
 	c.Redirect(302, "/admin")
 }
 

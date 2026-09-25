@@ -3,12 +3,13 @@ package migrations
 import (
 	"encoding/json"
 	"fmt"
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 
 	"github.com/nuomiiiii/lite/database/models"
 	appconfig "github.com/nuomiiiii/lite/pkg/config"

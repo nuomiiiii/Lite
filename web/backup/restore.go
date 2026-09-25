@@ -38,15 +38,6 @@ func (l *RestoreLock) Release() {
 	l.once.Do(restoreMutex.Unlock)
 }
 
-func SaveUploadedBackup(file io.Reader, filename string) error {
-	lock, err := AcquireRestoreLock()
-	if err != nil {
-		return err
-	}
-	defer lock.Release()
-	return lock.SaveUploadedBackup(file, filename)
-}
-
 func (l *RestoreLock) SaveUploadedBackup(file io.Reader, filename string) error {
 	if !strings.HasSuffix(strings.ToLower(filename), ".zip") {
 		return fmt.Errorf("uploaded file must be a ZIP archive")

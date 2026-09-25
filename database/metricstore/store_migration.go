@@ -3,10 +3,11 @@ package metricstore
 import (
 	"context"
 	"fmt"
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"strings"
 	"sync"
 	"time"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 
 	"github.com/nuomiiiii/lite/pkg/config"
 	"github.com/nuomiiiii/lite/pkg/metric"

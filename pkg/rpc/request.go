@@ -17,15 +17,7 @@ type JsonRpcRequest struct {
 	ID      any    `json:"id,omitempty"`     // 字符串 / 数值 / null；Notification 时省略
 }
 
-// NewRequest 创建一个普通请求（带 id）
-func NewRequest(id any, method string, params any) *JsonRpcRequest {
-	return &JsonRpcRequest{Version: RPC_VERSION, Method: method, Params: params, ID: id}
-}
-
 // NewNotification 创建一个 Notification（无 id，不会收到返回）
-func NewNotification(method string, params any) *JsonRpcRequest {
-	return &JsonRpcRequest{Version: RPC_VERSION, Method: method, Params: params}
-}
 
 // HasID 判断是否包含 id（Notification 没有 id，不需要返回）
 func (r *JsonRpcRequest) HasID() bool { return r != nil && r.ID != nil }
@@ -81,30 +73,6 @@ func GetParamAs[T any](req *JsonRpcRequest, name string) (val T, ok bool) {
 }
 
 // GetPositionalParamAs 获取位置参数 idx 的值为 T
-func GetPositionalParamAs[T any](req *JsonRpcRequest, idx int) (val T, ok bool) {
-	if req == nil || req.Params == nil {
-		return
-	}
-	if arr, isArr := req.Params.([]any); isArr {
-		if idx < 0 || idx >= len(arr) {
-			return
-		}
-		raw := arr[idx]
-		if v, good := raw.(T); good {
-			return v, true
-		}
-		b, err := json.Marshal(raw)
-		if err != nil {
-			return
-		}
-		var t T
-		if err = json.Unmarshal(b, &t); err != nil {
-			return
-		}
-		return t, true
-	}
-	return
-}
 
 // BindParams 将 Params 绑定到给定结构体指针。
 // 支持：

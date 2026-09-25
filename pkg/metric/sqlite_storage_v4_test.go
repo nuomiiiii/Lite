@@ -82,7 +82,7 @@ func TestSQLiteStorageV4MigratesV3AndPreservesExactPoints(t *testing.T) {
 	updated := points[100]
 	updated.Value = 999999.125
 	updated.Labels = map[string]string{"source": "hot-update"}
-	if err := store.Write(ctx, updated); err != nil {
+	if err := store.WriteBatch(ctx, []Point{updated}); err != nil {
 		t.Fatal(err)
 	}
 	got, err = store.Query(ctx, Query{MetricName: "exact", EntityID: "node-a", Start: updated.Timestamp, End: updated.Timestamp})
@@ -368,7 +368,7 @@ func TestSQLiteStorageV4MigratesLegacyRollupBlocksToSplitStorage(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	if err := store.Write(ctx, Point{MetricName: "legacy-split", EntityID: "node-a", Timestamp: base, Value: 1, Tags: map[string]string{"task": "117"}}); err != nil {
+	if err := store.WriteBatch(ctx, []Point{Point{MetricName: "legacy-split", EntityID: "node-a", Timestamp: base, Value: 1, Tags: map[string]string{"task": "117"}}}); err != nil {
 		t.Fatal(err)
 	}
 	series, err := store.sqliteV4MatchingSeries(ctx, store.db, "legacy-split", "node-a", map[string]string{"task": "117"})

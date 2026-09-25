@@ -1,8 +1,9 @@
 package auditlog
 
 import (
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"time"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 
 	"github.com/nuomiiiii/lite/database/dbcore"
 	"github.com/nuomiiiii/lite/database/models"
@@ -20,10 +21,6 @@ func Log(ip, uuid, message, msgType string) {
 	if err := db.Create(logEntry).Error; err != nil {
 		logger.Error("audit", "failed to persist audit event", "error", err, "type", msgType)
 	}
-}
-
-func EventLog(eventType, message string) {
-	Log("", "", message, eventType)
 }
 
 // Delete logs older than 30 days

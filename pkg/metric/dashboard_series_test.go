@@ -88,7 +88,7 @@ func TestDashboardSeriesLetsHotValueOverrideSealedBlock(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit sealed points: %v", err)
 	}
-	if err := store.Write(ctx, Point{MetricName: "counter", EntityID: "node-a", Timestamp: base.Add(10 * time.Second), Value: 25}); err != nil {
+	if err := store.WriteBatch(ctx, []Point{Point{MetricName: "counter", EntityID: "node-a", Timestamp: base.Add(10 * time.Second), Value: 25}}); err != nil {
 		t.Fatalf("write hot override: %v", err)
 	}
 	query := AggregateQuery{

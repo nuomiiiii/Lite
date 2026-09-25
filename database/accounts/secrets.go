@@ -75,11 +75,6 @@ func decryptTOTPSecret(stored string) (string, error) {
 	return openTOTPSecret(stored, key)
 }
 
-func verifyTOTPSecretWithKey(stored string, key []byte) error {
-	_, err := openTOTPSecret(stored, key)
-	return err
-}
-
 func openTOTPSecret(stored string, key []byte) (string, error) {
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(stored, totpSecretPrefix))
 	if err != nil {

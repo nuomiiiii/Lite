@@ -58,7 +58,7 @@ func TestLatestBeforeUsesRawAndRollupData(t *testing.T) {
 	}
 
 	recent := base.Add(29 * time.Minute)
-	if err := s.Write(ctx, Point{MetricName: "counter", EntityID: "node", Timestamp: recent, Value: 30}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "counter", EntityID: "node", Timestamp: recent, Value: 30}}); err != nil {
 		t.Fatalf("write recent counter: %v", err)
 	}
 	point, ok, err = s.LatestBefore(ctx, "counter", "node", base.Add(30*time.Minute))
@@ -369,7 +369,7 @@ func TestCompactDoesNotOverwriteCoarseRollupWithPartialFineRows(t *testing.T) {
 	if len(after) != 1 || after[0].Count != 300 {
 		t.Fatalf("coarse bucket was overwritten from partial fine rows: %#v", after)
 	}
-	if err := s.Write(ctx, Point{MetricName: "partial", EntityID: "n1", Timestamp: base.Add(4*time.Minute + 30*time.Second), Value: 1}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "partial", EntityID: "n1", Timestamp: base.Add(4*time.Minute + 30*time.Second), Value: 1}}); err != nil {
 		t.Fatalf("write late: %v", err)
 	}
 	if _, err := s.Compact(ctx, base.Add(19*time.Minute)); err != nil {
@@ -408,7 +408,7 @@ func TestCompactMergesLateFineDeltaLargerThanCoarseBucket(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	base := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
-	if err := s.Write(ctx, Point{MetricName: "latebig", EntityID: "n1", Timestamp: base.Add(10 * time.Second), Value: 1}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "latebig", EntityID: "n1", Timestamp: base.Add(10 * time.Second), Value: 1}}); err != nil {
 		t.Fatalf("write original: %v", err)
 	}
 	if _, err := s.Compact(ctx, base.Add(15*time.Minute)); err != nil {
@@ -418,7 +418,7 @@ func TestCompactMergesLateFineDeltaLargerThanCoarseBucket(t *testing.T) {
 		t.Fatalf("compact expire fine: %v", err)
 	}
 	for _, ts := range []time.Time{base.Add(20 * time.Second), base.Add(30 * time.Second)} {
-		if err := s.Write(ctx, Point{MetricName: "latebig", EntityID: "n1", Timestamp: ts, Value: 1}); err != nil {
+		if err := s.WriteBatch(ctx, []Point{Point{MetricName: "latebig", EntityID: "n1", Timestamp: ts, Value: 1}}); err != nil {
 			t.Fatalf("write late: %v", err)
 		}
 	}
@@ -519,12 +519,12 @@ func TestCompactMergesLateRawIntoExpiredRollup(t *testing.T) {
 	if _, err := s.Compact(ctx, base.Add(time.Hour)); err != nil {
 		t.Fatalf("compact initial: %v", err)
 	}
-	if err := s.Write(ctx, Point{
+	if err := s.WriteBatch(ctx, []Point{Point{
 		MetricName: "late",
 		EntityID:   "n1",
 		Timestamp:  base.Add(30*time.Second + 500*time.Millisecond),
 		Value:      1000,
-	}); err != nil {
+	}}); err != nil {
 		t.Fatalf("write late: %v", err)
 	}
 	if _, err := s.Compact(ctx, base.Add(2*time.Hour)); err != nil {
@@ -599,7 +599,7 @@ func TestSeriesStartBeforeLongestRetentionReturnsAvailableRollup(t *testing.T) {
 
 	now := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
 	pointTime := now.Add(-80 * 24 * time.Hour).Add(15 * time.Minute)
-	if err := s.Write(ctx, Point{MetricName: "long-window", EntityID: "n1", Timestamp: pointTime, Value: 42}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "long-window", EntityID: "n1", Timestamp: pointTime, Value: 42}}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if _, err := s.Compact(ctx, now); err != nil {
@@ -797,7 +797,7 @@ func TestSeriesAcrossRetentionIncludesUncompactedRecentRaw(t *testing.T) {
 	}
 
 	recent := now.Add(-10 * time.Minute)
-	if err := s.Write(ctx, Point{MetricName: "hybrid", EntityID: "n1", Timestamp: recent, Value: 500}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "hybrid", EntityID: "n1", Timestamp: recent, Value: 500}}); err != nil {
 		t.Fatalf("write recent: %v", err)
 	}
 
@@ -1030,7 +1030,7 @@ func TestCompactWithRawRetentionOnlyWritesChangedBuckets(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	base := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
-	if err := s.Write(ctx, Point{MetricName: "incremental", EntityID: "n1", Timestamp: base.Add(10 * time.Second), Value: 1}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "incremental", EntityID: "n1", Timestamp: base.Add(10 * time.Second), Value: 1}}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -1050,7 +1050,7 @@ func TestCompactWithRawRetentionOnlyWritesChangedBuckets(t *testing.T) {
 		t.Fatalf("unchanged compact rewrote %d buckets, want 0", second)
 	}
 
-	if err := s.Write(ctx, Point{MetricName: "incremental", EntityID: "n1", Timestamp: base.Add(20 * time.Second), Value: 2}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "incremental", EntityID: "n1", Timestamp: base.Add(20 * time.Second), Value: 2}}); err != nil {
 		t.Fatalf("write late: %v", err)
 	}
 	late, err := s.Compact(ctx, now.Add(2*time.Minute))
@@ -1150,7 +1150,7 @@ func TestZeroRetentionPurgesDataAndDisablesFurtherPersistence(t *testing.T) {
 	if err != nil || def.RetentionDays != 0 {
 		t.Fatalf("CreateMetric did not persist zero retention: %#v, err=%v", def, err)
 	}
-	if err := s.Write(ctx, Point{MetricName: "disabled", EntityID: "node", Timestamp: now, Value: 1}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "disabled", EntityID: "node", Timestamp: now, Value: 1}}); err != nil {
 		t.Fatalf("write disabled metric: %v", err)
 	}
 	raw, err := s.Query(ctx, Query{MetricName: "disabled", EntityID: "node", Start: now.Add(-time.Hour), End: now.Add(time.Hour)})
@@ -1160,7 +1160,7 @@ func TestZeroRetentionPurgesDataAndDisablesFurtherPersistence(t *testing.T) {
 	if err := s.UpsertMetric(ctx, Definition{Name: "disabled", Type: TypeGauge, RetentionDays: 30}); err != nil {
 		t.Fatalf("enable metric: %v", err)
 	}
-	if err := s.Write(ctx, Point{MetricName: "disabled", EntityID: "node", Timestamp: now.Add(-time.Hour), Value: 1}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "disabled", EntityID: "node", Timestamp: now.Add(-time.Hour), Value: 1}}); err != nil {
 		t.Fatalf("write initial point: %v", err)
 	}
 	if _, err := s.CompactMetric(ctx, "disabled", now); err != nil {
@@ -1194,7 +1194,7 @@ func TestZeroRetentionPurgesDataAndDisablesFurtherPersistence(t *testing.T) {
 	if err != nil || len(rollups) != 0 {
 		t.Fatalf("rollup data remained after disable: %#v, err=%v", rollups, err)
 	}
-	if err := s.Write(ctx, Point{MetricName: "disabled", EntityID: "node", Timestamp: now, Value: 2}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "disabled", EntityID: "node", Timestamp: now, Value: 2}}); err != nil {
 		t.Fatalf("write disabled metric: %v", err)
 	}
 	raw, err = s.Query(ctx, Query{MetricName: "disabled", EntityID: "node", Start: now.Add(-time.Hour), End: now.Add(time.Hour)})
@@ -1213,7 +1213,7 @@ func TestCompactPurgesZeroRetentionWithoutRollups(t *testing.T) {
 		t.Fatalf("create metric: %v", err)
 	}
 	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
-	if err := s.Write(ctx, Point{MetricName: "disabled", EntityID: "node", Timestamp: now, Value: 1}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "disabled", EntityID: "node", Timestamp: now, Value: 1}}); err != nil {
 		t.Fatalf("write point: %v", err)
 	}
 	if _, err := s.db.ExecContext(ctx,

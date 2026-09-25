@@ -10,13 +10,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/nuomiiiii/lite/database/accounts"
+	"github.com/nuomiiiii/lite/database/dbcore"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestLogin(t *testing.T) {
 	// 设置测试模式
 	gin.SetMode(gin.TestMode)
-	accounts.CreateAccount("testuser", "correctpassword")
+	accounts.CreateAccountWithDB(dbcore.GetDBInstance(), "testuser", "correctpassword")
 	tests := []struct {
 		name           string
 		requestBody    LoginRequest
@@ -99,7 +100,7 @@ func TestLogin(t *testing.T) {
 		})
 	}
 	// 清除测试数据
-	accounts.DeleteAccountByUsername("testuser")
+	accounts.DeleteAccountByUsernameWithDB(dbcore.GetDBInstance(), "testuser")
 	accounts.DeleteAllSessions()
 }
 

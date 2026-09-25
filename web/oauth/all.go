@@ -7,6 +7,4 @@ import (
 	_ "github.com/nuomiiiii/lite/web/oauth/qq"
 )
 
-func All() {
-	//empty function to ensure all OIDC providers are registered
-}
+//empty function to ensure all OIDC providers are registered

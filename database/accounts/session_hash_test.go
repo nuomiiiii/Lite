@@ -12,7 +12,7 @@ func TestSessionHashIsNotTheCookie(t *testing.T) {
 	t.Setenv("LITE_INSTANCE_KEY_FILE", filepath.Join(t.TempDir(), "lite-instance.key"))
 	instancekey.ResetForTest()
 	plain := "abcdefghijklmnopqrstuvwxyzabcdef"
-	hashed, err := HashSessionToken(plain)
+	hashed, err := hashSessionToken(plain)
 	if err != nil {
 		t.Fatal(err)
 	}

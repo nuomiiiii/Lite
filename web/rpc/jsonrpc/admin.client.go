@@ -2,6 +2,7 @@ package jsonrpc
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/nuomiiiii/lite/database/auditlog"
@@ -119,10 +120,12 @@ func adminAddClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.Jso
 	if err := d_notification.AddDefaultOnClientUUID(uuid); err != nil {
 		logger.ErrorArgs("clients", "Failed to apply default-on load notifications to new client:", err)
 	}
-	if params.Name != "" {
-		actor, ip := auditActor(ctx)
-		auditlog.Log(ip, actor, "create client:"+uuid, "info")
+	name := strings.TrimSpace(params.Name)
+	if name == "" {
+		name = uuid
 	}
+	actor, ip := auditActor(ctx)
+	auditlog.Event(ip, actor, "info", "audit.client_create", map[string]string{"name": name})
 	return map[string]any{"uuid": uuid, "token": token}, nil
 }
 
@@ -157,7 +160,7 @@ func adminEditClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.Js
 		}
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "edit client:"+uuid, "info")
+	auditlog.Event(ip, actor, "info", "audit.client_edit", map[string]string{"name": clients.DisplayName(uuid)})
 	return nil, nil
 }
 
@@ -169,6 +172,7 @@ func adminRemoveClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 	if params.UUID == "" {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid or missing UUID", nil)
 	}
+	clientName := clients.DisplayName(params.UUID)
 	metricstore.BlockEntityWrites(params.UUID)
 	remote_api.CloseClientSessions(params.UUID)
 	agent_runtime.DeleteConnectedClients(params.UUID)
@@ -183,7 +187,7 @@ func adminRemoveClient(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 	}
 	notifier.ForgetClient(params.UUID)
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "delete client:"+params.UUID, "warn")
+	auditlog.Event(ip, actor, "warn", "audit.client_delete", map[string]string{"name": clientName})
 	return nil, nil
 }
 
@@ -226,7 +230,7 @@ func adminGetClientToken(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rp
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "view client token:"+params.UUID, "info")
+	auditlog.Event(ip, actor, "info", "audit.client_token_view", map[string]string{"name": clients.DisplayName(params.UUID)})
 	return map[string]any{"token": token}, nil
 }
 
@@ -246,7 +250,7 @@ func adminRotateClientToken(ctx context.Context, req *rpc.JsonRpcRequest) (any, 
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "rotate client token:"+params.UUID, "warn")
+	auditlog.Event(ip, actor, "warn", "audit.client_token_rotate", map[string]string{"name": clients.DisplayName(params.UUID)})
 	return map[string]any{"token": token, "previous_token_expires_at": expiresAt}, nil
 }
 
@@ -255,6 +259,6 @@ func adminClearRecords(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.Js
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to delete Record"+err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "clear records", "warn")
+	auditlog.Event(ip, actor, "warn", "audit.records_clear", nil)
 	return nil, nil
 }

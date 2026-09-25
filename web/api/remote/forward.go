@@ -2,10 +2,12 @@ package remote
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/nuomiiiii/lite/database/auditlog"
+	"github.com/nuomiiiii/lite/database/clients"
 )
 
 func forwardSession(session *remoteSession) {
@@ -22,7 +24,7 @@ func forwardSession(session *remoteSession) {
 		deleteSession(session.ID)
 		return
 	}
-	auditlog.Log(session.RequesterIP, session.UserUUID, "established remote session, client:"+session.UUID, "terminal")
+	auditlog.Event(session.RequesterIP, session.UserUUID, "terminal", "audit.remote_open", map[string]string{"name": clients.DisplayName(session.UUID)})
 	errCh := make(chan error, 2)
 	setAlive := func(connection *websocket.Conn) {
 		_ = connection.SetReadDeadline(time.Now().Add(remoteIdleTimeout))
@@ -45,7 +47,10 @@ func forwardSession(session *remoteSession) {
 				}
 				if auditFileWrites {
 					if detail := fileOperationAuditDetail(data); detail != "" {
-						auditlog.Log(session.RequesterIP, session.UserUUID, "remote file operation requested, client:"+session.UUID+", "+detail, "warn")
+						auditlog.Event(session.RequesterIP, session.UserUUID, "warn", "audit.remote_file", map[string]string{
+							"name":      clients.DisplayName(session.UUID),
+							"operation": strings.TrimPrefix(detail, "operation:"),
+						})
 					}
 				}
 				err = target.WriteMessage(messageType, data)
@@ -93,7 +98,10 @@ func forwardSession(session *remoteSession) {
 		}
 	}
 	deleteSession(session.ID)
-	auditlog.Log(session.RequesterIP, session.UserUUID, "disconnected remote session, client:"+session.UUID+", duration:"+time.Since(startedAt).String(), "terminal")
+	auditlog.Event(session.RequesterIP, session.UserUUID, "terminal", "audit.remote_close", map[string]string{
+		"name":     clients.DisplayName(session.UUID),
+		"duration": time.Since(startedAt).String(),
+	})
 }
 
 func isRemoteHeartbeat(messageType int, data []byte) bool {

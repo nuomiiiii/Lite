@@ -353,16 +353,5 @@ func formatTrafficReportTotal(totalUp, totalDown, totalBilled int64, includeTraf
 //
 // 历史监控数据已完全迁移到 metric store，这里从 metric store 读取区间内记录并
 // 累加精确的流量增量字段计算用量；缺失增量时回退到累计流量差值。
-func getClientTrafficInRange(clientUUID string, start, end time.Time) (trafficUsage, error) {
-	return trafficledger.MetricUsage(context.Background(), clientUUID, start, end)
-}
 
 type trafficDeltaRecord = trafficledger.DeltaRecord
-
-func sumTrafficDeltas(records []trafficDeltaRecord, previous *trafficDeltaRecord) (int64, int64) {
-	return trafficledger.SumTrafficDeltas(records, previous)
-}
-
-func trafficDeltaOrFallback(storedDelta int64, storedDeltaSet bool, currentTotal, previousTotal int64) int64 {
-	return trafficledger.TrafficDeltaOrFallback(storedDelta, storedDeltaSet, currentTotal, previousTotal)
-}

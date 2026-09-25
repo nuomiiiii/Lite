@@ -10,7 +10,7 @@ func TestCronScheduleUsesSystemLocalWallClock(t *testing.T) {
 	time.Local = time.FixedZone("UTC+8", 8*60*60)
 	t.Cleanup(func() { time.Local = originalLocal })
 
-	schedule, err := Parse("0 0 9 * * *")
+	schedule, err := ParseInLocation("0 0 9 * * *", time.Local)
 	if err != nil {
 		t.Fatalf("parse schedule: %v", err)
 	}
@@ -24,7 +24,7 @@ func TestCronScheduleUsesSystemLocalWallClock(t *testing.T) {
 }
 
 func TestEverySchedulePreservesElapsedDuration(t *testing.T) {
-	schedule, err := Parse("@every 90s")
+	schedule, err := ParseInLocation("@every 90s", time.Local)
 	if err != nil {
 		t.Fatalf("parse schedule: %v", err)
 	}

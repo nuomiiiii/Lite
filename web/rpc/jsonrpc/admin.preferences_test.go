@@ -10,8 +10,8 @@ import (
 )
 
 func TestAccountPreferencePermission(t *testing.T) {
-	require.True(t, rpc.CheckPermission(rpc.RoleAdmin, "admin:updateAccountPreferences"))
-	require.False(t, rpc.CheckPermission(rpc.RoleGuest, "admin:updateAccountPreferences"))
+	require.True(t, rpc.CheckPrincipal(rpc.PrincipalFromRole(rpc.RoleAdmin), "admin:updateAccountPreferences"))
+	require.False(t, rpc.CheckPrincipal(rpc.PrincipalFromRole(rpc.RoleGuest), "admin:updateAccountPreferences"))
 }
 
 func TestPublicGetMeReturnsAccountPreferences(t *testing.T) {

@@ -3,11 +3,12 @@ package corn
 import (
 	"context"
 	"fmt"
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 )
 
 // Func 是 corn 调度器执行的任务函数。
@@ -98,20 +99,12 @@ func Every(duration time.Duration) string {
 	return "@every " + duration.String()
 }
 
-func Remove(name string) {
-	defaultManager.Remove(name)
-}
-
 func RemovePrefix(prefix string) {
 	defaultManager.RemovePrefix(prefix)
 }
 
 func StopAll() {
 	defaultManager.StopAll()
-}
-
-func (m *Manager) AddFunc(name string, spec string, fn func()) error {
-	return m.AddContextFunc(name, spec, false, func(context.Context) { fn() })
 }
 
 func (m *Manager) AddContextFunc(name string, spec string, runImmediately bool, fn Func) error {
@@ -135,16 +128,6 @@ func (m *Manager) AddContextFuncInLocation(name string, spec string, location *t
 
 	go m.run(ctx, name, s, runImmediately, fn)
 	return nil
-}
-
-func (m *Manager) Remove(name string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if old, ok := m.jobs[name]; ok {
-		old.cancel()
-		delete(m.jobs, name)
-	}
 }
 
 func (m *Manager) RemovePrefix(prefix string) {
@@ -236,9 +219,6 @@ func safeRun(ctx context.Context, name string, fn Func) {
 //   - @every 1m / @every 30s
 //
 // 字段支持 *、*/n、a-b、a-b/n、逗号列表和具体数字。
-func Parse(spec string) (schedule, error) {
-	return ParseInLocation(spec, time.Local)
-}
 
 // ParseInLocation parses a cron expression using location for calendar fields.
 func ParseInLocation(spec string, location *time.Location) (schedule, error) {

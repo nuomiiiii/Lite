@@ -42,10 +42,6 @@ func KeepLegacyHTTPListen(dataDir string) bool {
 	return fileExists(filepath.Join(dataDir, legacyHTTPListenMarker))
 }
 
-func LegacyHTTPListenAddr() string {
-	return ResolveDefaultHTTPListen("")
-}
-
 // ResolveDefaultHTTPListen returns the HTTP listen address for an unspecified
 // -l / LITE_LISTEN. Existing Komari / Komari Lite data keeps the previous
 // address (marker contents, otherwise 25774). A true new install uses 27777.

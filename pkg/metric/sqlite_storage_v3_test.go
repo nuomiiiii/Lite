@@ -147,7 +147,7 @@ func TestSQLiteStorageV4MigratesUpstreamLegacyDataAndPreservesQueries(t *testing
 		MetricName: "latency", EntityID: "node-a", Timestamp: rawTime,
 		Value: 99, Tags: tags, Labels: map[string]string{"origin": "new-write"},
 	}
-	if err := store.Write(ctx, updated); err != nil {
+	if err := store.WriteBatch(ctx, []Point{updated}); err != nil {
 		t.Fatalf("upsert point through V3 view: %v", err)
 	}
 	points, err = store.Query(ctx, Query{MetricName: "latency", EntityID: "node-a", Start: base, End: base.Add(time.Minute)})
@@ -229,7 +229,7 @@ func TestSQLiteStorageV3ContinuesWritingAndCompactingAfterLegacyMigration(t *tes
 		MetricName: "traffic", EntityID: "node-a", Timestamp: base.Add(3 * time.Hour), Value: 777,
 		Tags: map[string]string{"source": "report"}, Labels: map[string]string{"phase": "after-restart"},
 	}
-	if err := store.Write(ctx, recent); err != nil {
+	if err := store.WriteBatch(ctx, []Point{recent}); err != nil {
 		t.Fatalf("write after restart: %v", err)
 	}
 	raw, err := store.Query(ctx, Query{
@@ -313,7 +313,7 @@ func TestSQLiteStorageV3DetectedWithoutAutoMigration(t *testing.T) {
 		t.Fatal("V3 storage was not detected without auto migration")
 	}
 	point := Point{MetricName: "existing", EntityID: "node-a", Timestamp: time.Now().UTC(), Value: 1}
-	if err := store.Write(ctx, point); err != nil {
+	if err := store.WriteBatch(ctx, []Point{point}); err != nil {
 		t.Fatalf("write V3 database without auto migration: %v", err)
 	}
 }

@@ -110,7 +110,7 @@ func UploadAccountAvatar(c *gin.Context) {
 	if previous != "" && previous != version {
 		_ = os.Remove(avatarPath(uuidStr, previous))
 	}
-	auditlog.Log(c.ClientIP(), uuidStr, "updated account avatar", "info")
+	auditlog.Event(c.ClientIP(), uuidStr, "info", "audit.avatar_update", nil)
 	api.RespondSuccess(c, gin.H{"avatar_url": avatarURL(version)})
 }
 
@@ -159,7 +159,7 @@ func DeleteAccountAvatar(c *gin.Context) {
 	if user.AvatarVersion != "" {
 		_ = os.Remove(avatarPath(uuidStr, user.AvatarVersion))
 	}
-	auditlog.Log(c.ClientIP(), uuidStr, "removed account avatar", "info")
+	auditlog.Event(c.ClientIP(), uuidStr, "info", "audit.avatar_remove", nil)
 	api.RespondSuccess(c, gin.H{"avatar_url": ""})
 }
 

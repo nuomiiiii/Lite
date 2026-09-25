@@ -2,9 +2,10 @@ package notifier
 
 import (
 	"fmt"
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"sync"
 	"time"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 
 	"github.com/nuomiiiii/lite/database/clients"
 	"github.com/nuomiiiii/lite/database/dbcore"

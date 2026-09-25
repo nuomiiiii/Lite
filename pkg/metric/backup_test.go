@@ -21,7 +21,7 @@ func TestBackupSQLiteIncludesCommittedMetricHistory(t *testing.T) {
 		t.Fatalf("create metric: %v", err)
 	}
 	stamp := time.Date(2026, 8, 1, 1, 2, 3, 0, time.UTC)
-	if err := store.Write(ctx, Point{MetricName: "cpu", EntityID: "node-a", Timestamp: stamp, Value: 42.5}); err != nil {
+	if err := store.WriteBatch(ctx, []Point{Point{MetricName: "cpu", EntityID: "node-a", Timestamp: stamp, Value: 42.5}}); err != nil {
 		t.Fatalf("write point: %v", err)
 	}
 

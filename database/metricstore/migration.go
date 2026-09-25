@@ -2,8 +2,9 @@ package metricstore
 
 import (
 	"fmt"
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"strings"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 
 	"github.com/nuomiiiii/lite/pkg/config"
 )

@@ -7,8 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/url"
 	"strings"
 )
@@ -58,10 +56,6 @@ func newID(prefix string) (string, error) {
 func hashToken(plain string) string {
 	sum := sha256.Sum256([]byte(plain))
 	return hex.EncodeToString(sum[:])
-}
-
-func hashSession(value string) string {
-	return hashToken(value)
 }
 
 func requestDigest(value any) string {
@@ -192,11 +186,4 @@ func requestScheme(https bool) string {
 		return "https"
 	}
 	return "http"
-}
-
-func readLimited(r io.Reader, limit int64) ([]byte, error) {
-	if r == nil {
-		return nil, fmt.Errorf("empty body")
-	}
-	return io.ReadAll(io.LimitReader(r, limit))
 }

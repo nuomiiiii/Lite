@@ -77,15 +77,6 @@ func NewAPIKeyPrincipal() *Principal {
 	}
 }
 
-// NewMCPDelegationPrincipal creates a lease-scoped MCP caller without admin.
-func NewMCPDelegationPrincipal(leaseID string) *Principal {
-	return &Principal{
-		Type:    PrincipalMCPDelegation,
-		LeaseID: leaseID,
-		Roles:   nil,
-	}
-}
-
 // PrimaryRole 返回主体的主要角色(兼容现有单角色模型)。
 // 多角色场景下返回权限等级最高的那个。
 func (p *Principal) PrimaryRole() string {
@@ -118,7 +109,9 @@ func (p *Principal) HasRole(role string) bool {
 
 // PrincipalFromRole 按角色构造一个最小主体,用于内部调用(OnInternalRequest)等
 // 仅知道角色、无具体身份信息的场景。Type 按角色合理推断:
-//   guest → Anonymous, client → Agent, admin → User。
+//
+//	guest → Anonymous, client → Agent, admin → User。
+//
 // 注意:此构造不携带 UUID/token,仅用于权限判定与兜底,不应据此做审计 actor 归属。
 func PrincipalFromRole(role string) *Principal {
 	switch role {
@@ -130,4 +123,3 @@ func PrincipalFromRole(role string) *Principal {
 		return NewAnonymousPrincipal()
 	}
 }
-

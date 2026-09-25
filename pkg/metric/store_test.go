@@ -117,12 +117,12 @@ func TestWriteRejectsNonFiniteValues(t *testing.T) {
 	}
 
 	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
-		err := store.Write(ctx, Point{
+		err := store.WriteBatch(ctx, []Point{Point{
 			MetricName: "bad",
 			EntityID:   "server-1",
 			Timestamp:  time.Now(),
 			Value:      value,
-		})
+		}})
 		if !errors.Is(err, ErrInvalidArgument) {
 			t.Fatalf("expected ErrInvalidArgument for %v, got %v", value, err)
 		}
@@ -134,13 +134,13 @@ func TestWriteBatchRequiresMetricDefinition(t *testing.T) {
 	store := newMemStore(t)
 	point := Point{MetricName: "custom.metric", EntityID: "server-1", Timestamp: time.Now().UTC(), Value: 1}
 
-	if err := store.Write(ctx, point); !errors.Is(err, ErrNotFound) {
+	if err := store.WriteBatch(ctx, []Point{point}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("write undefined metric error = %v, want ErrNotFound", err)
 	}
 	if err := store.CreateMetric(ctx, Definition{Name: point.MetricName, Type: TypeGauge, RetentionDays: 1}); err != nil {
 		t.Fatalf("register dynamic metric: %v", err)
 	}
-	if err := store.Write(ctx, point); err != nil {
+	if err := store.WriteBatch(ctx, []Point{point}); err != nil {
 		t.Fatalf("write registered dynamic metric: %v", err)
 	}
 }
@@ -153,7 +153,7 @@ func TestUpdateMetricRetentionDefersDisabledMetricCleanup(t *testing.T) {
 		t.Fatalf("create metric: %v", err)
 	}
 	point := Point{MetricName: metricName, EntityID: "server-1", Timestamp: time.Now().UTC(), Value: 1}
-	if err := store.Write(ctx, point); err != nil {
+	if err := store.WriteBatch(ctx, []Point{point}); err != nil {
 		t.Fatalf("write point: %v", err)
 	}
 

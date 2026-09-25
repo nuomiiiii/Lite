@@ -21,10 +21,3 @@ func ErrorResponse(id any, code int, msg string, data any) *JsonRpcResponse {
 }
 
 // InternalErrorResponse 统一内部错误
-func InternalErrorResponse(id any, err error) *JsonRpcResponse {
-	msg := "internal error"
-	if err != nil {
-		msg = err.Error()
-	}
-	return ErrorResponse(id, InternalError, msg, nil)
-}

@@ -133,7 +133,7 @@ func TestCompactionChunksCommitResumeAndPreserveRollups(t *testing.T) {
 
 	late := Point{MetricName: metricName, EntityID: "node-a", Timestamp: base.Add(10 * time.Minute), Value: 9999, Tags: map[string]string{"source": "upgrade"}}
 	for _, store := range []*Store{chunked, reference} {
-		if err := store.Write(ctx, late); err != nil {
+		if err := store.WriteBatch(ctx, []Point{late}); err != nil {
 			t.Fatalf("write late point: %v", err)
 		}
 	}

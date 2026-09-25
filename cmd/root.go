@@ -10,10 +10,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func GetEnv(key, defaultValue string) string {
-	return GetEnvFirst(defaultValue, key)
-}
-
 func GetEnvFirst(defaultValue string, keys ...string) string {
 	for _, key := range keys {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {

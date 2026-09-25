@@ -421,7 +421,7 @@ func TestRecordReconstructionUsesMetricSpecificAggregation(t *testing.T) {
 		t.Fatalf("write points: %v", err)
 	}
 
-	records, err := GetRecordsByClientAndTime(ctx, entityID, base, base.Add(time.Hour))
+	records, err := GetRecordsByClientAndTimeForLoadType(ctx, entityID, base, base.Add(time.Hour), "all")
 	if err != nil {
 		t.Fatalf("reconstruct records: %v", err)
 	}

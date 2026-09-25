@@ -2,12 +2,12 @@ package javascript
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/dop251/goja"
 	"github.com/nuomiiiii/lite/utils/messageSender/outboundhttp"
@@ -53,84 +53,86 @@ func (j *JavaScriptSender) createFetchFunction() func(goja.FunctionCall) goja.Va
 
 		// 创建 Promise
 		promise, resolve, reject := j.vm.NewPromise()
+		gen := j.gen
+		method := options["method"].(string)
+		requestBody := options["body"].(string)
+		headers := options["headers"].(map[string]string)
 
 		go func() {
+			fail := func(message string) {
+				j.enqueue(gen, func() {
+					reject(j.vm.ToValue(message))
+				})
+			}
 			defer func() {
-				if r := recover(); r != nil {
-					reject(j.vm.ToValue(fmt.Sprintf("fetch panic: %v", r)))
+				if recovered := recover(); recovered != nil {
+					fail(fmt.Sprintf("fetch panic: %v", recovered))
 				}
 			}()
 
-			// 创建 HTTP 请求
-			method := options["method"].(string)
 			var body io.Reader
-			if options["body"].(string) != "" {
-				body = strings.NewReader(options["body"].(string))
+			if requestBody != "" {
+				body = strings.NewReader(requestBody)
 			}
-
-			req, err := http.NewRequest(method, url, body)
+			ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
+			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, method, url, body)
 			if err != nil {
-				reject(j.vm.ToValue(fmt.Sprintf("Failed to create request: %v", err)))
+				fail(fmt.Sprintf("Failed to create request: %v", err))
 				return
 			}
-
-			// 设置请求头
-			headers := options["headers"].(map[string]string)
 			for key, value := range headers {
 				req.Header.Set(key, value)
 			}
 
-			// 发送请求
-			client := outboundhttp.NewClient(30 * time.Second)
+			client := outboundhttp.NewClient(httpTimeout)
 			resp, err := client.Do(req)
 			if err != nil {
-				reject(j.vm.ToValue(fmt.Sprintf("Fetch failed: %v", err)))
+				fail(fmt.Sprintf("Fetch failed: %v", err))
 				return
 			}
 			defer resp.Body.Close()
-
-			// 读取响应体
 			bodyBytes, err := io.ReadAll(resp.Body)
 			if err != nil {
-				reject(j.vm.ToValue(fmt.Sprintf("Failed to read response: %v", err)))
+				fail(fmt.Sprintf("Failed to read response: %v", err))
 				return
 			}
 
-			// 创建响应对象
-			responseObj := j.vm.NewObject()
-			responseObj.Set("status", resp.StatusCode)
-			responseObj.Set("statusText", resp.Status)
-			responseObj.Set("ok", resp.StatusCode >= 200 && resp.StatusCode < 300)
-
-			// 响应头
-			headersObj := j.vm.NewObject()
+			statusCode := resp.StatusCode
+			statusText := resp.Status
+			headerCopy := map[string]string{}
 			for key, values := range resp.Header {
 				if len(values) > 0 {
-					headersObj.Set(key, values[0])
+					headerCopy[key] = values[0]
 				}
 			}
-			responseObj.Set("headers", headersObj)
-
-			// text() 方法
-			responseObj.Set("text", func(goja.FunctionCall) goja.Value {
-				textPromise, textResolve, _ := j.vm.NewPromise()
-				textResolve(j.vm.ToValue(string(bodyBytes)))
-				return j.vm.ToValue(textPromise)
-			})
-
-			// json() 方法
-			responseObj.Set("json", func(goja.FunctionCall) goja.Value {
-				jsonPromise, jsonResolve, jsonReject := j.vm.NewPromise()
-				var result interface{}
-				if err := json.Unmarshal(bodyBytes, &result); err != nil {
-					jsonReject(j.vm.ToValue(fmt.Sprintf("Failed to parse JSON: %v", err)))
-				} else {
-					jsonResolve(j.vm.ToValue(result))
+			j.enqueue(gen, func() {
+				responseObj := j.vm.NewObject()
+				responseObj.Set("status", statusCode)
+				responseObj.Set("statusText", statusText)
+				responseObj.Set("ok", statusCode >= 200 && statusCode < 300)
+				headersObj := j.vm.NewObject()
+				for key, value := range headerCopy {
+					headersObj.Set(key, value)
 				}
-				return j.vm.ToValue(jsonPromise)
+				responseObj.Set("headers", headersObj)
+				responseObj.Set("text", func(goja.FunctionCall) goja.Value {
+					textPromise, textResolve, _ := j.vm.NewPromise()
+					textResolve(j.vm.ToValue(string(bodyBytes)))
+					return j.vm.ToValue(textPromise)
+				})
+				responseObj.Set("json", func(goja.FunctionCall) goja.Value {
+					jsonPromise, jsonResolve, jsonReject := j.vm.NewPromise()
+					var result interface{}
+					if err := json.Unmarshal(bodyBytes, &result); err != nil {
+						jsonReject(j.vm.ToValue(fmt.Sprintf("Failed to parse JSON: %v", err)))
+					} else {
+						jsonResolve(j.vm.ToValue(result))
+					}
+					return j.vm.ToValue(jsonPromise)
+				})
+				resolve(responseObj)
 			})
-
-			resolve(responseObj)
 		}()
 
 		return j.vm.ToValue(promise)
@@ -191,85 +193,68 @@ func (j *JavaScriptSender) createXHRConstructor() func(goja.ConstructorCall) *go
 			if len(call.Arguments) > 0 && !goja.IsUndefined(call.Argument(0)) && !goja.IsNull(call.Argument(0)) {
 				requestBody = call.Argument(0).String()
 			}
-
-			sendFunc := func() {
-				defer func() {
-					if r := recover(); r != nil {
-						xhr.Set("readyState", 4)
-						xhr.Set("status", 0)
-						xhr.Set("statusText", fmt.Sprintf("Error: %v", r))
-						j.callHandler(xhr, "onerror")
-						j.callHandler(xhr, "onreadystatechange")
-					}
-				}()
-
-				// 创建请求
-				var body io.Reader
-				if requestBody != "" {
-					body = bytes.NewReader([]byte(requestBody))
-				}
-
-				req, err := http.NewRequest(method, url, body)
-				if err != nil {
-					xhr.Set("readyState", 4)
-					xhr.Set("status", 0)
-					xhr.Set("statusText", err.Error())
+			methodCopy := method
+			urlCopy := url
+			bodyCopy := requestBody
+			headerCopy := make(map[string]string, len(headers))
+			for key, value := range headers {
+				headerCopy[key] = value
+			}
+			apply := func(status int, statusText, responseText string, failed bool) {
+				xhr.Set("readyState", 4)
+				xhr.Set("status", status)
+				xhr.Set("statusText", statusText)
+				xhr.Set("responseText", responseText)
+				xhr.Set("response", responseText)
+				if failed {
 					j.callHandler(xhr, "onerror")
-					j.callHandler(xhr, "onreadystatechange")
-					return
+				} else {
+					j.callHandler(xhr, "onload")
 				}
-
-				// 设置请求头
-				for key, value := range headers {
+				j.callHandler(xhr, "onreadystatechange")
+			}
+			doRequest := func() (int, string, string, bool) {
+				var body io.Reader
+				if bodyCopy != "" {
+					body = bytes.NewReader([]byte(bodyCopy))
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
+				defer cancel()
+				req, err := http.NewRequestWithContext(ctx, methodCopy, urlCopy, body)
+				if err != nil {
+					return 0, err.Error(), "", true
+				}
+				for key, value := range headerCopy {
 					req.Header.Set(key, value)
 				}
-
-				// 发送请求
-				xhr.Set("readyState", 2)
-				j.callHandler(xhr, "onreadystatechange")
-
-				client := outboundhttp.NewClient(30 * time.Second)
+				client := outboundhttp.NewClient(httpTimeout)
 				resp, err := client.Do(req)
 				if err != nil {
-					xhr.Set("readyState", 4)
-					xhr.Set("status", 0)
-					xhr.Set("statusText", err.Error())
-					j.callHandler(xhr, "onerror")
-					j.callHandler(xhr, "onreadystatechange")
-					return
+					return 0, err.Error(), "", true
 				}
 				defer resp.Body.Close()
-
-				// 读取响应
-				xhr.Set("readyState", 3)
-				j.callHandler(xhr, "onreadystatechange")
-
 				bodyBytes, err := io.ReadAll(resp.Body)
 				if err != nil {
-					xhr.Set("readyState", 4)
-					xhr.Set("status", resp.StatusCode)
-					xhr.Set("statusText", err.Error())
-					j.callHandler(xhr, "onerror")
-					j.callHandler(xhr, "onreadystatechange")
-					return
+					return resp.StatusCode, err.Error(), "", true
 				}
-
-				// 完成
-				xhr.Set("readyState", 4)
-				xhr.Set("status", resp.StatusCode)
-				xhr.Set("statusText", resp.Status)
-				xhr.Set("responseText", string(bodyBytes))
-				xhr.Set("response", string(bodyBytes))
-				j.callHandler(xhr, "onreadystatechange")
-				j.callHandler(xhr, "onload")
+				return resp.StatusCode, resp.Status, string(bodyBytes), false
 			}
-
 			if async {
-				go sendFunc()
+				gen := j.gen
+				go func() {
+					defer func() {
+						if recovered := recover(); recovered != nil {
+							message := fmt.Sprintf("Error: %v", recovered)
+							j.enqueue(gen, func() { apply(0, message, "", true) })
+						}
+					}()
+					status, statusText, responseText, failed := doRequest()
+					j.enqueue(gen, func() { apply(status, statusText, responseText, failed) })
+				}()
 			} else {
-				sendFunc()
+				status, statusText, responseText, failed := doRequest()
+				apply(status, statusText, responseText, failed)
 			}
-
 			return goja.Undefined()
 		})
 

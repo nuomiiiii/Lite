@@ -28,55 +28,16 @@ const (
 )
 
 var (
-	digestEncoderOnce sync.Once
-	digestEncoder     *zstd.Encoder
-	digestEncoderErr  error
 	digestDecoderOnce sync.Once
 	digestDecoder     *zstd.Decoder
 	digestDecoderErr  error
 )
-
-func getDigestEncoder() (*zstd.Encoder, error) {
-	digestEncoderOnce.Do(func() {
-		digestEncoder, digestEncoderErr = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(1)))
-	})
-	return digestEncoder, digestEncoderErr
-}
 
 func getDigestDecoder() (*zstd.Decoder, error) {
 	digestDecoderOnce.Do(func() {
 		digestDecoder, digestDecoderErr = zstd.NewReader(nil)
 	})
 	return digestDecoder, digestDecoderErr
-}
-
-// encodeStoredTDigest returns the upstream 1.4.x on-disk representation.
-// Compression is per rollup: a poorly compressible digest is stored raw
-// instead of growing larger.
-func encodeStoredTDigest(t *TDigest) []byte {
-	if t == nil {
-		return nil
-	}
-	raw := t.encodeRaw()
-	encoder, err := getDigestEncoder()
-	if err != nil {
-		return append([]byte(nil), raw...)
-	}
-	compressed := encoder.EncodeAll(raw, nil)
-	if len(compressed)+storedDigestHeaderSize < len(raw) {
-		out := make([]byte, storedDigestHeaderSize+len(compressed))
-		out[0] = storedDigestMagic0
-		out[1] = storedDigestTypeZstd
-		out[2] = storedDigestVersion
-		copy(out[storedDigestHeaderSize:], compressed)
-		return out
-	}
-	out := make([]byte, storedDigestHeaderSize+len(raw))
-	out[0] = storedDigestMagic0
-	out[1] = storedDigestTypeRaw
-	out[2] = storedDigestVersion
-	copy(out[storedDigestHeaderSize:], raw)
-	return out
 }
 
 // decodeStoredTDigest unwraps upstream 1.4.x TZ/TU envelopes, Lite's flate TZ

@@ -102,11 +102,6 @@ func issueGrant(userUUID, loginSession, scope, pageID string, expires time.Time)
 	return plain, expires, nil
 }
 
-func ConsumeGrant(plain, userUUID, loginSession, scope, pageID string) error {
-	_, err := lookupGrant(plain, userUUID, loginSession, scope, pageID, true)
-	return err
-}
-
 func ConsumeAndRotateGrant(plain, userUUID, loginSession, scope, pageID string) (string, time.Time, error) {
 	stored, err := lookupGrant(plain, userUUID, loginSession, scope, pageID, true)
 	if err != nil {

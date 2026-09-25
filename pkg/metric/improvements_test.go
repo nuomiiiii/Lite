@@ -200,7 +200,7 @@ func TestLatestReturnsMostRecent(t *testing.T) {
 	}
 	base := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
 	for i := 0; i < 5; i++ {
-		if err := s.Write(ctx, Point{MetricName: "l", EntityID: "n1", Timestamp: base.Add(time.Duration(i) * time.Minute), Value: float64(i)}); err != nil {
+		if err := s.WriteBatch(ctx, []Point{Point{MetricName: "l", EntityID: "n1", Timestamp: base.Add(time.Duration(i) * time.Minute), Value: float64(i)}}); err != nil {
 			t.Fatalf("write: %v", err)
 		}
 	}
@@ -346,7 +346,7 @@ func TestSQLiteReadPoolOpens(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	base := time.Date(2026, 6, 18, 0, 0, 0, 0, time.UTC)
-	if err := store.Write(ctx, Point{MetricName: "rp", EntityID: "n1", Timestamp: base, Value: 7}); err != nil {
+	if err := store.WriteBatch(ctx, []Point{Point{MetricName: "rp", EntityID: "n1", Timestamp: base, Value: 7}}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	got, err := store.Latest(ctx, "rp", "n1", 1)
@@ -588,11 +588,11 @@ func TestJSONTagKeyWithSpecialChars(t *testing.T) {
 		"a-b":         "yes",
 		"with space":  "ok",
 	}
-	if err := s.Write(ctx, Point{MetricName: "tk", EntityID: "n1", Timestamp: base, Value: 1, Tags: tags}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "tk", EntityID: "n1", Timestamp: base, Value: 1, Tags: tags}}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	// A second point that should NOT match the filter below.
-	if err := s.Write(ctx, Point{MetricName: "tk", EntityID: "n1", Timestamp: base.Add(time.Minute), Value: 2, Tags: map[string]string{"region.zone": "eu-1"}}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "tk", EntityID: "n1", Timestamp: base.Add(time.Minute), Value: 2, Tags: map[string]string{"region.zone": "eu-1"}}}); err != nil {
 		t.Fatalf("write 2: %v", err)
 	}
 

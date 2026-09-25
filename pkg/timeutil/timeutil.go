@@ -9,22 +9,8 @@ import (
 var BeijingLocation = time.FixedZone("Asia/Shanghai", 8*60*60)
 
 // SameSystemDate compares calendar dates in the operating system timezone.
-func SameSystemDate(left, right time.Time) bool {
-	return sameDateIn(left, right, time.Local)
-}
-
-func sameDateIn(left, right time.Time, location *time.Location) bool {
-	left = left.In(location)
-	right = right.In(location)
-	ly, lm, ld := left.Date()
-	ry, rm, rd := right.Date()
-	return ly == ry && lm == rm && ld == rd
-}
 
 // SameBeijingDate compares calendar dates in Asia/Shanghai.
-func SameBeijingDate(left, right time.Time) bool {
-	return sameDateIn(left, right, BeijingLocation)
-}
 
 // BeijingDay returns midnight of the Asia/Shanghai calendar day containing value.
 func BeijingDay(value time.Time) time.Time {
@@ -38,12 +24,6 @@ func BeijingDayReached(now, expire time.Time) bool {
 }
 
 // FormatSystemDate formats an instant as a system-local calendar date.
-func FormatSystemDate(value time.Time) string {
-	if value.IsZero() {
-		return ""
-	}
-	return value.In(time.Local).Format("2006-01-02")
-}
 
 // FormatBeijingDate formats an instant as an Asia/Shanghai calendar date.
 func FormatBeijingDate(value time.Time) string {

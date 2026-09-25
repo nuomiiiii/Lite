@@ -197,13 +197,6 @@ func putSession(session *remoteSession) error {
 	return nil
 }
 
-func pruneStaleSessions(now time.Time) {
-	sessionsMu.Lock()
-	pruned := takeStaleSessionsLocked(now)
-	sessionsMu.Unlock()
-	closeTakenSessions(pruned)
-}
-
 func takeStaleSessionsLocked(now time.Time) []*remoteSession {
 	pruned := make([]*remoteSession, 0)
 	for id, session := range sessions {

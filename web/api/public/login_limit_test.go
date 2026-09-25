@@ -24,9 +24,9 @@ func TestLoginReturnsTooManyRequestsWhenArgon2Busy(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	accounts.ResetLoginLimitsForTest()
 	username := "busy-login"
-	accounts.CreateAccount(username, "correctpassword")
+	accounts.CreateAccountWithDB(dbcore.GetDBInstance(), username, "correctpassword")
 	t.Cleanup(func() {
-		accounts.DeleteAccountByUsername(username)
+		accounts.DeleteAccountByUsernameWithDB(dbcore.GetDBInstance(), username)
 		accounts.DeleteAllSessions()
 		accounts.ResetLoginLimitsForTest()
 	})
@@ -51,9 +51,9 @@ func TestLoginRateLimitReturnsTooManyRequestsBeforeArgon2(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	accounts.ResetLoginLimitsForTest()
 	username := "limit-login"
-	accounts.CreateAccount(username, "correctpassword")
+	accounts.CreateAccountWithDB(dbcore.GetDBInstance(), username, "correctpassword")
 	t.Cleanup(func() {
-		accounts.DeleteAccountByUsername(username)
+		accounts.DeleteAccountByUsernameWithDB(dbcore.GetDBInstance(), username)
 		accounts.DeleteAllSessions()
 		accounts.ResetLoginLimitsForTest()
 	})
@@ -89,10 +89,10 @@ func TestLoginWrongTOTPTriggersLimitWithoutLeaking(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	accounts.ResetLoginLimitsForTest()
 	username := "totp-limit-" + uuid.NewString()[:8]
-	user, err := accounts.CreateAccount(username, "correctpassword")
+	user, err := accounts.CreateAccountWithDB(dbcore.GetDBInstance(), username, "correctpassword")
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		accounts.DeleteAccountByUsername(username)
+		accounts.DeleteAccountByUsernameWithDB(dbcore.GetDBInstance(), username)
 		accounts.DeleteAllSessions()
 		accounts.ResetLoginLimitsForTest()
 	})
@@ -152,10 +152,10 @@ func TestLoginPasswordOkThenRequiresTwoFactor(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	accounts.ResetLoginLimitsForTest()
 	username := "totp-step-" + uuid.NewString()[:8]
-	user, err := accounts.CreateAccount(username, "correctpassword")
+	user, err := accounts.CreateAccountWithDB(dbcore.GetDBInstance(), username, "correctpassword")
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		accounts.DeleteAccountByUsername(username)
+		accounts.DeleteAccountByUsernameWithDB(dbcore.GetDBInstance(), username)
 		accounts.DeleteAllSessions()
 		accounts.ResetLoginLimitsForTest()
 	})

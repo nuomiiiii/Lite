@@ -370,7 +370,7 @@ func TestCreateMetricDefinitionsPreservesHistoricalMetricsAcrossRestart(t *testi
 		if err := s.CreateMetric(ctx, metric.Definition{Name: name, Type: metric.TypeGauge, RetentionDays: 1}); err != nil {
 			t.Fatalf("create historical definition %s: %v", name, err)
 		}
-		if err := s.Write(ctx, metric.Point{MetricName: name, EntityID: "node-a", Timestamp: at, Value: float64(index + 1)}); err != nil {
+		if err := s.WriteBatch(ctx, []metric.Point{metric.Point{MetricName: name, EntityID: "node-a", Timestamp: at, Value: float64(index + 1)}}); err != nil {
 			t.Fatalf("write historical point %s: %v", name, err)
 		}
 	}
@@ -581,7 +581,7 @@ func TestCompactContinuesAfterOneMetricFails(t *testing.T) {
 
 	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-time.Hour)
-	if err := s.Write(ctx, metric.Point{MetricName: "b.healthy", EntityID: "node", Timestamp: old, Value: 2}); err != nil {
+	if err := s.WriteBatch(ctx, []metric.Point{metric.Point{MetricName: "b.healthy", EntityID: "node", Timestamp: old, Value: 2}}); err != nil {
 		t.Fatalf("write healthy point: %v", err)
 	}
 
@@ -684,7 +684,7 @@ func TestCompactStepProcessesOnlyOneMetric(t *testing.T) {
 
 	now := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
 	for i, name := range []string{"a.metric", "b.metric", "c.metric"} {
-		if err := s.Write(ctx, metric.Point{MetricName: name, EntityID: "node", Timestamp: now.Add(-time.Hour), Value: float64(i + 1)}); err != nil {
+		if err := s.WriteBatch(ctx, []metric.Point{metric.Point{MetricName: name, EntityID: "node", Timestamp: now.Add(-time.Hour), Value: float64(i + 1)}}); err != nil {
 			t.Fatalf("write metric %s: %v", name, err)
 		}
 	}
@@ -774,7 +774,7 @@ func TestCompactStepDefersCleanupAndCheckpointUntilCycleEnd(t *testing.T) {
 	}
 	now := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
 	for _, name := range []string{"a.metric", "b.metric"} {
-		if err := s.Write(ctx, metric.Point{MetricName: name, EntityID: "node", Timestamp: now.Add(-48 * time.Hour), Value: 1}); err != nil {
+		if err := s.WriteBatch(ctx, []metric.Point{metric.Point{MetricName: name, EntityID: "node", Timestamp: now.Add(-48 * time.Hour), Value: 1}}); err != nil {
 			t.Fatalf("write metric %s: %v", name, err)
 		}
 	}
@@ -814,7 +814,7 @@ func TestFinishCompactCycleCleansExpiredDataEveryCycle(t *testing.T) {
 	now := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
 	for cycle := 1; cycle <= 2; cycle++ {
 		old := now.Add(-time.Duration(48+cycle) * time.Hour)
-		if err := s.Write(ctx, metric.Point{MetricName: "retention.metric", EntityID: "node", Timestamp: old, Value: float64(cycle)}); err != nil {
+		if err := s.WriteBatch(ctx, []metric.Point{metric.Point{MetricName: "retention.metric", EntityID: "node", Timestamp: old, Value: float64(cycle)}}); err != nil {
 			t.Fatalf("cycle %d write old point: %v", cycle, err)
 		}
 		if err := finishCompactCycle(ctx, s, now, false); err != nil {
@@ -849,7 +849,7 @@ func TestRetryMetricWALCheckpointClearsPendingWAL(t *testing.T) {
 		t.Fatalf("upsert metric: %v", err)
 	}
 	now := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
-	if err := s.Write(ctx, metric.Point{MetricName: "a.metric", EntityID: "node", Timestamp: now, Value: 1}); err != nil {
+	if err := s.WriteBatch(ctx, []metric.Point{metric.Point{MetricName: "a.metric", EntityID: "node", Timestamp: now, Value: 1}}); err != nil {
 		t.Fatalf("write metric: %v", err)
 	}
 	runtimeStatusMu.Lock()
@@ -892,7 +892,7 @@ func TestFinishCompactCycleDoesNotRepeatLongCheckpointWhilePending(t *testing.T)
 		t.Fatalf("upsert metric: %v", err)
 	}
 	now := time.Now().UTC()
-	if err := s.Write(ctx, metric.Point{MetricName: "a.metric", EntityID: "node", Timestamp: now, Value: 7}); err != nil {
+	if err := s.WriteBatch(ctx, []metric.Point{metric.Point{MetricName: "a.metric", EntityID: "node", Timestamp: now, Value: 7}}); err != nil {
 		t.Fatalf("write metric: %v", err)
 	}
 	before := fileSize(t, dsn+"-wal")
@@ -954,7 +954,7 @@ func TestCheckpointMetricWALAboveLimit(t *testing.T) {
 	if err := s.UpsertMetric(ctx, metric.Definition{Name: "a.metric", Type: metric.TypeGauge, RetentionDays: 1}); err != nil {
 		t.Fatalf("upsert metric: %v", err)
 	}
-	if err := s.Write(ctx, metric.Point{MetricName: "a.metric", EntityID: "node", Timestamp: time.Now().UTC(), Value: 1}); err != nil {
+	if err := s.WriteBatch(ctx, []metric.Point{metric.Point{MetricName: "a.metric", EntityID: "node", Timestamp: time.Now().UTC(), Value: 1}}); err != nil {
 		t.Fatalf("write metric: %v", err)
 	}
 	if size := fileSize(t, dsn+"-wal"); size == 0 {
@@ -990,7 +990,7 @@ func TestCompactStepAdvancesAfterMetricFailure(t *testing.T) {
 	}
 	now := time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour)
-	if err := s.Write(ctx, metric.Point{MetricName: "b.healthy", EntityID: "node", Timestamp: old, Value: 2}); err != nil {
+	if err := s.WriteBatch(ctx, []metric.Point{metric.Point{MetricName: "b.healthy", EntityID: "node", Timestamp: old, Value: 2}}); err != nil {
 		t.Fatalf("write healthy point: %v", err)
 	}
 	rawDB, err := sql.Open("sqlite3", dsn)
@@ -1135,7 +1135,7 @@ func TestGetRecordsByClientAndTimeReadsRollupsAfterRawCompaction(t *testing.T) {
 		t.Fatalf("expected old raw cpu point to be deleted after compaction, got %d", len(raw))
 	}
 
-	got, err := GetRecordsByClientAndTime(ctx, rec.Client, ts.Add(-time.Minute), now)
+	got, err := GetRecordsByClientAndTimeForLoadType(ctx, rec.Client, ts.Add(-time.Minute), now, "all")
 	if err != nil {
 		t.Fatalf("get records: %v", err)
 	}
@@ -1146,7 +1146,7 @@ func TestGetRecordsByClientAndTimeReadsRollupsAfterRawCompaction(t *testing.T) {
 		t.Fatalf("record was not reconstructed from rollup: %#v", got[0])
 	}
 
-	all, err := GetRecordsByTime(ctx, ts.Add(-time.Minute), now)
+	all, err := GetRecordsByTimeForLoadTypeMaxPoints(ctx, ts.Add(-time.Minute), now, "all", -1)
 	if err != nil {
 		t.Fatalf("get all records: %v", err)
 	}

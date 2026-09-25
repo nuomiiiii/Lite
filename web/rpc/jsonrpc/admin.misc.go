@@ -99,7 +99,7 @@ func adminDeleteSession(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc
 	}
 	remotectl.RevokeLogin(params.Session)
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "delete session", "info")
+	auditlog.Event(ip, actor, "info", "audit.session_delete", nil)
 	return nil, nil
 }
 
@@ -109,7 +109,7 @@ func adminDeleteAllSessions(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *r
 	}
 	remotectl.RevokeAll()
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "delete all sessions", "warn")
+	auditlog.Event(ip, actor, "warn", "audit.session_delete_all", nil)
 	return nil, nil
 }
 
@@ -234,8 +234,16 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 		cancel()
 	}
 
+	previousSettings, settingsErr := config.GetAll()
+	if settingsErr != nil {
+		previousSettings = map[string]any{}
+	}
 	if err := config.SetMany(cfg); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to update settings: "+err.Error(), nil)
+	}
+	actor, ip := auditActor(ctx)
+	for _, change := range auditlog.SettingChanges(previousSettings, cfg) {
+		auditlog.Event(ip, actor, "info", change.Key, change.Params)
 	}
 	if _, ok := cfg[config.SessionTTLSecondsKey]; ok {
 		if err := accounts.CapLegacySessionExpires(accounts.SessionTTL()); err != nil {
@@ -281,15 +289,6 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 		cancel()
 	}
 
-	message := "update settings: "
-	for key := range cfg {
-		message += key + ", "
-	}
-	if len(message) > 2 {
-		message = message[:len(message)-2]
-	}
-	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, message, "info")
 	return nil, nil
 }
 
@@ -415,7 +414,7 @@ func adminClearAllRecords(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc
 	records.DeleteAll()
 	tasks.DeleteAllPingRecords()
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "clear all records", "info")
+	auditlog.Event(ip, actor, "info", "audit.records_clear_all", nil)
 	return nil, nil
 }
 
@@ -446,6 +445,6 @@ func adminOrderClients(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to update client weight: "+err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "order clients", "info")
+	auditlog.Event(ip, actor, "info", "audit.order_clients", nil)
 	return nil, nil
 }

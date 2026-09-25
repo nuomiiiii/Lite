@@ -221,12 +221,12 @@ func TestSummarizeDashboardLatencyRankingRanksEachTask(t *testing.T) {
 func TestDashboardLatencyMinuteAveragesAndJitterRanking(t *testing.T) {
 	current := time.Date(2026, 8, 6, 4, 30, 0, 0, time.UTC)
 	previous := current.Add(-time.Minute)
-	previousAverage, currentAverage, ok := dashboardLatencyMinuteAverages([]metric.AggregatePoint{
+	previousAverage, currentAverage, ok := dashboardLatestLatencyMinuteAverages([]metric.AggregatePoint{
 		{Bucket: previous, Value: 10, Count: 2},
 		{Bucket: previous, Value: 20, Count: 1},
 		{Bucket: current, Value: 30, Count: 2},
 		{Bucket: current, Value: -1, Count: 5},
-	}, previous, current)
+	}, current)
 	require.True(t, ok)
 	assert.InDelta(t, 40.0/3.0, previousAverage, 0.001)
 	assert.InDelta(t, 30, currentAverage, 0.001)

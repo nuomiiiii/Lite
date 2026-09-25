@@ -132,7 +132,7 @@ func TestV2BasicInfoSynchronizesCurrentAgentRuntimeConfig(t *testing.T) {
 	if resp.Error != nil {
 		t.Fatalf("v2 basic info failed: %+v", resp.Error)
 	}
-	profile, saved, err := clients.GetDeploymentProfile(clientUUID)
+	profile, saved, _, err := clients.GetDeploymentProfileWithDelivery(clientUUID)
 	if err != nil {
 		t.Fatalf("load synchronized profile: %v", err)
 	}

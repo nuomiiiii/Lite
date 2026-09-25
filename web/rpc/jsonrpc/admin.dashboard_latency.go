@@ -266,16 +266,6 @@ func dashboardLatencyTaskID(point metric.AggregatePoint) (uint, bool) {
 	return uint(value), err == nil && value > 0
 }
 
-func dashboardLatencyMinuteAverages(points []metric.AggregatePoint, previousMinute, currentMinute time.Time) (float64, float64, bool) {
-	buckets := dashboardLatencyMinuteBuckets(points)
-	previous, previousOK := buckets[previousMinute]
-	current, currentOK := buckets[currentMinute]
-	if !previousOK || !currentOK || previous.Count == 0 || current.Count == 0 {
-		return 0, 0, false
-	}
-	return previous.Sum / float64(previous.Count), current.Sum / float64(current.Count), true
-}
-
 func dashboardLatestLatencyMinuteAverages(points []metric.AggregatePoint, currentMinute time.Time) (float64, float64, bool) {
 	buckets := dashboardLatencyMinuteBuckets(points)
 	for later := currentMinute; !later.Before(currentMinute.Add(-dashboardLatencyJitterLookback)); later = later.Add(-time.Minute) {

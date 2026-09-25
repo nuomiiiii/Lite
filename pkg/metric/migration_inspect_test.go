@@ -47,14 +47,14 @@ func TestSQLiteMigrationCompatibilityMatrix(t *testing.T) {
 			if err := store.CreateMetric(ctx, Definition{Name: "compat.value", Type: TypeGauge, RetentionDays: 10}); err != nil {
 				t.Fatalf("create %s metric: %v", version.name, err)
 			}
-			if err := store.Write(ctx, Point{
+			if err := store.WriteBatch(ctx, []Point{Point{
 				MetricName: "compat.value",
 				EntityID:   "node-a",
 				Timestamp:  base,
 				Value:      math.Float64frombits(wantBits),
 				Tags:       map[string]string{"source": version.name},
 				Labels:     map[string]string{"precision": "bit-exact"},
-			}); err != nil {
+			}}); err != nil {
 				t.Fatalf("write %s metric: %v", version.name, err)
 			}
 			if version.layout == "v4" {

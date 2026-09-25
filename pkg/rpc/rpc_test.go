@@ -31,18 +31,20 @@ func TestRegisterDuplicateAndReserved(t *testing.T) {
 
 // 内部函数
 func TestInternalMethods(t *testing.T) {
-	res, err := Invoke("rpc.ping", nil)
-	if err != nil {
-		t.Fatalf("rpc.ping returned error: %+v", err)
+	resp := CallWithContext(context.Background(), 1, "rpc.ping", nil)
+	if resp.Error != nil {
+		t.Fatalf("rpc.ping returned error: %+v", resp.Error)
 	}
+	res := resp.Result
 	if res != "pong" {
 		t.Fatalf("expected pong got %v", res)
 	}
 	// version
-	res, err = Invoke("rpc.version", nil)
-	if err != nil {
-		t.Fatalf("rpc.version returned error: %+v", err)
+	resp = CallWithContext(context.Background(), 2, "rpc.version", nil)
+	if resp.Error != nil {
+		t.Fatalf("rpc.version returned error: %+v", resp.Error)
 	}
+	res = resp.Result
 	if res != RPC_VERSION {
 		t.Fatalf("expected version %s got %v", RPC_VERSION, res)
 	}
@@ -58,16 +60,16 @@ func TestRpcHelp(t *testing.T) {
 	}, &MethodMeta{Summary: "echo back string", Description: "Returns the provided string parameter v", Params: []ParamMeta{{Name: "v", Type: "string", Required: false, Description: "value to echo"}}, Returns: "string"})
 
 	// Query single method
-	resp := Call(1, "rpc.help", map[string]any{"method": method})
+	resp := CallWithContext(context.Background(), 1, "rpc.help", map[string]any{"method": method})
 	if resp.Error != nil {
 		t.Fatalf("rpc.help single error: %+v", resp.Error)
 	}
 
-	resp = Call(2, "rpc.help", "rpc.help")
+	resp = CallWithContext(context.Background(), 2, "rpc.help", "rpc.help")
 	if resp.Error != nil {
 		t.Fatalf("rpc.help multiple error: %+v", resp.Error)
 	}
-	resp = Call(3, "rpc.help", nil)
+	resp = CallWithContext(context.Background(), 3, "rpc.help", nil)
 	if resp.Error != nil {
 		t.Fatalf("rpc.help nil params error: %+v", resp.Error)
 	}

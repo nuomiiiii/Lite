@@ -40,71 +40,73 @@ func TestCheckPermission(t *testing.T) {
 		{RoleAdmin, "plugin:foo", true},
 	}
 	for _, c := range cases {
-		if got := CheckPermission(c.group, c.method); got != c.want {
-			t.Errorf("CheckPermission(%q, %q) = %v, want %v", c.group, c.method, got, c.want)
+		if got := CheckPrincipal(PrincipalFromRole(c.group), c.method); got != c.want {
+			t.Errorf("CheckPrincipal(%q, %q) = %v, want %v", c.group, c.method, got, c.want)
 		}
 	}
 }
 
 func TestRegisterNamespace(t *testing.T) {
-	RegisterNamespace("myplugin", RoleClient)
-	if !CheckPermission(RoleClient, "myplugin:doThing") {
+	Allow("myplugin:*", RoleClient)
+	if !CheckPrincipal(PrincipalFromRole(RoleClient), "myplugin:doThing") {
 		t.Error("client should be allowed in myplugin namespace after registration")
 	}
-	if CheckPermission(RoleGuest, "myplugin:doThing") {
+	if CheckPrincipal(PrincipalFromRole(RoleGuest), "myplugin:doThing") {
 		t.Error("guest should not be allowed in myplugin namespace")
 	}
 }
 
 func TestAllowWildcardSpecificity(t *testing.T) {
 	// 命名空间默认 admin，但更具体的方法级规则可放宽。
-	RegisterNamespace("acltest", RoleAdmin)
+	Allow("acltest:*", RoleAdmin)
 	Allow("acltest:public*", RoleGuest) // 前缀通配，比 "acltest:*" 更具体
 
-	if !CheckPermission(RoleGuest, "acltest:publicInfo") {
+	if !CheckPrincipal(PrincipalFromRole(RoleGuest), "acltest:publicInfo") {
 		t.Error("guest should be allowed: acltest:public* is more specific than acltest:*")
 	}
-	if CheckPermission(RoleGuest, "acltest:secret") {
+	if CheckPrincipal(PrincipalFromRole(RoleGuest), "acltest:secret") {
 		t.Error("guest should be denied acltest:secret (falls back to acltest:* = admin)")
 	}
 
 	// 精确规则优先于任何通配。
 	Allow("acltest:secret", RoleClient)
-	if !CheckPermission(RoleClient, "acltest:secret") {
+	if !CheckPrincipal(PrincipalFromRole(RoleClient), "acltest:secret") {
 		t.Error("client should be allowed by exact rule acltest:secret")
 	}
-	if CheckPermission(RoleGuest, "acltest:secret") {
+	if CheckPrincipal(PrincipalFromRole(RoleGuest), "acltest:secret") {
 		t.Error("guest still denied acltest:secret (exact rule requires client)")
 	}
 }
 
 func TestAllowOverride(t *testing.T) {
 	Allow("override:x", RoleAdmin)
-	if CheckPermission(RoleGuest, "override:x") {
+	if CheckPrincipal(PrincipalFromRole(RoleGuest), "override:x") {
 		t.Fatal("precondition: guest denied")
 	}
 	Allow("override:x", RoleGuest) // 覆盖同一 pattern
-	if !CheckPermission(RoleGuest, "override:x") {
+	if !CheckPrincipal(PrincipalFromRole(RoleGuest), "override:x") {
 		t.Error("override should relax override:x to guest")
 	}
 }
 
 func TestInternalMethodsPermission(t *testing.T) {
 	// 内部 rpc.* 方法对 guest 开放。
-	if !CheckPermission(RoleGuest, "rpc.ping") {
+	if !CheckPrincipal(PrincipalFromRole(RoleGuest), "rpc.ping") {
 		t.Error("guest should be allowed to call rpc.ping")
 	}
 	// 裸方法名归入 common，对 guest 开放。
-	if !CheckPermission(RoleGuest, "getNodes") {
+	if !CheckPrincipal(PrincipalFromRole(RoleGuest), "getNodes") {
 		t.Error("guest should be allowed to call bare common method getNodes")
 	}
 }
 
 func TestUnregister(t *testing.T) {
 	method := "unreg.sample"
-	MustRegister(method, func(ctx context.Context, req *JsonRpcRequest) (any, *JsonRpcError) {
+	if err := Register(method, func(ctx context.Context, req *JsonRpcRequest) (any, *JsonRpcError) {
 		return "ok", nil
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if getHandler(method) == nil {
 		t.Fatal("method should be registered")
 	}

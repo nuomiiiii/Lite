@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -100,11 +102,14 @@ func UpdateTrafficCalibration(c *gin.Context) {
 		api.RespondError(c, http.StatusBadRequest, "保存流量校准失败："+err.Error())
 		return
 	}
-	auditlog.Log(
-		c.ClientIP(),
-		fmt.Sprint(actor),
-		fmt.Sprintf("calibrated traffic for client %s to up=%d down=%d", client.UUID, request.TargetUp, request.TargetDown),
-		"warn",
-	)
+	name := strings.TrimSpace(client.Name)
+	if name == "" {
+		name = client.UUID
+	}
+	auditlog.Event(c.ClientIP(), fmt.Sprint(actor), "warn", "audit.traffic_calibrate", map[string]string{
+		"name": name,
+		"up":   strconv.FormatInt(request.TargetUp, 10),
+		"down": strconv.FormatInt(request.TargetDown, 10),
+	})
 	api.RespondSuccess(c, gin.H{"available": true, "snapshot": snapshot})
 }

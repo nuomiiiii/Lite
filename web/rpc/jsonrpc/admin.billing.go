@@ -10,6 +10,7 @@ import (
 
 	"github.com/nuomiiiii/lite/database/auditlog"
 	"github.com/nuomiiiii/lite/database/billing"
+	"github.com/nuomiiiii/lite/database/clients"
 	"github.com/nuomiiiii/lite/database/dbcore"
 	"github.com/nuomiiiii/lite/pkg/rpc"
 	"gorm.io/gorm"
@@ -178,7 +179,9 @@ func adminCreateBillingTrafficReset(ctx context.Context, req *rpc.JsonRpcRequest
 	if err != nil {
 		return nil, billingRPCError(err)
 	}
-	auditlog.Log(ip, actor, fmt.Sprintf("record traffic reset cost:%s:%d", params.UUID, entry.ID), "info")
+	auditlog.Event(ip, actor, "info", "audit.billing_reset", map[string]string{
+		"name": clients.DisplayName(params.UUID), "amount": params.Amount, "currency": params.Currency,
+	})
 	return entry, nil
 }
 
@@ -201,7 +204,9 @@ func adminCreateBillingIPChange(ctx context.Context, req *rpc.JsonRpcRequest) (a
 	if err != nil {
 		return nil, billingRPCError(err)
 	}
-	auditlog.Log(ip, actor, fmt.Sprintf("record ip change cost:%s:%d", params.UUID, entry.ID), "info")
+	auditlog.Event(ip, actor, "info", "audit.billing_ip", map[string]string{
+		"name": clients.DisplayName(params.UUID), "amount": params.Amount, "currency": params.Currency,
+	})
 	return entry, nil
 }
 
@@ -224,7 +229,9 @@ func adminCreateBillingOneTimeFee(ctx context.Context, req *rpc.JsonRpcRequest) 
 	if err != nil {
 		return nil, billingRPCError(err)
 	}
-	auditlog.Log(ip, actor, fmt.Sprintf("record one-time fee:%s:%d", params.UUID, entry.ID), "info")
+	auditlog.Event(ip, actor, "info", "audit.billing_once", map[string]string{
+		"name": clients.DisplayName(params.UUID), "amount": params.Amount, "currency": params.Currency,
+	})
 	return entry, nil
 }
 
@@ -245,7 +252,7 @@ func adminVoidBillingEntry(ctx context.Context, req *rpc.JsonRpcRequest) (any, *
 	if err != nil {
 		return nil, billingRPCError(err)
 	}
-	auditlog.Log(ip, actor, fmt.Sprintf("void billing entry:%d", id), "warn")
+	auditlog.Event(ip, actor, "warn", "audit.billing_void", map[string]string{"id": strconv.FormatUint(id, 10)})
 	return entry, nil
 }
 

@@ -100,7 +100,7 @@ func Login(c *gin.Context) {
 	}
 	setSessionCookie(c, session, sessionCookieMaxAgeSeconds())
 	accounts.ClearLoginFailures(c.ClientIP(), data.Username)
-	auditlog.Log(c.ClientIP(), uuid, "logged in (password)", "login")
+	auditlog.Event(c.ClientIP(), uuid, "login", "audit.login_password", nil)
 	api.RespondSuccess(c, gin.H{})
 }
 func Logout(c *gin.Context) {
@@ -108,6 +108,6 @@ func Logout(c *gin.Context) {
 	accounts.DeleteSession(session)
 	remotectl.RevokeLogin(session)
 	setSessionCookie(c, "", -1)
-	auditlog.Log(c.ClientIP(), "", "logged out", "logout")
+	auditlog.Event(c.ClientIP(), "", "logout", "audit.logout", nil)
 	c.Redirect(302, "/")
 }

@@ -45,7 +45,7 @@ func TestFilterAdminLogsByMessageType(t *testing.T) {
 	}
 
 	var logs []models.Log
-	statement := filterAdminLogsByMessageType(db.Model(&models.Log{}), " visitor ").Find(&logs).Statement
+	statement := filterAdminLogsByValues(db.Model(&models.Log{}), "msg_type", parseAdminLogCSV(" visitor ")).Find(&logs).Statement
 	if sql := statement.SQL.String(); !strings.Contains(sql, "WHERE msg_type IN (?)") {
 		t.Fatalf("filtered SQL missing message type predicate: %s", sql)
 	}

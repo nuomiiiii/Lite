@@ -143,31 +143,6 @@ func replaceCompletedFile(tmp, dest string) error {
 }
 
 // removeAllInDirExcept 删除 dir 下除 exclude 指定绝对路径外的所有文件和文件夹
-func removeAllInDirExcept(dir string, exclude map[string]struct{}) error {
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		return err
-	}
-	normExclude := make(map[string]struct{}, len(exclude))
-	for p := range exclude {
-		abs, _ := filepath.Abs(p)
-		normExclude[abs] = struct{}{}
-	}
-	entries, err := os.ReadDir(absDir)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		full := filepath.Join(absDir, e.Name())
-		if _, ok := normExclude[full]; ok {
-			continue
-		}
-		if err := os.RemoveAll(full); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // unzipToDir 将 zipPath 解压到 dstDir，包含路径遍历保护
 func unzipToDir(zipPath, dstDir string) error {

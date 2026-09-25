@@ -1,21 +1,30 @@
 package javascript
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/dop251/goja"
 	"github.com/dop251/goja_nodejs/require"
-	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/utils/messageSender/factory"
+)
+
+// scriptTimeout bounds one send. httpTimeout is shorter so a slow request
+// fails inside the script instead of racing the outer deadline.
+var (
+	scriptTimeout = 30 * time.Second
+	httpTimeout   = 20 * time.Second
 )
 
 type JavaScriptSender struct {
 	Addition
+	sendMu      sync.Mutex
+	mu          sync.Mutex
 	vm          *goja.Runtime
 	noopProgram *goja.Program
+	gen         uint64
 }
 
 func (j *JavaScriptSender) GetName() string {
@@ -27,6 +36,12 @@ func (j *JavaScriptSender) GetConfiguration() factory.Configuration {
 }
 
 func (j *JavaScriptSender) Init() error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.initLocked()
+}
+
+func (j *JavaScriptSender) initLocked() error {
 	if j.Addition.Script == "" {
 		return errors.New("JavaScript script is empty")
 	}
@@ -49,17 +64,20 @@ func (j *JavaScriptSender) Init() error {
 	// 加载用户脚本
 	_, err := j.vm.RunString(j.Addition.Script)
 	if err != nil {
+		j.vm = nil
 		return fmt.Errorf("failed to load JavaScript script: %v", err)
 	}
 
 	// 验证 sendMessage 函数是否存在
 	sendMessage := j.vm.Get("sendMessage")
 	if sendMessage == nil || goja.IsUndefined(sendMessage) {
+		j.vm = nil
 		return errors.New("sendMessage function not defined in script")
 	}
 
 	// 验证是否可调用
 	if _, ok := goja.AssertFunction(sendMessage); !ok {
+		j.vm = nil
 		return errors.New("sendMessage is not a function")
 	}
 
@@ -69,220 +87,25 @@ func (j *JavaScriptSender) Init() error {
 }
 
 func (j *JavaScriptSender) Destroy() error {
-	if j.vm != nil {
-		j.vm = nil
-	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.abandonLocked()
 	return nil
 }
 
-func (j *JavaScriptSender) SendTextMessage(message, title string) error {
-	if j.vm == nil {
-		if err := j.Init(); err != nil {
-			return err
-		}
-	}
-
-	// 获取 sendMessage 函数
-	sendMessageFunc, ok := goja.AssertFunction(j.vm.Get("sendMessage"))
-	if !ok {
-		return errors.New("sendMessage is not a callable function")
-	}
-
-	// 调用 sendMessage 函数
-	resultChan := make(chan error, 1)
-	timeoutChan := time.After(30 * time.Second)
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				resultChan <- fmt.Errorf("JavaScript panic: %v", r)
-			}
-		}()
-
-		result, err := sendMessageFunc(goja.Undefined(), j.vm.ToValue(message), j.vm.ToValue(title))
-		if err != nil {
-			resultChan <- fmt.Errorf("JavaScript error: %v", err)
-			return
-		}
-
-		// 处理 Promise 返回值
-		if promise, ok := result.Export().(*goja.Promise); ok {
-			// 等待 Promise 完成
-			ticker := time.NewTicker(50 * time.Millisecond)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-timeoutChan:
-					resultChan <- errors.New("JavaScript execution timeout")
-					return
-				case <-ticker.C:
-					// 运行微任务以处理 Promise 回调
-					j.runMicrotasks()
-
-					state := promise.State()
-					if state == goja.PromiseStateFulfilled {
-						// Promise 成功完成,检查返回值
-						promiseResult := promise.Result()
-						if !promiseResult.ToBoolean() {
-							resultChan <- errors.New("sendMessage returned false")
-						} else {
-							resultChan <- nil
-						}
-						return
-					} else if state == goja.PromiseStateRejected {
-						// Promise 被拒绝
-						resultChan <- fmt.Errorf("Promise rejected: %v", promise.Result())
-						return
-					}
-					// state == goja.PromiseStatePending, 继续等待
-				}
-			}
-		} else {
-			// 处理布尔或其他返回值
-			if result.ToBoolean() {
-				resultChan <- nil
-			} else {
-				resultChan <- errors.New("sendMessage returned false")
-			}
-		}
-	}()
-
-	select {
-	case err := <-resultChan:
-		return err
-	case <-timeoutChan:
-		return errors.New("JavaScript execution timeout after 30 seconds")
-	}
+func (j *JavaScriptSender) abandonLocked() {
+	j.gen++
+	j.vm = nil
+	j.noopProgram = nil
 }
 
-func (j *JavaScriptSender) SendEvent(event models.EventMessage) error {
-	if j.vm == nil {
-		if err := j.Init(); err != nil {
-			return err
-		}
+func (j *JavaScriptSender) enqueue(gen uint64, fn func()) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.vm == nil || j.gen != gen {
+		return
 	}
-
-	// 检查是否定义了 sendEvent 函数
-	sendEventValue := j.vm.Get("sendEvent")
-	if sendEventValue == nil || goja.IsUndefined(sendEventValue) {
-		// 如果没有定义 sendEvent,则回退到使用 SendTextMessage
-		return j.fallbackToTextMessage(event)
-	}
-
-	sendEventFunc, ok := goja.AssertFunction(sendEventValue)
-	if !ok {
-		// 如果 sendEvent 不是函数,回退到 SendTextMessage
-		return j.fallbackToTextMessage(event)
-	}
-
-	// 将 EventMessage 转换为 JavaScript 对象
-	eventJSON, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("failed to marshal event: %v", err)
-	}
-
-	var eventMap map[string]interface{}
-	if err := json.Unmarshal(eventJSON, &eventMap); err != nil {
-		return fmt.Errorf("failed to unmarshal event: %v", err)
-	}
-
-	// 调用 sendEvent 函数
-	resultChan := make(chan error, 1)
-	timeoutChan := time.After(30 * time.Second)
-
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				resultChan <- fmt.Errorf("JavaScript panic: %v", r)
-			}
-		}()
-
-		result, err := sendEventFunc(goja.Undefined(), j.vm.ToValue(eventMap))
-		if err != nil {
-			resultChan <- fmt.Errorf("JavaScript error: %v", err)
-			return
-		}
-
-		// 处理 Promise 返回值
-		if promise, ok := result.Export().(*goja.Promise); ok {
-			// 等待 Promise 完成
-			ticker := time.NewTicker(10 * time.Millisecond)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-timeoutChan:
-					resultChan <- errors.New("JavaScript execution timeout")
-					return
-				case <-ticker.C:
-					// 运行微任务以处理 Promise 回调
-					j.runMicrotasks()
-
-					state := promise.State()
-					if state == goja.PromiseStateFulfilled {
-						// Promise 成功完成,检查返回值
-						promiseResult := promise.Result()
-						if !promiseResult.ToBoolean() {
-							resultChan <- errors.New("sendEvent returned false")
-						} else {
-							resultChan <- nil
-						}
-						return
-					} else if state == goja.PromiseStateRejected {
-						// Promise 被拒绝
-						resultChan <- fmt.Errorf("Promise rejected: %v", promise.Result())
-						return
-					}
-					// state == goja.PromiseStatePending, 继续等待
-				}
-			}
-		} else {
-			// 处理布尔或其他返回值
-			if result.ToBoolean() {
-				resultChan <- nil
-			} else {
-				resultChan <- errors.New("sendEvent returned false")
-			}
-		}
-	}()
-
-	select {
-	case err := <-resultChan:
-		return err
-	case <-timeoutChan:
-		return errors.New("JavaScript execution timeout after 30 seconds")
-	}
-}
-
-// fallbackToTextMessage 当没有定义 sendEvent 时,回退到使用文本消息格式
-func (j *JavaScriptSender) fallbackToTextMessage(event models.EventMessage) error {
-	// 构建简单的文本消息
-	message := fmt.Sprintf("%s%s%s\nEvent: %s\nMessage: %s\nTime: %s",
-		event.Emoji, event.Emoji, event.Emoji,
-		event.Event,
-		event.Message,
-		event.Time.UTC().Format(time.RFC3339Nano))
-
-	// 添加客户端信息
-	if len(event.Clients) > 0 {
-		clientNames := make([]string, 0, len(event.Clients))
-		for _, c := range event.Clients {
-			name := c.Name
-			if name == "" {
-				name = c.UUID
-			}
-			clientNames = append(clientNames, name)
-		}
-		message = fmt.Sprintf("%s%s%s\nEvent: %s\nClients: %s\nMessage: %s\nTime: %s",
-			event.Emoji, event.Emoji, event.Emoji,
-			event.Event,
-			clientNames,
-			event.Message,
-			event.Time.UTC().Format(time.RFC3339Nano))
-	}
-
-	return j.SendTextMessage(message, event.Event)
+	fn()
 }
 
 // runMicrotasks 安全地推动 goja 的微任务队列(例如 Promise 回调)
@@ -332,14 +155,18 @@ func (j *JavaScriptSender) setupGlobals() {
 	j.vm.Set("setTimeout", func(call goja.FunctionCall) goja.Value {
 		callback := call.Argument(0)
 		delay := call.Argument(1).ToInteger()
-
+		if delay < 0 {
+			delay = 0
+		}
+		gen := j.gen
 		go func() {
 			time.Sleep(time.Duration(delay) * time.Millisecond)
-			if fn, ok := goja.AssertFunction(callback); ok {
-				fn(goja.Undefined())
-			}
+			j.enqueue(gen, func() {
+				if fn, ok := goja.AssertFunction(callback); ok {
+					_, _ = fn(goja.Undefined())
+				}
+			})
 		}()
-
 		return goja.Undefined()
 	})
 

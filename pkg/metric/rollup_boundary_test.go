@@ -242,14 +242,14 @@ func TestSeriesHybridIncludesRawBetweenCutoffAndNextBucket(t *testing.T) {
 
 	now := time.Date(2026, 6, 18, 12, 0, 30, 0, time.UTC)
 	old := time.Date(2026, 6, 18, 11, 30, 10, 0, time.UTC)
-	if err := s.Write(ctx, Point{MetricName: "cutgap", EntityID: "n1", Timestamp: old, Value: 10}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "cutgap", EntityID: "n1", Timestamp: old, Value: 10}}); err != nil {
 		t.Fatalf("write old: %v", err)
 	}
 	if _, err := s.Compact(ctx, now); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
 	recentUncompacted := time.Date(2026, 6, 18, 11, 30, 45, 0, time.UTC)
-	if err := s.Write(ctx, Point{MetricName: "cutgap", EntityID: "n1", Timestamp: recentUncompacted, Value: 100}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "cutgap", EntityID: "n1", Timestamp: recentUncompacted, Value: 100}}); err != nil {
 		t.Fatalf("write recent: %v", err)
 	}
 
@@ -279,7 +279,7 @@ func TestSeriesHybridEndAtCutoffIncludesRawBoundary(t *testing.T) {
 
 	now := time.Date(2026, 6, 18, 12, 0, 30, 0, time.UTC)
 	cutoff := policy.rawCutoff(now)
-	if err := s.Write(ctx, Point{MetricName: "cutedge", EntityID: "n1", Timestamp: cutoff, Value: 7}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "cutedge", EntityID: "n1", Timestamp: cutoff, Value: 7}}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	if _, err := s.Compact(ctx, now); err != nil {
@@ -315,13 +315,13 @@ func TestCompactDoesNotDoubleCountRawBucketAfterCutoffAdvances(t *testing.T) {
 	}
 
 	now := time.Date(2026, 6, 18, 12, 0, 30, 0, time.UTC)
-	if err := s.Write(ctx, Point{MetricName: "nodup", EntityID: "n1", Timestamp: time.Date(2026, 6, 18, 11, 30, 10, 0, time.UTC), Value: 10}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "nodup", EntityID: "n1", Timestamp: time.Date(2026, 6, 18, 11, 30, 10, 0, time.UTC), Value: 10}}); err != nil {
 		t.Fatalf("write old: %v", err)
 	}
 	if _, err := s.Compact(ctx, now); err != nil {
 		t.Fatalf("compact 1: %v", err)
 	}
-	if err := s.Write(ctx, Point{MetricName: "nodup", EntityID: "n1", Timestamp: time.Date(2026, 6, 18, 11, 30, 45, 0, time.UTC), Value: 100}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "nodup", EntityID: "n1", Timestamp: time.Date(2026, 6, 18, 11, 30, 45, 0, time.UTC), Value: 100}}); err != nil {
 		t.Fatalf("write recent: %v", err)
 	}
 	now = now.Add(time.Minute)

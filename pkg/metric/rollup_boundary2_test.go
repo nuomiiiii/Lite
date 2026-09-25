@@ -36,7 +36,7 @@ func TestSeriesHybridKeepsUncompactedRawNearCutoff(t *testing.T) {
 	// 11:30:15 is >= the finest-aligned cutoff (11:30:00) -> survives compaction
 	// as raw and is not rolled up.
 	before := time.Date(2026, 6, 18, 11, 30, 15, 0, time.UTC)
-	if err := s.Write(ctx, Point{MetricName: "nearcut", EntityID: "n1", Timestamp: before, Value: 10}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "nearcut", EntityID: "n1", Timestamp: before, Value: 10}}); err != nil {
 		t.Fatalf("write before: %v", err)
 	}
 	if _, err := s.Compact(ctx, now); err != nil {
@@ -44,7 +44,7 @@ func TestSeriesHybridKeepsUncompactedRawNearCutoff(t *testing.T) {
 	}
 	// Written after compaction: only ever lives in raw.
 	after := time.Date(2026, 6, 18, 11, 30, 45, 0, time.UTC)
-	if err := s.Write(ctx, Point{MetricName: "nearcut", EntityID: "n1", Timestamp: after, Value: 100}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "nearcut", EntityID: "n1", Timestamp: after, Value: 100}}); err != nil {
 		t.Fatalf("write after: %v", err)
 	}
 
@@ -100,11 +100,11 @@ func TestSeriesHybridEndEqualsCutoff(t *testing.T) {
 	now := time.Date(2026, 6, 18, 12, 0, 0, 0, time.UTC)
 	cutoff := time.Date(2026, 6, 18, 11, 30, 0, 0, time.UTC)
 	old := time.Date(2026, 6, 18, 11, 0, 10, 0, time.UTC) // rolled up, raw deleted
-	if err := s.Write(ctx, Point{MetricName: "endcut", EntityID: "n1", Timestamp: old, Value: 10}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "endcut", EntityID: "n1", Timestamp: old, Value: 10}}); err != nil {
 		t.Fatalf("write old: %v", err)
 	}
 	// Point exactly at the cutoff: kept as raw (not < cutoff) after compaction.
-	if err := s.Write(ctx, Point{MetricName: "endcut", EntityID: "n1", Timestamp: cutoff, Value: 100}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "endcut", EntityID: "n1", Timestamp: cutoff, Value: 100}}); err != nil {
 		t.Fatalf("write cutoff: %v", err)
 	}
 	if _, err := s.Compact(ctx, now); err != nil {
@@ -291,7 +291,7 @@ func TestSeriesWithoutWatermarkDoesNotDoubleCountLegacyOverlap(t *testing.T) {
 	if _, err := s.Compact(ctx, compactAt); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
-	if err := s.Write(ctx, Point{MetricName: "upgrade-overlap", EntityID: "n1", Timestamp: oldTime, Value: 10}); err != nil {
+	if err := s.WriteBatch(ctx, []Point{Point{MetricName: "upgrade-overlap", EntityID: "n1", Timestamp: oldTime, Value: 10}}); err != nil {
 		t.Fatalf("restore overlapping legacy raw point: %v", err)
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM `+s.tables.watermarks+` WHERE metric_name = ?`, "upgrade-overlap"); err != nil {
@@ -339,12 +339,12 @@ func TestSeriesWithoutWatermarkKeepsRawPointsInRollupGaps(t *testing.T) {
 	if _, err := s.Compact(ctx, compactAt); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
-	if err := s.Write(ctx, Point{
+	if err := s.WriteBatch(ctx, []Point{Point{
 		MetricName: "upgrade-gap",
 		EntityID:   "n1",
 		Timestamp:  time.Date(2026, 6, 18, 11, 21, 10, 0, time.UTC),
 		Value:      20,
-	}); err != nil {
+	}}); err != nil {
 		t.Fatalf("restore raw point in rollup gap: %v", err)
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM `+s.tables.watermarks+` WHERE metric_name = ?`, "upgrade-gap"); err != nil {

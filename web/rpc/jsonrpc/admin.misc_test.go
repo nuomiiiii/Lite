@@ -86,9 +86,9 @@ func TestAdminEditSettingsRejectsAPIKeyForLoginKeys(t *testing.T) {
 		Principal:  rpc.NewAPIKeyPrincipal(),
 		Permission: rpc.RoleAdmin,
 	})
-	_, rpcErr := adminEditSettings(ctx, rpc.NewRequest(1, "admin:editSettings", map[string]any{
+	_, rpcErr := adminEditSettings(ctx, &rpc.JsonRpcRequest{Version: rpc.RPC_VERSION, ID: 1, Method: "admin:editSettings", Params: map[string]any{
 		config.DisablePasswordLoginKey: true,
-	}))
+	}})
 	if rpcErr == nil || rpcErr.Code != rpc.PermissionDenied {
 		t.Fatalf("API key password-login change error = %#v", rpcErr)
 	}
@@ -99,9 +99,9 @@ func TestAdminSetOidcRejectsAPIKey(t *testing.T) {
 		Principal:  rpc.NewAPIKeyPrincipal(),
 		Permission: rpc.RoleAdmin,
 	})
-	_, rpcErr := adminSetOidc(ctx, rpc.NewRequest(1, "admin:setOidcProvider", map[string]any{
+	_, rpcErr := adminSetOidc(ctx, &rpc.JsonRpcRequest{Version: rpc.RPC_VERSION, ID: 1, Method: "admin:setOidcProvider", Params: map[string]any{
 		"name": "github",
-	}))
+	}})
 	if rpcErr == nil || rpcErr.Code != rpc.PermissionDenied {
 		t.Fatalf("API key OIDC change error = %#v", rpcErr)
 	}

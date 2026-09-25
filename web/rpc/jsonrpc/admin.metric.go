@@ -115,7 +115,7 @@ func adminUpdateMetricDefinition(ctx context.Context, req *rpc.JsonRpcRequest) (
 	}
 
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "update metric definition: "+params.Name, "info")
+	auditlog.Event(ip, actor, "info", "audit.metric_definition", map[string]string{"name": params.Name})
 
 	return metricDefinitionResponse{
 		Name:          def.Name,
@@ -186,7 +186,7 @@ func adminStartMetricMigration(ctx context.Context, req *rpc.JsonRpcRequest) (an
 	}
 
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "start metrics store migration", "info")
+	auditlog.Event(ip, actor, "info", "audit.metric_start_migration", nil)
 
 	return map[string]any{
 		"status":  "started",
@@ -202,7 +202,7 @@ func adminCancelMetricMigration(ctx context.Context, _ *rpc.JsonRpcRequest) (any
 	}
 
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "cancel metrics store migration", "warn")
+	auditlog.Event(ip, actor, "warn", "audit.metric_cancel_migration", nil)
 
 	return map[string]any{
 		"status":  "canceled",

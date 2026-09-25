@@ -140,23 +140,6 @@ func DeleteAllSessions() error {
 	return InvalidateAllSessions()
 }
 
-func UpdateLatest(session, useragent, ip string) error {
-	db := dbcore.GetDBInstance()
-	hashed, err := hashSessionToken(session)
-	if err != nil {
-		return db.Model(&models.Session{}).Where("session = ?", session).Updates(map[string]interface{}{
-			"latest_online":     time.Now().UTC(),
-			"latest_user_agent": useragent,
-			"latest_ip":         ip,
-		}).Error
-	}
-	return db.Model(&models.Session{}).Where("session = ? OR session = ?", hashed, session).Updates(map[string]interface{}{
-		"latest_online":     time.Now().UTC(),
-		"latest_user_agent": useragent,
-		"latest_ip":         ip,
-	}).Error
-}
-
 func RemoveExpiredSessions() error {
 	db := dbcore.GetDBInstance()
 	result := db.Where("expires < ?", time.Now().UTC()).Delete(&models.Session{})
@@ -164,10 +147,6 @@ func RemoveExpiredSessions() error {
 		return result.Error
 	}
 	return nil
-}
-
-func HashSessionToken(plain string) (string, error) {
-	return hashSessionToken(plain)
 }
 
 func SessionLookupKey(value string) string {

@@ -56,7 +56,7 @@ func adminStartSelfUpdate(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to prepare update: "+err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "scheduled self update to "+params.Version+" ("+params.VersionHash+")", "warn")
+	auditlog.Event(ip, actor, "warn", "audit.self_update", map[string]string{"version": params.Version, "hash": params.VersionHash})
 	return result, nil
 }
 

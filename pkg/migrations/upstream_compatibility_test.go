@@ -48,7 +48,7 @@ func TestUpstreamMainDatabaseUpgradeCompatibility(t *testing.T) {
 
 			metricPath := filepath.Join(t.TempDir(), "metrics.db")
 			cfg := &metricstore.MetricStoreConfig{Driver: "sqlite", DSN: metricPath, TablePrefix: "metric_"}
-			store, err := metricstore.OpenStoreForMigration(ctx, cfg, 1)
+			store, err := metricstore.OpenStoreForMigrationWithProgress(ctx, cfg, 1, nil)
 			if err != nil {
 				t.Fatalf("open V4 migration target: %v", err)
 			}
@@ -286,7 +286,7 @@ func assertCompatibilityReadAPIs(t *testing.T, timestamp time.Time, expected com
 	ctx := context.Background()
 	start := timestamp.Add(-time.Minute)
 	end := timestamp.Add(time.Hour + time.Minute)
-	records, err := metricstore.GetRecordsByClientAndTime(ctx, compatibilityNodeID, start, end)
+	records, err := metricstore.GetRecordsByClientAndTimeForLoadType(ctx, compatibilityNodeID, start, end, "all")
 	if err != nil {
 		t.Fatalf("read client records after migration: %v", err)
 	}
@@ -298,7 +298,7 @@ func assertCompatibilityReadAPIs(t *testing.T, timestamp time.Time, expected com
 		record.TrafficUp != expected.trafficUp || record.TrafficDown != expected.trafficDown {
 		t.Fatalf("load or traffic values changed during migration: %#v", record)
 	}
-	all, err := metricstore.GetRecordsByTime(ctx, start, end)
+	all, err := metricstore.GetRecordsByTimeForLoadTypeMaxPoints(ctx, start, end, "all", -1)
 	if err != nil || len(all) != 1 || all[0].Client != compatibilityNodeID {
 		t.Fatalf("read all records after migration: records=%#v err=%v", all, err)
 	}

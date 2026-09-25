@@ -82,14 +82,6 @@ func checkpointSQLiteWAL(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func sqliteFileSetSize(dsn string) (int64, error) {
-	files, err := sqliteFileSetSizes(dsn)
-	if err != nil {
-		return 0, err
-	}
-	return files.Total(), nil
-}
-
 func sqliteFileSetSizes(dsn string) (SQLiteFileSizes, error) {
 	path := strings.TrimPrefix(strings.TrimSpace(dsn), "file:")
 	if index := strings.IndexByte(path, '?'); index >= 0 {

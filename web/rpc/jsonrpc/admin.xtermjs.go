@@ -102,7 +102,7 @@ func adminSetXtermjs(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.Js
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to save settings: "+err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "update xtermjs settings", "info")
+	auditlog.Event(ip, actor, "info", "audit.xterm_update", nil)
 	return normalized, nil
 }
 

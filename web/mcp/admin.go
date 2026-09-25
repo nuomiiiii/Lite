@@ -363,7 +363,7 @@ func approveAuthorization(c *gin.Context) {
 		"owner_user_uuid": principal.UserUUID,
 	}).Error
 	redirect, _ := urlWithCode(req.RedirectURI, code, req.State)
-	auditlog.Log(c.ClientIP(), principal.UserUUID, "approved MCP authorization, lease:"+lease.ID, "warn")
+	auditlog.Event(c.ClientIP(), principal.UserUUID, "warn", "audit.mcp_approve", map[string]string{"id": lease.ID})
 	api.RespondSuccess(c, gin.H{
 		"lease_id":     lease.ID,
 		"expires_at":   lease.ExpiresAt.UTC(),
@@ -388,7 +388,7 @@ func denyAuthorization(c *gin.Context) {
 		return
 	}
 	redirect, _ := urlWithError(req.RedirectURI, "access_denied", req.State)
-	auditlog.Log(c.ClientIP(), principal.UserUUID, "denied MCP authorization, lease:"+lease.ID, "warn")
+	auditlog.Event(c.ClientIP(), principal.UserUUID, "warn", "audit.mcp_deny", map[string]string{"id": lease.ID})
 	api.RespondSuccess(c, gin.H{
 		"lease_id":     lease.ID,
 		"redirect_uri": redirect,

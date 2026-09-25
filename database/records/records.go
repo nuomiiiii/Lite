@@ -24,10 +24,6 @@ func GetGPURecordsByClientAndTime(uuid string, start, end time.Time) ([]models.G
 	return metricstore.GetGPURecordsByClientAndTime(context.Background(), uuid, start, end)
 }
 
-func GetRecordsByClientAndTime(uuid string, start, end time.Time) ([]models.Record, error) {
-	return metricstore.GetRecordsByClientAndTime(context.Background(), uuid, start, end)
-}
-
 func GetRecordsByClientAndTimeForLoadType(uuid string, start, end time.Time, loadType string) ([]models.Record, error) {
 	return metricstore.GetRecordsByClientAndTimeForLoadType(context.Background(), uuid, start, end, loadType)
 }
@@ -37,13 +33,6 @@ func GetRecordsByClientAndTimeForLoadTypeMaxPoints(uuid string, start, end time.
 }
 
 // GetRecordsByTime 获取所有客户端在时间范围内的记录。
-func GetRecordsByTime(start, end time.Time) ([]models.Record, error) {
-	return metricstore.GetRecordsByTime(context.Background(), start, end)
-}
-
-func GetRecordsByTimeForLoadType(start, end time.Time, loadType string) ([]models.Record, error) {
-	return metricstore.GetRecordsByTimeForLoadType(context.Background(), start, end, loadType)
-}
 
 func GetRecordsByTimeForLoadTypeMaxPoints(start, end time.Time, loadType string, maxPoints int) ([]models.Record, error) {
 	return metricstore.GetRecordsByTimeForLoadTypeMaxPoints(context.Background(), start, end, loadType, maxPoints)

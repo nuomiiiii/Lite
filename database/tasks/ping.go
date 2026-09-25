@@ -292,21 +292,6 @@ func GetAllPingTasks() ([]models.PingTask, error) {
 }
 
 // GetPingTasksByClient 获取指定服务器需要执行的延迟监测任务。
-func GetPingTasksByClient(uuid string) []models.PingTask {
-	tasks, err := getPingTasksByClient(dbcore.GetDBInstance(), uuid)
-	if err != nil {
-		return nil
-	}
-	return tasks
-}
-
-func getPingTasksByClient(db *gorm.DB, uuid string) ([]models.PingTask, error) {
-	var tasks []models.PingTask
-	if err := db.Where("clients LIKE ?", `%"`+uuid+`"%`).Order("weight ASC").Order("id ASC").Find(&tasks).Error; err != nil {
-		return nil, err
-	}
-	return tasks, nil
-}
 
 func UpdatePingTaskOrder(order map[uint]int) error {
 	if len(order) == 0 {
@@ -355,10 +340,6 @@ func SavePingRecord(record models.PingRecord) error {
 		return fmt.Errorf("ping task %d is not assigned to client %s", record.TaskId, record.Client)
 	}
 	return metricstore.WritePingRecord(context.Background(), record)
-}
-
-func DeletePingRecords(id []uint) error {
-	return metricstore.DeletePingRecordsByTask(context.Background(), id)
 }
 
 func DeleteAllPingRecords() error {

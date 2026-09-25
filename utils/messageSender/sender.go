@@ -3,10 +3,11 @@ package messageSender
 import (
 	"encoding/json"
 	"fmt"
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"strings"
 	"sync"
 	"time"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 
 	"github.com/nuomiiiii/lite/database"
 	"github.com/nuomiiiii/lite/database/auditlog"
@@ -81,28 +82,6 @@ func Initialize() {
 	LoadProvider(NotificationMethod, senderConfig.Addition)
 }
 
-func SendTextMessage(message string, title string) error {
-	if CurrentProvider() == nil {
-		return fmt.Errorf("message sender provider is not initialized")
-	}
-	var err error
-	NotificationEnabled, err := config.GetAs[bool](config.NotificationEnabledKey, false)
-	if err != nil {
-		return err
-	}
-	if !NotificationEnabled {
-		return nil
-	}
-	for i := 0; i < 3; i++ {
-		err = CurrentProvider().SendTextMessage(message, title)
-		if err == nil {
-			auditlog.Log("", "", "Message sent: "+title, "info")
-			return nil
-		}
-	}
-	auditlog.Log("", "", "Failed to send message after 3 attempts: "+err.Error()+","+title, "error")
-	return err
-}
 func SendEvent(event models.EventMessage) error {
 	if CurrentProvider() == nil {
 		return fmt.Errorf("message sender provider is not initialized")
@@ -130,11 +109,11 @@ func SendEvent(event models.EventMessage) error {
 		for i := 0; i < 3; i++ {
 			err = eventSender.SendEvent(event)
 			if err == nil || err.Error() == "short response: \x00\x00\x00\x1a\x00\x00\x00" {
-				auditlog.Log("", "", "Event message sent: "+event.Event, "info")
+				auditlog.Event("", "", "info", "audit.event_ok", map[string]string{"event": event.Event})
 				return nil
 			}
 		}
-		auditlog.Log("", "", "Failed to send event message after 3 attempts: "+err.Error()+","+event.Event, "error")
+		auditlog.Event("", "", "error", "audit.event_fail", map[string]string{"event": event.Event, "error": err.Error()})
 		return err
 	}
 
@@ -146,11 +125,11 @@ func SendEvent(event models.EventMessage) error {
 	for i := 0; i < 3; i++ {
 		err = CurrentProvider().SendTextMessage(messageTemplate, event.Event)
 		if err == nil || err.Error() == "short response: \x00\x00\x00\x1a\x00\x00\x00" { // QQ 会返回这个错误，但实际上消息是发送成功的
-			auditlog.Log("", "", "Event message sent: "+event.Event, "info")
+			auditlog.Event("", "", "info", "audit.event_ok", map[string]string{"event": event.Event})
 			return nil
 		}
 	}
-	auditlog.Log("", "", "Failed to send event message after 3 attempts: "+err.Error()+","+event.Event, "error")
+	auditlog.Event("", "", "error", "audit.event_fail", map[string]string{"event": event.Event, "error": err.Error()})
 	return err
 }
 

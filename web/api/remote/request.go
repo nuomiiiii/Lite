@@ -109,7 +109,7 @@ func CreateSession(c *gin.Context) {
 		respondCreateSessionAdmissionError(c, err, nextGrant, grantExpires)
 		return
 	}
-	auditlog.Log(session.RequesterIP, session.UserUUID, "request remote session, client:"+request.UUID, "terminal")
+	auditlog.Event(session.RequesterIP, session.UserUUID, "terminal", "audit.remote_request", map[string]string{"name": clients.DisplayName(request.UUID)})
 	time.AfterFunc(pendingSessionTTL, func() {
 		session.mu.Lock()
 		pending := session.StartedAt.IsZero()

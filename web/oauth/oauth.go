@@ -3,8 +3,9 @@ package oauth
 import (
 	"encoding/json"
 	"fmt"
-	logger "github.com/nuomiiiii/lite/utils/log"
 	"sync"
+
+	logger "github.com/nuomiiiii/lite/utils/log"
 
 	"github.com/nuomiiiii/lite/database"
 	"github.com/nuomiiiii/lite/database/models"

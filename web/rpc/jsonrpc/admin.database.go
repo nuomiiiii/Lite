@@ -131,12 +131,12 @@ func adminVacuumDatabase(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.
 
 	actor, ip := auditActor(ctx)
 	level := "warn"
-	message := "reclaimed database space"
+	key := "audit.database_reclaim"
 	if !response.AllSucceeded {
-		message = "database space reclaim completed with errors"
+		key = "audit.database_reclaim_error"
 		level = "error"
 	}
-	auditlog.Log(ip, actor, message, level)
+	auditlog.Event(ip, actor, level, key, nil)
 
 	return response, nil
 }
