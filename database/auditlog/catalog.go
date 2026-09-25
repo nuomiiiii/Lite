@@ -100,9 +100,9 @@ var phrases = map[string][4]string{
 	"audit.geoip_update":            {"更新了地理位置数据库", "Updated the GeoIP database", "地理位置データベースを更新しました", "更新了地理位置資料庫"},
 	"audit.https_reload":            {"重新加载了内置 HTTPS 证书", "Reloaded the built-in HTTPS certificate", "内蔵 HTTPS 証明書を再読み込みしました", "重新載入了內建 HTTPS 憑證"},
 	"audit.https_update":            {"更新了内置 HTTPS 设置", "Updated built-in HTTPS settings", "内蔵 HTTPS 設定を更新しました", "更新了內建 HTTPS 設定"},
-	"audit.login_oauth":             {"通过单点登录进入后台", "Signed in with single sign-on", "シングルサインオンでログインしました", "透過 SSO 登入後台"},
-	"audit.login_passkey":           {"通过通行密钥进入后台", "Signed in with a passkey", "パスキーでログインしました", "透過通行密鑰登入後台"},
-	"audit.login_password":          {"通过密码进入后台", "Signed in with a password", "パスワードでログインしました", "透過密碼登入後台"},
+	"audit.login_oauth":             {"通过单点登录", "Signed in with single sign-on", "シングルサインオンでログインしました", "透過 SSO 登入後台"},
+	"audit.login_passkey":           {"通过通行密钥登录", "Signed in with a passkey", "パスキーでログインしました", "透過通行密鑰登入後台"},
+	"audit.login_password":          {"通过密码登录", "Signed in with a password", "パスワードでログインしました", "透過密碼登入後台"},
 	"audit.logout":                  {"退出了登录", "Signed out", "ログアウトしました", "已登出"},
 	"audit.mcp_approve":             {"批准了 MCP 授权 {{id}}", "Approved MCP authorization {{id}}", "MCP 認可 {{id}} を承認しました", "核准了 MCP 授權 {{id}}"},
 	"audit.mcp_deny":                {"拒绝了 MCP 授权 {{id}}", "Denied MCP authorization {{id}}", "MCP 認可 {{id}} を拒否しました", "拒絕了 MCP 授權 {{id}}"},
@@ -147,7 +147,7 @@ var phrases = map[string][4]string{
 	"audit.traffic_calibrate":       {"校准了服务器「{{name}}」的本周期流量，上行 {{up}}，下行 {{down}}", "Calibrated this cycle's traffic for {{name}}: up {{up}}, down {{down}}", "サーバー「{{name}}」の今周期トラフィックを校正しました。上り {{up}}、下り {{down}}", "校正了伺服器「{{name}}」本週期傳輸用量，上行 {{up}}，下行 {{down}}"},
 	"audit.user_update":             {"更新了账户资料", "Updated the account profile", "アカウント情報を更新しました", "更新了帳戶資料"},
 	"audit.value_change":            {"将「{{setting}}」从「{{from}}」改为「{{to}}」", "Changed {{setting}} from {{from}} to {{to}}", "「{{setting}}」を「{{from}}」から「{{to}}」に変更しました", "將「{{setting}}」從「{{from}}」改為「{{to}}」"},
-	"audit.visitor":                 {"{{detail}}", "{{detail}}", "{{detail}}", "{{detail}}"},
+	"audit.visitor":                 {"访客事件 {{detail}}", "Visitor event {{detail}}", "訪問者イベント {{detail}}", "訪客事件 {{detail}}"},
 	"audit.xterm_update":            {"更新了终端设置", "Updated terminal settings", "ターミナル設定を更新しました", "更新了終端機設定"},
 }
 

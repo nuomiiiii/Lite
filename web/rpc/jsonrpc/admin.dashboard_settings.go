@@ -22,10 +22,10 @@ const (
 )
 
 const (
-	dashboardModuleServerStatus       = "server_status"
-	dashboardModuleTrafficSummary     = "traffic_summary"
-	dashboardModuleTraffic30dSummary  = "traffic_30d_summary"
-	dashboardModuleStorageSummary     = "storage_summary"
+	dashboardModuleServerStatus      = "server_status"
+	dashboardModuleTrafficSummary    = "traffic_summary"
+	dashboardModuleTraffic30dSummary = "traffic_30d_summary"
+	dashboardModuleStorageSummary    = "storage_summary"
 	dashboardModuleCostCenter        = "cost_center"
 	dashboardModuleResourceRanking   = "resource_ranking"
 	dashboardModuleTrafficRanking    = "daily_traffic_ranking"
@@ -260,7 +260,7 @@ func adminSetDashboardSettings(ctx context.Context, req *rpc.JsonRpcRequest) (an
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to save dashboard settings: "+err.Error(), nil)
 	}
 	actor, ip := auditActor(ctx)
-	auditlog.Log(ip, actor, "update dashboard settings", "info")
+	auditlog.Event(ip, actor, "info", "audit.dashboard_update", nil)
 	return normalized, nil
 }
 
@@ -499,4 +499,3 @@ func insertTraffic30dAfterTraffic(modules []dashboardModuleSetting) []dashboardM
 	out = append(out, modules[idx:]...)
 	return out
 }
-

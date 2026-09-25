@@ -28,7 +28,6 @@ const (
 	visitorAuditRateMaxEntries  = 10000
 	visitorAuditLimiterEntryTTL = 10 * time.Minute
 	visitorAuditCleanupInterval = time.Minute
-	visitorAuditMessagePrefix   = "visitor event: "
 	visitorAuditUnknownIPKey    = "<unknown>"
 )
 
@@ -241,8 +240,8 @@ func buildVisitorAuditMessage(message visitorAuditMessage) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		if len(visitorAuditMessagePrefix)+len(encoded) <= visitorAuditMaxMessageLen {
-			return visitorAuditMessagePrefix + string(encoded), nil
+		if len(encoded) <= visitorAuditMaxMessageLen {
+			return string(encoded), nil
 		}
 
 		if message.Detail != nil && !detailReduced {

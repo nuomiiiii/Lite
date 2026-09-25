@@ -57,12 +57,8 @@ func TestBuildVisitorAuditMessage(t *testing.T) {
 	if message == "" || len(message) > visitorAuditMaxMessageLen || !utf8.ValidString(message) {
 		t.Fatalf("unexpected message length %d", len(message))
 	}
-	encoded, ok := strings.CutPrefix(message, visitorAuditMessagePrefix)
-	if !ok {
-		t.Fatalf("message missing prefix: %q", message)
-	}
 	var decoded visitorAuditMessage
-	if err := json.Unmarshal([]byte(encoded), &decoded); err != nil {
+	if err := json.Unmarshal([]byte(message), &decoded); err != nil {
 		t.Fatalf("message JSON is invalid: %v", err)
 	}
 	if decoded.Event != "page_view" {
@@ -78,9 +74,8 @@ func TestBuildVisitorAuditMessageBoundsUserAgentByRunes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildVisitorAuditMessage returned error: %v", err)
 	}
-	encoded, _ := strings.CutPrefix(message, visitorAuditMessagePrefix)
 	var decoded visitorAuditMessage
-	if err := json.Unmarshal([]byte(encoded), &decoded); err != nil {
+	if err := json.Unmarshal([]byte(message), &decoded); err != nil {
 		t.Fatalf("message JSON is invalid: %v", err)
 	}
 	if got := utf8.RuneCountInString(decoded.UserAgent); got != visitorAuditMaxUserAgentLen {
