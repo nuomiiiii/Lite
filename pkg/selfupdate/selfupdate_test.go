@@ -579,3 +579,75 @@ func TestReadLastResultFallsBackToLegacyUpdateRoot(t *testing.T) {
 		t.Fatalf("legacy last result = %#v", got)
 	}
 }
+
+func TestPruneKeepsOnlyTheCompletedRollbackSnapshot(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "backup")
+	current := filepath.Join(parent, "self-update-current")
+	older := filepath.Join(parent, "self-update-older")
+	oldest := filepath.Join(parent, "self-update-oldest")
+	writeRollbackSnapshot(t, current)
+	writeRollbackSnapshot(t, older)
+	writeRollbackSnapshot(t, oldest)
+	if err := os.WriteFile(filepath.Join(parent, "upgrade-20060102-150405.zip"), []byte("zip"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(parent, "pre-restore"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	if !rollbackSnapshotComplete(current) {
+		t.Fatal("current snapshot should be restorable")
+	}
+	pruneRollbackSnapshots(parent, current, 1)
+
+	if !rollbackSnapshotComplete(current) {
+		t.Fatal("current snapshot was removed")
+	}
+	if _, err := os.Stat(older); !os.IsNotExist(err) {
+		t.Fatalf("older snapshot still present: %v", err)
+	}
+	if _, err := os.Stat(oldest); !os.IsNotExist(err) {
+		t.Fatalf("oldest snapshot still present: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, "upgrade-20060102-150405.zip")); err != nil {
+		t.Fatalf("upgrade archive was removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(parent, "pre-restore")); err != nil {
+		t.Fatalf("unrelated directory was removed: %v", err)
+	}
+}
+
+func TestPruneLeavesOlderSnapshotsWhenCurrentBackupIsIncomplete(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "backup")
+	current := filepath.Join(parent, "self-update-current")
+	older := filepath.Join(parent, "self-update-older")
+	if err := os.MkdirAll(current, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeRollbackSnapshot(t, older)
+
+	if rollbackSnapshotComplete(current) {
+		t.Fatal("incomplete snapshot was treated as restorable")
+	}
+	if rollbackSnapshotComplete(current) {
+		pruneRollbackSnapshots(parent, current, 1)
+	}
+	if _, err := os.Stat(filepath.Join(older, "Lite")); err != nil {
+		t.Fatalf("older snapshot was removed: %v", err)
+	}
+}
+
+func writeRollbackSnapshot(t *testing.T, root string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "data"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Lite"), []byte("binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "data", "state"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}

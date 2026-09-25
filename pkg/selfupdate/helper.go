@@ -48,7 +48,12 @@ func RunHelper(configPath string) error {
 	err = tx.run()
 	if err == nil {
 		_ = os.RemoveAll(filepath.Dir(configPath))
-		pruneRollbackSnapshots(filepath.Dir(config.BackupRoot), config.BackupRoot, 2)
+		// Only drop older snapshots after this one still contains both the
+		// previous binary and its data. A failed copy or a rollback that
+		// moved the data back must leave the last complete snapshot in place.
+		if rollbackSnapshotComplete(config.BackupRoot) {
+			pruneRollbackSnapshots(filepath.Dir(config.BackupRoot), config.BackupRoot, 1)
+		}
 	}
 	return err
 }
@@ -477,6 +482,15 @@ func copyFile(source, destination string, mode os.FileMode) error {
 		return syncErr
 	}
 	return closeErr
+}
+
+func rollbackSnapshotComplete(root string) bool {
+	info, err := os.Stat(filepath.Join(root, "Lite"))
+	if err != nil || info.IsDir() || info.Size() == 0 {
+		return false
+	}
+	info, err = os.Stat(filepath.Join(root, "data"))
+	return err == nil && info.IsDir()
 }
 
 func pruneRollbackSnapshots(parent, keep string, limit int) {

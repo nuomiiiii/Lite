@@ -491,7 +491,7 @@ func uniqueStrings(values []string, exclude ...[]string) []string {
 }
 
 func adminTestSendMessage(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
-	err := messageSender.SendEvent(models.EventMessage{
+	err := messageSender.SendTestEvent(models.EventMessage{
 		Event:   "Test",
 		Time:    time.Now().UTC(),
 		Message: "This is a test message from Lite.",
