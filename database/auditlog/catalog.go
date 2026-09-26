@@ -52,6 +52,7 @@ var settingLabels = map[string][4]string{
 	"tempory_share_token":              {"临时分享", "Temporary Share", "一時的な共有", "訪客連結"},
 	"theme":                            {"外观与主题", "Appearance & Themes", "外観とテーマ", "外觀與主題"},
 	"traffic_limit_percentage":         {"流量用量", "Traffic Usage", "トラフィック使用量", "傳輸用量提醒"},
+	"traffic_reminder_step":            {"提醒幅度", "Reminder step", "継続通知の刻み", "提醒幅度"},
 	"traffic_report_time":              {"报告推送时间", "Report Delivery Time", "レポート送信時刻", "報告傳送時間"},
 	"ws_allowed_origins":               {"WebSocket Origin 允许列表", "WebSocket allowed origins", "WebSocket オリジン許可リスト", "WebSocket 來源允許清單"},
 	"ws_origin_check_enabled":          {"WebSocket Origin 校验", "WebSocket origin check", "WebSocket オリジンチェック", "WebSocket 來源驗證"},

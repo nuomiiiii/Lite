@@ -33,3 +33,27 @@ func TestPutCeremonyCapsStoreSize(t *testing.T) {
 		t.Fatalf("ceremony count = %d, want %d", got, ceremonyMaxItems)
 	}
 }
+
+func TestSignInAvailabilityCountsPasswordSiteAndPasskey(t *testing.T) {
+	if (SignInAvailability{HasPassword: true}).Remaining() != 1 {
+		t.Fatal("password alone should count")
+	}
+	if (SignInAvailability{OAuthEnabled: true}).Remaining() != 0 {
+		t.Fatal("site sign-in without a bound account should not count")
+	}
+	if (SignInAvailability{OAuthEnabled: true, SSOBound: true}).Remaining() != 1 {
+		t.Fatal("bound site sign-in should count")
+	}
+	if (SignInAvailability{PasswordDisabled: true, HasPassword: true, PasskeyCount: 1}).Remaining() != 1 {
+		t.Fatal("a passkey should count after password is disabled")
+	}
+	closed := SignInAvailability{PasswordDisabled: true, OAuthEnabled: true, PasskeyCount: 0}
+	if closed.Remaining() != 0 {
+		t.Fatal("disabled password, unbound site sign-in, and no passkey should leave none")
+	}
+	lastPasskey := SignInAvailability{PasswordDisabled: true, PasskeyCount: 1}
+	lastPasskey.PasskeyCount--
+	if lastPasskey.Remaining() != 0 {
+		t.Fatal("removing the last passkey should leave none when the other methods are off")
+	}
+}

@@ -33,6 +33,30 @@ type trafficReminderState struct {
 	Type  string
 }
 
+// nextTrafficReminderPercent reports the reminder mark for the current usage.
+// The first mark is the configured start percentage. Later marks advance by step.
+// Reaching the quota reports 100 even when that is not on the step grid.
+func nextTrafficReminderPercent(usagePercent, startThreshold, step float64) (int, bool) {
+	if startThreshold <= 0 || usagePercent < startThreshold {
+		return 0, false
+	}
+	if step < 1 || step > 100 {
+		step = 5
+	}
+	if usagePercent >= 100 {
+		return 100, true
+	}
+	steps := int(math.Floor((usagePercent-startThreshold)/step + 1e-9))
+	mark := int(math.Floor(startThreshold + float64(steps)*step + 1e-9))
+	if mark < 1 {
+		mark = 1
+	}
+	if mark > 99 {
+		mark = 99
+	}
+	return mark, true
+}
+
 func currentTrafficUsage(client models.Client, up, down int64, now time.Time) trafficUsageSnapshot {
 	limit, typeName := clients.EffectiveTrafficLimit(client, now)
 	return trafficUsageSnapshot{
@@ -42,7 +66,7 @@ func currentTrafficUsage(client models.Client, up, down int64, now time.Time) tr
 	}
 }
 
-// CheckTraffic 检查各客户端流量使用情况，并在达到阈值和每+5%时提醒一次；100%时额外提醒一次
+// CheckTraffic 检查各客户端流量使用情况。用量达到起始比例时提醒一次，之后每增加一个提醒幅度再提醒一次；满额时再提醒一次。
 // 由外部协程每分钟调用一次
 func CheckTraffic() {
 	// 获取最新上报与客户端配置
@@ -59,14 +83,13 @@ func CheckTraffic() {
 		return
 	}
 
-	// 起始阈值：例如 80%，非5的倍数则从上取整到最近的5的倍数，例如 83->85
 	startThreshold := cfg
 	if startThreshold < 0 {
 		startThreshold = 0
 	}
-	baseStep := int(math.Ceil(startThreshold/5.0) * 5.0)
-	if baseStep > 100 {
-		baseStep = 100
+	step, stepErr := config.GetAs[float64](config.TrafficReminderStepKey, 5.0)
+	if stepErr != nil || step < 1 || step > 100 {
+		step = 5
 	}
 
 	allClients, err := clients.GetAllClientBasicInfo()
@@ -103,18 +126,10 @@ func CheckTraffic() {
 			state = trafficReminderState{Limit: usage.Limit, Type: usage.Type}
 			trafficCache.SetDefault(key, state)
 		}
-		if pct < startThreshold {
+		curStep, reached := nextTrafficReminderPercent(pct, startThreshold, step)
+		if !reached {
 			continue
 		}
-
-		// 当前所在阈值步进（5%的倍数）
-		curStep := int(math.Floor(pct/5.0) * 5.0)
-		if curStep < baseStep {
-			curStep = baseStep
-		}
-		// if curStep > 100 {
-		// 	curStep = 100
-		// }
 
 		// 修复：当检测到当前进度小于历史记录时，说明流量已重置，将基准归零
 		if curStep < state.Step {

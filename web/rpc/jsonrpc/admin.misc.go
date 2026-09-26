@@ -20,6 +20,7 @@ import (
 	logger "github.com/nuomiiiii/lite/utils/log"
 	agent "github.com/nuomiiiii/lite/web/agent"
 	"github.com/nuomiiiii/lite/web/mcp"
+	"github.com/nuomiiiii/lite/web/passkey"
 	"github.com/nuomiiiii/lite/web/remotectl"
 )
 
@@ -185,6 +186,13 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 		}
 		cfg[config.AdminDefaultPageSizeKey] = pageSize
 	}
+	if rawStep, ok := cfg[config.TrafficReminderStepKey]; ok {
+		step, ok := normalizeTrafficReminderStep(rawStep)
+		if !ok {
+			return nil, rpc.MakeError(rpc.InvalidParams, "Traffic reminder step must be an integer between 1 and 100", nil)
+		}
+		cfg[config.TrafficReminderStepKey] = step
+	}
 	if rawTTL, ok := cfg[config.SessionTTLSecondsKey]; ok {
 		ttl, ok := normalizeSessionTTLSeconds(rawTTL)
 		if !ok {
@@ -232,6 +240,12 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 				"Metrics database connection test failed: "+err.Error(), nil)
 		}
 		cancel()
+	}
+
+	if closed, err := closingLastSignInMethod(ctx, cfg); err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, "Failed to read sign-in settings: "+err.Error(), nil)
+	} else if closed {
+		return nil, rpc.MakeError(rpc.InvalidParams, "At least one sign-in method must stay enabled", nil)
 	}
 
 	previousSettings, settingsErr := config.GetAll()
@@ -301,6 +315,18 @@ func normalizeAdminDefaultPageSize(raw any) (int, bool) {
 	return int(value), true
 }
 
+func normalizeTrafficReminderStep(raw any) (int, bool) {
+	value, ok := raw.(float64)
+	if !ok || math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value {
+		return 0, false
+	}
+	step := int(value)
+	if step < 1 || step > 100 {
+		return 0, false
+	}
+	return step, true
+}
+
 func normalizeSessionTTLSeconds(raw any) (int, bool) {
 	value, ok := raw.(float64)
 	if !ok || math.IsNaN(value) || math.IsInf(value, 0) || math.Trunc(value) != value {
@@ -345,6 +371,38 @@ func mergedMetricConfig(cfg map[string]interface{}) (*metricstore.MetricStoreCon
 	}
 
 	return merged, nil
+}
+
+func signInMethodsAllClosed(avail passkey.SignInAvailability, cfg map[string]any) bool {
+	_, touchPassword := cfg[config.DisablePasswordLoginKey]
+	_, touchOAuth := cfg[config.OAuthEnabledKey]
+	if !touchPassword && !touchOAuth {
+		return false
+	}
+	if touchPassword {
+		avail.PasswordDisabled = toBool(cfg[config.DisablePasswordLoginKey], avail.PasswordDisabled)
+	}
+	if touchOAuth {
+		avail.OAuthEnabled = toBool(cfg[config.OAuthEnabledKey], avail.OAuthEnabled)
+	}
+	return avail.Remaining() == 0
+}
+
+func closingLastSignInMethod(ctx context.Context, cfg map[string]any) (bool, error) {
+	if _, ok := cfg[config.DisablePasswordLoginKey]; !ok {
+		if _, ok := cfg[config.OAuthEnabledKey]; !ok {
+			return false, nil
+		}
+	}
+	meta := rpc.MetaFromContext(ctx)
+	if meta == nil || meta.UserUUID == "" {
+		return false, errors.New("missing signed-in account")
+	}
+	avail, err := passkey.CurrentSignInAvailability(meta.UserUUID)
+	if err != nil {
+		return false, err
+	}
+	return signInMethodsAllClosed(avail, cfg), nil
 }
 
 func toBool(v any, fallback bool) bool {

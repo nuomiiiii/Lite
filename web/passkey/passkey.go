@@ -348,27 +348,60 @@ func DeleteCredential(userUUID, id string) error {
 	return db.Delete(&row).Error
 }
 
-func canRemovePasskey(userUUID string) (bool, error) {
+// SignInAvailability is the shared password, site sign-in, and passkey check.
+// A method counts only when it can actually be used to sign in.
+type SignInAvailability struct {
+	PasswordDisabled bool
+	HasPassword      bool
+	OAuthEnabled     bool
+	SSOBound         bool
+	PasskeyCount     int
+}
+
+func (a SignInAvailability) Remaining() int {
+	count := 0
+	if !a.PasswordDisabled && a.HasPassword {
+		count++
+	}
+	if a.OAuthEnabled && a.SSOBound {
+		count++
+	}
+	if a.PasskeyCount > 0 {
+		count++
+	}
+	return count
+}
+
+func CurrentSignInAvailability(userUUID string) (SignInAvailability, error) {
 	user, err := accounts.GetUserByUUID(userUUID)
 	if err != nil {
-		return false, err
+		return SignInAvailability{}, err
 	}
 	var count int64
 	if err := dbcore.GetDBInstance().Model(&models.PasskeyCredential{}).Where("user_uuid = ?", userUUID).Count(&count).Error; err != nil {
-		return false, err
-	}
-	if count > 1 {
-		return true, nil
+		return SignInAvailability{}, err
 	}
 	passwordDisabled, _ := config.GetAs[bool](config.DisablePasswordLoginKey, false)
-	if !passwordDisabled && user.Passwd != "" {
-		return true, nil
-	}
 	oauthEnabled, _ := config.GetAs[bool](config.OAuthEnabledKey, false)
-	if oauthEnabled && strings.TrimSpace(user.SSOID) != "" {
-		return true, nil
+	return SignInAvailability{
+		PasswordDisabled: passwordDisabled,
+		HasPassword:      strings.TrimSpace(user.Passwd) != "",
+		OAuthEnabled:     oauthEnabled,
+		SSOBound:         strings.TrimSpace(user.SSOID) != "",
+		PasskeyCount:     int(count),
+	}, nil
+}
+
+func canRemovePasskey(userUUID string) (bool, error) {
+	avail, err := CurrentSignInAvailability(userUUID)
+	if err != nil {
+		return false, err
 	}
-	return false, nil
+	if avail.PasskeyCount <= 0 {
+		return false, nil
+	}
+	avail.PasskeyCount--
+	return avail.Remaining() > 0, nil
 }
 
 func encodeAAGUID(raw []byte) string {

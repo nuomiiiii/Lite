@@ -12,6 +12,56 @@ func intPointer(value int) *int {
 	return &value
 }
 
+func TestNextTrafficReminderPercentUsesConfiguredStep(t *testing.T) {
+	mark, reached := nextTrafficReminderPercent(79.9, 80, 5)
+	assert.False(t, reached)
+	assert.Equal(t, 0, mark)
+
+	mark, reached = nextTrafficReminderPercent(80, 80, 5)
+	assert.True(t, reached)
+	assert.Equal(t, 80, mark)
+
+	mark, reached = nextTrafficReminderPercent(84.9, 80, 5)
+	assert.Equal(t, 80, mark)
+
+	mark, reached = nextTrafficReminderPercent(85, 80, 5)
+	assert.Equal(t, 85, mark)
+
+	mark, reached = nextTrafficReminderPercent(87, 80, 8)
+	assert.Equal(t, 80, mark)
+	mark, reached = nextTrafficReminderPercent(88, 80, 8)
+	assert.Equal(t, 88, mark)
+
+	mark, reached = nextTrafficReminderPercent(89, 80, 10)
+	assert.Equal(t, 80, mark)
+	mark, reached = nextTrafficReminderPercent(90, 80, 10)
+	assert.Equal(t, 90, mark)
+
+	mark, reached = nextTrafficReminderPercent(100, 80, 8)
+	assert.Equal(t, 100, mark)
+
+	mark, reached = nextTrafficReminderPercent(96, 80, 8)
+	assert.Equal(t, 96, mark)
+
+	// The historical 5-point ladder from 80 stays on the same marks.
+	for _, pct := range []float64{80, 84, 85, 89, 90, 94, 95, 99, 100} {
+		mark, reached = nextTrafficReminderPercent(pct, 80, 5)
+		assert.True(t, reached)
+		switch {
+		case pct >= 100:
+			assert.Equal(t, 100, mark)
+		case pct >= 95:
+			assert.Equal(t, 95, mark)
+		case pct >= 90:
+			assert.Equal(t, 90, mark)
+		case pct >= 85:
+			assert.Equal(t, 85, mark)
+		default:
+			assert.Equal(t, 80, mark)
+		}
+	}
+}
+
 func TestCurrentTrafficUsageIncludesCurrentCycleResetAllowance(t *testing.T) {
 	const gib = int64(1024 * 1024 * 1024)
 	client := models.Client{

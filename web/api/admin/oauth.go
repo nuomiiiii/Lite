@@ -1,9 +1,12 @@
 package admin
 
 import (
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/nuomiiiii/lite/database/accounts"
 	"github.com/nuomiiiii/lite/web/api"
+	"github.com/nuomiiiii/lite/web/passkey"
 )
 
 // oauth.go
@@ -41,6 +44,16 @@ func UnbindExternalAccount(c *gin.Context) {
 	user, err := accounts.GetUserBySession(session)
 	if err != nil {
 		api.RespondError(c, 500, "No user found: "+err.Error())
+		return
+	}
+	avail, err := passkey.CurrentSignInAvailability(user.UUID)
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, "Failed to read sign-in methods: "+err.Error())
+		return
+	}
+	avail.SSOBound = false
+	if avail.Remaining() == 0 {
+		api.RespondError(c, http.StatusConflict, passkey.ErrLastLoginMethod.Error())
 		return
 	}
 	if err := accounts.UnbindExternalAccount(user.UUID); err != nil {

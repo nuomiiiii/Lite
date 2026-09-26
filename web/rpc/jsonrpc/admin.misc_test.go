@@ -7,6 +7,7 @@ import (
 	"github.com/nuomiiiii/lite/database/metricstore"
 	"github.com/nuomiiiii/lite/pkg/config"
 	"github.com/nuomiiiii/lite/pkg/rpc"
+	"github.com/nuomiiiii/lite/web/passkey"
 )
 
 func TestNormalizeAdminDefaultPageSize(t *testing.T) {
@@ -60,6 +61,75 @@ func TestStripRetiredAdminSettingsRemovesAutoDiscoveryKey(t *testing.T) {
 		if _, ok := settings[key]; ok {
 			t.Fatalf("%s should be stripped", key)
 		}
+	}
+}
+
+func TestSignInMethodsAllClosed(t *testing.T) {
+	passwordOnly := passkey.SignInAvailability{HasPassword: true}
+	ssoOnly := passkey.SignInAvailability{PasswordDisabled: true, OAuthEnabled: true, SSOBound: true}
+	passkeyOnly := passkey.SignInAvailability{PasswordDisabled: true, PasskeyCount: 1}
+	tests := []struct {
+		name  string
+		avail passkey.SignInAvailability
+		cfg   map[string]any
+		want  bool
+	}{
+		{
+			name:  "unrelated setting",
+			avail: passkey.SignInAvailability{PasswordDisabled: true},
+			cfg:   map[string]any{config.SitenameKey: "Lite"},
+		},
+		{
+			name:  "disable password while sso is off and no passkey",
+			avail: passwordOnly,
+			cfg:   map[string]any{config.DisablePasswordLoginKey: true},
+			want:  true,
+		},
+		{
+			name:  "turn off sso while password is disabled and no passkey",
+			avail: ssoOnly,
+			cfg:   map[string]any{config.OAuthEnabledKey: false},
+			want:  true,
+		},
+		{
+			name:  "disable password while a passkey remains",
+			avail: passkey.SignInAvailability{HasPassword: true, PasskeyCount: 1},
+			cfg:   map[string]any{config.DisablePasswordLoginKey: true},
+		},
+		{
+			name:  "disable password while sso stays bound",
+			avail: passkey.SignInAvailability{HasPassword: true, OAuthEnabled: true, SSOBound: true},
+			cfg:   map[string]any{config.DisablePasswordLoginKey: true},
+		},
+		{
+			name:  "sso switch alone does not count without a bound account",
+			avail: passkey.SignInAvailability{HasPassword: true, OAuthEnabled: true},
+			cfg:   map[string]any{config.DisablePasswordLoginKey: true},
+			want:  true,
+		},
+		{
+			name:  "turn off sso while password stays on",
+			avail: passkey.SignInAvailability{HasPassword: true, OAuthEnabled: true, SSOBound: true},
+			cfg:   map[string]any{config.OAuthEnabledKey: false},
+		},
+		{
+			name:  "turn off sso while a passkey remains",
+			avail: passkey.SignInAvailability{PasswordDisabled: true, OAuthEnabled: true, SSOBound: true, PasskeyCount: 2},
+			cfg:   map[string]any{config.OAuthEnabledKey: false},
+		},
+		{
+			name:  "remove the last passkey is not this settings check",
+			avail: passkeyOnly,
+			cfg:   map[string]any{config.SitenameKey: "Lite"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := signInMethodsAllClosed(test.avail, test.cfg)
+			if got != test.want {
+				t.Fatalf("signInMethodsAllClosed() = %v, want %v", got, test.want)
+			}
+		})
 	}
 }
 

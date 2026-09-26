@@ -63,6 +63,7 @@ type Settings struct {
 	ExpireNotificationLeadDays int     `json:"expire_notification_lead_days" default:"7"`  // 过期前多少天通知，默认7天
 	LoginNotification          bool    `json:"login_notification" default:"true"`          // 登录通知
 	TrafficLimitPercentage     float64 `json:"traffic_limit_percentage" default:"80.00"`   // 流量限制百分比，默认80.00%
+	TrafficReminderStep        float64 `json:"traffic_reminder_step" default:"5"`          // 达到起始比例后，每增加多少个百分点再提醒
 	TrafficReportTime          string  `json:"traffic_report_time" default:"00:00"`        // 流量日报/周报/月报发送时间（北京时间）
 	UpdatedAt                  time.Time
 }
@@ -130,6 +131,7 @@ const (
 	ExpireNotificationLeadDaysKey  = "expire_notification_lead_days"
 	LoginNotificationKey           = "login_notification"
 	TrafficLimitPercentageKey      = "traffic_limit_percentage"
+	TrafficReminderStepKey         = "traffic_reminder_step"
 	TrafficReportTimeKey           = "traffic_report_time"
 	UpdatedAtKey                   = "updated_at"
 	XtermjsSettingsKey             = "xtermjs_settings"
