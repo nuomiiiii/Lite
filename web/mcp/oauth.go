@@ -14,6 +14,7 @@ import (
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/web/api"
 	"github.com/nuomiiiii/lite/web/api/remote"
+	"gorm.io/gorm"
 )
 
 var (
@@ -600,6 +601,21 @@ func handleRefreshToken(c *gin.Context, values url.Values) {
 	refresh := strings.TrimSpace(values.Get("refresh_token"))
 	clientID := strings.TrimSpace(values.Get("client_id"))
 	now := time.Now().UTC()
+	var token models.MCPToken
+	if err := database().Where("hash = ? AND kind = ?", hashToken(refresh), kindRefresh).First(&token).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+		return
+	}
+	// Validate client binding BEFORE joining a concurrent/retry response.
+	if clientID != "" && token.ClientID != clientID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_client"})
+		return
+	}
+	lease, err := loadLiveLease(token.LeaseID, now)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+		return
+	}
 	refreshMu.Lock()
 	if pending, ok := refreshIn[refresh]; ok {
 		refreshMu.Unlock()
@@ -616,6 +632,10 @@ func handleRefreshToken(c *gin.Context, values url.Values) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
 			return
 		}
+		if _, err := loadLiveLease(token.LeaseID, time.Now().UTC()); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+			return
+		}
 		writeTokenResponse(c, pending.pair)
 		return
 	}
@@ -624,23 +644,22 @@ func handleRefreshToken(c *gin.Context, values url.Values) {
 	refreshMu.Unlock()
 	defer func() {
 		close(wait.done)
-		refreshMu.Lock()
-		delete(refreshIn, refresh)
-		refreshMu.Unlock()
+		if wait.pair.err != nil {
+			refreshMu.Lock()
+			delete(refreshIn, refresh)
+			refreshMu.Unlock()
+			return
+		}
+		// Briefly tolerate a lost HTTP response; later reuse still revokes.
+		// Plaintext successor credentials are never persisted to disk.
+		time.AfterFunc(30*time.Second, func() {
+			refreshMu.Lock()
+			if refreshIn[refresh] == wait {
+				delete(refreshIn, refresh)
+			}
+			refreshMu.Unlock()
+		})
 	}()
-
-	var token models.MCPToken
-	err := database().Where("hash = ? AND kind = ?", hashToken(refresh), kindRefresh).First(&token).Error
-	if err != nil {
-		wait.pair = tokenPair{err: err}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
-		return
-	}
-	if clientID != "" && token.ClientID != clientID {
-		wait.pair = tokenPair{err: ErrClientMismatch}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_client"})
-		return
-	}
 	if token.Used {
 		_ = revokeFamily(token.FamilyID, reasonRefreshReuse)
 		wait.pair = tokenPair{err: ErrTokenReuse}
@@ -652,16 +671,26 @@ func handleRefreshToken(c *gin.Context, values url.Values) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
 		return
 	}
-	lease, err := loadLiveLease(token.LeaseID, now)
+	var pair tokenPair
+	err = database().Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.MCPToken{}).Where("hash = ? AND used = ? AND expires_at > ?", token.Hash, false, now).Update("used", true)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrTokenReuse
+		}
+		var issueErr error
+		pair, issueErr = issueTokenPairInDB(tx, lease, token.ClientID, token.RedirectURI, token.Resource, now)
+		return issueErr
+	})
 	if err != nil {
 		wait.pair = tokenPair{err: err}
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
-		return
-	}
-	_ = database().Model(&token).Update("used", true).Error
-	pair, err := issueTokenPair(lease, token.ClientID, token.RedirectURI, token.Resource, now)
-	if err != nil {
-		wait.pair = tokenPair{err: err}
+		if errors.Is(err, ErrTokenReuse) {
+			_ = revokeFamily(token.FamilyID, reasonRefreshReuse)
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
 		return
 	}
@@ -670,6 +699,10 @@ func handleRefreshToken(c *gin.Context, values url.Values) {
 }
 
 func issueTokenPair(lease models.MCPLease, clientID, redirectURI, resource string, now time.Time) (tokenPair, error) {
+	return issueTokenPairInDB(database(), lease, clientID, redirectURI, resource, now)
+}
+
+func issueTokenPairInDB(db *gorm.DB, lease models.MCPLease, clientID, redirectURI, resource string, now time.Time) (tokenPair, error) {
 	accessTTL := truncateTTL(now, lease.ExpiresAt, AccessTokenTTL)
 	refreshTTL := truncateTTL(now, lease.ExpiresAt, lease.ExpiresAt.Sub(now))
 	if accessTTL <= 0 || refreshTTL <= 0 {
@@ -705,10 +738,10 @@ func issueTokenPair(lease models.MCPLease, clientID, redirectURI, resource strin
 		ExpiresAt:   now.Add(refreshTTL),
 		CreatedAt:   now,
 	}
-	if err := database().Create(&access).Error; err != nil {
+	if err := db.Create(&access).Error; err != nil {
 		return tokenPair{}, err
 	}
-	if err := database().Create(&refresh).Error; err != nil {
+	if err := db.Create(&refresh).Error; err != nil {
 		return tokenPair{}, err
 	}
 	return tokenPair{

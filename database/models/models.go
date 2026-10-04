@@ -204,6 +204,7 @@ type MCPLease struct {
 	MaxConcurrency         int        `json:"max_concurrency" gorm:"not null;default:4"`
 	Status                 string     `json:"status" gorm:"type:varchar(24);index;not null"`
 	PolicyVersion          int        `json:"policy_version" gorm:"not null;default:1"`
+	LongTerm               bool       `json:"long_term" gorm:"not null;default:false"`
 	RevocationReason       string     `json:"revocation_reason" gorm:"type:varchar(64)"`
 	CreatedAt              time.Time  `json:"created_at"`
 	ExpiresAt              time.Time  `json:"expires_at" gorm:"index"`

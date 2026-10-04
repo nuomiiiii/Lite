@@ -129,14 +129,11 @@ func ForceResetPassword(username, passwd string) (err error) {
 	if err != nil {
 		return err
 	}
-	db := dbcore.GetDBInstance()
-	result := db.Model(&models.User{}).Where("username = ?", username).Update("passwd", hashed)
-	if result.Error != nil {
-		return result.Error
+	ownerUUID, err := forceResetPasswordWithDB(dbcore.GetDBInstance(), username, hashed)
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("无法找到用户名")
-	}
+	notifyUserSecurityChanged(ownerUUID)
 	return nil
 }
 

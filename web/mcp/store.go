@@ -58,6 +58,10 @@ var (
 )
 
 func init() {
+	remote.SetMCPTerminalLeaseValidator(func(leaseID, userUUID, nodeUUID string) bool {
+		lease, err := loadLiveLease(leaseID, time.Now().UTC())
+		return err == nil && lease.OwnerUserUUID == userUUID && leaseContainsNode(lease, nodeUUID)
+	})
 	accounts.AddUserSecurityListener(RevokeUser)
 	remotectl.AddRevokeAllListener(func() {
 		_ = revokeActiveLeases("", "", reasonRemoteOff)
@@ -68,7 +72,8 @@ func init() {
 }
 
 func InvalidateActiveLeases() error {
-	return revokeActiveLeases("", "", reasonRestart)
+	promotionErr := promoteConfiguredLongTermLeases()
+	return errors.Join(promotionErr, revokeActiveLeases("", "", reasonRestart))
 }
 
 func RevokeUser(userUUID string) {
@@ -86,6 +91,9 @@ func revokeActiveLeases(userUUID, loginHash, reason string) error {
 	db := database()
 	now := time.Now().UTC()
 	query := db.Model(&models.MCPLease{}).Where("status = ? AND revoked_at IS NULL", statusActive)
+	if reason == reasonRestart || reason == reasonLoginRevoked {
+		query = query.Where("long_term = ?", false)
+	}
 	if userUUID != "" {
 		query = query.Where("owner_user_uuid = ?", userUUID)
 	}
@@ -158,7 +166,12 @@ func loadLiveLease(id string, now time.Time) (models.MCPLease, error) {
 		}
 		return models.MCPLease{}, ErrLeaseInactive
 	}
-	if !accounts.SessionStillValid(lease.OwnerUserUUID, lease.OwnerLoginSessionHash) {
+	if lease.LongTerm {
+		if !longTermOwnerExists(lease.OwnerUserUUID) {
+			_ = revokeActiveLeases(lease.OwnerUserUUID, "", reasonUserSecurity)
+			return models.MCPLease{}, ErrLeaseInactive
+		}
+	} else if !accounts.SessionStillValid(lease.OwnerUserUUID, lease.OwnerLoginSessionHash) {
 		_ = revokeActiveLeases(lease.OwnerUserUUID, lease.OwnerLoginSessionHash, reasonLoginRevoked)
 		return models.MCPLease{}, ErrLeaseInactive
 	}
@@ -332,7 +345,7 @@ func cleanupHistory(db *gorm.DB, now time.Time) error {
 			return err
 		}
 	}
-	if err := db.Where("created_at < ?", cutoff).Delete(&models.MCPToken{}).Error; err != nil {
+	if err := db.Where("created_at < ? AND (used = ? OR expires_at <= ?)", cutoff, true, now).Delete(&models.MCPToken{}).Error; err != nil {
 		return err
 	}
 	if err := compactStaleOperationOutputs(db, now); err != nil {
@@ -349,7 +362,7 @@ func pruneUnusedMCPClients(db *gorm.DB, now time.Time) error {
 	return db.Exec(`
 		DELETE FROM mcp_clients
 		WHERE created_at < ?
-		AND NOT EXISTS (SELECT 1 FROM mcp_leases WHERE mcp_leases.oauth_client_id = mcp_clients.client_id)
+		AND NOT EXISTS (SELECT 1 FROM mcp_leases WHERE mcp_leases.o_auth_client_id = mcp_clients.client_id)
 		AND NOT EXISTS (SELECT 1 FROM mcp_tokens WHERE mcp_tokens.client_id = mcp_clients.client_id)
 	`, stale).Error
 }
@@ -358,7 +371,7 @@ func unusedMCPClientCount() int64 {
 	var count int64
 	_ = database().Raw(`
 		SELECT COUNT(*) FROM mcp_clients
-		WHERE NOT EXISTS (SELECT 1 FROM mcp_leases WHERE mcp_leases.oauth_client_id = mcp_clients.client_id)
+		WHERE NOT EXISTS (SELECT 1 FROM mcp_leases WHERE mcp_leases.o_auth_client_id = mcp_clients.client_id)
 		AND NOT EXISTS (SELECT 1 FROM mcp_tokens WHERE mcp_tokens.client_id = mcp_clients.client_id)
 	`).Scan(&count).Error
 	return count

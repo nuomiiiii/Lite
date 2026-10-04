@@ -194,6 +194,7 @@ func authorizationPayload(lease models.MCPLease, now time.Time) gin.H {
 	return gin.H{
 		"lease_id":          lease.ID,
 		"mode":              lease.Mode,
+		"long_term":         lease.LongTerm,
 		"expires_at":        lease.ExpiresAt.UTC().Format(time.RFC3339),
 		"remaining_seconds": remaining,
 		"target_uuids":      parseTargetUUIDs(lease.TargetUUIDs),

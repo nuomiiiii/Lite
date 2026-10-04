@@ -74,6 +74,8 @@ func getSettings(c *gin.Context) {
 		"endpoint":                     instanceResource(c),
 		"hard_max_duration_minutes":    HardMaxDurationMinutes,
 		"min_duration_minutes":         MinDurationMinutes,
+		"long_term_enabled":            longTermAuthorizationEnabled(),
+		"long_term_expires_at":         longTermExpiresAt().Format(time.RFC3339),
 	})
 }
 
@@ -267,6 +269,7 @@ func approveAuthorization(c *gin.Context) {
 		Credential      json.RawMessage `json:"credential"`
 		TargetUUIDs     []string        `json:"target_uuids"`
 		DurationMinutes any             `json:"duration_minutes"`
+		LongTerm        *bool           `json:"long_term"`
 		Note            string          `json:"note"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -323,6 +326,11 @@ func approveAuthorization(c *gin.Context) {
 		return
 	}
 	now := time.Now().UTC()
+	longTerm, expiresAt, err := authorizationPolicy(body.LongTerm, now, minutes)
+	if err != nil {
+		api.RespondError(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	leaseID, err := newID("ls_")
 	if err != nil {
 		api.RespondError(c, http.StatusInternalServerError, "failed to create authorization")
@@ -346,8 +354,9 @@ func approveAuthorization(c *gin.Context) {
 		MaxConcurrency:         settings.MaxConcurrency,
 		Status:                 statusActive,
 		PolicyVersion:          PolicyVersion,
+		LongTerm:               longTerm,
 		CreatedAt:              now,
-		ExpiresAt:              leaseExpiresAt(now, minutes),
+		ExpiresAt:              expiresAt,
 	}
 	if err := database().Create(&lease).Error; err != nil {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
@@ -411,9 +420,12 @@ func listLeases(c *gin.Context) {
 	if _, _, ok := requireAdminSession(c); !ok {
 		return
 	}
-	var leases []models.MCPLease
 	now := time.Now().UTC()
-	_ = database().Where("created_at >= ?", adminHistoryCutoff(now)).Order("created_at DESC").Find(&leases).Error
+	leases, err := visibleAdminLeases(database(), now)
+	if err != nil {
+		api.RespondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
 	items := make([]gin.H, 0, len(leases))
 	for _, lease := range leases {
 		if lease.Status == statusActive && !lease.ExpiresAt.After(now) {
@@ -435,6 +447,7 @@ func listLeases(c *gin.Context) {
 			"target_uuids":    parseTargetUUIDs(lease.TargetUUIDs),
 			"created_at":      lease.CreatedAt.UTC(),
 			"expires_at":      lease.ExpiresAt.UTC(),
+			"long_term":       lease.LongTerm,
 			"revoked_at":      lease.RevokedAt,
 			"max_concurrency": lease.MaxConcurrency,
 			"running":         runningOperationCount(lease.ID),
@@ -461,6 +474,7 @@ func getLease(c *gin.Context) {
 		"target_uuids":    parseTargetUUIDs(lease.TargetUUIDs),
 		"created_at":      lease.CreatedAt.UTC(),
 		"expires_at":      lease.ExpiresAt.UTC(),
+		"long_term":       lease.LongTerm,
 		"max_concurrency": lease.MaxConcurrency,
 		"running":         runningOperationCount(lease.ID),
 	})

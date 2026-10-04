@@ -200,7 +200,7 @@ func forwardMCPSession(session *remoteSession) {
 		case <-timer.C:
 			waiting = false
 		case now := <-pingTicker.C:
-			if !loginStillValid(session.UserUUID, session.LoginSession) || now.After(session.ExpiresAt) {
+			if !mcpTerminalAuthorizationValid(session) || now.After(session.ExpiresAt) {
 				waiting = false
 				continue
 			}
