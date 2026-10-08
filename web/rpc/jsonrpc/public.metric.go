@@ -802,15 +802,24 @@ func publicPingStatsFromAggregateGroups(entityID string, groups publicPingMetric
 		}
 
 		lossRate, valid, approximate := publicPingLossRate(groups.Avg[taskID], groups.Loss[taskID], total, groups.LossAvailable)
-		avg, _ := weightedAggregateValue(groups.Avg[taskID], true)
-		p50, _ := weightedAggregateValue(groups.P50[taskID], true)
-		p99, _ := weightedAggregateValue(groups.P99[taskID], true)
-		stddev, _ := weightedAggregateValue(groups.StdDev[taskID], false)
-		minimum := positiveAggregateMin(groups.Min[taskID])
-		maximum := positiveAggregateMax(groups.Max[taskID])
-		latest := latestPositiveAggregate(groups.Last[taskID])
+		// Latency buckets count failed probes in Count, and a bucket of only
+		// failures comes back as 0. Re-weight by valid samples so failures do not
+		// drag avg/min/percentiles down.
+		avgPoints := validPingLatencyPoints(groups.Avg[taskID], groups.Loss[taskID], groups.LossAvailable)
+		avg, _ := weightedAggregateValue(avgPoints, true)
+		p50, _ := weightedAggregateValue(validPingLatencyPoints(groups.P50[taskID], groups.Loss[taskID], groups.LossAvailable), true)
+		p99, _ := weightedAggregateValue(validPingLatencyPoints(groups.P99[taskID], groups.Loss[taskID], groups.LossAvailable), true)
+		stddev, _ := weightedAggregateValue(validPingLatencyPoints(groups.StdDev[taskID], groups.Loss[taskID], groups.LossAvailable), false)
+		minimum := positiveAggregateMin(validPingLatencyPoints(groups.Min[taskID], groups.Loss[taskID], groups.LossAvailable))
+		maximum := positiveAggregateMax(validPingLatencyPoints(groups.Max[taskID], groups.Loss[taskID], groups.LossAvailable))
+		latest := latestPositiveAggregate(validPingLatencyPoints(groups.Last[taskID], groups.Loss[taskID], groups.LossAvailable))
 		if latest == nil {
-			latest = latestPositiveAggregate(groups.Avg[taskID])
+			latest = latestPositiveAggregate(avgPoints)
+		}
+		if valid <= 0 {
+			// Every probe failed. A bucket holding only failures is aggregated
+			// over zero valid samples and comes back as 0, which is not a latency.
+			avg, p50, p99, stddev, minimum, maximum, latest = nil, nil, nil, nil, nil, nil, nil
 		}
 
 		stat := publicPingMetricTaskStats{
@@ -925,6 +934,39 @@ func publicPingLossRate(latencyPoints, lossPoints []metric.AggregatePoint, total
 	return float64(lost) / float64(total) * 100, valid, true
 }
 
+// validPingLatencyPoints drops latency buckets in which every probe failed and
+// re-weights partially failed buckets by their number of valid probes, using the
+// per-bucket loss ratio. Without loss data the points are returned unchanged
+// (failed probes are then already negative and filtered by the callers).
+func validPingLatencyPoints(points, lossPoints []metric.AggregatePoint, lossAvailable bool) []metric.AggregatePoint {
+	if !lossAvailable || len(points) == 0 {
+		return points
+	}
+	lossByBucket := make(map[int64]float64, len(lossPoints))
+	for _, point := range lossPoints {
+		if point.Count <= 0 {
+			continue
+		}
+		lossByBucket[point.Bucket.UTC().UnixNano()] = math.Max(0, math.Min(1, point.Value))
+	}
+	out := make([]metric.AggregatePoint, 0, len(points))
+	for _, point := range points {
+		if point.Count <= 0 {
+			continue
+		}
+		valid := point.Count
+		if ratio, ok := lossByBucket[point.Bucket.UTC().UnixNano()]; ok {
+			valid = int(math.Round(float64(point.Count) * (1 - ratio)))
+		}
+		if valid <= 0 {
+			continue
+		}
+		point.Count = valid
+		out = append(out, point)
+	}
+	return out
+}
+
 func weightedAggregateValue(points []metric.AggregatePoint, skipNegative bool) (*float64, int) {
 	sum := 0.0
 	count := 0
@@ -973,6 +1015,8 @@ func positiveAggregateMax(points []metric.AggregatePoint) *float64 {
 	return out
 }
 
+// latestPositiveAggregate returns the newest non-negative bucket value. Zero is
+// kept because sub-millisecond latency can legitimately round to 0.
 func latestPositiveAggregate(points []metric.AggregatePoint) *float64 {
 	var out *float64
 	var latest time.Time
