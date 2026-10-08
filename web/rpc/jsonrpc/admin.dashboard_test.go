@@ -228,7 +228,7 @@ func TestDashboardLatencyMinuteAveragesAndJitterRanking(t *testing.T) {
 		{Bucket: current, Value: -1, Count: 5},
 	}, current)
 	require.True(t, ok)
-	assert.InDelta(t, 40.0/3.0, previousAverage, 0.001)
+	assert.InDelta(t, 13.33, previousAverage, 0.001)
 	assert.InDelta(t, 30, currentAverage, 0.001)
 
 	ranking := []dashboardLatencyJitterRankItem{}

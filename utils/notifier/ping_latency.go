@@ -36,12 +36,14 @@ func latencyThresholds(notification models.PingLossNotification) (low, high floa
 		if !notification.HasAdaptiveBaseline() {
 			return 0, 0, false
 		}
-		baseline := *notification.AdaptiveBaselineMs
-		low = baseline * (1 - notification.AdaptiveLowerDeviationPercent/100)
-		high = baseline * (1 + notification.AdaptiveUpperDeviationPercent/100)
+		baseline := metricstore.RoundLatencyMS(*notification.AdaptiveBaselineMs)
+		low = metricstore.RoundLatencyMS(baseline * (1 - notification.AdaptiveLowerDeviationPercent/100))
+		high = metricstore.RoundLatencyMS(baseline * (1 + notification.AdaptiveUpperDeviationPercent/100))
 		return low, high, high > low
 	}
-	return notification.LowLatencyThresholdMs, notification.HighLatencyThresholdMs, notification.HighLatencyThresholdMs > notification.LowLatencyThresholdMs
+	low = metricstore.RoundLatencyMS(notification.LowLatencyThresholdMs)
+	high = metricstore.RoundLatencyMS(notification.HighLatencyThresholdMs)
+	return low, high, high > low
 }
 
 func latencyCoverageTolerance(pingIntervalSeconds int) time.Duration {
@@ -89,18 +91,22 @@ func latencyWindowCovered(stats metricstore.PingHealthStats, windowStart, now ti
 }
 
 func latencyAverageInside(stats metricstore.PingHealthStats, low, high float64) bool {
-	if !stats.HasLatency || stats.AverageLatencyMS >= high {
+	if !stats.HasLatency {
 		return false
 	}
-	// A measured 0 ms RTT is normal on an intranet. It is not below the floor.
+	// 0.00 ms is not a real latency, so it sits inside the band.
 	if stats.AverageLatencyMS == 0 {
 		return true
 	}
-	return stats.AverageLatencyMS > low
+	return stats.AverageLatencyMS > low && stats.AverageLatencyMS < high
 }
 
 func latencyBelowFloor(average, low float64) bool {
 	return average > 0 && average <= low
+}
+
+func latencyAboveCeiling(average, high float64) bool {
+	return average > 0 && average >= high
 }
 
 func latencyFullyRecovered(stats metricstore.PingHealthStats, windowStart, now time.Time, notification models.PingLossNotification, pingIntervalSeconds int, low, high float64) bool {
@@ -128,8 +134,7 @@ func evaluateLatencyAnomaly(
 		next.AdaptiveBaselineFingerprint = fp
 		repairStuckFrozenBaseline(&next, now)
 		if !next.HasAdaptiveBaseline() || next.NormalizedAdaptiveBaselineStatus() == models.AdaptiveBaselineWarming {
-			if candidate.Successful >= int64(next.BaselineMinimumSamples) && candidate.MedianMS > 0 {
-				median := candidate.MedianMS
+			if median := metricstore.RoundLatencyMS(candidate.MedianMS); candidate.Successful >= int64(next.BaselineMinimumSamples) && median > 0 {
 				next.AdaptiveBaselineMs = &median
 				next.AdaptiveBaselineStatus = models.AdaptiveBaselineReady
 				next.AdaptiveBaselineSampleCount = int(candidate.Successful)
@@ -143,7 +148,10 @@ func evaluateLatencyAnomaly(
 		}
 	}
 
-	if stats.Successful < int64(next.LatencyMinimumSamples) || !stats.HasLatency {
+	stats.AverageLatencyMS = metricstore.RoundLatencyMS(stats.AverageLatencyMS)
+	stats.MinLatencyMS = metricstore.RoundLatencyMS(stats.MinLatencyMS)
+	stats.MaxLatencyMS = metricstore.RoundLatencyMS(stats.MaxLatencyMS)
+	if stats.Successful < int64(next.LatencyMinimumSamples) || !stats.HasLatency || stats.AverageLatencyMS < 0 {
 		return pingLatencyEvaluation{Notification: next, Action: pingLatencyNotificationNone}
 	}
 
@@ -162,7 +170,7 @@ func evaluateLatencyAnomaly(
 
 	switch state {
 	case models.LatencyAlertNormal:
-		if stats.AverageLatencyMS >= high {
+		if latencyAboveCeiling(stats.AverageLatencyMS, high) {
 			action = pingLatencyNotificationAlertHigh
 			next.LatencyAlertState = models.LatencyAlertHigh
 			next.LatencyIncidentNotified = false
@@ -201,14 +209,14 @@ func evaluateLatencyAnomaly(
 			}
 			applyLatencyRecovery(&next, now)
 			next.LatencyIncidentNotified = false
-		} else if stats.AverageLatencyMS >= high && latencyCooldownElapsed(next, now) {
+		} else if latencyAboveCeiling(stats.AverageLatencyMS, high) && latencyCooldownElapsed(next, now) {
 			action = pingLatencyNotificationPersist
 			if next.LatencyLastNotified == nil {
 				action = pingLatencyNotificationAlertHigh
 			}
 		}
 	case models.LatencyAlertLow:
-		if stats.AverageLatencyMS >= high {
+		if latencyAboveCeiling(stats.AverageLatencyMS, high) {
 			action = pingLatencyNotificationFlipHigh
 			next.LatencyAlertState = models.LatencyAlertHigh
 			next.LatencyIncidentNotified = false
@@ -345,7 +353,7 @@ func maybeUpdateAdaptiveBaseline(
 		now.Before(notification.AdaptiveBaselineUpdatedAt.Add(time.Duration(notification.LatencyWindowSeconds)*time.Second)) {
 		return
 	}
-	updated := *notification.AdaptiveBaselineMs*adaptiveBaselineEWMASlow + stats.AverageLatencyMS*adaptiveBaselineEWMAFast
+	updated := metricstore.RoundLatencyMS(*notification.AdaptiveBaselineMs*adaptiveBaselineEWMASlow + stats.AverageLatencyMS*adaptiveBaselineEWMAFast)
 	notification.AdaptiveBaselineMs = &updated
 	updatedAt := now
 	notification.AdaptiveBaselineUpdatedAt = &updatedAt
@@ -381,35 +389,35 @@ func formatPingLatencyMessage(notification models.PingLossNotification, stats me
 		fmt.Sprintf("检测目标：%s", target),
 		fmt.Sprintf("判定模式：%s", mode),
 		fmt.Sprintf("统计窗口：最近 %s", formatPingLossWindow(notification.LatencyWindowSeconds)),
-		fmt.Sprintf("平均延迟：%.1f ms", stats.AverageLatencyMS),
+		fmt.Sprintf("平均延迟：%.2f ms", stats.AverageLatencyMS),
 	}
 	if notification.AdaptiveBaselineEnabled && notification.HasAdaptiveBaseline() {
-		lines = append(lines, fmt.Sprintf("冻结基线：%.1f ms", *notification.AdaptiveBaselineMs))
+		lines = append(lines, fmt.Sprintf("冻结基线：%.2f ms", *notification.AdaptiveBaselineMs))
 		if action == pingLatencyNotificationAlertHigh || action == pingLatencyNotificationPersist && notification.NormalizedLatencyAlertState() == models.LatencyAlertHigh || action == pingLatencyNotificationFlipHigh {
 			lines = append(lines, fmt.Sprintf("允许上浮：%.1f%%", notification.AdaptiveUpperDeviationPercent))
-			lines = append(lines, fmt.Sprintf("异常边界：>= %.1f ms", high))
+			lines = append(lines, fmt.Sprintf("异常边界：>= %.2f ms", high))
 		} else if action == pingLatencyNotificationAlertLow || action == pingLatencyNotificationPersist && notification.NormalizedLatencyAlertState() == models.LatencyAlertLow || action == pingLatencyNotificationFlipLow {
 			lines = append(lines, fmt.Sprintf("允许下浮：%.1f%%", notification.AdaptiveLowerDeviationPercent))
-			lines = append(lines, fmt.Sprintf("异常边界：<= %.1f ms", low))
+			lines = append(lines, fmt.Sprintf("异常边界：<= %.2f ms", low))
 		} else {
 			lines = append(lines, fmt.Sprintf("允许下浮：%.1f%%", notification.AdaptiveLowerDeviationPercent))
 			lines = append(lines, fmt.Sprintf("允许上浮：%.1f%%", notification.AdaptiveUpperDeviationPercent))
-			lines = append(lines, fmt.Sprintf("正常范围：%.1f-%.1f ms", low, high))
+			lines = append(lines, fmt.Sprintf("正常范围：%.2f-%.2f ms", low, high))
 		}
 	} else {
 		if notification.FixedBaselineMs > 0 {
-			lines = append(lines, fmt.Sprintf("基线：%.1f ms", notification.FixedBaselineMs))
+			lines = append(lines, fmt.Sprintf("基线：%.2f ms", notification.FixedBaselineMs))
 		}
 		if action == pingLatencyNotificationRecovery {
-			lines = append(lines, fmt.Sprintf("正常范围：%.1f-%.1f ms", low, high))
+			lines = append(lines, fmt.Sprintf("正常范围：%.2f-%.2f ms", low, high))
 		} else if action == pingLatencyNotificationAlertHigh || action == pingLatencyNotificationFlipHigh || (action == pingLatencyNotificationPersist && notification.NormalizedLatencyAlertState() == models.LatencyAlertHigh) {
-			lines = append(lines, fmt.Sprintf("异常边界：>= %.1f ms", high))
+			lines = append(lines, fmt.Sprintf("异常边界：>= %.2f ms", high))
 		} else {
-			lines = append(lines, fmt.Sprintf("异常边界：<= %.1f ms", low))
+			lines = append(lines, fmt.Sprintf("异常边界：<= %.2f ms", low))
 		}
 	}
 	if action == pingLatencyNotificationRecovery {
-		lines = append(lines, fmt.Sprintf("最近 %s的平均延迟已回到 %.1f-%.1f ms", formatPingLossWindow(notification.LatencyWindowSeconds), low, high))
+		lines = append(lines, fmt.Sprintf("最近 %s的平均延迟已回到 %.2f-%.2f ms", formatPingLossWindow(notification.LatencyWindowSeconds), low, high))
 	}
 	lines = append(lines,
 		fmt.Sprintf("成功样本：%d", stats.Successful),

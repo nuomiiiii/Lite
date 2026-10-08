@@ -115,13 +115,13 @@ func loadDashboardLatency(ctx context.Context, clientList []models.Client, pingT
 		if bucket.Count <= 0 {
 			continue
 		}
-		average := bucket.Sum / float64(bucket.Count)
+		average := metricstore.RoundLatencyMS(bucket.Sum / float64(bucket.Count))
 		result.Points = append(result.Points, dashboardLatencyPoint{Time: bucketTime, Average: average})
 		total += bucket.Sum
 		count += bucket.Count
 	}
 	if count > 0 {
-		result.Average = total / float64(count)
+		result.Average = metricstore.RoundLatencyMS(total / float64(count))
 	}
 	return result, nil
 }
@@ -162,7 +162,7 @@ func summarizeDashboardLatencyRanking(clientList []models.Client, taskList []mod
 			result = dashboardTopLatency(result, dashboardLatencyRankItem{
 				UUID:        client.UUID,
 				Name:        dashboardNodeName(client),
-				Average:     bucket.Sum / float64(bucket.Count),
+				Average:     metricstore.RoundLatencyMS(bucket.Sum / float64(bucket.Count)),
 				TaskID:      task.Id,
 				TaskName:    dashboardTaskName(task),
 				clientOrder: clientOrder,
@@ -252,7 +252,7 @@ func summarizeDashboardLatencyJitter(clientList []models.Client, taskList []mode
 				Name:        dashboardNodeName(client),
 				Previous:    previous,
 				Current:     current,
-				Delta:       current - previous,
+				Delta:       metricstore.RoundLatencyMS(current - previous),
 				TaskID:      task.Id,
 				TaskName:    dashboardTaskName(task),
 				clientOrder: clientOrder,
@@ -276,7 +276,9 @@ func dashboardLatestLatencyMinuteAverages(points []metric.AggregatePoint, curren
 		if !previousOK || !currentOK || previous.Count == 0 || current.Count == 0 {
 			continue
 		}
-		return previous.Sum / float64(previous.Count), current.Sum / float64(current.Count), true
+		previousAverage := metricstore.RoundLatencyMS(previous.Sum / float64(previous.Count))
+		currentAverage := metricstore.RoundLatencyMS(current.Sum / float64(current.Count))
+		return previousAverage, currentAverage, true
 	}
 	return 0, 0, false
 }

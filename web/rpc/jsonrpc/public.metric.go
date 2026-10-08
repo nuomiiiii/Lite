@@ -821,6 +821,13 @@ func publicPingStatsFromAggregateGroups(entityID string, groups publicPingMetric
 			// over zero valid samples and comes back as 0, which is not a latency.
 			avg, p50, p99, stddev, minimum, maximum, latest = nil, nil, nil, nil, nil, nil, nil
 		}
+		avg = roundLatencyPointer(avg)
+		p50 = roundLatencyPointer(p50)
+		p99 = roundLatencyPointer(p99)
+		stddev = roundLatencyPointer(stddev)
+		minimum = roundLatencyPointer(minimum)
+		maximum = roundLatencyPointer(maximum)
+		latest = roundLatencyPointer(latest)
 
 		stat := publicPingMetricTaskStats{
 			EntityID:        entityID,
@@ -965,6 +972,14 @@ func validPingLatencyPoints(points, lossPoints []metric.AggregatePoint, lossAvai
 		out = append(out, point)
 	}
 	return out
+}
+
+func roundLatencyPointer(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	rounded := metricstore.RoundLatencyMS(*value)
+	return &rounded
 }
 
 func weightedAggregateValue(points []metric.AggregatePoint, skipNegative bool) (*float64, int) {

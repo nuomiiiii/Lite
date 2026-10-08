@@ -177,11 +177,11 @@ func CombinePingHealthStats(loss PingLossStats, avgPoints, minPoints, maxPoints 
 	}
 	if stats.Successful > 0 {
 		if minVal, ok := positiveExtreme(minPoints, true); ok {
-			stats.MinLatencyMS = minVal
+			stats.MinLatencyMS = RoundLatencyMS(minVal)
 			stats.HasLatency = true
 		}
 		if maxVal, ok := positiveExtreme(maxPoints, false); ok {
-			stats.MaxLatencyMS = maxVal
+			stats.MaxLatencyMS = RoundLatencyMS(maxVal)
 			stats.HasLatency = true
 		}
 	}
@@ -221,9 +221,20 @@ func PingHealthStatsFromLatencyPoints(points []metric.AggregatePoint) PingHealth
 		stats.HasLatency = true
 	}
 	if stats.Successful > 0 {
-		stats.AverageLatencyMS = weightedSum / float64(stats.Successful)
+		stats.AverageLatencyMS = RoundLatencyMS(weightedSum / float64(stats.Successful))
+		stats.MinLatencyMS = RoundLatencyMS(stats.MinLatencyMS)
+		stats.MaxLatencyMS = RoundLatencyMS(stats.MaxLatencyMS)
 	}
 	return stats
+}
+
+// RoundLatencyMS keeps latency figures at hundredths of a millisecond.
+// 0.00 is not a usable latency: comparisons and stored values share this precision.
+func RoundLatencyMS(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return value
+	}
+	return math.Round(value*100) / 100
 }
 
 func PingBaselineCandidateFromPoints(loss PingLossStats, points []metric.AggregatePoint) PingBaselineCandidate {
@@ -239,7 +250,7 @@ func PingBaselineCandidateFromPoints(loss PingLossStats, points []metric.Aggrega
 		values = append(values, point.Value)
 	}
 	if median, ok := medianFloats(values); ok && median > 0 {
-		candidate.MedianMS = median
+		candidate.MedianMS = RoundLatencyMS(median)
 	}
 	if candidate.Successful == 0 {
 		fromSamples := PingHealthStatsFromLatencyPoints(points)
@@ -258,7 +269,7 @@ func PingBaselineCandidateFromValues(values []float64) PingBaselineCandidate {
 	}
 	candidate := PingBaselineCandidate{Successful: int64(len(filtered))}
 	if median, ok := medianFloats(filtered); ok {
-		candidate.MedianMS = median
+		candidate.MedianMS = RoundLatencyMS(median)
 	}
 	return candidate
 }

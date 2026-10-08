@@ -41,7 +41,7 @@ func TestPingHealthStatsFromLatencyPoints(t *testing.T) {
 		{Value: 100, Count: 2},
 		{Value: 200, Count: 1},
 	})
-	if math.Abs(weighted.AverageLatencyMS-400.0/3) > 0.001 {
+	if math.Abs(weighted.AverageLatencyMS-133.33) > 0.001 {
 		t.Fatalf("weighted avg = %v", weighted.AverageLatencyMS)
 	}
 
