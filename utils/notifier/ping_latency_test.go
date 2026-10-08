@@ -516,6 +516,34 @@ func TestStuckFrozenBaselineBecomesRecoveryHold(t *testing.T) {
 	require.NotNil(t, got.AdaptiveBaselineResumeAt)
 }
 
+func TestCentisecondBandStillAlertsAndRecovers(t *testing.T) {
+	now := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	windowStart := now.Add(-5 * time.Minute)
+	rule := adaptiveLatencyRule(0.02)
+
+	low, high, ok := latencyThresholds(rule)
+	require.True(t, ok)
+	assert.Less(t, low, 0.02)
+	assert.Greater(t, high, 0.02)
+
+	highAlert := evaluateLatencyAnomaly(rule, coveredLatencyStats(1, 1, 1, 18, windowStart, now), metricstore.PingBaselineCandidate{}, windowStart, now, 0)
+	assert.Equal(t, pingLatencyNotificationAlertHigh, highAlert.Action)
+
+	zero := evaluateLatencyAnomaly(rule, coveredLatencyStats(0, 0, 0, 18, windowStart, now), metricstore.PingBaselineCandidate{}, windowStart, now, 0)
+	assert.Equal(t, pingLatencyNotificationNone, zero.Action)
+	assert.Equal(t, models.LatencyAlertNormal, zero.Notification.LatencyAlertState)
+
+	rule.LatencyAlertState = models.LatencyAlertHigh
+	rule.LatencyIncidentNotified = true
+	recovered := evaluateLatencyAnomaly(rule, coveredLatencyStats(0.02, 0.02, 0.02, 18, windowStart, now), metricstore.PingBaselineCandidate{}, windowStart, now, 0)
+	assert.Equal(t, pingLatencyNotificationRecovery, recovered.Action)
+	assert.Equal(t, models.LatencyAlertNormal, recovered.Notification.LatencyAlertState)
+
+	tiny := adaptiveLatencyRule(0.01)
+	one := evaluateLatencyAnomaly(tiny, coveredLatencyStats(1, 1, 1, 18, windowStart, now), metricstore.PingBaselineCandidate{}, windowStart, now, 0)
+	assert.Equal(t, pingLatencyNotificationAlertHigh, one.Action)
+}
+
 func widenedAdaptiveRule(resume time.Time) models.PingLossNotification {
 	rule := adaptiveLatencyRule(100)
 	rule.AdaptiveUpperDeviationPercent = 40

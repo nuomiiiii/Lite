@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
 	"github.com/nuomiiiii/lite/database/models"
 	"gorm.io/gorm"
 )
@@ -76,11 +77,16 @@ func validateLatencyAnomalyFields(notification models.PingLossNotification) erro
 	if notification.LowLatencyThresholdMs < 0 {
 		return fmt.Errorf("low latency threshold must be at least 0")
 	}
-	if notification.HighLatencyThresholdMs <= notification.LowLatencyThresholdMs {
+	low, high, ok := metricstore.LatencyComparisonBand(
+		notification.LowLatencyThresholdMs,
+		notification.HighLatencyThresholdMs,
+		(notification.LowLatencyThresholdMs+notification.HighLatencyThresholdMs)/2,
+	)
+	if !ok {
 		return fmt.Errorf("high latency threshold must be greater than the low latency threshold")
 	}
-	if notification.FixedBaselineMs <= notification.LowLatencyThresholdMs ||
-		notification.FixedBaselineMs >= notification.HighLatencyThresholdMs {
+	baseline := metricstore.RoundLatencyMS(notification.FixedBaselineMs)
+	if baseline <= low || baseline >= high {
 		return fmt.Errorf("fixed baseline must be between the low and high latency thresholds")
 	}
 	return nil

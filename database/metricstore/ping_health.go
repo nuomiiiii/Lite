@@ -237,6 +237,27 @@ func RoundLatencyMS(value float64) float64 {
 	return math.Round(value*100) / 100
 }
 
+// LatencyComparisonBand rounds a latency interval to 0.01 ms.
+// A usable raw interval that collapses to one centisecond is widened by 0.01 ms
+// around anchor, so comparison still has an inside and an outside.
+func LatencyComparisonBand(rawLow, rawHigh, anchor float64) (low, high float64, ok bool) {
+	if !(rawHigh > rawLow) || math.IsNaN(rawLow) || math.IsNaN(rawHigh) || math.IsNaN(anchor) {
+		return RoundLatencyMS(rawLow), RoundLatencyMS(rawHigh), false
+	}
+	low = RoundLatencyMS(rawLow)
+	high = RoundLatencyMS(rawHigh)
+	if high > low {
+		return low, high, true
+	}
+	center := RoundLatencyMS(anchor)
+	low = RoundLatencyMS(center - 0.01)
+	high = RoundLatencyMS(center + 0.01)
+	if high <= low {
+		high = RoundLatencyMS(low + 0.01)
+	}
+	return low, high, high > low
+}
+
 func PingBaselineCandidateFromPoints(loss PingLossStats, points []metric.AggregatePoint) PingBaselineCandidate {
 	candidate := PingBaselineCandidate{Successful: loss.Total - loss.Lost}
 	if candidate.Successful < 0 {

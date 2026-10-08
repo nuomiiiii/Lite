@@ -37,13 +37,12 @@ func latencyThresholds(notification models.PingLossNotification) (low, high floa
 			return 0, 0, false
 		}
 		baseline := metricstore.RoundLatencyMS(*notification.AdaptiveBaselineMs)
-		low = metricstore.RoundLatencyMS(baseline * (1 - notification.AdaptiveLowerDeviationPercent/100))
-		high = metricstore.RoundLatencyMS(baseline * (1 + notification.AdaptiveUpperDeviationPercent/100))
-		return low, high, high > low
+		rawLow := baseline * (1 - notification.AdaptiveLowerDeviationPercent/100)
+		rawHigh := baseline * (1 + notification.AdaptiveUpperDeviationPercent/100)
+		return metricstore.LatencyComparisonBand(rawLow, rawHigh, baseline)
 	}
-	low = metricstore.RoundLatencyMS(notification.LowLatencyThresholdMs)
-	high = metricstore.RoundLatencyMS(notification.HighLatencyThresholdMs)
-	return low, high, high > low
+	anchor := (notification.LowLatencyThresholdMs + notification.HighLatencyThresholdMs) / 2
+	return metricstore.LatencyComparisonBand(notification.LowLatencyThresholdMs, notification.HighLatencyThresholdMs, anchor)
 }
 
 func latencyCoverageTolerance(pingIntervalSeconds int) time.Duration {
