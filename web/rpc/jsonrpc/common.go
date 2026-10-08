@@ -12,6 +12,7 @@ import (
 	"github.com/nuomiiiii/lite/database/billing"
 	"github.com/nuomiiiii/lite/database/clients"
 	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/database/tasks"
 	"github.com/nuomiiiii/lite/database/trafficledger"
@@ -30,12 +31,12 @@ var pingStatsCache = cache.New(1*time.Minute, 2*time.Minute)
 
 type pingStat struct {
 	Name   string  `json:"name"`
-	Latest int     `json:"latest"`
-	Avg    int     `json:"avg"`
+	Latest float64 `json:"latest"`
+	Avg    float64 `json:"avg"`
 	Tail   float64 `json:"tail"` // (P99-P50)/P50
 	Loss   float64 `json:"loss"` // 丢包率 %
-	Min    int     `json:"min"`
-	Max    int     `json:"max"`
+	Min    float64 `json:"min"`
+	Max    float64 `json:"max"`
 }
 
 // getPingStatsForNode 计算并缓存节点最近 1 小时 ping 统计
@@ -88,15 +89,15 @@ func getPingStatsForNode(uuid string, pingTasks []models.PingTask) map[string]pi
 		if len(records) == 0 {
 			continue
 		}
-		latest := -1
+		latest := -1.0
 		var latestTs time.Time
-		values := make([]int, 0, len(records))
-		sum := 0
+		values := make([]float64, 0, len(records))
+		sum := 0.0
 		valid := 0
 		total := 0
 		lossCount := 0
-		minLat := 0
-		maxLat := 0
+		minLat := 0.0
+		maxLat := 0.0
 		for _, r := range records {
 			total++
 			if r.Value < 0 { // 丢包
@@ -118,14 +119,14 @@ func getPingStatsForNode(uuid string, pingTasks []models.PingTask) map[string]pi
 				latest = r.Value
 			}
 		}
-		avg := 0
+		avg := 0.0
 		if valid > 0 {
-			avg = sum / valid
+			avg = metricstore.RoundLatencyMS(sum / float64(valid))
 		}
-		p50, p99 := 0, 0
+		p50, p99 := 0.0, 0.0
 		if len(values) > 0 {
-			sort.Ints(values)
-			percentile := func(vals []int, pct float64) int {
+			sort.Float64s(values)
+			percentile := func(vals []float64, pct float64) float64 {
 				if len(vals) == 0 {
 					return 0
 				}
@@ -142,15 +143,14 @@ func getPingStatsForNode(uuid string, pingTasks []models.PingTask) map[string]pi
 					return vals[lo]
 				}
 				frac := pos - float64(lo)
-				v := float64(vals[lo]) + (float64(vals[hi])-float64(vals[lo]))*frac
-				return int(math.Round(v))
+				return metricstore.RoundLatencyMS(vals[lo] + (vals[hi]-vals[lo])*frac)
 			}
-			p50 = percentile(values, 0.50)
-			p99 = percentile(values, 0.99)
+			p50 = metricstore.RoundLatencyMS(percentile(values, 0.50))
+			p99 = metricstore.RoundLatencyMS(percentile(values, 0.99))
 		}
 		tail := 0.0
 		if p50 > 0 && p99 >= p50 {
-			tail = float64(p99-p50) / float64(p50)
+			tail = (p99 - p50) / p50
 		}
 		lossRate := 0.0
 		if total > 0 {
@@ -158,12 +158,12 @@ func getPingStatsForNode(uuid string, pingTasks []models.PingTask) map[string]pi
 		}
 		result[fmt.Sprintf("%d", t.Id)] = pingStat{
 			Name:   t.Name,
-			Latest: latest,
+			Latest: metricstore.RoundLatencyMS(latest),
 			Avg:    avg,
 			Tail:   tail,
 			Loss:   lossRate,
-			Min:    minLat,
-			Max:    maxLat,
+			Min:    metricstore.RoundLatencyMS(minLat),
+			Max:    metricstore.RoundLatencyMS(maxLat),
 		}
 	}
 	pingStatsCache.Set(key, result, cache.DefaultExpiration)

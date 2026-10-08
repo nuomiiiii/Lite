@@ -228,6 +228,9 @@ func TestPublicPingStatsFromAggregateGroupsUsesTaskNamesAndLossMetric(t *testing
 			"1": {{Bucket: base, Count: 4, Value: 0.25}},
 		},
 		LossAvailable: true,
+		Window: map[string]metric.PingDistribution{
+			"1": {P50: 30, P99: 80, StdDev: 8, OK: true},
+		},
 	}
 
 	stats := publicPingStatsFromAggregateGroups("node-a", groups, taskMap, nil)

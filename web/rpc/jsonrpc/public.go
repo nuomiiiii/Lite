@@ -9,6 +9,7 @@ import (
 	"github.com/nuomiiiii/lite/database"
 	"github.com/nuomiiiii/lite/database/clients"
 	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/database/metricstore"
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/database/records"
 	"github.com/nuomiiiii/lite/database/tasks"
@@ -333,14 +334,14 @@ func publicGetPingRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 	type recordsResp struct {
 		TaskId uint      `json:"task_id,omitempty"`
 		Time   time.Time `json:"time"`
-		Value  int       `json:"value"`
+		Value  float64   `json:"value"`
 		Client string    `json:"client,omitempty"`
 	}
 	type clientBasicInfo struct {
 		Client string  `json:"client"`
 		Loss   float64 `json:"loss"`
-		Min    int     `json:"min"`
-		Max    int     `json:"max"`
+		Min    float64 `json:"min"`
+		Max    float64 `json:"max"`
 	}
 	type resp struct {
 		Count     int               `json:"count"`
@@ -394,7 +395,8 @@ func publicGetPingRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 	recs = filterPingRecordsByCurrentAssignments(recs, pingTasksByStringID(pingTasks))
 
 	clientStats := make(map[string]struct {
-		total, loss, min, max int
+		total, loss int
+		min, max    float64
 	})
 	for _, r := range recs {
 		if r.Client != "" && !isLogin && hiddenMap[r.Client] {
@@ -440,7 +442,8 @@ func publicGetPingRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 			if params.UUID != "" && !t.AppliesToClient(params.UUID) {
 				continue
 			}
-			totalCount, lossCount, minLatency, maxLatency, sumLatency, validCount := 0, 0, 0, 0, 0, 0
+			totalCount, lossCount, validCount := 0, 0, 0
+			minLatency, maxLatency, sumLatency := 0.0, 0.0, 0.0
 			for _, r := range recs {
 				if r.TaskId != t.Id {
 					continue
@@ -466,14 +469,14 @@ func publicGetPingRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 			if totalCount > 0 {
 				lossRate = float64(lossCount) / float64(totalCount) * 100
 			}
-			avgLatency := 0
+			avgLatency := 0.0
 			if validCount > 0 {
-				avgLatency = sumLatency / validCount
+				avgLatency = metricstore.RoundLatencyMS(sumLatency / float64(validCount))
 			}
 			taskInfo := map[string]any{
 				"id": t.Id, "name": t.Name, "type": t.Type, "interval": t.Interval,
-				"default_on": t.DefaultOn, "loss": lossRate, "min": minLatency,
-				"max": maxLatency, "avg": avgLatency, "total": totalCount,
+				"default_on": t.DefaultOn, "loss": lossRate, "min": metricstore.RoundLatencyMS(minLatency),
+				"max": metricstore.RoundLatencyMS(maxLatency), "avg": avgLatency, "total": totalCount,
 			}
 			if params.UUID == "" && taskId != -1 {
 				taskInfo["clients"] = t.Clients

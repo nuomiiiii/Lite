@@ -97,8 +97,17 @@ type BasicInfoParams struct {
 type PingResultParams struct {
 	TaskID     uint      `json:"task_id"`
 	PingType   string    `json:"ping_type"`
-	Value      int       `json:"value"`
+	Value      float64   `json:"value"`              // 延迟，单位毫秒。失败为负数。旧版 Agent 只发这个整数。
+	ValueMS    *float64  `json:"value_ms,omitempty"` // 新版 Agent 的小数毫秒。有则优先使用。
 	FinishedAt time.Time `json:"finished_at"`
+}
+
+// LatencyMS 优先使用新版 Agent 上报的小数毫秒，否则使用 value。
+func (p PingResultParams) LatencyMS() float64 {
+	if p.ValueMS != nil {
+		return *p.ValueMS
+	}
+	return p.Value
 }
 
 type RouteHop struct {

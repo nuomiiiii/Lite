@@ -97,7 +97,7 @@ func handleV2RPC(uuid string, req v2.Request, allowWait bool) v2.Response {
 		if err := bindV2Params(req.Params, &params); err != nil {
 			return v2.Error(req.ID, -32602, "invalid ping result params", err.Error())
 		}
-		if err := ingestPingResult(uuid, params.TaskID, params.Value, params.FinishedAt); err != nil {
+		if err := ingestPingResult(uuid, params.TaskID, params.LatencyMS(), params.FinishedAt); err != nil {
 			return v2.Error(req.ID, -32000, "failed to save ping result", err.Error())
 		}
 		return v2.Success(req.ID, gin.H{"status": "success"})

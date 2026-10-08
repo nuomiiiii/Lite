@@ -407,6 +407,11 @@ func publicGetPingMetricStats(ctx context.Context, req *rpc.JsonRpcRequest) (any
 	stats := make([]publicPingMetricTaskStats, 0)
 	for index, entityID := range entityIDs {
 		groups := publicPingMetricGroupsFromSummary(summaries[index])
+		window, err := store.PingTaskDistributions(ctx, entityID, start, end, now)
+		if err != nil {
+			return nil, rpc.MakeError(rpc.InternalError, "Failed to query ping stats: "+err.Error(), nil)
+		}
+		groups.Window = window
 		entityStats := publicPingStatsFromAggregateGroups(entityID, groups, taskMap, taskFilter)
 		stats = append(stats, entityStats...)
 	}
@@ -733,6 +738,7 @@ type publicPingMetricAggregateGroups struct {
 	StdDev        map[string][]metric.AggregatePoint
 	Loss          map[string][]metric.AggregatePoint
 	LossAvailable bool
+	Window        map[string]metric.PingDistribution
 }
 
 func publicPingMetricGroupsFromSummary(summary metric.SeriesSummary) publicPingMetricAggregateGroups {
@@ -807,9 +813,11 @@ func publicPingStatsFromAggregateGroups(entityID string, groups publicPingMetric
 		// drag avg/min/percentiles down.
 		avgPoints := validPingLatencyPoints(groups.Avg[taskID], groups.Loss[taskID], groups.LossAvailable)
 		avg, _ := weightedAggregateValue(avgPoints, true)
-		p50, _ := weightedAggregateValue(validPingLatencyPoints(groups.P50[taskID], groups.Loss[taskID], groups.LossAvailable), true)
-		p99, _ := weightedAggregateValue(validPingLatencyPoints(groups.P99[taskID], groups.Loss[taskID], groups.LossAvailable), true)
-		stddev, _ := weightedAggregateValue(validPingLatencyPoints(groups.StdDev[taskID], groups.Loss[taskID], groups.LossAvailable), false)
+		var p50, p99, stddev *float64
+		if window, ok := groups.Window[taskID]; ok && window.OK {
+			p50Value, p99Value, stddevValue := window.P50, window.P99, window.StdDev
+			p50, p99, stddev = &p50Value, &p99Value, &stddevValue
+		}
 		minimum := positiveAggregateMin(validPingLatencyPoints(groups.Min[taskID], groups.Loss[taskID], groups.LossAvailable))
 		maximum := positiveAggregateMax(validPingLatencyPoints(groups.Max[taskID], groups.Loss[taskID], groups.LossAvailable))
 		latest := latestPositiveAggregate(validPingLatencyPoints(groups.Last[taskID], groups.Loss[taskID], groups.LossAvailable))

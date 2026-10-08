@@ -8,7 +8,7 @@ type PingRecord struct {
 	TaskId     uint      `json:"task_id" gorm:"not null;index"`
 	Task       PingTask  `json:"task" gorm:"foreignKey:TaskId;references:Id;constraint:OnDelete:CASCADE,OnUpdate:CASCADE;"`
 	Time       time.Time `json:"time" gorm:"index;not null"`
-	Value      int       `json:"value" gorm:"type:int;not null"` // Ping 值，单位毫秒
+	Value      float64   `json:"value" gorm:"not null"` // 延迟毫秒。失败为负数。
 }
 
 // PingTask 表示一次延迟监测任务配置。

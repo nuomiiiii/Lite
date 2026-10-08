@@ -6,6 +6,7 @@ import (
 
 	"github.com/nuomiiiii/lite/database/billing"
 	"github.com/nuomiiiii/lite/database/models"
+	"github.com/nuomiiiii/lite/pkg/expiry"
 	"github.com/nuomiiiii/lite/pkg/trafficreset"
 )
 
@@ -31,44 +32,45 @@ var themeNodeForbiddenJSONKeys = []string{
 // It is a deliberate subset of models.Client and must not be replaced by
 // serializing the full client record.
 type ThemeNode struct {
-	UUID                  string     `json:"uuid,omitempty"`
-	Name                  string     `json:"name"`
-	CpuName               string     `json:"cpu_name"`
-	Virtualization        string     `json:"virtualization"`
-	Arch                  string     `json:"arch"`
-	CpuCores              int        `json:"cpu_cores"`
-	CpuPhysicalCores      int        `json:"cpu_physical_cores"`
-	OS                    string     `json:"os"`
-	KernelVersion         string     `json:"kernel_version"`
-	GpuName               string     `json:"gpu_name"`
-	IPv4                  string     `json:"ipv4,omitempty"`
-	IPv6                  string     `json:"ipv6,omitempty"`
-	Region                string     `json:"region"`
-	RegionOverride        string     `json:"region_override"`
-	PublicRemark          string     `json:"public_remark,omitempty"`
-	MemTotal              int64      `json:"mem_total"`
-	SwapTotal             int64      `json:"swap_total"`
-	DiskTotal             int64      `json:"disk_total"`
-	Weight                int        `json:"weight"`
-	Price                 float64    `json:"price"`
-	BillingCycle          int        `json:"billing_cycle"`
-	AutoRenewal           bool       `json:"auto_renewal"`
-	Currency              string     `json:"currency"`
-	ExpiredAt             *time.Time `json:"expired_at"`
-	Group                 string     `json:"group"`
-	Tags                  string     `json:"tags"`
-	Bandwidth             string     `json:"bandwidth"`
-	Hidden                bool       `json:"hidden"`
-	TrafficLimit          int64      `json:"traffic_limit"`
-	TrafficLimitType      string     `json:"traffic_limit_type"`
-	TrafficResetDay       *int       `json:"traffic_reset_day,omitempty"`
-	TrafficResetTime      string     `json:"traffic_reset_time,omitempty"`
-	TrafficResetTimezone  string     `json:"traffic_reset_timezone,omitempty"`
-	TrafficResetAt        string     `json:"traffic_reset_at,omitempty"`
-	EffectiveTrafficLimit int64      `json:"effective_traffic_limit"`
-	EffectiveTrafficType  string     `json:"effective_traffic_type"`
-	RemainingValue          *string `json:"remaining_value,omitempty"`
-	RemainingValueCurrency  string  `json:"remaining_value_currency,omitempty"`
+	UUID                   string     `json:"uuid,omitempty"`
+	Name                   string     `json:"name"`
+	CpuName                string     `json:"cpu_name"`
+	Virtualization         string     `json:"virtualization"`
+	Arch                   string     `json:"arch"`
+	CpuCores               int        `json:"cpu_cores"`
+	CpuPhysicalCores       int        `json:"cpu_physical_cores"`
+	OS                     string     `json:"os"`
+	KernelVersion          string     `json:"kernel_version"`
+	GpuName                string     `json:"gpu_name"`
+	IPv4                   string     `json:"ipv4,omitempty"`
+	IPv6                   string     `json:"ipv6,omitempty"`
+	Region                 string     `json:"region"`
+	RegionOverride         string     `json:"region_override"`
+	PublicRemark           string     `json:"public_remark,omitempty"`
+	MemTotal               int64      `json:"mem_total"`
+	SwapTotal              int64      `json:"swap_total"`
+	DiskTotal              int64      `json:"disk_total"`
+	Weight                 int        `json:"weight"`
+	Price                  float64    `json:"price"`
+	BillingCycle           int        `json:"billing_cycle"`
+	AutoRenewal            bool       `json:"auto_renewal"`
+	Currency               string     `json:"currency"`
+	ExpiredAt              *time.Time `json:"expired_at"`
+	ExpiryTimezone         string     `json:"expiry_timezone"`
+	Group                  string     `json:"group"`
+	Tags                   string     `json:"tags"`
+	Bandwidth              string     `json:"bandwidth"`
+	Hidden                 bool       `json:"hidden"`
+	TrafficLimit           int64      `json:"traffic_limit"`
+	TrafficLimitType       string     `json:"traffic_limit_type"`
+	TrafficResetDay        *int       `json:"traffic_reset_day,omitempty"`
+	TrafficResetTime       string     `json:"traffic_reset_time,omitempty"`
+	TrafficResetTimezone   string     `json:"traffic_reset_timezone,omitempty"`
+	TrafficResetAt         string     `json:"traffic_reset_at,omitempty"`
+	EffectiveTrafficLimit  int64      `json:"effective_traffic_limit"`
+	EffectiveTrafficType   string     `json:"effective_traffic_type"`
+	RemainingValue         *string    `json:"remaining_value,omitempty"`
+	RemainingValueCurrency string     `json:"remaining_value_currency,omitempty"`
 }
 
 func themeTrafficResetDay(node models.Client, now time.Time) *int {
@@ -81,6 +83,14 @@ func themeTrafficResetDay(node models.Client, now time.Time) *int {
 	}
 	day := next.In(trafficreset.Location(trafficreset.DefaultTimezone)).Day()
 	return &day
+}
+
+func themeExpiryTimezone(value string) string {
+	zone, err := expiry.NormalizeTimezone(value)
+	if err != nil {
+		return expiry.DefaultTimezone
+	}
+	return zone
 }
 
 func toThemeNode(node models.Client) ThemeNode {
@@ -119,6 +129,7 @@ func toThemeNode(node models.Client) ThemeNode {
 		AutoRenewal:           node.AutoRenewal,
 		Currency:              node.Currency,
 		ExpiredAt:             node.ExpiredAt,
+		ExpiryTimezone:        themeExpiryTimezone(node.ExpiryTimezone),
 		Group:                 node.Group,
 		Tags:                  node.Tags,
 		Bandwidth:             node.Bandwidth,

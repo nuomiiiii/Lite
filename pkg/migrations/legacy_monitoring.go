@@ -756,7 +756,7 @@ func pingRecordToPoints(rec models.PingRecord) []metric.Point {
 			MetricName: metricstore.MetricPingLatency,
 			EntityID:   rec.Client,
 			Timestamp:  ts,
-			Value:      float64(rec.Value),
+			Value:      rec.Value,
 			Tags:       tags,
 		},
 		{

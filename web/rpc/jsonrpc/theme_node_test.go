@@ -98,6 +98,15 @@ func TestThemeNodeOmitsForbiddenFieldsForGuestAndAdmin(t *testing.T) {
 		if presented[0].TrafficResetAt == "" || presented[0].TrafficResetTimezone != "Asia/Shanghai" {
 			t.Fatalf("admin=%v: traffic reset datetime missing: %+v", isAdmin, presented[0])
 		}
+		if presented[0].ExpiryTimezone != "Asia/Shanghai" {
+			t.Fatalf("admin=%v: empty expiry timezone = %q, want Asia/Shanghai", isAdmin, presented[0].ExpiryTimezone)
+		}
+	}
+	named := sampleThemeClient(false, "secret-token")
+	named.ExpiryTimezone = "America/New_York"
+	presented := presentThemeNodes([]models.Client{named}, false, true)
+	if presented[0].ExpiryTimezone != "America/New_York" {
+		t.Fatalf("named expiry timezone = %q", presented[0].ExpiryTimezone)
 	}
 }
 

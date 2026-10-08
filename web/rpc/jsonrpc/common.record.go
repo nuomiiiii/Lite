@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/database/metricstore"
 	"github.com/nuomiiiii/lite/database/models"
 	recordsdb "github.com/nuomiiiii/lite/database/records"
 	"github.com/nuomiiiii/lite/database/tasks"
@@ -201,14 +202,14 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 		type RecordsResp struct {
 			TaskId uint      `json:"task_id,omitempty"`
 			Time   time.Time `json:"time"`
-			Value  int       `json:"value"`
+			Value  float64   `json:"value"`
 			Client string    `json:"client,omitempty"`
 		}
 		type ClientBasicInfo struct {
 			Client string  `json:"client"`
 			Loss   float64 `json:"loss"`
-			Min    int     `json:"min"`
-			Max    int     `json:"max"`
+			Min    float64 `json:"min"`
+			Max    float64 `json:"max"`
 		}
 		type Resp struct {
 			Count     int               `json:"count"`
@@ -225,8 +226,8 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 		clientStats := make(map[string]struct {
 			total int
 			loss  int
-			min   int
-			max   int
+			min   float64
+			max   float64
 		})
 
 		for _, r := range recs {
@@ -284,14 +285,14 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 			}
 			total := 0
 			lossCount := 0
-			minLat := 0
-			maxLat := 0
-			sum := 0
+			minLat := 0.0
+			maxLat := 0.0
+			sum := 0.0
 			valid := 0
-			latestVal := -1
+			latestVal := -1.0
 			var latestTs time.Time
 			// 收集该任务的所有有效(非丢包)延迟值以计算百分位
-			latencies := make([]int, 0, 64)
+			latencies := make([]float64, 0, 64)
 			for _, r := range recs {
 				if r.TaskId != t.Id {
 					continue
@@ -322,11 +323,11 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 			}
 
 			// 计算 P50 / P99
-			p50 := 0
-			p99 := 0
+			p50 := 0.0
+			p99 := 0.0
 			if len(latencies) > 0 {
-				sort.Ints(latencies)
-				getPercentileInt := func(values []int, percentile float64) int {
+				sort.Float64s(latencies)
+				getPercentile := func(values []float64, percentile float64) float64 {
 					if len(values) == 0 {
 						return 0
 					}
@@ -343,25 +344,24 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 						return values[lo]
 					}
 					frac := pos - float64(lo)
-					v := float64(values[lo]) + (float64(values[hi])-float64(values[lo]))*frac
-					return int(math.Round(v))
+					return values[lo] + (values[hi]-values[lo])*frac
 				}
-				p50 = getPercentileInt(latencies, 0.50)
-				p99 = getPercentileInt(latencies, 0.99)
+				p50 = metricstore.RoundLatencyMS(getPercentile(latencies, 0.50))
+				p99 = metricstore.RoundLatencyMS(getPercentile(latencies, 0.99))
 			}
 			ratio := 0.0
 			if p50 > 0 && p99 >= p50 {
-				jitterMs := float64(p99 - p50)
-				adjustedBase := math.Max(math.Min(float64(p50), 50.0), 10.0)
+				jitterMs := p99 - p50
+				adjustedBase := math.Max(math.Min(p50, 50.0), 10.0)
 				ratio = jitterMs / adjustedBase
 			}
 			lossRate := 0.0
 			if total > 0 {
 				lossRate = float64(lossCount) / float64(total) * 100
 			}
-			avg := 0
+			avg := 0.0
 			if valid > 0 {
-				avg = sum / valid
+				avg = metricstore.RoundLatencyMS(sum / float64(valid))
 			}
 			info := map[string]any{
 				"id":            t.Id,
@@ -370,10 +370,10 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 				"interval":      t.Interval,
 				"default_on":    t.DefaultOn,
 				"loss":          lossRate,
-				"min":           minLat,
-				"max":           maxLat,
+				"min":           metricstore.RoundLatencyMS(minLat),
+				"max":           metricstore.RoundLatencyMS(maxLat),
 				"avg":           avg,
-				"latest":        latestVal,
+				"latest":        metricstore.RoundLatencyMS(latestVal),
 				"total":         total,
 				"p50":           p50,
 				"p99":           p99,

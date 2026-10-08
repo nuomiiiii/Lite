@@ -290,3 +290,100 @@ func openPingBaselineStore(t *testing.T) *metric.Store {
 	}
 	return store
 }
+
+func TestQueryPingHealthStatsWeightsBySuccessfulSamples(t *testing.T) {
+	ctx := context.Background()
+	store := openPingHealthStore(t)
+	bucket := time.Unix(90*100, 0).UTC()
+	first := bucket.Add(45 * time.Second)
+	values := []float64{20, 20, -1, 0, 2, 0}
+	points := make([]metric.Point, 0, len(values))
+	for index, value := range values {
+		points = append(points, metric.Point{
+			MetricName: MetricPingLatency,
+			EntityID:   "node-a",
+			Timestamp:  first.Add(time.Duration(index) * 15 * time.Second),
+			Value:      value,
+			Tags:       map[string]string{"task_id": "7"},
+		})
+	}
+	if err := store.WriteBatch(ctx, points); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := QueryPingHealthStats(ctx, store, "node-a", 7, first, first.Add(90*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Total != 6 || stats.Lost != 1 || stats.Successful != 5 {
+		t.Fatalf("counts = %+v", stats)
+	}
+	if math.Abs(stats.AverageLatencyMS-8.4) > 0.001 {
+		t.Fatalf("avg = %v, want 8.4", stats.AverageLatencyMS)
+	}
+}
+
+func TestQueryPingHealthStatsIgnoresAllFailureBucket(t *testing.T) {
+	ctx := context.Background()
+	store := openPingHealthStore(t)
+	bucket := time.Unix(90*200, 0).UTC()
+	points := []metric.Point{
+		{MetricName: MetricPingLatency, EntityID: "node-a", Timestamp: bucket.Add(10 * time.Second), Value: -1, Tags: map[string]string{"task_id": "7"}},
+		{MetricName: MetricPingLatency, EntityID: "node-a", Timestamp: bucket.Add(20 * time.Second), Value: -1, Tags: map[string]string{"task_id": "7"}},
+		{MetricName: MetricPingLatency, EntityID: "node-a", Timestamp: bucket.Add(30 * time.Second), Value: -1, Tags: map[string]string{"task_id": "7"}},
+		{MetricName: MetricPingLatency, EntityID: "node-a", Timestamp: bucket.Add(100 * time.Second), Value: 10, Tags: map[string]string{"task_id": "7"}},
+		{MetricName: MetricPingLatency, EntityID: "node-a", Timestamp: bucket.Add(110 * time.Second), Value: 30, Tags: map[string]string{"task_id": "7"}},
+	}
+	if err := store.WriteBatch(ctx, points); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := QueryPingHealthStats(ctx, store, "node-a", 7, bucket, bucket.Add(180*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Total != 5 || stats.Lost != 3 || stats.Successful != 2 {
+		t.Fatalf("counts = %+v", stats)
+	}
+	if !stats.HasLatency || math.Abs(stats.AverageLatencyMS-20) > 0.001 {
+		t.Fatalf("avg = %+v, want 20", stats)
+	}
+	if math.Abs(stats.MinLatencyMS-10) > 0.001 || math.Abs(stats.MaxLatencyMS-30) > 0.001 {
+		t.Fatalf("min/max = %+v", stats)
+	}
+}
+
+func TestQueryPingHealthStatsKeepsSuccessfulZero(t *testing.T) {
+	ctx := context.Background()
+	store := openPingHealthStore(t)
+	bucket := time.Unix(90*300, 0).UTC()
+	points := []metric.Point{
+		{MetricName: MetricPingLatency, EntityID: "node-a", Timestamp: bucket.Add(10 * time.Second), Value: 0, Tags: map[string]string{"task_id": "7"}},
+		{MetricName: MetricPingLatency, EntityID: "node-a", Timestamp: bucket.Add(20 * time.Second), Value: 0, Tags: map[string]string{"task_id": "7"}},
+		{MetricName: MetricPingLatency, EntityID: "node-a", Timestamp: bucket.Add(30 * time.Second), Value: -1, Tags: map[string]string{"task_id": "7"}},
+	}
+	if err := store.WriteBatch(ctx, points); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := QueryPingHealthStats(ctx, store, "node-a", 7, bucket, bucket.Add(90*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Total != 3 || stats.Lost != 1 || stats.Successful != 2 || !stats.HasLatency {
+		t.Fatalf("counts = %+v", stats)
+	}
+	if stats.AverageLatencyMS != 0 || stats.MinLatencyMS != 0 || stats.MaxLatencyMS != 0 {
+		t.Fatalf("zero success latency = %+v", stats)
+	}
+}
+
+func openPingHealthStore(t *testing.T) *metric.Store {
+	t.Helper()
+	store, err := metric.Open(context.Background(), metric.SQLite(":memory:", metric.WithMaxOpenConns(1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if err := store.UpsertMetric(context.Background(), metric.Definition{Name: MetricPingLatency, Type: metric.TypeGauge, RetentionDays: 30}); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}

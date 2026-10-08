@@ -62,7 +62,7 @@ func ingestMCPCapability(uuid string, params v2.PullParams) {
 const pingResultLookback = 6 * time.Hour
 
 // ingestPingResult 保存一条 ping 探测结果。
-func ingestPingResult(uuid string, taskID uint, value int, finishedAt time.Time) error {
+func ingestPingResult(uuid string, taskID uint, value float64, finishedAt time.Time) error {
 	return tasks.SavePingRecord(models.PingRecord{
 		Client: uuid,
 		TaskId: taskID,

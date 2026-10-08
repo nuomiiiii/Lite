@@ -808,18 +808,22 @@ func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
 		"task_id": fmt.Sprintf("%d", rec.TaskId),
 	}
 
+	value := rec.Value
+	if value >= 0 {
+		value = RoundLatencyMS(value)
+	}
 	points := []metric.Point{
 		{
 			MetricName: MetricPingLatency,
 			EntityID:   entityID,
 			Timestamp:  ts,
-			Value:      float64(rec.Value),
+			Value:      value,
 			Tags:       tags,
 		},
 	}
 	if s.Driver() != metric.DriverSQLite {
 		loss := 0.0
-		if rec.Value < 0 {
+		if value < 0 {
 			loss = 1
 		}
 		points = append(points, metric.Point{
@@ -1430,7 +1434,7 @@ func GetPingRecords(ctx context.Context, clientUUID string, taskID int, start, e
 			Client: p.EntityID,
 			TaskId: taskIDVal,
 			Time:   p.Bucket.UTC(),
-			Value:  int(p.Value),
+			Value:  p.Value,
 		})
 	}
 	sort.Slice(records, func(i, j int) bool {

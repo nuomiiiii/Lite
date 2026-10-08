@@ -78,6 +78,7 @@ func TestPublicPingStatsFromAggregateGroupsKeepsZeroLatencyWithValidSamples(t *t
 		Avg: zero, Min: zero, Max: zero, Last: zero, P50: zero, P99: zero, StdDev: zero,
 		Loss:          map[string][]metric.AggregatePoint{"1": {{Bucket: base, Count: 4, Value: 0}}},
 		LossAvailable: true,
+		Window:        map[string]metric.PingDistribution{"1": {OK: true}},
 	}
 	stats := publicPingStatsFromAggregateGroups("node-a", groups, taskMap, nil)
 	if len(stats) != 1 {
@@ -142,12 +143,10 @@ func TestPublicPingStatsFromAggregateGroupsPartialLossIgnoresFailedSamples(t *te
 	}
 	want := map[string]float64{
 		"avg": 155, // (200*1 + 220*1 + 100*2) / 4, not (200+0+220+400)/7
-		"p50": 155,
-		"p99": 165, // (200 + 220 + 120*2) / 4
 		"min": 80,  // the failed bucket's 0 must not become the minimum
 		"max": 220,
 	}
-	have := map[string]*float64{"avg": got.Avg, "p50": got.P50, "p99": got.P99, "min": got.Min, "max": got.Max}
+	have := map[string]*float64{"avg": got.Avg, "min": got.Min, "max": got.Max}
 	for name, w := range want {
 		g := have[name]
 		if g == nil {
@@ -155,6 +154,9 @@ func TestPublicPingStatsFromAggregateGroupsPartialLossIgnoresFailedSamples(t *te
 		} else if *g < w-0.001 || *g > w+0.001 {
 			t.Errorf("%s = %v, want %v", name, *g, w)
 		}
+	}
+	if got.P50 != nil || got.P99 != nil || got.StdDev != nil {
+		t.Fatalf("bucket percentiles must not stand in for the window distribution: %#v", got)
 	}
 	if got.Latest == nil {
 		t.Errorf("latest is nil, want 90 (the newest successful bucket)")
@@ -214,7 +216,13 @@ func pingStatsFromRawProbes(t *testing.T, probes map[int][]float64, minutes int)
 	taskMap := map[string]models.PingTask{
 		"1": {Id: 1, Name: "Seattle ICMP", Clients: models.StringArray{"node-a"}, Type: "icmp", Interval: 60},
 	}
-	stats := publicPingStatsFromAggregateGroups("node-a", publicPingMetricGroupsFromSummary(summary), taskMap, nil)
+	groups := publicPingMetricGroupsFromSummary(summary)
+	window, err := store.PingTaskDistributions(ctx, "node-a", base, end, end)
+	if err != nil {
+		t.Fatalf("window distribution: %v", err)
+	}
+	groups.Window = window
+	stats := publicPingStatsFromAggregateGroups("node-a", groups, taskMap, nil)
 	if len(stats) != 1 {
 		t.Fatalf("expected one stat, got %#v", stats)
 	}
@@ -252,6 +260,31 @@ func TestPublicPingStatsFromRealAggregationIgnoresFailedProbes(t *testing.T) {
 	}
 	if got.Latest == nil || *got.Latest != 100 {
 		t.Errorf("latest = %v, want 100 (the newest minute with a successful probe)", got.Latest)
+	}
+	if got.P50 == nil || *got.P50 != 150 {
+		t.Errorf("p50 = %v, want 150", got.P50)
+	}
+	if got.P99 == nil || *got.P99 != 219.4 {
+		t.Errorf("p99 = %v, want 219.4", got.P99)
+	}
+	if got.StdDev == nil || *got.StdDev < 55.44 || *got.StdDev > 55.46 {
+		t.Errorf("stddev = %v, want 55.45", got.StdDev)
+	}
+}
+
+func TestPublicPingStatsWindowPercentileIsNotBucketAverage(t *testing.T) {
+	got := pingStatsFromRawProbes(t, map[int][]float64{
+		0: {10},
+		1: {110},
+	}, 2)
+	if got.Avg == nil || *got.Avg != 60 {
+		t.Fatalf("avg = %v, want 60", got.Avg)
+	}
+	if got.P99 == nil || *got.P99 != 109 {
+		t.Fatalf("p99 = %v, want 109", got.P99)
+	}
+	if got.StdDev == nil || *got.StdDev != 50 {
+		t.Fatalf("stddev = %v, want 50", got.StdDev)
 	}
 }
 
