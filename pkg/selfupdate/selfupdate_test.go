@@ -350,6 +350,39 @@ func TestManifestPrefersLiteAssetName(t *testing.T) {
 	}
 }
 
+func TestUpdateTransactionConflictReusesTheSameTarget(t *testing.T) {
+	now := time.Now()
+	running := &UpdateResult{
+		Status:        "running",
+		TargetVersion: "2.3.7",
+		TargetHash:    "5p3sro0",
+		UpdatedAt:     now.Add(-time.Minute),
+	}
+	reuse, err := updateTransactionConflict(running, "2.3.7", "5p3sro0", now)
+	if err != nil || reuse != running {
+		t.Fatalf("same target = %v, %v", reuse, err)
+	}
+	if _, err := updateTransactionConflict(running, "2.3.7", "k8m3n6t", now); err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("different hash error = %v", err)
+	}
+	abandoned := &UpdateResult{
+		Status:        "scheduled",
+		TargetVersion: "2.3.7",
+		TargetHash:    "5p3sro0",
+		UpdatedAt:     now.Add(-scheduledTransactionGrace),
+	}
+	reuse, err = updateTransactionConflict(abandoned, "2.3.7", "5p3sro0", now)
+	if err != nil || reuse != nil {
+		t.Fatalf("abandoned scheduled = %v, %v", reuse, err)
+	}
+	fresh := *abandoned
+	fresh.UpdatedAt = now.Add(-time.Second)
+	reuse, err = updateTransactionConflict(&fresh, "2.3.7", "5p3sro0", now)
+	if err != nil || reuse == nil {
+		t.Fatalf("fresh scheduled = %v, %v", reuse, err)
+	}
+}
+
 func TestMigrationHealthWindowCoversLowEndSQLiteUpgrade(t *testing.T) {
 	if defaultHealthTimeout < 15*time.Minute {
 		t.Fatalf("health timeout %s is too short for a low-end SQLite migration", defaultHealthTimeout)

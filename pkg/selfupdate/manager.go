@@ -27,6 +27,9 @@ const (
 	defaultHealthTimeout     = 15 * time.Minute
 	defaultStableWindow      = 15 * time.Second
 	activeTransactionTimeout = defaultHealthTimeout + 5*time.Minute
+	// scheduled is written before the helper process starts. If it never
+	// moves on, the helper did not start and a later attempt may proceed.
+	scheduledTransactionGrace = 2 * time.Minute
 )
 
 type HelperConfig struct {
@@ -81,8 +84,14 @@ func PrepareAndLaunch(ctx context.Context, version, versionHash string) (*Update
 	if err != nil {
 		return nil, err
 	}
-	if previous, err := ReadLastResult(filepath.Dir(executable)); err == nil && previous != nil && isUpdateInProgress(previous.Status) && time.Since(previous.UpdatedAt) < activeTransactionTimeout {
-		return nil, errors.New("another self-update transaction is already running")
+	if previous, err := ReadLastResult(filepath.Dir(executable)); err == nil {
+		reuse, conflictErr := updateTransactionConflict(previous, version, versionHash, time.Now())
+		if conflictErr != nil {
+			return nil, conflictErr
+		}
+		if reuse != nil {
+			return reuse, nil
+		}
 	}
 	healthURL, err := localHealthURL()
 	if err != nil {
@@ -233,6 +242,26 @@ func removeSystemdRunArguments(arguments []string, remove func(string) bool) []s
 		}
 	}
 	return compatible
+}
+
+func updateTransactionConflict(previous *UpdateResult, version, versionHash string, now time.Time) (*UpdateResult, error) {
+	if previous == nil || !isUpdateInProgress(previous.Status) {
+		return nil, nil
+	}
+	age := now.Sub(previous.UpdatedAt)
+	if age < 0 {
+		age = 0
+	}
+	if previous.Status == "scheduled" && age >= scheduledTransactionGrace {
+		return nil, nil
+	}
+	if age >= activeTransactionTimeout {
+		return nil, nil
+	}
+	if previous.TargetVersion == version && strings.EqualFold(previous.TargetHash, versionHash) {
+		return previous, nil
+	}
+	return nil, errors.New("another self-update transaction is already running")
 }
 
 func isUpdateInProgress(status string) bool {
