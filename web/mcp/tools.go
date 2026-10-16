@@ -37,8 +37,8 @@ func toolDescriptors() []gin.H {
 	idem := schema("idempotency_key", "string", true)
 	return []gin.H{
 		tool("get_authorization", "Current MCP lease without secrets", gin.H{"type": "object", "additionalProperties": false, "properties": gin.H{}}),
-		tool("list_agents", "Authorized nodes", objectSchema(gin.H{"q": schema("q", "string", false)}, nil)),
-		tool("get_agent", "Authorized node details", objectSchema(gin.H{"agent_uuid": agentUUID}, []string{"agent_uuid"})),
+		tool("list_agents", "Authorized nodes with their IPv4 and IPv6 addresses", objectSchema(gin.H{"q": schema("q", "string", false)}, nil)),
+		tool("get_agent", "Authorized node details with its IPv4 and IPv6 addresses", objectSchema(gin.H{"agent_uuid": agentUUID}, []string{"agent_uuid"})),
 		tool("exec", "Run a shell command on an authorized node", objectSchema(gin.H{
 			"agent_uuid":      agentUUID,
 			"command":         schema("command", "string", true),
@@ -216,13 +216,12 @@ func listAuthorizedAgents(lease models.MCPLease, query string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	query = strings.ToLower(strings.TrimSpace(query))
 	out := make([]gin.H, 0, len(nodes))
 	for _, node := range nodes {
 		if lease.AllNodes && (remote.AgentRemoteAllowed(node) != nil || !agentSupportsMCP(node)) {
 			continue
 		}
-		if query != "" && !strings.Contains(strings.ToLower(node.Name+" "+node.UUID+" "+node.OS), query) {
+		if !agentMatchesQuery(node, query) {
 			continue
 		}
 		out = append(out, agentSummary(node))
@@ -238,12 +237,33 @@ func getAuthorizedAgent(lease models.MCPLease, uuid string) (any, error) {
 	return agentSummary(node), nil
 }
 
+// agentMatchesQuery reports whether a node satisfies the list_agents filter.
+// The filter covers the identity fields an operator reads in the admin server
+// list, plus both address families, so a node can also be found by its IPv4 or
+// IPv6 address. Matching is case-insensitive and an empty query matches every
+// node, which keeps filtering state inside this helper.
+func agentMatchesQuery(node models.Client, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	searchable := node.Name + " " + node.UUID + " " + node.OS + " " + node.IPv4 + " " + node.IPv6
+	return strings.Contains(strings.ToLower(searchable), query)
+}
+
+// agentSummary is the node payload shared by list_agents and get_agent.
+// ipv4/ipv6 always carry the stored address strings; an empty string means no
+// address is recorded for that family. Keeping both keys present lets a client
+// tell "no recorded IPv6" apart from "field missing", so it does not have to
+// read the node's network interfaces over exec just to learn the addresses.
 func agentSummary(node models.Client) gin.H {
 	return gin.H{
 		"uuid":             node.UUID,
 		"name":             node.Name,
 		"os":               node.OS,
 		"arch":             node.Arch,
+		"ipv4":             node.IPv4,
+		"ipv6":             node.IPv6,
 		"online":           agent_runtime.IsAgentOnline(node.UUID),
 		"mcp_full":         node.MCPFull,
 		"mcp_full_version": node.MCPFullVersion,
