@@ -243,8 +243,8 @@ func CleanupHistory() error {
 }
 
 // expireUnredeemedApprovals retires approvals that were granted but never
-// redeemed: the lease is still active, its authorization code has expired, and
-// the token family never produced an access or refresh token. Such a lease can
+// redeemed: the lease is still active, a correctly bound authorization code has
+// expired, and there is no remaining access/refresh token or operation evidence. Such a lease can
 // never yield a usable credential, but it keeps consuming authorization
 // capacity, so it is reported as expired instead of silently holding an active
 // slot. Families whose code row was already compacted out of history are left
@@ -262,13 +262,20 @@ func expireUnredeemedApprovals(db *gorm.DB, now time.Time) error {
 			AND EXISTS (
 				SELECT 1 FROM mcp_tokens code_row
 				WHERE code_row.family_id = mcp_leases.token_family_id
+					AND code_row.lease_id = mcp_leases.id
+					AND code_row.client_id = mcp_leases.o_auth_client_id
 					AND code_row.kind = ?
 					AND code_row.expires_at <= ?
 			)
 			AND NOT EXISTS (
 				SELECT 1 FROM mcp_tokens issued
-				WHERE issued.family_id = mcp_leases.token_family_id
+				WHERE (issued.family_id = mcp_leases.token_family_id
+					OR issued.lease_id = mcp_leases.id)
 					AND issued.kind IN (?, ?)
+			)
+			AND NOT EXISTS (
+				SELECT 1 FROM mcp_operations op
+				WHERE op.lease_id = mcp_leases.id
 			)
 	`, statusExpired, reasonCodeUnredeemed, statusActive, now, kindCode, now, kindAccess, kindRefresh).Error
 }
