@@ -159,43 +159,89 @@ func TestRedeemAuthorizationCodeIsSingleUse(t *testing.T) {
 }
 
 func TestRedeemAuthorizationCodeRollsBackOnTokenInsertFailure(t *testing.T) {
+	for _, failingKind := range []string{kindAccess, kindRefresh} {
+		t.Run(failingKind+" insert fails", func(t *testing.T) {
+			db := openMCPTokenTestDB(t)
+			useMCPTokenTestDB(t, db)
+			now := time.Now().UTC()
+			lease, codeHash, _ := seedApprovedLease(t, db, now, AuthCodeTTL)
+			trigger := "fail_" + failingKind + "_insert"
+			if err := db.Exec(fmt.Sprintf(`
+				CREATE TRIGGER %s BEFORE INSERT ON mcp_tokens
+				WHEN NEW.kind = '%s'
+				BEGIN
+					SELECT RAISE(ABORT, 'token insert failed');
+				END
+			`, trigger, failingKind)).Error; err != nil {
+				t.Fatalf("create trigger: %v", err)
+			}
+
+			if _, err := redeemAuthorizationCode(lease, codeHash, lease.OAuthClientID, testRedirectURI, "", now); err == nil {
+				t.Fatalf("redemption must fail when the %s token cannot be stored", failingKind)
+			}
+			var code models.MCPToken
+			if err := db.Where("hash = ?", codeHash).First(&code).Error; err != nil {
+				t.Fatalf("load code: %v", err)
+			}
+			if code.Used {
+				t.Fatal("code must stay redeemable after a rolled back redemption")
+			}
+			if got := countTokensOfKind(t, db, kindAccess) + countTokensOfKind(t, db, kindRefresh); got != 0 {
+				t.Fatalf("issued tokens = %d, want 0 after rollback", got)
+			}
+
+			if err := db.Exec("DROP TRIGGER " + trigger).Error; err != nil {
+				t.Fatalf("drop trigger: %v", err)
+			}
+			if _, err := redeemAuthorizationCode(lease, codeHash, lease.OAuthClientID, testRedirectURI, "", now); err != nil {
+				t.Fatalf("redemption must succeed after the failure is resolved: %v", err)
+			}
+		})
+	}
+}
+
+// The reported symptom is running out of authorization slots: unredeemed
+// approvals accumulate and eventually block a new one.
+func TestExpireUnredeemedApprovalsReleasesCapacityForANewApproval(t *testing.T) {
 	db := openMCPTokenTestDB(t)
 	useMCPTokenTestDB(t, db)
 	now := time.Now().UTC()
-	lease, codeHash, _ := seedApprovedLease(t, db, now, AuthCodeTTL)
-	if err := db.Exec(`
-		CREATE TRIGGER fail_refresh_insert BEFORE INSERT ON mcp_tokens
-		WHEN NEW.kind = 'refresh'
-		BEGIN
-			SELECT RAISE(ABORT, 'refresh insert failed');
-		END
-	`).Error; err != nil {
-		t.Fatalf("create trigger: %v", err)
+	owner := "owner-" + t.Name()
+	for i := 0; i < MaxActiveLeasesPerUser; i++ {
+		lease, _, _ := seedApprovedLease(t, db, now, -time.Minute)
+		if err := db.Model(&models.MCPLease{}).Where("id = ?", lease.ID).Update("owner_user_uuid", owner).Error; err != nil {
+			t.Fatalf("assign owner: %v", err)
+		}
+	}
+	live, _, _ := seedApprovedLease(t, db, now, AuthCodeTTL)
+	if err := db.Model(&models.MCPLease{}).Where("id = ?", live.ID).Update("owner_user_uuid", owner).Error; err != nil {
+		t.Fatalf("assign owner: %v", err)
 	}
 
-	if _, err := redeemAuthorizationCode(lease, codeHash, lease.OAuthClientID, "https://app.example/cb", "", now); err == nil {
-		t.Fatal("redemption must fail when the refresh token cannot be stored")
+	if _, user, err := countActiveLeases(owner); err != nil || user != MaxActiveLeasesPerUser+1 {
+		t.Fatalf("active leases before cleanup = %d (err %v), want %d", user, err, MaxActiveLeasesPerUser+1)
 	}
 
-	var code models.MCPToken
-	if err := db.Where("hash = ?", codeHash).First(&code).Error; err != nil {
-		t.Fatalf("load code: %v", err)
-	}
-	if code.Used {
-		t.Fatal("code must stay redeemable after a rolled back redemption")
-	}
-	if got := countTokensOfKind(t, db, kindAccess); got != 0 {
-		t.Fatalf("access tokens = %d, want 0 after rollback", got)
-	}
-	if got := countTokensOfKind(t, db, kindRefresh); got != 0 {
-		t.Fatalf("refresh tokens = %d, want 0 after rollback", got)
+	if err := expireUnredeemedApprovals(db, now); err != nil {
+		t.Fatalf("expire unredeemed approvals: %v", err)
 	}
 
-	if err := db.Exec("DROP TRIGGER fail_refresh_insert").Error; err != nil {
-		t.Fatalf("drop trigger: %v", err)
+	_, user, err := countActiveLeases(owner)
+	if err != nil {
+		t.Fatalf("count active leases: %v", err)
 	}
-	if _, err := redeemAuthorizationCode(lease, codeHash, lease.OAuthClientID, "https://app.example/cb", "", now); err != nil {
-		t.Fatalf("redemption must succeed after the failure is resolved: %v", err)
+	if user != 1 {
+		t.Fatalf("active leases after cleanup = %d, want 1 (only the redeemable approval)", user)
+	}
+	if user >= MaxActiveLeasesPerUser {
+		t.Fatalf("capacity still exhausted: %d active leases for a limit of %d", user, MaxActiveLeasesPerUser)
+	}
+	var stored models.MCPLease
+	if err := db.Where("id = ?", live.ID).First(&stored).Error; err != nil {
+		t.Fatalf("load redeemable approval: %v", err)
+	}
+	if stored.Status != statusActive {
+		t.Fatalf("redeemable approval status = %q, want %q", stored.Status, statusActive)
 	}
 }
 
