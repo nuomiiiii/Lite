@@ -48,6 +48,7 @@ const (
 	reasonMCPOff             = "mcp_disabled"
 	reasonRemoteOff          = "remote_disabled"
 	reasonRefreshReuse       = "refresh_reuse"
+	reasonCodeUnredeemed     = "code_unredeemed"
 )
 
 var (
@@ -241,7 +242,41 @@ func CleanupHistory() error {
 	return cleanupHistory(database(), time.Now().UTC())
 }
 
+// expireUnredeemedApprovals retires approvals that were granted but never
+// redeemed: the lease is still active, its authorization code has expired, and
+// the token family never produced an access or refresh token. Such a lease can
+// never yield a usable credential, but it keeps consuming authorization
+// capacity, so it is reported as expired instead of silently holding an active
+// slot. Families whose code row was already compacted out of history are left
+// untouched: no evidence is left to separate them from a live grant.
+func expireUnredeemedApprovals(db *gorm.DB, now time.Time) error {
+	if db == nil || !db.Migrator().HasTable(&models.MCPLease{}) || !db.Migrator().HasTable(&models.MCPToken{}) {
+		return nil
+	}
+	return db.Exec(`
+		UPDATE mcp_leases
+		SET status = ?, revocation_reason = ?
+		WHERE status = ?
+			AND revoked_at IS NULL
+			AND expires_at > ?
+			AND EXISTS (
+				SELECT 1 FROM mcp_tokens code_row
+				WHERE code_row.family_id = mcp_leases.token_family_id
+					AND code_row.kind = ?
+					AND code_row.expires_at <= ?
+			)
+			AND NOT EXISTS (
+				SELECT 1 FROM mcp_tokens issued
+				WHERE issued.family_id = mcp_leases.token_family_id
+					AND issued.kind IN (?, ?)
+			)
+	`, statusExpired, reasonCodeUnredeemed, statusActive, now, kindCode, now, kindAccess, kindRefresh).Error
+}
+
 func purgeInactiveHistory(db *gorm.DB, now time.Time) (int, error) {
+	if err := expireUnredeemedApprovals(db, now); err != nil {
+		return 0, err
+	}
 	var leases []models.MCPLease
 	if err := db.Where(
 		"status IN ? OR (status = ? AND expires_at <= ?)",
@@ -322,6 +357,9 @@ func recordDeniedAuthorization(db *gorm.DB, req models.MCPAuthorizationRequest, 
 }
 
 func cleanupHistory(db *gorm.DB, now time.Time) error {
+	if err := expireUnredeemedApprovals(db, now); err != nil {
+		return err
+	}
 	cutoff := adminHistoryCutoff(now)
 	if err := db.Where("created_at < ?", cutoff).Delete(&models.MCPOperation{}).Error; err != nil {
 		return err

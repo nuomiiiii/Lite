@@ -588,13 +588,67 @@ func handleAuthorizationCode(c *gin.Context, values url.Values) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
 		return
 	}
-	_ = database().Model(&token).Update("used", true).Error
-	pair, err := issueTokenPair(lease, token.ClientID, token.RedirectURI, token.Resource, now)
-	if err != nil {
+	// Redemption is the only place that turns an authorization code into
+	// credentials, so it has to be atomic: consume the code, re-read the lease
+	// and persist both tokens inside one transaction. Concurrent requests for the
+	// same code can then only win once (RFC 6749 §4.1.2), and a failed insert no
+	// longer leaves a burned code with no credentials behind it.
+	pair, err := redeemAuthorizationCode(lease, token.Hash, token.ClientID, token.RedirectURI, token.Resource, now)
+	switch {
+	case errors.Is(err, errCodeNotRedeemable), errors.Is(err, ErrLeaseInactive):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid_grant"})
+	case err != nil:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "server_error"})
-		return
+	default:
+		writeTokenResponse(c, pair)
 	}
-	writeTokenResponse(c, pair)
+}
+
+// errCodeNotRedeemable reports that an authorization code was already consumed
+// by a competing redemption.
+var errCodeNotRedeemable = errors.New("authorization code already redeemed")
+
+// redeemAuthorizationCode consumes the authorization code and issues its token
+// pair in a single transaction. The code row is updated conditionally so exactly
+// one caller can win the race, and the lease is re-read inside the transaction so
+// a revocation that lands after the caller's snapshot still wins.
+//
+// Only tx-scoped handles are used inside the transaction: the SQLite pool can
+// hold a single connection, so a helper reaching for the global handle while a
+// transaction is open would block until that transaction ended.
+func redeemAuthorizationCode(lease models.MCPLease, codeHash, clientID, redirectURI, resource string, now time.Time) (tokenPair, error) {
+	var pair tokenPair
+	err := database().Transaction(func(tx *gorm.DB) error {
+		consumed := tx.Model(&models.MCPToken{}).
+			Where("hash = ? AND kind = ? AND used = ?", codeHash, kindCode, false).
+			Update("used", true)
+		if consumed.Error != nil {
+			return consumed.Error
+		}
+		if consumed.RowsAffected != 1 {
+			return errCodeNotRedeemable
+		}
+		var live models.MCPLease
+		if err := tx.Where("id = ?", lease.ID).First(&live).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrLeaseInactive
+			}
+			return err
+		}
+		if !leaseLive(live, now) {
+			return ErrLeaseInactive
+		}
+		issued, err := issueTokenPairInDB(tx, live, clientID, redirectURI, resource, now)
+		if err != nil {
+			return err
+		}
+		pair = issued
+		return nil
+	})
+	if err != nil {
+		return tokenPair{}, err
+	}
+	return pair, nil
 }
 
 func handleRefreshToken(c *gin.Context, values url.Values) {

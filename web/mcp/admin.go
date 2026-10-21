@@ -293,6 +293,13 @@ func approveAuthorization(c *gin.Context) {
 		api.RespondError(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Retire approvals that were granted but never redeemed before measuring
+	// capacity: a lease whose code expired without ever issuing credentials can
+	// never be used, and must not keep blocking new authorizations.
+	if err := expireUnredeemedApprovals(database(), time.Now().UTC()); err != nil {
+		api.RespondError(c, http.StatusInternalServerError, err.Error())
+		return
+	}
 	global, user, err := countActiveLeases(principal.UserUUID)
 	if err != nil {
 		api.RespondError(c, http.StatusInternalServerError, err.Error())
