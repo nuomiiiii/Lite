@@ -73,6 +73,24 @@ Changes are recorded as `audit.mcp_update`, including scope and expiry. The UI
 keeps the current expiry by default and only sends new duration fields when the
 administrator selects **Change expiry**.
 
+## Access token lifetime
+
+Access tokens are short lived by default: `mcp_access_token_ttl_minutes`
+defaults to 5 and is clamped to 1..1440. Raising it only reduces how often a
+client has to call the token endpoint; it never extends the grant, because every
+MCP request still resolves the live lease and every issued token is truncated to
+the grant expiry.
+
+This matters when several clients share one grant. Refresh tokens rotate, and a
+replay of an already rotated token revokes the whole token family, which ends the
+grant. Clients that keep their own copy of the refresh chain — several agent
+processes reading one credential store — will therefore sign each other out when
+their schedules diverge, and the only way back is a fresh browser authorization.
+A longer access token lifetime narrows that window but does not remove it: a
+client that stays idle past one refresh cycle still returns with a rotated token.
+Deploy one credential store per grant, or make the clients coordinate refreshes,
+when several of them are expected to use the same grant concurrently.
+
 ## Regression checks
 
 ```sh

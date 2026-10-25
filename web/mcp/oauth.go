@@ -779,7 +779,7 @@ func issueTokenPair(lease models.MCPLease, clientID, redirectURI, resource strin
 }
 
 func issueTokenPairInDB(db *gorm.DB, lease models.MCPLease, clientID, redirectURI, resource string, now time.Time) (tokenPair, error) {
-	accessTTL := truncateTTL(now, lease.ExpiresAt, AccessTokenTTL)
+	accessTTL := truncateTTL(now, lease.ExpiresAt, AccessTokenLifetime())
 	refreshTTL := truncateTTL(now, lease.ExpiresAt, lease.ExpiresAt.Sub(now))
 	if accessTTL <= 0 || refreshTTL <= 0 {
 		return tokenPair{}, ErrLeaseInactive

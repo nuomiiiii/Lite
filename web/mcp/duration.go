@@ -17,7 +17,9 @@ const (
 	DefaultDurationMinutes    = 30
 	DefaultMaxConcurrency     = 4
 	MaxConcurrencyCap         = 16
-	AccessTokenTTL            = 5 * time.Minute
+	DefaultAccessTokenTTL     = 5 * time.Minute
+	MinAccessTokenTTLMinutes  = 1
+	MaxAccessTokenTTLMinutes  = 24 * 60
 	AuthCodeTTL               = 180 * time.Second
 	DefaultExecTimeout        = 5 * time.Minute
 	MaxOutputCache            = 1 << 20
@@ -65,6 +67,34 @@ func siteDurationSettings() DurationSettings {
 		}
 	}
 	return normalized
+}
+
+// accessTokenTTLMinutes clamps a configured access-token lifetime into the range
+// this server accepts, so a bad setting cannot mint a token that outlives the
+// authorization it belongs to.
+func accessTokenTTLMinutes(minutes int) int {
+	if minutes < MinAccessTokenTTLMinutes {
+		return MinAccessTokenTTLMinutes
+	}
+	if minutes > MaxAccessTokenTTLMinutes {
+		return MaxAccessTokenTTLMinutes
+	}
+	return minutes
+}
+
+// AccessTokenLifetime is the lifetime of a freshly issued MCP access token.
+//
+// Short by default, because every MCP request re-checks the live authorization.
+// The setting exists for deployments whose clients each refresh on their own
+// schedule: a longer lifetime means fewer refresh round trips, not a longer
+// grant. It can never outlive the authorization itself, because
+// issueTokenPairInDB still truncates it to the lease expiry.
+func AccessTokenLifetime() time.Duration {
+	minutes := int(DefaultAccessTokenTTL / time.Minute)
+	if v, err := config.GetAs[int](config.MCPAccessTokenTTLMinKey, minutes); err == nil {
+		minutes = v
+	}
+	return time.Duration(accessTokenTTLMinutes(minutes)) * time.Minute
 }
 
 func NormalizeSettings(defaultMinutes, maxMinutes, concurrency int) (DurationSettings, error) {

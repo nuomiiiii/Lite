@@ -71,7 +71,7 @@ func TestSaveLeasePolicyUpdatesUsableRefreshTokensOnly(t *testing.T) {
 				{Hash: "usable", Kind: kindRefresh, ExpiresAt: lease.ExpiresAt},
 				{Hash: "used", Kind: kindRefresh, Used: true, ExpiresAt: lease.ExpiresAt},
 				{Hash: "expired", Kind: kindRefresh, ExpiresAt: now.Add(-time.Minute)},
-				{Hash: "access", Kind: kindAccess, ExpiresAt: now.Add(AccessTokenTTL)},
+				{Hash: "access", Kind: kindAccess, ExpiresAt: now.Add(DefaultAccessTokenTTL)},
 				{Hash: "code", Kind: kindCode, ExpiresAt: now.Add(AuthCodeTTL)},
 			} {
 				token.LeaseID, token.FamilyID = lease.ID, lease.TokenFamilyID
