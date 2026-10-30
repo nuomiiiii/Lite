@@ -103,6 +103,33 @@ func TestTruncateTTLNeverExceedsLease(t *testing.T) {
 	}
 }
 
+func TestAccessTokenLifetimeStaysShortByDefault(t *testing.T) {
+	if DefaultAccessTokenTTL != 5*time.Minute {
+		t.Fatalf("default access token lifetime = %v, want 5m", DefaultAccessTokenTTL)
+	}
+	// No site setting is reachable in a unit test, so this is the default path.
+	if got := AccessTokenLifetime(); got != 5*time.Minute {
+		t.Fatalf("AccessTokenLifetime() = %v, want 5m", got)
+	}
+}
+
+func TestAccessTokenTTLMinutesIsClamped(t *testing.T) {
+	cases := []struct{ in, want int }{
+		{-90, MinAccessTokenTTLMinutes},
+		{0, MinAccessTokenTTLMinutes},
+		{1, 1},
+		{5, 5},
+		{60, 60},
+		{MaxAccessTokenTTLMinutes, MaxAccessTokenTTLMinutes},
+		{MaxAccessTokenTTLMinutes + 1, MaxAccessTokenTTLMinutes},
+	}
+	for _, tc := range cases {
+		if got := accessTokenTTLMinutes(tc.in); got != tc.want {
+			t.Fatalf("accessTokenTTLMinutes(%d) = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestAuthCodeTTL(t *testing.T) {
 	if AuthCodeTTL != 180*time.Second {
 		t.Fatalf("AuthCodeTTL = %v, want 180s", AuthCodeTTL)
