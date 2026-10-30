@@ -142,6 +142,11 @@ func TestRecentTerminalTrafficSkipsProtocolPing(t *testing.T) {
 	if remoteHasRecentTraffic(time.Time{}, now) {
 		t.Fatal("a session with no activity skipped keepalive pings")
 	}
+	session := &remoteSession{}
+	session.recordHopTraffic(true, now)
+	if session.hopHasRecentTraffic(false, now) {
+		t.Fatal("browser heartbeat was treated as agent traffic")
+	}
 }
 
 func TestProtocolPingWriteTimeoutDoesNotEndRemoteSession(t *testing.T) {

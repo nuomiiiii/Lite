@@ -23,6 +23,22 @@ func TestRemoteHasRecentTrafficSkipsIdlePings(t *testing.T) {
 	}
 }
 
+func TestBrowserHeartbeatDoesNotSkipAgentKeepalivePing(t *testing.T) {
+	now := time.Now()
+	session := &remoteSession{}
+	session.recordHopTraffic(true, now)
+	if !session.hopHasRecentTraffic(true, now) {
+		t.Fatal("browser heartbeat should skip browser protocol pings")
+	}
+	if session.hopHasRecentTraffic(false, now) {
+		t.Fatal("browser heartbeat skipped agent keepalive pings")
+	}
+	session.recordHopTraffic(false, now)
+	if !session.hopHasRecentTraffic(false, now) {
+		t.Fatal("agent traffic should skip agent protocol pings")
+	}
+}
+
 func TestPingWriteErrorDoesNotEndABusyRemoteSession(t *testing.T) {
 	for _, err := range []error{
 		errors.New("websocket: write timeout"),

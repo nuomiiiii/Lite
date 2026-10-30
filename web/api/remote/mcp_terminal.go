@@ -235,7 +235,7 @@ func forwardMCPSession(session *remoteSession) {
 				waiting = false
 				continue
 			}
-			if remoteHasRecentTraffic(session.lastActivityAt(), now) {
+			if session.hopHasRecentTraffic(false, now) {
 				continue
 			}
 			if err := writeRemotePing(agent, now); pingWriteErrorEndsSession(err) {

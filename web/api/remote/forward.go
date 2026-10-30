@@ -26,21 +26,22 @@ func forwardSession(session *remoteSession) {
 	}
 	auditlog.Event(session.RequesterIP, session.UserUUID, "terminal", "audit.remote_open", map[string]string{"name": clients.DisplayName(session.UUID)})
 	errCh := make(chan error, 2)
-	setAlive := func(connection *websocket.Conn) {
+	setAlive := func(connection *websocket.Conn, browserHop bool) {
 		_ = connection.SetReadDeadline(time.Now().Add(remoteIdleTimeout))
 		connection.SetPongHandler(func(string) error {
-			session.touch(time.Now())
-			return connection.SetReadDeadline(time.Now().Add(remoteIdleTimeout))
+			now := time.Now()
+			session.recordHopTraffic(browserHop, now)
+			return connection.SetReadDeadline(now.Add(remoteIdleTimeout))
 		})
 	}
-	setAlive(browser)
-	setAlive(agent)
+	setAlive(browser, true)
+	setAlive(agent, false)
 	forward := func(source, target *websocket.Conn, auditFileWrites bool, browserSource bool) {
 		for {
 			messageType, data, err := source.ReadMessage()
 			if err == nil {
 				now := time.Now()
-				session.touch(now)
+				session.recordHopTraffic(browserSource, now)
 				_ = source.SetReadDeadline(now.Add(remoteIdleTimeout))
 				if browserSource && isRemoteHeartbeat(messageType, data) {
 					continue
@@ -54,6 +55,9 @@ func forwardSession(session *remoteSession) {
 					}
 				}
 				err = target.WriteMessage(messageType, data)
+				if err == nil {
+					session.recordHopTraffic(!browserSource, now)
+				}
 			}
 			if err != nil {
 				select {
@@ -81,15 +85,16 @@ func forwardSession(session *remoteSession) {
 				waiting = false
 				continue
 			}
-			if remoteHasRecentTraffic(session.lastActivityAt(), now) {
-				continue
+			if !session.hopHasRecentTraffic(true, now) {
+				if err := writeRemotePing(browser, now); pingWriteErrorEndsSession(err) {
+					waiting = false
+					continue
+				}
 			}
-			if err := writeRemotePing(browser, now); pingWriteErrorEndsSession(err) {
-				waiting = false
-				continue
-			}
-			if err := writeRemotePing(agent, now); pingWriteErrorEndsSession(err) {
-				waiting = false
+			if !session.hopHasRecentTraffic(false, now) {
+				if err := writeRemotePing(agent, now); pingWriteErrorEndsSession(err) {
+					waiting = false
+				}
 			}
 		}
 	}

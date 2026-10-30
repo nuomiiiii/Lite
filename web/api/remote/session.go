@@ -36,16 +36,18 @@ type remoteSession struct {
 	AgentTicket   string
 	Browser       *websocket.Conn
 	Agent         *websocket.Conn
-	CreatedAt     time.Time
-	ExpiresAt     time.Time
-	StartedAt     time.Time
-	LastActivity  time.Time
-	closed        bool
-	mcp           bool
-	leaseID       string
-	mcpOut        []byte
-	mcpBase       int
-	mcpClosed     bool
+	CreatedAt          time.Time
+	ExpiresAt          time.Time
+	StartedAt          time.Time
+	LastActivity       time.Time
+	lastBrowserTraffic time.Time
+	lastAgentTraffic   time.Time
+	closed             bool
+	mcp                bool
+	leaseID            string
+	mcpOut             []byte
+	mcpBase            int
+	mcpClosed          bool
 }
 
 var (
@@ -94,11 +96,31 @@ func (session *remoteSession) attachAgent(clientUUID, ticket string, connection 
 }
 
 func (session *remoteSession) touch(now time.Time) {
+	session.recordHopTraffic(false, now)
+}
+
+func (session *remoteSession) recordHopTraffic(browserHop bool, now time.Time) {
 	session.mu.Lock()
-	if !session.closed {
-		session.LastActivity = now
+	defer session.mu.Unlock()
+	if session.closed {
+		return
 	}
-	session.mu.Unlock()
+	session.LastActivity = now
+	if browserHop {
+		session.lastBrowserTraffic = now
+		return
+	}
+	session.lastAgentTraffic = now
+}
+
+func (session *remoteSession) hopHasRecentTraffic(browserHop bool, now time.Time) bool {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	last := session.lastAgentTraffic
+	if browserHop {
+		last = session.lastBrowserTraffic
+	}
+	return remoteHasRecentTraffic(last, now)
 }
 
 func (session *remoteSession) stale(now time.Time) bool {

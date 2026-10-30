@@ -6,12 +6,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-func (session *remoteSession) lastActivityAt() time.Time {
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	return session.LastActivity
-}
-
+// Browser JSON heartbeats keep the admin socket alive, but they are not
+// forwarded to the agent. Protocol pings must be decided per hop so an idle
+// agent socket is still pinged.
 func remoteHasRecentTraffic(lastActivity, now time.Time) bool {
 	return !lastActivity.IsZero() && now.Sub(lastActivity) < remotePingInterval
 }
