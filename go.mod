@@ -2,6 +2,10 @@ module github.com/nuomiiiii/lite
 
 go 1.26.10
 
+// Linux listen sockets stay on plain TCP. Go 1.24+ enables MPTCP on
+// listeners by default; that is the shape used in public exploits of CVE-2026-98432.
+godebug multipathtcp=0
+
 require (
 	github.com/dop251/goja v0.0.0-20251008123653-cf18d89f3cf6
 	github.com/dop251/goja_nodejs v0.0.0-20251015164255-5e94316bedaf

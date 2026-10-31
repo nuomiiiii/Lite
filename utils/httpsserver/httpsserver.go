@@ -21,6 +21,7 @@ import (
 	"github.com/nuomiiiii/lite/pkg/config"
 	logger "github.com/nuomiiiii/lite/utils/log"
 	"github.com/nuomiiiii/lite/utils/requestscheme"
+	"github.com/nuomiiiii/lite/utils/tcplisten"
 )
 
 type Settings struct {
@@ -426,7 +427,7 @@ func (m *Manager) Apply(settings Settings) error {
 		return nil
 	}
 
-	listener, err := net.Listen("tcp", normalized.Listen)
+	listener, err := tcplisten.Listen("tcp", normalized.Listen)
 	if err != nil {
 		err = fmt.Errorf("listen on %s: %w", normalized.Listen, err)
 		m.setError(normalized, err)
@@ -592,7 +593,7 @@ func listenerFamilyAvailabilityFromIPs(ips []net.IP) (bool, bool) {
 }
 
 func protocolStackAvailable(network, address string) bool {
-	listener, err := net.Listen(network, address)
+	listener, err := tcplisten.Listen(network, address)
 	if err != nil {
 		return false
 	}

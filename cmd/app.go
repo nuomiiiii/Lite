@@ -38,6 +38,7 @@ import (
 	logger "github.com/nuomiiiii/lite/utils/log"
 	"github.com/nuomiiiii/lite/utils/messageSender"
 	"github.com/nuomiiiii/lite/utils/notifier"
+	"github.com/nuomiiiii/lite/utils/tcplisten"
 	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 	"github.com/nuomiiiii/lite/web/api"
 	"github.com/nuomiiiii/lite/web/api/admin"
@@ -440,7 +441,7 @@ func (a *App) RunInstallGuide() (bool, error) {
 	serverErr := make(chan error, 1)
 	logger.Infof("server", "First-run installation guide is available on %s", flags.Listen)
 	go func() {
-		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := serveHTTP(a.server); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
 		}
 	}()
@@ -513,7 +514,7 @@ func (a *App) RunLegacyUpgrade(summary migrations.LegacyMonitoringSummary) (bool
 	serverErr := make(chan error, 1)
 	logger.Infof("server", "Legacy monitoring data requires the 1.2.7 upgrade wizard on %s", flags.Listen)
 	go func() {
-		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := serveHTTP(a.server); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
 		}
 	}()
@@ -587,7 +588,7 @@ func (a *App) RunMetricStorageUpgrade(summary metric.SQLiteMigrationSummary) (bo
 	serverErr := make(chan error, 1)
 	logger.Infof("server", "Metric storage upgrade progress is available on %s", flags.Listen)
 	go func() {
-		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := serveHTTP(a.server); err != nil && err != http.ErrServerClosed {
 			serverErr <- err
 		}
 	}()
@@ -811,7 +812,7 @@ func listenAndFinalizeStartup(
 	commitRestore func() error,
 	startBackground func() error,
 ) (net.Listener, error) {
-	listener, err := net.Listen("tcp", address)
+	listener, err := tcplisten.Listen("tcp", address)
 	if err != nil {
 		return nil, fmt.Errorf("listen: %w", err)
 	}
@@ -829,6 +830,18 @@ func listenAndFinalizeStartup(
 	}
 	closeOnError = false
 	return listener, nil
+}
+
+func serveHTTP(server *http.Server) error {
+	addr := server.Addr
+	if addr == "" {
+		addr = ":http"
+	}
+	listener, err := tcplisten.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return server.Serve(listener)
 }
 
 // Shutdown 优雅关闭：先停止接收新请求，再反序执行已登记的清理函数。
