@@ -58,6 +58,7 @@ func registerPublicRoutes(r *gin.Engine) {
 	r.GET("/api/records/load", jsonRpc.Bind("public:getRecordsByUUID", jsonRpc.WithQuery("uuid", "load_type", "hours")))
 	r.GET("/api/records/ping", jsonRpc.Bind("public:getPingRecords", jsonRpc.WithQuery("uuid", "task_id", "hours")))
 	r.GET("/api/task/ping", jsonRpc.Bind("public:getPublicPingTasks"))
+	r.GET("/api/task/return-route", jsonRpc.Bind("public:getPublicReturnRoutes"))
 
 	// JSON-RPC 直连入口。
 	r.GET("/api/rpc2", jsonRpc.OnRpcRequest)
@@ -338,5 +339,11 @@ func registerAdminRoutes(r *gin.Engine) {
 		returnRoute.POST("/rules/reload", jsonRpc.Bind("admin:reloadReturnRouteRules"))
 		returnRoute.POST("/rules/update", jsonRpc.Bind("admin:updateReturnRouteRules"))
 		returnRoute.POST("/rules/refresh", jsonRpc.Bind("admin:refreshReturnRouteBGPRules"))
+		returnRoute.GET("/templates", jsonRpc.Bind("admin:listReturnRouteTemplates"))
+		returnRoute.POST("/templates/add", jsonRpc.Bind("admin:addReturnRouteTemplate"))
+		returnRoute.POST("/templates/edit", jsonRpc.Bind("admin:editReturnRouteTemplate"))
+		returnRoute.POST("/templates/edit/batch", jsonRpc.Bind("admin:batchEditReturnRouteTemplates"))
+		returnRoute.POST("/templates/delete", jsonRpc.Bind("admin:deleteReturnRouteTemplates"))
+		returnRoute.POST("/templates/apply", jsonRpc.Bind("admin:applyReturnRouteTemplates"))
 	}
 }

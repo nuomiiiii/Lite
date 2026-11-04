@@ -29,6 +29,28 @@ type ReturnRouteTask struct {
 	UpdatedAt                          time.Time `json:"updated_at"`
 }
 
+// ReturnRouteTemplate is a reusable return-route configuration without a probe node.
+type ReturnRouteTemplate struct {
+	Id             uint      `json:"id,omitempty" gorm:"primaryKey;autoIncrement"`
+	Name           string    `json:"name" gorm:"type:varchar(255);not null"`
+	Carrier        string    `json:"carrier" gorm:"type:varchar(16);not null"`
+	Region         string    `json:"region" gorm:"type:varchar(64);not null"`
+	Target         string    `json:"target" gorm:"type:varchar(255);not null"`
+	IPVersion      int       `json:"ip_version" gorm:"type:int;not null;default:4"`
+	ExpectedLine   string    `json:"expected_line" gorm:"type:varchar(32);not null"`
+	Protocol       string    `json:"protocol" gorm:"type:varchar(12);not null;default:'icmp'"`
+	Interval       int       `json:"interval" gorm:"type:int;not null;default:180"`
+	SwitchConfirm  int       `json:"switch_confirm" gorm:"type:int;not null;default:2"`
+	RecoveryConfirm int      `json:"recovery_confirm" gorm:"type:int;not null;default:3"`
+	Cooldown       int       `json:"cooldown" gorm:"type:int;not null;default:1800"`
+	Notify         bool      `json:"notify" gorm:"type:boolean;not null;default:true"`
+	NotifyRecovery bool      `json:"notify_recovery" gorm:"type:boolean;not null;default:true"`
+	Enabled        bool      `json:"enabled" gorm:"type:boolean;not null;default:true"`
+	ApplyToNew     bool      `json:"apply_to_new" gorm:"type:boolean;not null;default:false"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+}
+
 // ReturnRouteStatus stores only the latest observation and state-machine data.
 type ReturnRouteStatus struct {
 	TaskId                 uint            `json:"task_id" gorm:"primaryKey"`

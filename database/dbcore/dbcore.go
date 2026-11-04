@@ -1064,6 +1064,7 @@ func doInitialize() error {
 		&models.PingTask{},
 		&models.PingLossNotification{},
 		&models.ReturnRouteTask{},
+		&models.ReturnRouteTemplate{},
 		&models.ReturnRouteStatus{},
 		&models.ReturnRouteEvent{},
 		&models.ReturnRouteProbeSample{},

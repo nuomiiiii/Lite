@@ -19,6 +19,8 @@ import (
 
 const returnRouteEventRetention = 90 * 24 * time.Hour
 
+const errReturnRouteTaskSlotTaken = "该服务器已有相同的回程探测任务"
+
 const (
 	returnRouteLineCUGVIP       = "CUG VIP"
 	returnRouteLineCUGOptimized = "CUG 优化"
@@ -119,6 +121,23 @@ func normalizeReturnRouteTask(task *models.ReturnRouteTask) error {
 }
 
 func normalizeReturnRouteTaskWithDB(db *gorm.DB, task *models.ReturnRouteTask) error {
+	if err := normalizeReturnRouteTaskFields(task); err != nil {
+		return err
+	}
+	if task.Client == "" {
+		return fmt.Errorf("任务名称、客户端、探测目标和预期线路为必填项")
+	}
+	var count int64
+	if err := db.Model(&models.Client{}).Where("uuid = ?", task.Client).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("client not found")
+	}
+	return normalizeMainlandPingAssociation(db, task)
+}
+
+func normalizeReturnRouteTaskFields(task *models.ReturnRouteTask) error {
 	task.Name = strings.TrimSpace(task.Name)
 	task.Client = strings.TrimSpace(task.Client)
 	task.Carrier = strings.ToLower(strings.TrimSpace(task.Carrier))
@@ -126,8 +145,8 @@ func normalizeReturnRouteTaskWithDB(db *gorm.DB, task *models.ReturnRouteTask) e
 	task.Target = strings.TrimSpace(task.Target)
 	task.ExpectedLine = normalizeReturnRouteLine(task.ExpectedLine)
 	task.Protocol = strings.ToLower(strings.TrimSpace(task.Protocol))
-	if task.Name == "" || task.Client == "" || task.Target == "" || task.ExpectedLine == "" {
-		return fmt.Errorf("任务名称、客户端、探测目标和预期线路为必填项")
+	if task.Name == "" || task.Target == "" || task.ExpectedLine == "" {
+		return fmt.Errorf("任务名称、探测目标和预期线路为必填项")
 	}
 	if task.Carrier != "mobile" && task.Carrier != "telecom" && task.Carrier != "unicom" {
 		return fmt.Errorf("unsupported carrier %q", task.Carrier)
@@ -160,14 +179,7 @@ func normalizeReturnRouteTaskWithDB(db *gorm.DB, task *models.ReturnRouteTask) e
 	if task.Cooldown < 0 || task.Cooldown > 604800 {
 		return fmt.Errorf("cooldown must be between 0 and 604800 seconds")
 	}
-	var count int64
-	if err := db.Model(&models.Client{}).Where("uuid = ?", task.Client).Count(&count).Error; err != nil {
-		return err
-	}
-	if count == 0 {
-		return fmt.Errorf("client not found")
-	}
-	return normalizeMainlandPingAssociation(db, task)
+	return nil
 }
 
 func normalizeMainlandPingAssociation(db *gorm.DB, task *models.ReturnRouteTask) error {
@@ -209,7 +221,11 @@ func AddReturnRouteTask(task *models.ReturnRouteTask) (uint, bool, error) {
 	if err := normalizeReturnRouteTask(task); err != nil {
 		return 0, false, err
 	}
-	if err := dbcore.GetDBInstance().Create(task).Error; err != nil {
+	db := dbcore.GetDBInstance()
+	if err := ensureReturnRouteTaskSlotFree(db, *task, nil); err != nil {
+		return 0, false, err
+	}
+	if err := db.Create(task).Error; err != nil {
 		return 0, false, err
 	}
 	_ = evaluateMainlandReachability(dbcore.GetDBInstance(), task.Client, task.IPVersion, *task, time.Now().UTC())
@@ -233,6 +249,9 @@ func editReturnRouteTask(db *gorm.DB, task *models.ReturnRouteTask) error {
 		return fmt.Errorf("task id is required")
 	}
 	if err := normalizeReturnRouteTaskWithDB(db, task); err != nil {
+		return err
+	}
+	if err := ensureReturnRouteTaskSlotFree(db, *task, []uint{task.Id}); err != nil {
 		return err
 	}
 	var previous models.ReturnRouteTask
@@ -316,6 +335,25 @@ func editReturnRouteTasksBatch(db *gorm.DB, params ReturnRouteTaskBatchEdit) err
 		params.Protocol = candidate.Protocol
 	}
 
+	seenSlots := make(map[string]struct{}, len(existing))
+	for _, current := range existing {
+		candidate := models.ReturnRouteTask{
+			Client:       current.Client,
+			Carrier:      params.Carrier,
+			Target:       params.Target,
+			IPVersion:    params.IPVersion,
+			ExpectedLine: params.ExpectedLine,
+		}
+		key := returnRouteTaskSlotKey(candidate)
+		if _, ok := seenSlots[key]; ok {
+			return fmt.Errorf("%s", errReturnRouteTaskSlotTaken)
+		}
+		seenSlots[key] = struct{}{}
+		if err := ensureReturnRouteTaskSlotFree(db, candidate, ids); err != nil {
+			return err
+		}
+	}
+
 	var pingID any
 	if params.MainlandReachabilityPingTaskID != nil {
 		pingID = *params.MainlandReachabilityPingTaskID
@@ -342,6 +380,58 @@ func editReturnRouteTasksBatch(db *gorm.DB, params ReturnRouteTaskBatchEdit) err
 		}
 	}
 	return recomputeMainlandReachabilityKeys(db, keys, time.Now().UTC())
+}
+
+func returnRouteNormalizedIPVersion(ipVersion int) int {
+	if ipVersion == 6 {
+		return 6
+	}
+	return 4
+}
+
+func returnRouteTaskSlotKey(task models.ReturnRouteTask) string {
+	return strings.ToLower(strings.TrimSpace(task.Client)) + "\x00" +
+		strings.ToLower(strings.TrimSpace(task.Carrier)) + "\x00" +
+		fmt.Sprintf("%d", returnRouteNormalizedIPVersion(task.IPVersion)) + "\x00" +
+		normalizeReturnRouteLine(task.ExpectedLine) + "\x00" +
+		strings.ToLower(strings.TrimSpace(task.Target))
+}
+
+func returnRouteTaskSlotTaken(db *gorm.DB, task models.ReturnRouteTask, exceptIDs []uint) (bool, error) {
+	client := strings.ToLower(strings.TrimSpace(task.Client))
+	carrier := strings.ToLower(strings.TrimSpace(task.Carrier))
+	target := strings.ToLower(strings.TrimSpace(task.Target))
+	line := normalizeReturnRouteLine(task.ExpectedLine)
+	ipVersion := returnRouteNormalizedIPVersion(task.IPVersion)
+	query := db.Model(&models.ReturnRouteTask{}).Where(
+		"LOWER(client) = ? AND LOWER(carrier) = ? AND LOWER(target) = ? AND expected_line = ? AND (ip_version = ? OR (? = 4 AND (ip_version IS NULL OR ip_version NOT IN (4, 6))))",
+		client,
+		carrier,
+		target,
+		line,
+		ipVersion,
+		ipVersion,
+	)
+	exceptIDs = uniqueReturnRouteTaskIDs(exceptIDs)
+	if len(exceptIDs) > 0 {
+		query = query.Where("id NOT IN ?", exceptIDs)
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func ensureReturnRouteTaskSlotFree(db *gorm.DB, task models.ReturnRouteTask, exceptIDs []uint) error {
+	taken, err := returnRouteTaskSlotTaken(db, task, exceptIDs)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return fmt.Errorf("%s", errReturnRouteTaskSlotTaken)
+	}
+	return nil
 }
 
 func uniqueReturnRouteTaskIDs(ids []uint) []uint {

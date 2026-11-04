@@ -25,6 +25,12 @@ func init() {
 	RegisterWithGroupAndMeta("reloadReturnRouteRules", rpc.RoleAdmin, adminReloadReturnRouteRules, &rpc.MethodMeta{Name: "admin:reloadReturnRouteRules", Summary: "Reload return route signature rules from disk"})
 	RegisterWithGroupAndMeta("updateReturnRouteRules", rpc.RoleAdmin, adminUpdateReturnRouteRules, &rpc.MethodMeta{Name: "admin:updateReturnRouteRules", Summary: "Validate, store and activate return route signature rules"})
 	RegisterWithGroupAndMeta("refreshReturnRouteBGPRules", rpc.RoleAdmin, adminRefreshReturnRouteBGPRules, &rpc.MethodMeta{Name: "admin:refreshReturnRouteBGPRules", Summary: "Download and activate the latest filtered BGP prefix rules"})
+	RegisterWithGroupAndMeta("listReturnRouteTemplates", rpc.RoleAdmin, adminListReturnRouteTemplates, &rpc.MethodMeta{Name: "admin:listReturnRouteTemplates", Summary: "List return route templates"})
+	RegisterWithGroupAndMeta("addReturnRouteTemplate", rpc.RoleAdmin, adminAddReturnRouteTemplate, &rpc.MethodMeta{Name: "admin:addReturnRouteTemplate", Summary: "Create a return route template"})
+	RegisterWithGroupAndMeta("editReturnRouteTemplate", rpc.RoleAdmin, adminEditReturnRouteTemplate, &rpc.MethodMeta{Name: "admin:editReturnRouteTemplate", Summary: "Edit a return route template"})
+	RegisterWithGroupAndMeta("batchEditReturnRouteTemplates", rpc.RoleAdmin, adminBatchEditReturnRouteTemplates, &rpc.MethodMeta{Name: "admin:batchEditReturnRouteTemplates", Summary: "Edit multiple return route templates"})
+	RegisterWithGroupAndMeta("deleteReturnRouteTemplates", rpc.RoleAdmin, adminDeleteReturnRouteTemplates, &rpc.MethodMeta{Name: "admin:deleteReturnRouteTemplates", Summary: "Delete return route templates"})
+	RegisterWithGroupAndMeta("applyReturnRouteTemplates", rpc.RoleAdmin, adminApplyReturnRouteTemplates, &rpc.MethodMeta{Name: "admin:applyReturnRouteTemplates", Summary: "Create return route tasks from templates for selected servers"})
 }
 
 func adminGetReturnRouteSummary(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
@@ -159,6 +165,76 @@ func adminUpdateReturnRouteRules(_ context.Context, req *rpc.JsonRpcRequest) (an
 	result, err := tasks.UpdateReturnRouteRules(params.Rules)
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), result)
+	}
+	return result, nil
+}
+
+func adminListReturnRouteTemplates(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	templates, err := tasks.ListReturnRouteTemplates()
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	return templates, nil
+}
+
+func adminAddReturnRouteTemplate(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var template models.ReturnRouteTemplate
+	if err := req.BindParams(&template); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	id, err := tasks.AddReturnRouteTemplate(&template)
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return map[string]any{"template_id": id}, nil
+}
+
+func adminEditReturnRouteTemplate(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var template models.ReturnRouteTemplate
+	if err := req.BindParams(&template); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	if err := tasks.EditReturnRouteTemplate(&template); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return nil, nil
+}
+
+func adminBatchEditReturnRouteTemplates(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params tasks.ReturnRouteTemplateBatchEdit
+	if err := req.BindParams(&params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	if err := tasks.EditReturnRouteTemplatesBatch(params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	return nil, nil
+}
+
+func adminDeleteReturnRouteTemplates(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		IDs []uint `json:"ids"`
+	}
+	if err := req.BindParams(&params); err != nil || len(params.IDs) == 0 {
+		return nil, rpc.MakeError(rpc.InvalidParams, "ids are required", nil)
+	}
+	if err := tasks.DeleteReturnRouteTemplates(params.IDs); err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	return nil, nil
+}
+
+func adminApplyReturnRouteTemplates(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		TemplateIDs []uint   `json:"template_ids"`
+		Clients     []string `json:"clients"`
+	}
+	if err := req.BindParams(&params); err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
+	}
+	result, err := tasks.ApplyReturnRouteTemplates(params.TemplateIDs, params.Clients)
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InvalidParams, err.Error(), nil)
 	}
 	return result, nil
 }

@@ -514,7 +514,7 @@ func TestCUGBackboneChangeCountsAsSwitch(t *testing.T) {
 func TestFormatReturnRouteNotificationUsesChineseCarrierAndExpectedLine(t *testing.T) {
 	task := models.ReturnRouteTask{
 		Name: "VMISS_LAX_CM", Carrier: "telecom", Region: "华东",
-		Target: "zj-ningbo-cm-v4.ip.zstaticcdn.com", ExpectedLine: "CN2 GIA",
+		Target: "sh-shanghai-cm-v4.ip.zstaticcdn.com", ExpectedLine: "CN2 GIA",
 	}
 	event := models.ReturnRouteEvent{
 		ExpectedLine: "CN2 GIA", FromLine: "CMIN2", ToLine: "CMI", Confidence: 0.98,
@@ -522,7 +522,7 @@ func TestFormatReturnRouteNotificationUsesChineseCarrierAndExpectedLine(t *testi
 	}
 	want := "任务：VMISS_LAX_CM\n" +
 		"运营商/地区：中国电信 / 华东\n" +
-		"探测目标：zj-ningbo-cm-v4.ip.zstaticcdn.com\n" +
+		"探测目标：sh-shanghai-cm-v4.ip.zstaticcdn.com\n" +
 		"预期线路：CN2 GIA\n" +
 		"线路变化：CMIN2 -> CMI\n" +
 		"识别置信度：98%\n" +

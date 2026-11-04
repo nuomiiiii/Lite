@@ -34,6 +34,7 @@ func init() {
 	regPublic("getRecordsByUUID", publicGetRecordsByUUID, "Get load records for a client")
 	regPublic("getPingRecords", publicGetPingRecords, "Get ping records")
 	regPublic("getPublicPingTasks", publicGetPublicPingTasks, "List public ping tasks")
+	regPublic("getPublicReturnRoutes", publicGetPublicReturnRoutes, "List public return-route lines")
 }
 
 func regPublic(name string, h rpc.Handler, summary string) {
@@ -264,6 +265,17 @@ func publicGetPublicPingTasks(_ context.Context, _ *rpc.JsonRpcRequest) (any, *r
 			Interval:  task.Interval,
 			Weight:    task.Weight,
 		}
+	}
+	return out, nil
+}
+
+func publicGetPublicReturnRoutes(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	out, err := tasks.ListPublicReturnRoutes(isLoginFromCtx(ctx))
+	if err != nil {
+		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
+	}
+	if out == nil {
+		out = []tasks.PublicReturnRoute{}
 	}
 	return out, nil
 }

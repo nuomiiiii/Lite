@@ -85,15 +85,15 @@ func TestFormatPingLossMessageIdentifiesExactTask(t *testing.T) {
 func TestFormatPingLossRecoveryMessage(t *testing.T) {
 	notification := models.PingLossNotification{
 		Client:        "node-a",
-		ClientInfo:    models.Client{Name: "宁波服务器"},
+		ClientInfo:    models.Client{Name: "测试服务器"},
 		TaskId:        117,
-		Task:          models.PingTask{Name: "宁波电信", Target: "example.com"},
+		Task:          models.PingTask{Name: "XX电信", Target: "example.com"},
 		WindowSeconds: 60,
 		LossThreshold: 5,
 	}
 	message := formatPingLossMessage(notification, pingLossStats{Total: 20, Lost: 1}, pingLossNotificationRecovery)
 	assert.Contains(t, message, "延迟监测告警 · 丢包恢复")
-	assert.Contains(t, message, "检测任务：宁波电信")
+	assert.Contains(t, message, "检测任务：XX电信")
 	assert.NotContains(t, message, "#117")
 }
 

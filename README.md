@@ -9,7 +9,7 @@ Lite 是一款轻量、自托管的服务器监控与运维管理工具。服务
 
 本项目基于 [komari-monitor/komari](https://github.com/komari-monitor/komari) 持续开发，重点改善低配置主控上的数据库占用、历史查询和维护负载，同时提供流量管理、成本中心、备份迁移、接入安全与适配电脑和手机的管理界面。
 
-**当前正式版：Lite [`2.3.10`](https://github.com/nuomiiiii/Lite/releases/tag/2.3.10) · 配套 Agent [`2.3.10.1`](https://github.com/nuomiiiii/Lite-agent/releases/tag/2.3.10.1) · 默认主题 [`1.2.9`](https://github.com/nuomiiiii/Lite-theme/releases/tag/v1.2.9)**
+**当前正式版：Lite [`2.3.10`](https://github.com/nuomiiiii/Lite/releases/tag/2.3.10) · 配套 Agent [`2.3.10.1`](https://github.com/nuomiiiii/Lite-agent/releases/tag/2.3.10.1) · 默认主题 [`1.3.0`](https://github.com/nuomiiiii/Lite-theme/releases/tag/v1.3.0)**
 
 [使用手册](https://nuomiiiii.github.io/Lite-document/) · [快速开始](#快速开始) · [功能概览](#功能概览) · [升级说明](#从旧版本升级) · [Agent](#agent-与远程管理) · [MCP 代理](#mcp-代理与-ai-授权) · [完整更新日志](https://github.com/nuomiiiii/lite/releases)
 
@@ -40,7 +40,8 @@ Lite 是一款轻量、自托管的服务器监控与运维管理工具。服务
 - **成本中心**：服务器国旗跟随手选的国家/地区图标；没手选时仍用自动识别。
 - **日志**：过长的 IPv6 会自动换行，不再盖住后面的类型和内容。
 - **手机端远程终端**：复制、粘贴、Tab 旁有「Ctrl+C」，用来打断正在执行的命令。
-- **内置主题**：Lite-Theme `1.2.9`。首页可按服务器设置探测任务，手机端概览默认关闭。
+- **回程线路**：可保存探测配置模板，应用到已有服务器，也可在新服务器加入时自动创建。公开大屏可展示当前回程线路名和疑似被墙。
+- **内置主题**：Lite-Theme `1.3.0`。首页可按服务器设置探测任务，可显示回程线路名称，没有探测任务的卡片可隐藏探测窗口。手机端概览默认关闭。
 
 ## 功能概览
 
