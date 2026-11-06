@@ -107,15 +107,24 @@ const (
 // 更多质心。小于等于 1 的值会回退到默认值（100），这通常能把每个 digest 控制在
 // 几 KB，同时让典型分布的尾部误差远低于 1%。
 func NewTDigest(compression float64) *TDigest {
+	digest := &TDigest{}
+	digest.reset(compression)
+	return digest
+}
+
+func (t *TDigest) reset(compression float64) {
+	if t == nil {
+		return
+	}
 	if compression <= 1 {
 		compression = defaultTDigestCompression
 	}
-	return &TDigest{
-		compression: compression,
-		min:         math.Inf(1),
-		max:         math.Inf(-1),
-		processed:   true,
-	}
+	t.compression = compression
+	t.centroids = t.centroids[:0]
+	t.count = 0
+	t.min = math.Inf(1)
+	t.max = math.Inf(-1)
+	t.processed = true
 }
 
 // Add folds a single observation with weight w (w must be > 0) into the digest.

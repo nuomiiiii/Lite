@@ -784,58 +784,90 @@ func createMetricDefinitionsWithDefaultRetention(ctx context.Context, s *metric.
 	return nil
 }
 
-// WritePingRecord 将 ping 记录写入 metric store
+// WritePingRecord 将 ping 记录写入 metric store。返回成功时记录已经落盘。
 func WritePingRecord(ctx context.Context, rec models.PingRecord) error {
 	assignment := PingAssignment{Client: rec.Client, TaskID: rec.TaskId}
 	if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) || PingAssignmentWritesBlocked(assignment) {
+		return ErrMetricWriteBlocked
+	}
+	reportBatcherMu.Lock()
+	worker := reportBatcher
+	reportBatcherMu.Unlock()
+	if worker != nil {
+		return worker.enqueuePing(ctx, rec)
+	}
+	return writePingRecords(ctx, []models.PingRecord{rec})
+}
+
+func writePingRecords(ctx context.Context, records []models.PingRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	filtered := records[:0]
+	for _, rec := range records {
+		assignment := PingAssignment{Client: rec.Client, TaskID: rec.TaskId}
+		if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) || PingAssignmentWritesBlocked(assignment) {
+			continue
+		}
+		filtered = append(filtered, rec)
+	}
+	if len(filtered) == 0 {
 		return ErrMetricWriteBlocked
 	}
 	if err := storeOperations.AcquireShared(ctx); err != nil {
 		return fmt.Errorf("wait for metric store operation before writing ping record: %w", err)
 	}
 	defer storeOperations.ReleaseShared()
-	if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) || PingAssignmentWritesBlocked(assignment) {
+	records = filtered[:0]
+	for _, rec := range filtered {
+		assignment := PingAssignment{Client: rec.Client, TaskID: rec.TaskId}
+		if EntityWritesBlocked(rec.Client) || PingTaskWritesBlocked(rec.TaskId) || PingAssignmentWritesBlocked(assignment) {
+			continue
+		}
+		records = append(records, rec)
+	}
+	if len(records) == 0 {
 		return ErrMetricWriteBlocked
 	}
 	s := GetStore()
 	if s == nil {
 		return fmt.Errorf("metric store not enabled")
 	}
-
-	ts := rec.Time
-	entityID := rec.Client
-	tags := map[string]string{
-		"task_id": fmt.Sprintf("%d", rec.TaskId),
+	points := make([]metric.Point, 0, len(records)*2)
+	includeLoss := s.Driver() != metric.DriverSQLite
+	for _, rec := range records {
+		points = append(points, pingMetricPoints(rec, includeLoss)...)
 	}
+	return s.WriteBatch(ctx, points)
+}
 
+func pingMetricPoints(rec models.PingRecord, includeLoss bool) []metric.Point {
 	value := rec.Value
 	if value >= 0 {
 		value = RoundLatencyMS(value)
 	}
-	points := []metric.Point{
-		{
-			MetricName: MetricPingLatency,
-			EntityID:   entityID,
-			Timestamp:  ts,
-			Value:      value,
-			Tags:       tags,
-		},
+	tags := map[string]string{"task_id": fmt.Sprintf("%d", rec.TaskId)}
+	points := []metric.Point{{
+		MetricName: MetricPingLatency,
+		EntityID:   rec.Client,
+		Timestamp:  rec.Time,
+		Value:      value,
+		Tags:       tags,
+	}}
+	if !includeLoss {
+		return points
 	}
-	if s.Driver() != metric.DriverSQLite {
-		loss := 0.0
-		if value < 0 {
-			loss = 1
-		}
-		points = append(points, metric.Point{
-			MetricName: MetricPingLoss,
-			EntityID:   entityID,
-			Timestamp:  ts,
-			Value:      loss,
-			Tags:       tags,
-		})
+	loss := 0.0
+	if value < 0 {
+		loss = 1
 	}
-
-	return s.WriteBatch(ctx, points)
+	return append(points, metric.Point{
+		MetricName: MetricPingLoss,
+		EntityID:   rec.Client,
+		Timestamp:  rec.Time,
+		Value:      loss,
+		Tags:       tags,
+	})
 }
 
 // GetRecordsByClientAndTime 从 metric store 查询记录并重构为 models.Record

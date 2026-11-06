@@ -2,7 +2,6 @@ package metricstore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -362,20 +361,193 @@ func TestReportBatcherFlushesQueuedReports(t *testing.T) {
 	assertMetricValues(t, s, MetricTrafficDown, first.UUID, base.Add(-time.Second), base.Add(time.Minute), []float64{0, 60})
 }
 
-func TestFullReportQueueRejectsNewReportWithoutDroppingData(t *testing.T) {
+func TestFullReportQueueBlocksUntilFlushed(t *testing.T) {
 	ctx := context.Background()
+	s := useReportTestStore(t, nil)
 	worker := &reportBatchWorker{
-		queue:    make(chan v2.Report, 1),
-		requests: make(chan reportBatchRequest, 1),
-		done:     make(chan struct{}),
+		queue:      make(chan v2.Report, 1),
+		pingQueue:  make(chan pingBatchItem, 1),
+		requests:   make(chan reportBatchRequest, 1),
+		flushNudge: make(chan struct{}, 1),
+		done:       make(chan struct{}),
 	}
-	worker.queue <- v2.Report{UUID: "already-queued"}
-	report := v2.Report{
-		UUID:      "realtime-node",
-		UpdatedAt: time.Now().UTC(),
+	reportBatcherMu.Lock()
+	previous := reportBatcher
+	reportBatcher = worker
+	reportBatcherMu.Unlock()
+	t.Cleanup(func() {
+		_ = StopReportBatcher(ctx)
+		reportBatcherMu.Lock()
+		reportBatcher = previous
+		reportBatcherMu.Unlock()
+	})
+	go worker.run()
+
+	first := v2.Report{UUID: "queued-node", UpdatedAt: time.Now().UTC(), CPU: v2.CPUReport{Usage: 1}}
+	second := v2.Report{UUID: "blocked-node", UpdatedAt: time.Now().UTC().Add(time.Second), CPU: v2.CPUReport{Usage: 2}}
+	worker.queue <- first
+	done := make(chan error, 1)
+	go func() {
+		done <- worker.enqueueReport(ctx, second)
+	}()
+	if err := FlushReportBatch(ctx); err != nil {
+		t.Fatalf("flush: %v", err)
 	}
-	if err := worker.enqueue(ctx, report); !errors.Is(err, ErrReportBatchQueueFull) {
-		t.Fatalf("queue full error = %v, want ErrReportBatchQueueFull", err)
+	if err := <-done; err != nil {
+		t.Fatalf("second enqueue: %v", err)
+	}
+	if err := FlushReportBatch(ctx); err != nil {
+		t.Fatalf("flush second: %v", err)
+	}
+	assertMetricValues(t, s, MetricCPU, first.UUID, first.UpdatedAt.Add(-time.Second), second.UpdatedAt.Add(time.Second), []float64{1})
+	assertMetricValues(t, s, MetricCPU, second.UUID, first.UpdatedAt.Add(-time.Second), second.UpdatedAt.Add(time.Second), []float64{2})
+}
+
+func TestReportsSurviveStopWhileQueueBlocked(t *testing.T) {
+	ctx := context.Background()
+	s := useReportTestStore(t, nil)
+	worker := &reportBatchWorker{
+		queue:      make(chan v2.Report, 1),
+		pingQueue:  make(chan pingBatchItem, 1),
+		requests:   make(chan reportBatchRequest, 1),
+		flushNudge: make(chan struct{}, 1),
+		done:       make(chan struct{}),
+	}
+	reportBatcherMu.Lock()
+	previous := reportBatcher
+	reportBatcher = worker
+	reportBatcherMu.Unlock()
+	t.Cleanup(func() {
+		_ = StopReportBatcher(ctx)
+		reportBatcherMu.Lock()
+		reportBatcher = previous
+		reportBatcherMu.Unlock()
+	})
+	go worker.run()
+
+	first := v2.Report{UUID: "stop-queued", UpdatedAt: time.Now().UTC(), CPU: v2.CPUReport{Usage: 3}}
+	second := v2.Report{UUID: "stop-blocked", UpdatedAt: time.Now().UTC().Add(time.Second), CPU: v2.CPUReport{Usage: 4}}
+	worker.queue <- first
+	done := make(chan error, 1)
+	go func() {
+		done <- worker.enqueueReport(ctx, second)
+	}()
+	if err := StopReportBatcher(ctx); err != nil {
+		t.Fatalf("stop report batcher: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("blocked enqueue during stop: %v", err)
+	}
+	assertMetricValues(t, s, MetricCPU, first.UUID, first.UpdatedAt.Add(-time.Second), second.UpdatedAt.Add(time.Second), []float64{3})
+	assertMetricValues(t, s, MetricCPU, second.UUID, first.UpdatedAt.Add(-time.Second), second.UpdatedAt.Add(time.Second), []float64{4})
+}
+
+func TestPingDoesNotWaitForQueuedReports(t *testing.T) {
+	ctx := context.Background()
+	s := useReportTestStore(t, nil)
+	StartReportBatcher()
+	t.Cleanup(func() {
+		if err := StopReportBatcher(ctx); err != nil {
+			t.Errorf("stop report batcher: %v", err)
+		}
+	})
+	reportTime := time.Now().UTC().Truncate(time.Millisecond)
+	if _, err := WriteReport(ctx, v2.Report{
+		UUID: "report-node", UpdatedAt: reportTime, CPU: v2.CPUReport{Usage: 9},
+	}); err != nil {
+		t.Fatalf("queue report: %v", err)
+	}
+	pingTime := reportTime.Add(time.Millisecond)
+	if err := WritePingRecord(ctx, models.PingRecord{
+		Client: "ping-ahead", TaskId: 3, Time: pingTime, Value: 8,
+	}); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+	points, err := s.Query(ctx, metric.Query{
+		MetricName: MetricPingLatency, EntityID: "ping-ahead",
+		Start: pingTime.Add(-time.Second), End: pingTime.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("query ping: %v", err)
+	}
+	if len(points) != 1 || points[0].Value != 8 {
+		t.Fatalf("ping points = %#v, want one 8ms sample before reports flush", points)
+	}
+	reports, err := s.Query(ctx, metric.Query{
+		MetricName: MetricCPU, EntityID: "report-node",
+		Start: reportTime.Add(-time.Second), End: reportTime.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("query queued report: %v", err)
+	}
+	if len(reports) != 0 {
+		t.Fatalf("queued report was written before its 3s batch: %#v", reports)
+	}
+}
+
+func TestWritePingRecordIsDurableBeforeReturn(t *testing.T) {
+	ctx := context.Background()
+	s := useReportTestStore(t, nil)
+	StartReportBatcher()
+	t.Cleanup(func() {
+		if err := StopReportBatcher(ctx); err != nil {
+			t.Errorf("stop report batcher: %v", err)
+		}
+	})
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	if err := WritePingRecord(ctx, models.PingRecord{
+		Client: "ping-node", TaskId: 7, Time: now, Value: 12.5,
+	}); err != nil {
+		t.Fatalf("write ping: %v", err)
+	}
+	points, err := s.Query(ctx, metric.Query{
+		MetricName: MetricPingLatency, EntityID: "ping-node",
+		Start: now.Add(-time.Second), End: now.Add(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("query ping: %v", err)
+	}
+	if len(points) != 1 || points[0].Value != 12.5 {
+		t.Fatalf("ping points = %#v, want one 12.5 sample on disk before return", points)
+	}
+}
+
+func TestConcurrentPingRecordsAllPersist(t *testing.T) {
+	ctx := context.Background()
+	s := useReportTestStore(t, nil)
+	StartReportBatcher()
+	t.Cleanup(func() {
+		if err := StopReportBatcher(ctx); err != nil {
+			t.Errorf("stop report batcher: %v", err)
+		}
+	})
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	const n = 32
+	errCh := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func(i int) {
+			errCh <- WritePingRecord(ctx, models.PingRecord{
+				Client: fmt.Sprintf("ping-%d", i), TaskId: 1,
+				Time: now.Add(time.Duration(i) * time.Millisecond), Value: float64(i),
+			})
+		}(i)
+	}
+	for i := 0; i < n; i++ {
+		if err := <-errCh; err != nil {
+			t.Fatalf("write ping: %v", err)
+		}
+	}
+	for i := 0; i < n; i++ {
+		points, err := s.Query(ctx, metric.Query{
+			MetricName: MetricPingLatency, EntityID: fmt.Sprintf("ping-%d", i),
+			Start: now.Add(-time.Second), End: now.Add(time.Minute),
+		})
+		if err != nil {
+			t.Fatalf("query ping %d: %v", i, err)
+		}
+		if len(points) != 1 {
+			t.Fatalf("ping %d points = %#v", i, points)
+		}
 	}
 }
 

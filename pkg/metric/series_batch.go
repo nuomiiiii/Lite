@@ -92,7 +92,7 @@ func (s *Store) seriesBatchWithinGate(ctx context.Context, queries []AggregateQu
 			return nil, err
 		}
 		for index, group := range rawGroups {
-			if err := s.buildSeriesBatchGroup(result, physical, virtualLoss, group, rawPoints[index], nil); err != nil {
+			if err := s.buildSeriesBatchGroup(ctx, result, physical, virtualLoss, group, rawPoints[index], nil); err != nil {
 				return nil, err
 			}
 		}
@@ -111,7 +111,7 @@ func (s *Store) seriesBatchWithinGate(ctx context.Context, queries []AggregateQu
 			if err != nil {
 				return nil, err
 			}
-			if err := s.buildSeriesBatchGroup(result, physical, virtualLoss, group, nil, buckets); err != nil {
+			if err := s.buildSeriesBatchGroup(ctx, result, physical, virtualLoss, group, nil, buckets); err != nil {
 				return nil, err
 			}
 		}
@@ -122,14 +122,14 @@ func (s *Store) seriesBatchWithinGate(ctx context.Context, queries []AggregateQu
 		return nil, err
 	}
 	for _, group := range rollupGroups {
-		if err := s.buildSeriesBatchGroup(result, physical, virtualLoss, group, nil, collected[group]); err != nil {
+		if err := s.buildSeriesBatchGroup(ctx, result, physical, virtualLoss, group, nil, collected[group]); err != nil {
 			return nil, err
 		}
 	}
 	return result, nil
 }
 
-func (s *Store) buildSeriesBatchGroup(result [][]AggregatePoint, physical []AggregateQuery, virtualLoss []bool, group *seriesBatchGroup, raw []Point, buckets map[rollupKey]*rollupBucket) error {
+func (s *Store) buildSeriesBatchGroup(ctx context.Context, result [][]AggregatePoint, physical []AggregateQuery, virtualLoss []bool, group *seriesBatchGroup, raw []Point, buckets map[rollupKey]*rollupBucket) error {
 	for _, queryIndex := range group.indices {
 		query := physical[queryIndex]
 		var points []AggregatePoint
@@ -141,7 +141,7 @@ func (s *Store) buildSeriesBatchGroup(result [][]AggregatePoint, physical []Aggr
 			points, err = AggregatePoints(raw, query)
 		} else {
 			if buckets == nil {
-				buckets, err = foldRawPoints(nil, raw, group.query.Interval, s.cfg.RollupPolicy.compression(), group.query.PreserveSeries, false)
+				buckets, err = foldRawPoints(nil, raw, group.query.Interval, s.cfg.RollupPolicy.compression(), group.query.PreserveSeries, false, queryArenaFrom(ctx))
 				if err != nil {
 					return err
 				}

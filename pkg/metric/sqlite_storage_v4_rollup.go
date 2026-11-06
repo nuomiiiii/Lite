@@ -812,7 +812,7 @@ func (s *Store) visitSQLiteV4Rollups(ctx context.Context, q querier, metricName,
 // foldSQLiteV4Rollups merges non-percentile block records directly into the
 // requested output buckets. It avoids materializing storedRollup objects and a
 // second full-result sort on the common dashboard/report read path.
-func (s *Store) foldSQLiteV4Rollups(ctx context.Context, q querier, metricName, entityID string, tags map[string]string, resolution, lower, upper int64, groups map[rollupKey]*rollupBucket, outputInterval time.Duration, compression float64, preserveSeries bool) error {
+func (s *Store) foldSQLiteV4Rollups(ctx context.Context, q querier, metricName, entityID string, tags map[string]string, resolution, lower, upper int64, groups map[rollupKey]*rollupBucket, outputInterval time.Duration, compression float64, preserveSeries, omitTags bool) error {
 	size := outputInterval.Nanoseconds()
 	series, err := s.sqliteV4MatchingSeries(ctx, q, metricName, entityID, tags)
 	if err != nil || len(series) == 0 {
@@ -822,9 +822,13 @@ func (s *Store) foldSQLiteV4Rollups(ctx context.Context, q querier, metricName, 
 		key := foldedRollupKey(item.entityID, item.tagsHash, floorDivNano(record.bucketNano, size), preserveSeries)
 		bucket := groups[key]
 		if bucket == nil {
-			bucket = newRollupBucketWithDigest(compression, false)
+			bucket = newQueryRollupBucket(ctx, compression, false)
 			bucket.tagsHash = item.tagsHash
-			bucket.tagsJSON = item.tagsJSON
+			if !omitTags {
+				if tagsJSON := item.tagsJSON; tagsJSON != "" {
+					bucket.tagsJSON = tagsJSON
+				}
+			}
 			groups[key] = bucket
 		}
 		stored := rollupBucket{

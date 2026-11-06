@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	logger "github.com/nuomiiiii/lite/utils/log"
@@ -37,7 +39,8 @@ var reportTrafficStates sync.Map
 
 const (
 	reportBatchInterval         = 3 * time.Second
-	reportBatchQueueSize        = 256
+	reportBatchQueueSize        = 4096
+	pingBatchQueueSize          = 4096
 	reportBatchWriteTimeout     = 10 * time.Second
 	reportTrafficRateMultiplier = int64(4)
 	reportTrafficRateAllowance  = int64(64 * 1024 * 1024)
@@ -49,8 +52,7 @@ var (
 )
 
 var (
-	ErrReportBatchQueueFull = errors.New("metric report batch queue is full")
-	ErrReportBatchStopped   = errors.New("metric report batcher is stopped")
+	ErrReportBatchStopped = errors.New("metric report batcher is stopped")
 )
 
 type reportBatchRequest struct {
@@ -59,12 +61,21 @@ type reportBatchRequest struct {
 	stop bool
 }
 
+type pingBatchItem struct {
+	rec  models.PingRecord
+	done chan error
+}
+
 type reportBatchWorker struct {
-	mu       sync.Mutex
-	queue    chan v2.Report
-	requests chan reportBatchRequest
-	done     chan struct{}
-	stopping bool
+	mu             sync.Mutex
+	queue          chan v2.Report
+	pingQueue      chan pingBatchItem
+	requests       chan reportBatchRequest
+	flushNudge     chan struct{}
+	done           chan struct{}
+	reportInflight atomic.Int64
+	pingInflight   atomic.Int64
+	stopping       bool
 }
 
 // StartReportBatcher starts the shared report writer.
@@ -75,9 +86,11 @@ func StartReportBatcher() {
 		return
 	}
 	worker := &reportBatchWorker{
-		queue:    make(chan v2.Report, reportBatchQueueSize),
-		requests: make(chan reportBatchRequest, 1),
-		done:     make(chan struct{}),
+		queue:      make(chan v2.Report, reportBatchQueueSize),
+		pingQueue:  make(chan pingBatchItem, pingBatchQueueSize),
+		requests:   make(chan reportBatchRequest, 1),
+		flushNudge: make(chan struct{}, 1),
+		done:       make(chan struct{}),
 	}
 	reportBatcher = worker
 	go worker.run()
@@ -116,9 +129,36 @@ func StopReportBatcher(ctx context.Context) error {
 	}
 }
 
-// FlushReportBatch synchronously flushes the current queue. It is useful for
-// controlled handoff points and deterministic tests; normal operation uses the
-// worker ticker and the active mode's flush interval.
+// FlushReportBatch synchronously flushes queued load reports. Ping records are
+// written as soon as they are queued and are not delayed for this flush.
+func FlushReportBatch(ctx context.Context) error {
+	reportBatcherMu.Lock()
+	worker := reportBatcher
+	reportBatcherMu.Unlock()
+	if worker == nil {
+		return nil
+	}
+	request := reportBatchRequest{ctx: ctx, done: make(chan error, 1)}
+	worker.mu.Lock()
+	stopping := worker.stopping
+	worker.mu.Unlock()
+	if stopping {
+		return ErrReportBatchStopped
+	}
+	select {
+	case worker.requests <- request:
+	case <-worker.done:
+		return ErrReportBatchStopped
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-request.done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // WriteReport persists one agent report as raw metric points sharing the same
 // server receive time. Traffic deltas are derived from the previous counters
@@ -142,7 +182,7 @@ func WriteReport(ctx context.Context, report v2.Report) (v2.Report, error) {
 	worker := reportBatcher
 	reportBatcherMu.Unlock()
 	if worker != nil {
-		if err := worker.enqueue(ctx, report); err != nil {
+		if err := worker.enqueueReport(ctx, report); err != nil {
 			return v2.Report{}, err
 		}
 		return report, nil
@@ -158,20 +198,77 @@ func WriteReport(ctx context.Context, report v2.Report) (v2.Report, error) {
 	return saved[0], nil
 }
 
-func (w *reportBatchWorker) enqueue(ctx context.Context, report v2.Report) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.stopping {
-		return ErrReportBatchStopped
-	}
+func (w *reportBatchWorker) enqueueReport(ctx context.Context, report v2.Report) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	w.mu.Lock()
+	select {
+	case <-w.done:
+		w.mu.Unlock()
+		_, err := writeReportBatch(ctx, []v2.Report{report})
+		return err
+	default:
+	}
+	w.reportInflight.Add(1)
+	w.mu.Unlock()
+	defer w.reportInflight.Add(-1)
+	select {
+	case w.queue <- report:
+		if len(w.queue)*4 >= cap(w.queue)*3 {
+			w.nudgeFlush()
+		}
+		return nil
+	default:
+	}
+	w.nudgeFlush()
 	select {
 	case w.queue <- report:
 		return nil
+	case <-w.done:
+		_, err := writeReportBatch(ctx, []v2.Report{report})
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (w *reportBatchWorker) enqueuePing(ctx context.Context, rec models.PingRecord) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	select {
+	case <-w.done:
+		w.mu.Unlock()
+		return writePingRecords(ctx, []models.PingRecord{rec})
 	default:
-		return ErrReportBatchQueueFull
+	}
+	w.pingInflight.Add(1)
+	w.mu.Unlock()
+	item := pingBatchItem{rec: rec, done: make(chan error, 1)}
+	select {
+	case w.pingQueue <- item:
+		w.pingInflight.Add(-1)
+	case <-w.done:
+		w.pingInflight.Add(-1)
+		return writePingRecords(ctx, []models.PingRecord{rec})
+	case <-ctx.Done():
+		w.pingInflight.Add(-1)
+		return ctx.Err()
+	}
+	select {
+	case err := <-item.done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (w *reportBatchWorker) nudgeFlush() {
+	select {
+	case w.flushNudge <- struct{}{}:
+	default:
 	}
 }
 
@@ -180,27 +277,128 @@ func (w *reportBatchWorker) run() {
 	defer ticker.Stop()
 
 	var pending []v2.Report
+	flushReports := func(ctx context.Context) error {
+		pending = append(pending, drainReportQueue(w.queue, cap(w.queue))...)
+		return writePendingReports(ctx, &pending)
+	}
+	flushPings := func(ctx context.Context, first pingBatchItem, hasFirst bool) {
+		items := drainPingQueue(w.pingQueue, cap(w.pingQueue))
+		if hasFirst {
+			batch := make([]pingBatchItem, 0, 1+len(items))
+			batch = append(batch, first)
+			items = append(batch, items...)
+		}
+		if len(items) == 0 {
+			return
+		}
+		writable := items[:0]
+		for _, item := range items {
+			assignment := PingAssignment{Client: item.rec.Client, TaskID: item.rec.TaskId}
+			if EntityWritesBlocked(item.rec.Client) || PingTaskWritesBlocked(item.rec.TaskId) || PingAssignmentWritesBlocked(assignment) {
+				item.done <- ErrMetricWriteBlocked
+				continue
+			}
+			writable = append(writable, item)
+		}
+		if len(writable) == 0 {
+			return
+		}
+		records := make([]models.PingRecord, len(writable))
+		for i, item := range writable {
+			records[i] = item.rec
+		}
+		err := writePingRecords(ctx, records)
+		for _, item := range writable {
+			item.done <- err
+		}
+	}
+
 	for {
 		select {
 		case request := <-w.requests:
-			pending = append(pending, drainReportQueue(w.queue, reportBatchQueueSize)...)
-			err := writePendingReports(request.ctx, &pending)
-			if request.stop {
-				if err != nil {
-					logger.Errorf("metricstore", "failed to flush metric report batch during shutdown: %v", err)
+			if !request.stop {
+				flushPings(request.ctx, pingBatchItem{}, false)
+				request.done <- flushReports(request.ctx)
+				continue
+			}
+			var err error
+			for {
+				for w.pingInflight.Load() > 0 || len(w.pingQueue) > 0 {
+					select {
+					case item := <-w.pingQueue:
+						flushPings(request.ctx, item, true)
+					default:
+						flushPings(request.ctx, pingBatchItem{}, false)
+						if w.pingInflight.Load() > 0 && len(w.pingQueue) == 0 {
+							runtime.Gosched()
+						}
+					}
 				}
-				close(w.done)
-				request.done <- err
-				return
+				if ferr := flushReports(request.ctx); ferr != nil && err == nil {
+					err = ferr
+				}
+				for w.reportInflight.Load() > 0 || len(w.queue) > 0 {
+					if ferr := flushReports(request.ctx); ferr != nil {
+						if err == nil {
+							err = ferr
+						}
+						break
+					}
+					if w.reportInflight.Load() > 0 && len(w.queue) == 0 {
+						runtime.Gosched()
+					}
+				}
+				w.mu.Lock()
+				idle := w.pingInflight.Load() == 0 && len(w.pingQueue) == 0 &&
+					w.reportInflight.Load() == 0 && len(w.queue) == 0
+				if idle {
+					close(w.done)
+					w.mu.Unlock()
+					break
+				}
+				w.mu.Unlock()
+				runtime.Gosched()
+			}
+			if err != nil {
+				logger.Errorf("metricstore", "failed to flush metric report batch during shutdown: %v", err)
 			}
 			request.done <- err
-		case <-ticker.C:
-			pending = append(pending, drainReportQueue(w.queue, reportBatchQueueSize)...)
-			if err := writePendingReports(context.Background(), &pending); err != nil {
+			return
+		case <-w.flushNudge:
+			if err := flushReports(context.Background()); err != nil {
 				logger.Errorf("metricstore", "failed to flush metric report batch: %v", err)
 			}
+		case <-ticker.C:
+			if err := flushReports(context.Background()); err != nil {
+				logger.Errorf("metricstore", "failed to flush metric report batch: %v", err)
+			}
+		case item := <-w.pingQueue:
+			flushPings(context.Background(), item, true)
 		}
 	}
+}
+
+func drainPingQueue(queue <-chan pingBatchItem, limit int) []pingBatchItem {
+	if limit <= 0 {
+		return nil
+	}
+	capacity := len(queue)
+	if capacity == 0 {
+		return nil
+	}
+	if capacity > limit {
+		capacity = limit
+	}
+	items := make([]pingBatchItem, 0, capacity)
+	for len(items) < limit {
+		select {
+		case item := <-queue:
+			items = append(items, item)
+		default:
+			return items
+		}
+	}
+	return items
 }
 
 func drainReportQueue(queue <-chan v2.Report, limit int) []v2.Report {

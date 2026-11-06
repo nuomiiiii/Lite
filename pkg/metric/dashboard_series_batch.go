@@ -55,6 +55,8 @@ func (s *Store) DashboardSeriesBatch(ctx context.Context, queries []AggregateQue
 		return result, nil
 	}
 	ctx = withDashboardAxisQueryCache(ctx)
+	ctx, release := withQueryBucketArena(ctx)
+	defer release()
 
 	select {
 	case s.heavyReadGate <- struct{}{}:
@@ -479,9 +481,11 @@ func (s *Store) foldSQLiteV4DashboardRawBatchChunk(ctx context.Context, q querie
 		key := foldedRollupKey(item.series.entityID, item.series.tagsHash, bucketNano, plan.query.PreserveSeries)
 		bucket := plan.groups[key]
 		if bucket == nil {
-			bucket = newRollupBucketWithDigest(s.cfg.RollupPolicy.compression(), false)
+			bucket = newQueryRollupBucket(ctx, s.cfg.RollupPolicy.compression(), false)
 			bucket.tagsHash = item.series.tagsHash
-			bucket.tagsJSON = item.series.tagsJSON
+			if !plan.query.OmitTags {
+				bucket.tagsJSON = item.series.tagsJSON
+			}
 			plan.groups[key] = bucket
 		}
 		bucket.addMetricPoint(item.series.metricName, value, timestamp)
@@ -599,9 +603,11 @@ func (s *Store) foldSQLiteV4DashboardRollupBatchChunk(ctx context.Context, q que
 			floorDivNano(record.bucketNano, plan.query.Interval.Nanoseconds()), plan.query.PreserveSeries)
 		bucket := plan.groups[key]
 		if bucket == nil {
-			bucket = newRollupBucketWithDigest(s.cfg.RollupPolicy.compression(), false)
+			bucket = newQueryRollupBucket(ctx, s.cfg.RollupPolicy.compression(), false)
 			bucket.tagsHash = item.series.tagsHash
-			bucket.tagsJSON = item.series.tagsJSON
+			if !plan.query.OmitTags {
+				bucket.tagsJSON = item.series.tagsJSON
+			}
 			plan.groups[key] = bucket
 		}
 		stored := rollupBucket{

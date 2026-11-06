@@ -294,7 +294,7 @@ func (s *Store) executeRelationalSeriesRollupScanChunk(ctx context.Context, key 
 			},
 		}
 		for _, target := range relationalRollupScanRouteTargets(routes, metricName, entityID) {
-			foldRollupRow(target.plan.buckets, row, target.plan.group.query.Interval, s.cfg.RollupPolicy.compression(), target.plan.group.query.PreserveSeries, target.needDigest)
+			foldRollupRow(target.plan.buckets, row, target.plan.group.query.Interval, s.cfg.RollupPolicy.compression(), target.plan.group.query.PreserveSeries, target.needDigest, queryArenaFrom(ctx))
 			if !target.plan.hasWatermark {
 				identity := entityID + "\x00" + tagsHash
 				target.plan.covered[identity] = append(target.plan.covered[identity], rollupCoverage{start: bucketNano, end: bucketNano + target.resolution})
@@ -348,7 +348,7 @@ func (s *Store) foldRelationalSeriesRawTails(ctx context.Context, plans []*relat
 			}
 			points = remaining
 		}
-		if _, err := foldRawPoints(plan.buckets, points, plan.group.query.Interval, s.cfg.RollupPolicy.compression(), plan.group.query.PreserveSeries, plan.group.needDigest); err != nil {
+		if _, err := foldRawPoints(plan.buckets, points, plan.group.query.Interval, s.cfg.RollupPolicy.compression(), plan.group.query.PreserveSeries, plan.group.needDigest, queryArenaFrom(ctx)); err != nil {
 			return err
 		}
 	}

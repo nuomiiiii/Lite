@@ -27,6 +27,8 @@ func (s *Store) DashboardSeries(ctx context.Context, query AggregateQuery, now t
 		query.Aggregation = pingLossPhysicalAggregation(query.Aggregation)
 	}
 	ctx = withDashboardAxisQueryCache(ctx)
+	ctx, release := withQueryBucketArena(ctx)
+	defer release()
 
 	select {
 	case s.heavyReadGate <- struct{}{}:
@@ -166,9 +168,11 @@ func (s *Store) foldSQLiteV4RawDashboard(ctx context.Context, q querier, query A
 		key := foldedRollupKey(series.entityID, series.tagsHash, bucketNano, query.PreserveSeries)
 		bucket := groups[key]
 		if bucket == nil {
-			bucket = newRollupBucketWithDigest(s.cfg.RollupPolicy.compression(), false)
+			bucket = newQueryRollupBucket(ctx, s.cfg.RollupPolicy.compression(), false)
 			bucket.tagsHash = series.tagsHash
-			bucket.tagsJSON = series.tagsJSON
+			if !query.OmitTags {
+				bucket.tagsJSON = series.tagsJSON
+			}
 			groups[key] = bucket
 		}
 		bucket.addMetricPoint(series.metricName, value, timestamp)

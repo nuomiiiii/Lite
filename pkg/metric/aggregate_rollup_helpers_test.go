@@ -68,7 +68,7 @@ func (s *Store) AggregateRollup(ctx context.Context, query AggregateQuery, resol
 	if err != nil {
 		return nil, err
 	}
-	groups := foldRollupRows(nil, rows, query.Interval, comp, query.PreserveSeries, needDigest)
+	groups := foldRollupRows(nil, rows, query.Interval, comp, query.PreserveSeries, needDigest, nil)
 
 	out, err := rollupGroupsToPoints(groups, query)
 	if err != nil {

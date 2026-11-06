@@ -228,7 +228,7 @@ func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, en
 		key := rollupKey{entityID: row.entityID, tagsHash: row.bucketData.tagsHash, bucket: floorDivNano(row.bucket, resolution)}
 		bucket := groups[key]
 		if bucket == nil {
-			bucket = newRollupBucketWithDigest(comp, false)
+			bucket = newQueryRollupBucket(ctx, comp, false)
 			groups[key] = bucket
 		}
 		bucket.mergeStored(row.bucketData)
@@ -248,22 +248,22 @@ func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, en
 	return rows, nil
 }
 
-func foldRollupRows(groups map[rollupKey]*rollupBucket, rows []storedRollup, interval time.Duration, comp float64, preserveSeries, needDigest bool) map[rollupKey]*rollupBucket {
+func foldRollupRows(groups map[rollupKey]*rollupBucket, rows []storedRollup, interval time.Duration, comp float64, preserveSeries, needDigest bool, arena *queryBucketArena) map[rollupKey]*rollupBucket {
 	if groups == nil {
 		groups = make(map[rollupKey]*rollupBucket)
 	}
 	for _, r := range rows {
-		foldRollupRow(groups, r, interval, comp, preserveSeries, needDigest)
+		foldRollupRow(groups, r, interval, comp, preserveSeries, needDigest, arena)
 	}
 	return groups
 }
 
-func foldRollupRow(groups map[rollupKey]*rollupBucket, row storedRollup, interval time.Duration, comp float64, preserveSeries, needDigest bool) {
+func foldRollupRow(groups map[rollupKey]*rollupBucket, row storedRollup, interval time.Duration, comp float64, preserveSeries, needDigest bool, arena *queryBucketArena) {
 	bucketNano := floorDivNano(row.bucket, interval.Nanoseconds())
 	key := foldedRollupKey(row.entityID, row.bucketData.tagsHash, bucketNano, preserveSeries)
 	bucket := groups[key]
 	if bucket == nil {
-		bucket = newRollupBucketWithDigest(comp, needDigest)
+		bucket = newQueryRollupBucketFrom(arena, comp, needDigest)
 		bucket.tagsHash = row.bucketData.tagsHash
 		bucket.tagsJSON = row.bucketData.tagsJSON
 		groups[key] = bucket
@@ -280,7 +280,7 @@ func foldRollupRow(groups map[rollupKey]*rollupBucket, row storedRollup, interva
 // foldRawPoints 将原始点折叠进 interval 宽的输出桶，把每个观测值加入对应桶的
 // 累加器。它与 foldRollupRows 共用桶 map，因此混合查询可以把旧 rollup 半边和
 // 近期 raw 半边合并到同一批输出桶中并一起聚合（跨边界的 count/avg/百分位正确）。
-func foldRawPoints(groups map[rollupKey]*rollupBucket, points []Point, interval time.Duration, comp float64, preserveSeries, needDigest bool) (map[rollupKey]*rollupBucket, error) {
+func foldRawPoints(groups map[rollupKey]*rollupBucket, points []Point, interval time.Duration, comp float64, preserveSeries, needDigest bool, arena *queryBucketArena) (map[rollupKey]*rollupBucket, error) {
 	if groups == nil {
 		groups = make(map[rollupKey]*rollupBucket)
 	}
@@ -296,7 +296,7 @@ func foldRawPoints(groups map[rollupKey]*rollupBucket, points []Point, interval 
 		key := foldedRollupKey(p.EntityID, tagsHash, bkt, preserveSeries)
 		b := groups[key]
 		if b == nil {
-			b = newRollupBucketWithDigest(comp, needDigest)
+			b = newQueryRollupBucketFrom(arena, comp, needDigest)
 			b.tagsHash = tagsHash
 			b.tagsJSON = tagsJSON
 			groups[key] = b
@@ -528,6 +528,8 @@ func (s *Store) Series(ctx context.Context, query AggregateQuery, now time.Time)
 	if err := query.Validate(); err != nil {
 		return nil, err
 	}
+	ctx, release := withQueryBucketArena(ctx)
+	defer release()
 	if s.cfg.Driver == DriverSQLite {
 		select {
 		case s.heavyReadGate <- struct{}{}:
@@ -563,6 +565,8 @@ func (s *Store) SeriesBatch(ctx context.Context, queries []AggregateQuery, now t
 	if len(queries) == 0 {
 		return [][]AggregatePoint{}, nil
 	}
+	ctx, release := withQueryBucketArena(ctx)
+	defer release()
 	select {
 	case s.heavyReadGate <- struct{}{}:
 		defer func() { <-s.heavyReadGate }()
@@ -727,7 +731,7 @@ func (s *Store) collectSeriesPhysicalGroups(ctx context.Context, query Aggregate
 		if err != nil {
 			return nil, err
 		}
-		return foldRawPoints(nil, points, query.Interval, policy.compression(), query.PreserveSeries, needDigest)
+		return foldRawPoints(nil, points, query.Interval, policy.compression(), query.PreserveSeries, needDigest, queryArenaFrom(ctx))
 	}
 	if !policy.Enabled() {
 		return collectRaw(q)
@@ -911,13 +915,13 @@ func (s *Store) collectSeriesAcrossHandoffTiers(ctx context.Context, query Aggre
 		}
 		if s.sqliteStorageV4 && hasWatermark && !needDigest {
 			return s.foldSQLiteV4Rollups(ctx, s.reader(), q.MetricName, q.EntityID, q.Tags,
-				resNano, scanLower, scanUpper, groups, query.Interval, comp, query.PreserveSeries)
+				resNano, scanLower, scanUpper, groups, query.Interval, comp, query.PreserveSeries, query.OmitTags)
 		}
 		rows, err := s.scanRollupRowsBetween(ctx, q.MetricName, q.EntityID, q.Tags, resNano, scanLower, scanUpper, needDigest)
 		if err != nil {
 			return err
 		}
-		foldRollupRows(groups, rows, query.Interval, comp, query.PreserveSeries, needDigest)
+		foldRollupRows(groups, rows, query.Interval, comp, query.PreserveSeries, needDigest, queryArenaFrom(ctx))
 		if !hasWatermark {
 			for _, row := range rows {
 				identity := row.entityID + "\x00" + row.bucketData.tagsHash
@@ -1039,7 +1043,7 @@ func (s *Store) collectSeriesAcrossHandoffTiers(ctx context.Context, query Aggre
 				}
 				points = remaining
 			}
-			if _, err := foldRawPoints(groups, points, query.Interval, comp, query.PreserveSeries, needDigest); err != nil {
+			if _, err := foldRawPoints(groups, points, query.Interval, comp, query.PreserveSeries, needDigest, queryArenaFrom(ctx)); err != nil {
 				return nil, err
 			}
 		}
@@ -1057,7 +1061,7 @@ func (s *Store) seriesWithoutWatermark(ctx context.Context, query AggregateQuery
 	if err != nil {
 		return nil, err
 	}
-	groups := foldRollupRows(nil, rows, query.Interval, comp, query.PreserveSeries, needDigest)
+	groups := foldRollupRows(nil, rows, query.Interval, comp, query.PreserveSeries, needDigest, queryArenaFrom(ctx))
 
 	type coveredBucketKey struct {
 		entityID string
@@ -1097,7 +1101,7 @@ func (s *Store) seriesWithoutWatermark(ctx context.Context, query AggregateQuery
 		}
 		remaining = append(remaining, point)
 	}
-	if _, err := foldRawPoints(groups, remaining, query.Interval, comp, query.PreserveSeries, needDigest); err != nil {
+	if _, err := foldRawPoints(groups, remaining, query.Interval, comp, query.PreserveSeries, needDigest, queryArenaFrom(ctx)); err != nil {
 		return nil, err
 	}
 
@@ -1160,7 +1164,7 @@ func (s *Store) seriesHybridWithRollupEnd(ctx context.Context, query AggregateQu
 		if err != nil {
 			return nil, err
 		}
-		foldRollupRows(groups, rows, query.Interval, comp, query.PreserveSeries, needDigest)
+		foldRollupRows(groups, rows, query.Interval, comp, query.PreserveSeries, needDigest, queryArenaFrom(ctx))
 	}
 
 	// Recent half: raw points in [splitAt, End]. Reuse the raw Query path so the
@@ -1176,7 +1180,7 @@ func (s *Store) seriesHybridWithRollupEnd(ctx context.Context, query AggregateQu
 		if err != nil {
 			return nil, err
 		}
-		if _, err := foldRawPoints(groups, points, query.Interval, comp, query.PreserveSeries, needDigest); err != nil {
+		if _, err := foldRawPoints(groups, points, query.Interval, comp, query.PreserveSeries, needDigest, queryArenaFrom(ctx)); err != nil {
 			return nil, err
 		}
 	}

@@ -93,6 +93,8 @@ func (s *Store) pingTaskDistributionsFromRaw(ctx context.Context, entityID strin
 }
 
 func (s *Store) pingTaskDistributionsFromMergedBuckets(ctx context.Context, query AggregateQuery, now time.Time) (map[string]PingDistribution, error) {
+	ctx, release := withQueryBucketArena(ctx)
+	defer release()
 	groups, err := s.collectSeriesPhysicalGroups(ctx, query, now, true)
 	if err != nil {
 		return nil, err
@@ -112,7 +114,7 @@ func (s *Store) pingTaskDistributionsFromMergedBuckets(ctx context.Context, quer
 		}
 		target := merged[taskID]
 		if target == nil {
-			target = newRollupBucketWithDigest(defaultTDigestCompression, true)
+			target = newQueryRollupBucket(ctx, defaultTDigestCompression, true)
 			merged[taskID] = target
 		}
 		target.mergeStored(bucket)
