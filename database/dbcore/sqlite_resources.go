@@ -1,6 +1,9 @@
 package dbcore
 
-const gibibyte = int64(1024 * 1024 * 1024)
+const (
+	mib      = int64(1024 * 1024)
+	gibibyte = 1024 * mib
+)
 
 func mainDatabaseCacheSizeKB() int {
 	return mainDatabaseCacheSizeKBFor(detectEffectiveMemoryBytes())
@@ -10,14 +13,17 @@ func mainDatabaseCacheSizeKBFor(memoryBytes int64) int {
 	if memoryBytes <= 0 {
 		memoryBytes = gibibyte
 	}
-	// lite.db also stores MCP history, audit logs and sessions, so the page
-	// cache has to cover a file that can grow well past a few megabytes.
+	// Page cache follows the product floor (256 MiB) and the working set, not
+	// spare RAM. lite.db can grow with MCP/audit/sessions, but a 256 MiB box
+	// cannot pre-size for a large future file.
 	switch {
-	case memoryBytes <= gibibyte:
-		return 8 * 1024
+	case memoryBytes <= 256*mib:
+		return 2 * 1024
+	case memoryBytes <= 512*mib:
+		return 4 * 1024
 	case memoryBytes <= 2*gibibyte:
-		return 12 * 1024
+		return 8 * 1024
 	default:
-		return 16 * 1024
+		return 12 * 1024
 	}
 }

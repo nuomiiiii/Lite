@@ -445,6 +445,7 @@ Environment=LITE_DEPLOYMENT=linux
 Environment=LITE_SERVICE_NAME=$(service_unit)
 Environment=LITE_SERVICE_MANAGER=systemd
 Environment=LITE_LISTEN=0.0.0.0:${port}
+Environment=GODEBUG=disablethp=1
 
 [Install]
 WantedBy=multi-user.target
@@ -474,7 +475,7 @@ start_service() {
 	procd_open_instance
 	procd_set_param command "\$PROG" server -l "0.0.0.0:\${PORT}"
 	procd_set_param cwd "\$DATA_DIR"
-	procd_set_param env LITE_DEPLOYMENT=linux LITE_SERVICE_NAME=${SERVICE_NAME} LITE_SERVICE_MANAGER=procd LITE_LISTEN=0.0.0.0:\${PORT}
+	procd_set_param env LITE_DEPLOYMENT=linux LITE_SERVICE_NAME=${SERVICE_NAME} LITE_SERVICE_MANAGER=procd LITE_LISTEN=0.0.0.0:\${PORT} GODEBUG=disablethp=1
 	procd_set_param pidfile "\$PIDFILE"
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout 1

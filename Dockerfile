@@ -15,6 +15,7 @@ RUN ln -s Lite /app/komari
 ENV GIN_MODE=release
 ENV LITE_DEPLOYMENT=docker
 ENV TZ=Asia/Shanghai
+ENV GODEBUG=disablethp=1
 
 EXPOSE 27777 36888
 

@@ -9,11 +9,14 @@ func TestMainDatabaseCacheSizeKBBoundsMemory(t *testing.T) {
 		wantKB int
 	}{
 		{name: "unknown", memory: 0, wantKB: 8 * 1024},
-		{name: "half-gibibyte", memory: gibibyte / 2, wantKB: 8 * 1024},
+		{name: "256-mib", memory: 256 * mib, wantKB: 2 * 1024},
+		{name: "just-over-256-mib", memory: 256*mib + 1, wantKB: 4 * 1024},
+		{name: "below-256-mib", memory: 128 * mib, wantKB: 2 * 1024},
+		{name: "half-gibibyte", memory: gibibyte / 2, wantKB: 4 * 1024},
 		{name: "one-gibibyte", memory: gibibyte, wantKB: 8 * 1024},
-		{name: "two-gibibytes", memory: 2 * gibibyte, wantKB: 12 * 1024},
-		{name: "four-gibibytes", memory: 4 * gibibyte, wantKB: 16 * 1024},
-		{name: "large", memory: 8 * gibibyte, wantKB: 16 * 1024},
+		{name: "two-gibibytes", memory: 2 * gibibyte, wantKB: 8 * 1024},
+		{name: "four-gibibytes", memory: 4 * gibibyte, wantKB: 12 * 1024},
+		{name: "large", memory: 8 * gibibyte, wantKB: 12 * 1024},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

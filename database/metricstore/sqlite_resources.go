@@ -2,7 +2,10 @@ package metricstore
 
 import "runtime"
 
-const gib = int64(1024 * 1024 * 1024)
+const (
+	mib = int64(1024 * 1024)
+	gib = 1024 * mib
+)
 
 type sqliteResourceProfile struct {
 	MemoryBytes         int64
@@ -30,9 +33,9 @@ func sqliteResourceProfileFor(memoryBytes int64, cpuCount int) sqliteResourcePro
 		cpuCount = 1
 	}
 
-	// Size caches for a typical Lite fleet, not the host's unused RAM.
-	// mmap is off: SQLite would otherwise keep hot pages in both the page
-	// cache and the mapping, so RSS grows with metrics.db for no extra hit rate.
+	// Size caches from the 256 MiB product floor upward. mmap stays off so
+	// metrics.db pages are not kept twice (SQLite cache + mapping). Extra host
+	// RAM does not buy a larger cache until well above 2 GiB.
 	profile := sqliteResourceProfile{
 		MemoryBytes:         memoryBytes,
 		CPUCount:            cpuCount,
@@ -43,20 +46,22 @@ func sqliteResourceProfileFor(memoryBytes int64, cpuCount int) sqliteResourcePro
 		MMapBytes:           0,
 	}
 	switch {
-	case memoryBytes <= 512*1024*1024:
+	case memoryBytes <= 256*mib:
+		profile.WriterCacheKB = 1 * 1024
+		profile.ReaderCacheKB = 1 * 1024
+	case memoryBytes <= 512*mib:
 		profile.WriterCacheKB = 2 * 1024
-		profile.ReaderCacheKB = 2 * 1024
+		profile.ReaderCacheKB = 1 * 1024
 	case memoryBytes <= gib:
 		// Defaults above: about 6 MiB of SQLite cache on 1 GiB hosts.
 	case memoryBytes <= 2*gib:
-		profile.WriterCacheKB = 6 * 1024
-		profile.ReaderCacheKB = 3 * 1024
+		// Same as 1 GiB: a 2 GiB VPS should not look "large" to the cache.
 	default:
 		profile.WriterCacheKB = 8 * 1024
 		profile.ReaderCacheKB = 4 * 1024
 	}
 
-	if cpuCount >= 2 && memoryBytes > 512*1024*1024 {
+	if cpuCount >= 2 && memoryBytes > 512*mib {
 		profile.ReadPoolSize = 2
 		profile.HeavyReadConcurrent = 2
 	}

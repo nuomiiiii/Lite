@@ -49,6 +49,7 @@ func applyHTTPListenDefault(cmd *cobra.Command) {
 // 具体各阶段的职责与顺序见 App（cmd/app.go）。这里只负责串联：
 // 任一初始化阶段失败即中止启动，避免在半初始化状态下对外提供服务。
 func RunServer() {
+	reportTransparentHugePages()
 	app := NewApp()
 	if err := app.Bootstrap(); err != nil {
 		_ = app.Shutdown()

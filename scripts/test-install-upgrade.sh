@@ -21,6 +21,10 @@ if ! grep -q 'LITE_SERVICE_MANAGER=procd' "$INSTALLER_PATH"; then
     echo "FAIL: install-lite.sh does not create a procd service" >&2
     exit 1
 fi
+if [ "$(grep -c 'GODEBUG=disablethp=1' "$INSTALLER_PATH")" -lt 2 ]; then
+    echo "FAIL: install-lite.sh does not disable transparent huge pages for systemd and procd" >&2
+    exit 1
+fi
 if ! grep -q 'download_file' "$INSTALLER_PATH" || ! grep -q 'wget' "$INSTALLER_PATH"; then
     echo "FAIL: install-lite.sh does not support wget downloads" >&2
     exit 1
@@ -275,6 +279,7 @@ run_procd_unit_case() (
     assert_file_contains "$script" 'USE_PROCD=1'
     assert_file_contains "$script" 'LITE_DEPLOYMENT=linux'
     assert_file_contains "$script" 'LITE_SERVICE_MANAGER=procd'
+    assert_file_contains "$script" 'GODEBUG=disablethp=1'
     assert_file_contains "$script" 'pidfile'
     assert_file_contains "$script" '0.0.0.0:${PORT}'
     assert_file_contains "$ENV_FILE" 'LISTEN_PORT=36888'
