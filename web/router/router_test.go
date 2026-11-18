@@ -2,15 +2,36 @@ package router
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/nuomiiiii/lite/cmd/flags"
+	"github.com/nuomiiiii/lite/database/dbcore"
+	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/utils/instancekey"
+	"github.com/nuomiiiii/lite/web/api"
 )
+
+func TestMain(m *testing.M) {
+	cleanup := instancekey.SetupTempFileForTest()
+	flags.DatabaseType = flags.DatabaseTypeSQLite
+	flags.DatabaseFile = "file:router_pkg_test?mode=memory&cache=shared"
+	db := dbcore.GetDBInstance()
+	if sqlDB, err := db.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
+}
 
 func TestRegisterDoesNotExposeHTTPSCertificateUpload(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
+	engine.Use(api.IdentityMiddleware())
 	Register(engine)
 
 	for _, route := range engine.Routes() {
@@ -23,6 +44,7 @@ func TestRegisterDoesNotExposeHTTPSCertificateUpload(t *testing.T) {
 func TestRegisterUsesOnlyChunkedArchiveUploadRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
+	engine.Use(api.IdentityMiddleware())
 	Register(engine)
 
 	routes := make(map[string]bool)
@@ -86,9 +108,41 @@ func TestRegisterProtectsClientTokenRoutesWithSensitive2FA(t *testing.T) {
 	}
 }
 
+func TestHTTPSSettingsRoutesRejectAPIKeyRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	config.SetDb(dbcore.GetDBInstance())
+	const testKey = "test-site-api-key-123456"
+	if err := config.Set(config.ApiKeyKey, testKey); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = config.Set(config.ApiKeyKey, "") })
+
+	engine := gin.New()
+	engine.Use(api.IdentityMiddleware())
+	Register(engine)
+
+	for _, tc := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/admin/settings/https"},
+		{http.MethodPost, "/api/admin/settings/https"},
+		{http.MethodPost, "/api/admin/settings/https/reload"},
+	} {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		req.Header.Set("Authorization", "Bearer "+testKey)
+		rec := httptest.NewRecorder()
+		engine.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("%s %s with API key returned HTTP %d (%s), want %d", tc.method, tc.path, rec.Code, rec.Body.String(), http.StatusForbidden)
+		}
+	}
+}
+
 func TestRegisterRemovesLegacyAgentAndTerminalRoutes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
+	engine.Use(api.IdentityMiddleware())
 	Register(engine)
 
 	routes := make(map[string]bool)
@@ -119,6 +173,7 @@ func TestRegisterRemovesLegacyAgentAndTerminalRoutes(t *testing.T) {
 func TestRegisterDoesNotExposeAutoDiscoveryRegister(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
+	engine.Use(api.IdentityMiddleware())
 	Register(engine)
 
 	for _, route := range engine.Routes() {

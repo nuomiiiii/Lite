@@ -201,6 +201,11 @@ func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, en
 		return rows, nil
 	}
 
+	if !s.metricRequiresQuantiles(ctx, nil, metricName) {
+		return rows, nil
+	}
+	allowDigestless := s.metricAllowsDigestlessRollups(ctx, nil, metricName)
+
 	var finer int64
 	for index, tier := range s.cfg.RollupPolicy.Tiers {
 		if tier.Interval.Nanoseconds() == resolution && index > 0 {
@@ -209,6 +214,9 @@ func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, en
 		}
 	}
 	if finer <= 0 || resolution%finer != 0 {
+		if allowDigestless {
+			return rows, nil
+		}
 		return nil, fmt.Errorf("metric: %d SQLite V4 rollup digests are unavailable at resolution %d", len(missing), resolution)
 	}
 	fineUpper, err := checkedAddInt64(upper, resolution-finer)
@@ -222,7 +230,7 @@ func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, en
 	comp := s.cfg.RollupPolicy.compression()
 	groups := make(map[rollupKey]*rollupBucket)
 	for _, row := range fineRows {
-		if row.bucketData.digest == nil && !rollupDigestOptional(metricName, row.bucketData) {
+		if row.bucketData.digest == nil && !rollupDigestOptional(metricName, row.bucketData) && !allowDigestless {
 			return nil, fmt.Errorf("metric: finer SQLite V4 rollup digest is unavailable at resolution %d bucket %d", finer, row.bucket)
 		}
 		key := rollupKey{entityID: row.entityID, tagsHash: row.bucketData.tagsHash, bucket: floorDivNano(row.bucket, resolution)}
@@ -240,7 +248,19 @@ func (s *Store) hydrateSQLiteV4RollupDigests(ctx context.Context, metricName, en
 		if rollupDigestOptional(metricName, coarse) && rollupDigestOptional(metricName, rebuilt) {
 			continue
 		}
-		if rebuilt == nil || rebuilt.digest == nil || !sqliteV4RollupSummariesEqual(rebuilt, coarse) {
+		if rebuilt == nil {
+			if allowDigestless {
+				continue
+			}
+			return nil, fmt.Errorf("metric: cannot losslessly rebuild SQLite V4 rollup digest at resolution %d bucket %d", resolution, rows[index].bucket)
+		}
+		if !sqliteV4RollupSummariesEqual(rebuilt, coarse) {
+			return nil, fmt.Errorf("metric: cannot losslessly rebuild SQLite V4 rollup digest at resolution %d bucket %d", resolution, rows[index].bucket)
+		}
+		if rebuilt.digest == nil {
+			if allowDigestless {
+				continue
+			}
 			return nil, fmt.Errorf("metric: cannot losslessly rebuild SQLite V4 rollup digest at resolution %d bucket %d", resolution, rows[index].bucket)
 		}
 		coarse.digest = rebuilt.digest

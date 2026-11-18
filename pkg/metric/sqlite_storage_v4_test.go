@@ -14,6 +14,11 @@ import (
 	"time"
 )
 
+func init() {
+	// Always verify block encode -> decode round-trip invariants across the test suite.
+	verifyEncodedBlocksOnWrite = true
+}
+
 func TestSQLiteStorageV4MigratesV3AndPreservesExactPoints(t *testing.T) {
 	ctx := context.Background()
 	dsn := sqliteFileDSN(filepath.Join(t.TempDir(), "metrics.db"))
@@ -1590,4 +1595,157 @@ func mustFileSize(t *testing.T, path string) int64 {
 		t.Fatal(err)
 	}
 	return info.Size()
+}
+
+func TestSQLiteV4BuiltinNonQuantileMetricSupportsPercentileQueriesAndQuantileOptInHandoff(t *testing.T) {
+	ctx := context.Background()
+	policy := RollupPolicy{
+		RawRetention: 15 * time.Minute,
+		Tiers: []RollupTier{
+			{Interval: time.Minute, Retention: time.Hour},
+			{Interval: 5 * time.Minute, Retention: 24 * time.Hour},
+			{Interval: time.Hour, Retention: 7 * 24 * time.Hour},
+		},
+	}
+	store, err := Open(ctx, SQLiteInDir(t.TempDir(), WithRollupPolicy(policy)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if err := store.CreateMetric(ctx, Definition{Name: "cpu.usage", Type: TypeGauge, RetentionDays: 7}); err != nil {
+		t.Fatal(err)
+	}
+
+	base := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	var batch []Point
+	for minute := 0; minute < 5; minute++ {
+		for sample, val := range []float64{10, 30, 80} {
+			batch = append(batch, Point{
+				MetricName: "cpu.usage",
+				EntityID:   "node-a",
+				Timestamp:  base.Add(time.Duration(minute)*time.Minute + time.Duration(sample*10)*time.Second),
+				Value:      val,
+			})
+		}
+	}
+	if err := store.WriteBatch(ctx, batch); err != nil {
+		t.Fatal(err)
+	}
+
+	// Compact past RawRetention so raw points are deleted and only digestless 1m rollups remain.
+	now := base.Add(30 * time.Minute)
+	if _, err := store.CompactMetric(ctx, "cpu.usage", now); err != nil {
+		t.Fatalf("CompactMetric digestless: %v", err)
+	}
+
+	// Querying p50/p95/p99 over rolled-up digestless cpu.usage must return 0 rather
+	// than fabricating interpolated percentiles from min/mean/max, while scalar
+	// summaries (avg/min/max) remain exact.
+	queries := []AggregateQuery{
+		{
+			Query:       Query{MetricName: "cpu.usage", EntityID: "node-a", Start: base, End: base.Add(5 * time.Minute)},
+			Aggregation: AggP50,
+			Interval:    5 * time.Minute,
+		},
+		{
+			Query:       Query{MetricName: "cpu.usage", EntityID: "node-a", Start: base, End: base.Add(5 * time.Minute)},
+			Aggregation: AggP95,
+			Interval:    5 * time.Minute,
+		},
+		{
+			Query:       Query{MetricName: "cpu.usage", EntityID: "node-a", Start: base, End: base.Add(5 * time.Minute)},
+			Aggregation: AggP99,
+			Interval:    5 * time.Minute,
+		},
+		{
+			Query:       Query{MetricName: "cpu.usage", EntityID: "node-a", Start: base, End: base.Add(5 * time.Minute)},
+			Aggregation: AggAvg,
+			Interval:    5 * time.Minute,
+		},
+		{
+			Query:       Query{MetricName: "cpu.usage", EntityID: "node-a", Start: base, End: base.Add(5 * time.Minute)},
+			Aggregation: AggMin,
+			Interval:    5 * time.Minute,
+		},
+		{
+			Query:       Query{MetricName: "cpu.usage", EntityID: "node-a", Start: base, End: base.Add(5 * time.Minute)},
+			Aggregation: AggMax,
+			Interval:    5 * time.Minute,
+		},
+	}
+	seriesBatch, err := store.SeriesBatch(ctx, queries, now)
+	if err != nil {
+		t.Fatalf("SeriesBatch on digestless cpu.usage failed: %v", err)
+	}
+	for i, agg := range []Aggregation{AggP50, AggP95, AggP99} {
+		if len(seriesBatch[i]) != 1 {
+			t.Fatalf("%s returned %d buckets, want 1", agg, len(seriesBatch[i]))
+		}
+		if v := seriesBatch[i][0].Value; v != 0 {
+			t.Fatalf("%s on digestless metric fabricated non-zero value %v, want 0", agg, v)
+		}
+	}
+	if got := seriesBatch[3][0].Value; math.Abs(got-40) > 1e-9 {
+		t.Fatalf("avg = %v, want 40", got)
+	}
+	if got := seriesBatch[4][0].Value; got != 10 {
+		t.Fatalf("min = %v, want 10", got)
+	}
+	if got := seriesBatch[5][0].Value; got != 80 {
+		t.Fatalf("max = %v, want 80", got)
+	}
+
+	// Opt cpu.usage into quantiles={"true"} on existing digestless 1m buckets and advance past 1h retention.
+	// Historical digestless buckets must hand off cleanly with Value == 0 (never wedging compaction),
+	// while newly written samples after opting in retain real TDigest percentiles.
+	if err := store.UpsertMetric(ctx, Definition{
+		Name:          "cpu.usage",
+		Type:          TypeGauge,
+		RetentionDays: 7,
+		Metadata:      map[string]string{"quantiles": "true"},
+	}); err != nil {
+		t.Fatalf("UpsertMetric quantiles=true: %v", err)
+	}
+	newBase := base.Add(90 * time.Minute)
+	var optedBatch []Point
+	for sample, val := range []float64{20, 40, 90} {
+		optedBatch = append(optedBatch, Point{
+			MetricName: "cpu.usage",
+			EntityID:   "node-a",
+			Timestamp:  newBase.Add(time.Duration(sample*10) * time.Second),
+			Value:      val,
+		})
+	}
+	if err := store.WriteBatch(ctx, optedBatch); err != nil {
+		t.Fatal(err)
+	}
+	handoffTime := base.Add(2 * time.Hour)
+	if _, err := store.CompactMetric(ctx, "cpu.usage", handoffTime); err != nil {
+		t.Fatalf("CompactMetric handoff after enabling quantiles wedged: %v", err)
+	}
+	afterHandoff, err := store.AggregateRollup(ctx, AggregateQuery{
+		Query:       Query{MetricName: "cpu.usage", EntityID: "node-a", Start: base, End: base.Add(5*time.Minute - time.Nanosecond)},
+		Aggregation: AggP95,
+		Interval:    5 * time.Minute,
+	}, 5*time.Minute)
+	if err != nil || len(afterHandoff) != 1 || afterHandoff[0].Value != 0 {
+		t.Fatalf("AggregateRollup historical digestless bucket after handoff: points=%v err=%v, want Value=0", afterHandoff, err)
+	}
+	afterHandoffAvg, err := store.AggregateRollup(ctx, AggregateQuery{
+		Query:       Query{MetricName: "cpu.usage", EntityID: "node-a", Start: base, End: base.Add(5*time.Minute - time.Nanosecond)},
+		Aggregation: AggAvg,
+		Interval:    5 * time.Minute,
+	}, 5*time.Minute)
+	if err != nil || len(afterHandoffAvg) != 1 || math.Abs(afterHandoffAvg[0].Value-40) > 1e-9 {
+		t.Fatalf("AggregateRollup historical avg after handoff: points=%v err=%v, want 40", afterHandoffAvg, err)
+	}
+	optedRollup, err := store.AggregateRollup(ctx, AggregateQuery{
+		Query:       Query{MetricName: "cpu.usage", EntityID: "node-a", Start: newBase, End: newBase.Add(time.Minute - time.Nanosecond)},
+		Aggregation: AggP95,
+		Interval:    time.Minute,
+	}, time.Minute)
+	if err != nil || len(optedRollup) != 1 || optedRollup[0].Value < 20 || optedRollup[0].Value > 90 {
+		t.Fatalf("AggregateRollup opted-in bucket: points=%v err=%v, want real quantile in [20, 90]", optedRollup, err)
+	}
 }

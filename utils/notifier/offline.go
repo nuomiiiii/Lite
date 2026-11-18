@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	logger "github.com/nuomiiiii/lite/utils/log"
@@ -31,6 +32,37 @@ type notificationState struct {
 // clientStates 使用 sync.Map 实现对客户端状态的并发访问。
 // 映射关系：clientID (string) -> *notificationState
 var clientStates sync.Map
+
+var suppressOffline atomic.Bool
+
+// ClientIsLive reports whether the node is currently reachable on any
+// transport. The HTTP/WS layer sets this so a dead WebSocket does not page
+// operators while HTTP reports are still landing, and so panel shutdown does
+// not flush a fleet-wide offline burst.
+var ClientIsLive func(clientID string) bool
+
+// SuppressOfflineNotifications drops disconnect events. Call this before
+// closing agent sockets on panel shutdown; those closes are the panel going
+// away, not the nodes.
+func SuppressOfflineNotifications() {
+	suppressOffline.Store(true)
+}
+
+// ResumeOfflineNotifications re-enables disconnect events when starting or
+// restarting background services in-process.
+func ResumeOfflineNotifications() {
+	suppressOffline.Store(false)
+}
+
+func skipOfflineSend(clientID string) bool {
+	if suppressOffline.Load() {
+		return true
+	}
+	if ClientIsLive != nil && ClientIsLive(clientID) {
+		return true
+	}
+	return false
+}
 
 func ForgetClient(clientID string) {
 	value, exists := clientStates.LoadAndDelete(clientID)
@@ -107,8 +139,32 @@ func recordOnlineConnection(state *notificationState, connectionID int64) (notif
 	return true, false
 }
 
+// RebindOnlineConnection hands notification ownership to a surviving transport
+// when another session for the same client closes, so a later real disconnect
+// of the surviving session still matches state.connectionID.
+func RebindOnlineConnection(clientID string, endedConnectionID, survivingConnectionID int64) {
+	if clientID == "" {
+		return
+	}
+	val, exists := clientStates.Load(clientID)
+	if !exists {
+		return
+	}
+	state := val.(*notificationState)
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.connectionID == endedConnectionID || !state.isConnExist {
+		state.connectionID = survivingConnectionID
+		state.pendingOfflineSince = time.Time{}
+		state.isConnExist = true
+	}
+}
+
 // OfflineNotification 在启用通知且未在宽限期内发送的情况下，发送客户端离线通知。
 func OfflineNotification(clientID string, endedConnectionID int64) {
+	if skipOfflineSend(clientID) {
+		return
+	}
 	client, err := clients.GetClientByUUID(clientID)
 	if err != nil {
 		return
@@ -144,6 +200,10 @@ func OfflineNotification(clientID string, endedConnectionID int64) {
 			logger.Infof("notifier", "%s is reconnected new connID: %d, old connID: %d", clientID, state.connectionID, expectedConnectionID)
 			return
 		}
+		if skipOfflineSend(clientID) {
+			state.pendingOfflineSince = time.Time{}
+			return
+		}
 
 		// 即将发送通知，重置待通知状态。
 		// 需要多一个boolean 是因为pendingOfflineSince在offline睡眠后才修改，可能导致online判断不对
@@ -176,19 +236,38 @@ func OfflineNotification(clientID string, endedConnectionID int64) {
 	}(now, endedConnectionID)
 }
 
+// NotifyOnlineAsync synchronously records the online connection ID in memory
+// (preventing instant-disconnect races where Offline runs before Online) and
+// runs DB renewal/notification checks asynchronously.
+func NotifyOnlineAsync(clientID string, connectionID int64) {
+	if clientID == "" {
+		return
+	}
+	state := getOrInitState(clientID)
+	notifyOnline, duplicate := recordOnlineConnection(state, connectionID)
+	go func() {
+		defer func() { _ = recover() }()
+		finishOnlineNotification(clientID, connectionID, notifyOnline, duplicate)
+	}()
+}
+
 // OnlineNotification 在启用通知的情况下，发送客户端上线通知。
 func OnlineNotification(clientID string, connectionID int64) {
+	if clientID == "" {
+		return
+	}
+	state := getOrInitState(clientID)
+	notifyOnline, duplicate := recordOnlineConnection(state, connectionID)
+	finishOnlineNotification(clientID, connectionID, notifyOnline, duplicate)
+}
+
+func finishOnlineNotification(clientID string, connectionID int64, notifyOnline, duplicate bool) {
 	client, err := clients.GetClientByUUID(clientID)
 	if err != nil {
 		return
 	}
 	// 上线时检测续费
 	renewal.CheckAndAutoRenewal(client)
-
-	// 连接状态必须始终维护。通知开关只控制消息发送，不能让当前连接 ID
-	// 缺失，否则节点在线时启用通知后的首次断线会被误判为旧连接事件。
-	state := getOrInitState(clientID)
-	notifyOnline, duplicate := recordOnlineConnection(state, connectionID)
 
 	notiConf, enabled := getNotificationConfig(clientID)
 	if !enabled {

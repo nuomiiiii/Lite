@@ -23,7 +23,10 @@ func init() {
 	reg("setOidcProvider", adminSetOidc, "Set OIDC provider config")
 }
 
-func adminGetMessageSender(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+func adminGetMessageSender(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	if err := denyAPIKey(ctx); err != nil {
+		return nil, err
+	}
 	var params struct {
 		Provider string `json:"provider"`
 	}
@@ -42,7 +45,10 @@ func adminGetMessageSender(_ context.Context, req *rpc.JsonRpcRequest) (any, *rp
 	return providers, nil
 }
 
-func adminSetMessageSender(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+func adminSetMessageSender(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	if err := denyAPIKey(ctx); err != nil {
+		return nil, err
+	}
 	var senderConfig models.MessageSenderProvider
 	if err := req.BindParams(&senderConfig); err != nil {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Invalid configuration: "+err.Error(), nil)
@@ -70,7 +76,10 @@ func adminSetMessageSender(_ context.Context, req *rpc.JsonRpcRequest) (any, *rp
 	return map[string]any{"message": "Message sender provider set successfully"}, nil
 }
 
-func adminGetOidc(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+func adminGetOidc(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	if err := denyAPIKey(ctx); err != nil {
+		return nil, err
+	}
 	var params struct {
 		Provider string `json:"provider"`
 	}

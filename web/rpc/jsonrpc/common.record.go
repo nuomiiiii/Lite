@@ -86,9 +86,10 @@ func getRecords(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpc
 			maxCount = 4000
 		}
 		queryMaxCount := maxCount
-		if !isAdmin {
-			// Keep hidden-node filtering exact for public responses. Logged-in
-			// admin reads can safely push the final budget into storage.
+		if !isAdmin && params.UUID == "" {
+			// Keep hidden-node filtering exact for multi-node public responses.
+			// Single-node public reads have already validated hidden[params.UUID],
+			// so they can safely push the final budget into storage.
 			queryMaxCount = -1
 		}
 		// fetch load records

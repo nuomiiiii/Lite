@@ -3,7 +3,6 @@ package public
 import (
 	"fmt"
 	"net/url"
-	"slices"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nuomiiiii/lite/database/accounts"
@@ -23,36 +22,24 @@ func OAuth(c *gin.Context) {
 	}
 
 	authURL, state := oauth.CurrentProvider().GetAuthorizationURL(utils.GetCallbackURL(c))
+	secure := utils.GetScheme(c) == "https"
 
-	c.SetCookie("oauth_state", state, 3600, "/", "", false, true)
+	c.SetCookie("oauth_state", state, 3600, "/", "", secure, true)
 
 	c.Redirect(302, authURL)
 }
 
 // /api/oauth_callback
 func OAuthCallback(c *gin.Context) {
+	secure := utils.GetScheme(c) == "https"
 
 	// 验证state防止CSRF攻击
 	state, _ := c.Cookie("oauth_state")
-	c.SetCookie("oauth_state", "", -1, "/", "", false, true)
+	c.SetCookie("oauth_state", "", -1, "/", "", secure, true)
 
-	// 获取当前OAuth提供商名称
-	providerName := oauth.CurrentProvider().GetName()
-
-	providersSkipStateCheck := []string{"qq"}
-	if slices.Contains(providersSkipStateCheck, providerName) {
-		// 对于QQ登录，由于是通过QQ聚合登录平台中转，state可能会不匹配
-		// 但我们仍然需要验证state的存在性（不能是空的）
-		if state == "" {
-			c.JSON(400, gin.H{"status": "error", "error": "Invalid state"})
-			return
-		}
-	} else {
-		// 对于其他提供商，严格验证state匹配
-		if state == "" || state != c.Query("state") {
-			c.JSON(400, gin.H{"status": "error", "error": "Invalid state"})
-			return
-		}
+	if state == "" || state != c.Query("state") {
+		c.JSON(400, gin.H{"status": "error", "error": "Invalid state"})
+		return
 	}
 
 	queries := make(map[string]string)
@@ -82,7 +69,7 @@ func OAuthCallback(c *gin.Context) {
 	// 否则如果是 passkey_confirm_account，说明是添加通行密钥时的 SSO 确认
 	// 否则是登录
 	uuid, _ := c.Cookie("binding_external_account")
-	c.SetCookie("binding_external_account", "", -1, "/", "", false, true)
+	c.SetCookie("binding_external_account", "", -1, "/", "", secure, true)
 	if uuid != "" {
 		// 绑定外部账号
 		session, _ := c.Cookie("session_token")
@@ -102,7 +89,7 @@ func OAuthCallback(c *gin.Context) {
 	}
 
 	confirmUUID, _ := c.Cookie("passkey_confirm_account")
-	c.SetCookie("passkey_confirm_account", "", -1, "/", "", false, true)
+	c.SetCookie("passkey_confirm_account", "", -1, "/", "", secure, true)
 	if confirmUUID != "" {
 		session, _ := c.Cookie("session_token")
 		user, err := accounts.GetUserBySession(session)
@@ -117,7 +104,7 @@ func OAuthCallback(c *gin.Context) {
 			return
 		}
 		token := passkey.PutConfirmGrant(user.UUID)
-		c.SetCookie("passkey_confirm_ok", token, int(passkeyConfirmCookieSeconds), "/", "", false, true)
+		c.SetCookie("passkey_confirm_ok", token, int(passkeyConfirmCookieSeconds), "/", "", secure, true)
 		auditlog.Event(c.ClientIP(), user.UUID, "info", "audit.sso_passkey", nil)
 		c.Redirect(302, "/admin/settings/account-security?tab=passkeys&passkey_confirm=ok")
 		return

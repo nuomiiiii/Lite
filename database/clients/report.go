@@ -19,6 +19,10 @@ func getClientUUIDByToken(db *gorm.DB, token string, now time.Time) (clientUUID 
 	if token == "" {
 		return "", gorm.ErrRecordNotFound
 	}
+	if cachedUUID, ok := tokenUUIDCache.get(db, token, now); ok {
+		return cachedUUID, nil
+	}
+	gen := tokenUUIDCache.generation(db)
 	var client models.Client
 	err = db.Where(
 		"token = ? OR (previous_token = ? AND previous_token_expires_at > ?)",
@@ -27,13 +31,17 @@ func getClientUUIDByToken(db *gorm.DB, token string, now time.Time) (clientUUID 
 	if err != nil {
 		return "", err
 	}
-	if client.Token == token && client.PreviousToken != "" {
-		if err := db.Model(&models.Client{}).
-			Where("uuid = ? AND token = ?", client.UUID, token).
-			Updates(map[string]interface{}{"previous_token": "", "previous_token_expires_at": nil}).Error; err != nil {
-			return "", err
+	if client.Token == token {
+		if client.PreviousToken != "" {
+			if err := db.Model(&models.Client{}).
+				Where("uuid = ? AND token = ?", client.UUID, token).
+				Updates(map[string]interface{}{"previous_token": "", "previous_token_expires_at": nil}).Error; err != nil {
+				return "", err
+			}
+			invalidateClientListCache()
+		} else {
+			tokenUUIDCache.set(db, gen, token, client.UUID, now)
 		}
-		invalidateClientListCache()
 	}
 	return client.UUID, nil
 }

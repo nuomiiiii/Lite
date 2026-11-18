@@ -61,7 +61,7 @@ func TestCorsMiddlewareValidatesAPIOrigins(t *testing.T) {
 
 func TestCorsMiddlewareAllowsAPIKeyRequestsFromAnyOrigin(t *testing.T) {
 	setupCORSConfigDB(t, "123456789012")
-	router := setupCORSRouter(true, "")
+	router := setupCORSRouter(true, "https://allowed.example")
 
 	request := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
 	request.Host = "api.example"
@@ -75,6 +75,19 @@ func TestCorsMiddlewareAllowsAPIKeyRequestsFromAnyOrigin(t *testing.T) {
 	}
 	if got := response.Header().Get("Access-Control-Allow-Origin"); got != "https://evil.example" {
 		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, "https://evil.example")
+	}
+	if got := response.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty for unlisted cross-origin API key request", got)
+	}
+
+	allowlisted := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+	allowlisted.Host = "api.example"
+	allowlisted.Header.Set("Origin", "https://allowed.example")
+	allowlisted.Header.Set("Authorization", "Bearer 123456789012")
+	allowlistedResp := httptest.NewRecorder()
+	router.ServeHTTP(allowlistedResp, allowlisted)
+	if got := allowlistedResp.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Fatalf("allowlisted Access-Control-Allow-Credentials = %q, want true", got)
 	}
 }
 
@@ -141,6 +154,33 @@ func TestCorsMiddlewareSkipsNonAPIPaths(t *testing.T) {
 	}
 	if got := response.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("Access-Control-Allow-Origin = %q, want empty", got)
+	}
+}
+
+func TestCorsMiddlewareWildcardNeverReflectsOriginWithCredentials(t *testing.T) {
+	setupCORSConfigDB(t, "")
+	router := setupCORSRouter(true, "*")
+
+	crossOrigin := performCORSRequest(router, http.MethodGet, "/api/ping", "api.example", "https://evil.example")
+	if crossOrigin.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", crossOrigin.Code, http.StatusOK)
+	}
+	if got := crossOrigin.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want *", got)
+	}
+	if got := crossOrigin.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Fatalf("Access-Control-Allow-Credentials = %q, want empty when wildcard matched", got)
+	}
+
+	sameOrigin := performCORSRequest(router, http.MethodGet, "/api/ping", "api.example", "https://api.example")
+	if sameOrigin.Code != http.StatusOK {
+		t.Fatalf("same-origin status = %d, want %d", sameOrigin.Code, http.StatusOK)
+	}
+	if got := sameOrigin.Header().Get("Access-Control-Allow-Origin"); got != "https://api.example" {
+		t.Fatalf("same-origin Access-Control-Allow-Origin = %q, want https://api.example", got)
+	}
+	if got := sameOrigin.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
+		t.Fatalf("same-origin Access-Control-Allow-Credentials = %q, want true", got)
 	}
 }
 

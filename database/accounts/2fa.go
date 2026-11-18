@@ -11,9 +11,10 @@ import (
 )
 
 var (
-	TwoFactorIssuer     = "轻量.Lite"
-	ErrTwoFactorInvalid = errors.New("Invalid 2FA code")
-	ErrTwoFactorClosed  = errors.New("2FA is unavailable")
+	TwoFactorIssuer            = "轻量.Lite"
+	ErrTwoFactorInvalid        = errors.New("Invalid 2FA code")
+	ErrTwoFactorClosed         = errors.New("2FA is unavailable")
+	ErrTwoFactorAlreadyEnabled = errors.New("2FA is already enabled; disable it first")
 )
 
 func Generate2Fa() (string, image.Image, error) {
@@ -35,6 +36,14 @@ func Enable2Fa(uuid, secret, code string) error {
 	if secret == "" || code == "" {
 		return ErrTwoFactorInvalid
 	}
+	db := dbcore.GetDBInstance()
+	var user models.User
+	if err := db.Where("uuid = ?", uuid).First(&user).Error; err != nil {
+		return err
+	}
+	if user.TwoFactor != "" {
+		return ErrTwoFactorAlreadyEnabled
+	}
 	counter, ok := matchingTOTPCounter(secret, code, 0, time.Now())
 	if !ok {
 		return ErrTwoFactorInvalid
@@ -43,12 +52,15 @@ func Enable2Fa(uuid, secret, code string) error {
 	if err != nil {
 		return err
 	}
-	db := dbcore.GetDBInstance()
-	if err := db.Model(&models.User{}).Where("uuid = ?", uuid).Updates(map[string]interface{}{
+	res := db.Model(&models.User{}).Where("uuid = ? AND (two_factor = '' OR two_factor IS NULL)", uuid).Updates(map[string]interface{}{
 		"two_factor":         encrypted,
 		"two_factor_counter": counter,
-	}).Error; err != nil {
-		return err
+	})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrTwoFactorAlreadyEnabled
 	}
 	notifyUserSecurityChanged(uuid)
 	return nil
@@ -85,5 +97,28 @@ func Disable2Fa(uuid string) error {
 		return err
 	}
 	notifyUserSecurityChanged(uuid)
+	return nil
+}
+
+func DeleteOtherSessions(userUUID, keepSession string) error {
+	if userUUID == "" {
+		return nil
+	}
+	db := dbcore.GetDBInstance()
+	var err error
+	if keepSession == "" {
+		err = db.Where("uuid = ?", userUUID).Delete(&models.Session{}).Error
+	} else {
+		hashed, hashErr := hashSessionToken(keepSession)
+		q := db.Where("uuid = ? AND session <> ?", userUUID, keepSession)
+		if hashErr == nil && hashed != keepSession {
+			q = db.Where("uuid = ? AND session <> ? AND session <> ?", userUUID, hashed, keepSession)
+		}
+		err = q.Delete(&models.Session{}).Error
+	}
+	if err != nil {
+		return err
+	}
+	notifyUserSecurityChanged(userUUID)
 	return nil
 }

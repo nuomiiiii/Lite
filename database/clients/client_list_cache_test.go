@@ -13,27 +13,36 @@ import (
 
 func TestClientBasicInfoCacheReusesThenDrops(t *testing.T) {
 	var cache clientBasicInfoCache
+	db := &gorm.DB{}
 	now := time.Date(2026, 10, 6, 21, 0, 0, 0, time.UTC)
 	day := 6
-	cache.set(now, []models.Client{{UUID: "a", Name: "alpha", TrafficResetDay: &day}})
+	gen := cache.generation(db)
+	cache.set(db, gen, now, []models.Client{{UUID: "a", Name: "alpha", TrafficResetDay: &day}})
 
-	got, ok := cache.get(now.Add(19*time.Second), clientListCacheTTL)
+	got, ok := cache.get(db, now.Add(19*time.Second), clientListCacheTTL)
 	if !ok || len(got) != 1 || got[0].Name != "alpha" || got[0].TrafficResetDay == nil || *got[0].TrafficResetDay != 6 {
 		t.Fatalf("fresh cache = %#v ok=%v", got, ok)
 	}
 	got[0].Name = "changed"
 	*got[0].TrafficResetDay = 1
 
-	again, ok := cache.get(now.Add(19*time.Second), clientListCacheTTL)
+	again, ok := cache.get(db, now.Add(19*time.Second), clientListCacheTTL)
 	if !ok || again[0].Name != "alpha" || *again[0].TrafficResetDay != 6 {
 		t.Fatalf("cache shared caller memory: %#v", again)
 	}
-	if _, ok := cache.get(now.Add(clientListCacheTTL), clientListCacheTTL); ok {
+	if _, ok := cache.get(db, now.Add(clientListCacheTTL), clientListCacheTTL); ok {
 		t.Fatal("cache lived past its window")
 	}
-	cache.set(now, []models.Client{{UUID: "a", Name: "alpha"}})
+	staleGen := cache.generation(db)
 	cache.invalidate()
-	if _, ok := cache.get(now, clientListCacheTTL); ok {
+	cache.set(db, staleGen, now, []models.Client{{UUID: "a", Name: "stale"}})
+	if _, ok := cache.get(db, now, clientListCacheTTL); ok {
+		t.Fatal("stale generation write repopulated invalidated cache")
+	}
+	gen = cache.generation(db)
+	cache.set(db, gen, now, []models.Client{{UUID: "a", Name: "alpha"}})
+	cache.invalidate()
+	if _, ok := cache.get(db, now, clientListCacheTTL); ok {
 		t.Fatal("invalidated cache still hit")
 	}
 }

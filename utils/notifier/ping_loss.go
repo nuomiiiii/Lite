@@ -75,20 +75,11 @@ func CheckPingLossNotifications() {
 	for _, notification := range notifications {
 		lossStats := pingLossStats{}
 		lossAction := pingLossNotificationNone
-		if notification.LossEnabled {
-			windowStart := now.Add(-time.Duration(notification.WindowSeconds) * time.Second)
-			stats, err := getPingLossStatsWithStore(context.Background(), store, notification.Client, notification.TaskId, windowStart, now)
-			if err != nil {
-				log.Printf("Failed to compute ping loss for notification %d: %v", notification.Id, err)
-			} else {
-				lossStats = stats
-				lossAction = evaluatePingLossNotification(notification, stats, now)
-			}
-		}
-
 		latencyStats := metricstore.PingHealthStats{}
 		latencyEval := pingLatencyEvaluation{Notification: notification, Action: pingLatencyNotificationNone}
 		latencyEvaluated := false
+
+		sharedHealthLoaded := false
 		if notification.LatencyEnabled {
 			windowStart := now.Add(-time.Duration(notification.LatencyWindowSeconds) * time.Second)
 			stats, err := metricstore.QueryPingHealthStats(context.Background(), store, notification.Client, notification.TaskId, windowStart, now)
@@ -96,6 +87,11 @@ func CheckPingLossNotifications() {
 				log.Printf("Failed to compute ping latency for notification %d: %v", notification.Id, err)
 			} else {
 				latencyStats = stats
+				sharedHealthLoaded = true
+				if notification.LossEnabled && notification.WindowSeconds == notification.LatencyWindowSeconds {
+					lossStats = pingLossStats{Total: stats.Total, Lost: stats.Lost}
+					lossAction = evaluatePingLossNotification(notification, lossStats, now)
+				}
 				prepared, candidate, _, baselineErr := loadAdaptiveBaselineCandidate(context.Background(), store, notification, now)
 				if baselineErr != nil {
 					log.Printf("Failed to compute ping baseline for notification %d: %v", notification.Id, baselineErr)
@@ -106,7 +102,21 @@ func CheckPingLossNotifications() {
 			}
 		}
 
-		silenced := alertsilence.IsSilencedWithDB(db, alertsilence.KindLatency, strconv.FormatUint(uint64(notification.Id), 10), now)
+		if notification.LossEnabled && (!sharedHealthLoaded || notification.WindowSeconds != notification.LatencyWindowSeconds) {
+			windowStart := now.Add(-time.Duration(notification.WindowSeconds) * time.Second)
+			stats, err := getPingLossStatsWithStore(context.Background(), store, notification.Client, notification.TaskId, windowStart, now)
+			if err != nil {
+				log.Printf("Failed to compute ping loss for notification %d: %v", notification.Id, err)
+			} else {
+				lossStats = stats
+				lossAction = evaluatePingLossNotification(notification, stats, now)
+			}
+		}
+
+		silenced := false
+		if pingLossActionRequiresSend(lossAction) || pingLatencyActionRequiresSend(latencyEval.Action) {
+			silenced = alertsilence.IsSilencedWithDB(db, alertsilence.KindLatency, strconv.FormatUint(uint64(notification.Id), 10), now)
+		}
 		lossSent := true
 		if pingLossActionRequiresSend(lossAction) {
 			if pingSilenceBlocksSend(silenced, lossAction) {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/nuomiiiii/lite/utils/notifier"
 	agent_runtime "github.com/nuomiiiii/lite/web/agent"
+	"github.com/nuomiiiii/lite/web/connection"
 )
 
 const (
@@ -44,10 +45,10 @@ func refreshPostPresence(uuid string) {
 		return
 	}
 
-	// 新 POST 会话：生成 connID，标记在线，启动超时定时器
-	connID := time.Now().UnixNano()
+	// 新 POST 会话：生成全局唯一 connID，标记在线并同步登记连接状态，启动超时定时器
+	connID := connection.NextID()
 	agent_runtime.KeepAlivePresence(uuid, connID, postPresenceTTL)
-	go notifier.OnlineNotification(uuid, connID)
+	notifier.NotifyOnlineAsync(uuid, connID)
 
 	defaultGeneration := uint64(0)
 
@@ -61,6 +62,22 @@ func refreshPostPresence(uuid string) {
 	})
 
 	postPresenceStates[uuid] = entry
+}
+
+// clearPostPresence 在节点建立 WebSocket 主通道时立即清理残留的 HTTP presence 会话，
+// 避免 WebSocket 随后在 35s 窗口内真断线时被未过期的 HTTP TTL 吞掉离线告警。
+func clearPostPresence(uuid string) {
+	postPresenceMu.Lock()
+	entry, ok := postPresenceStates[uuid]
+	if ok {
+		entry.generation++
+		entry.timer.Stop()
+		delete(postPresenceStates, uuid)
+	}
+	postPresenceMu.Unlock()
+	if ok {
+		agent_runtime.SetPresence(uuid, entry.connID, false)
+	}
 }
 
 // postPresenceExpired 是定时器到期的回调。
@@ -77,5 +94,14 @@ func postPresenceExpired(uuid string, connID int64, gen uint64) {
 	postPresenceMu.Unlock()
 
 	agent_runtime.SetPresence(uuid, connID, false)
+	if liveID, live := agent_runtime.ActiveConnectionID(uuid); live {
+		notifier.RebindOnlineConnection(uuid, connID, liveID)
+		return
+	}
 	notifier.OfflineNotification(uuid, connID)
+}
+
+func httpSessionGoneShouldNotify(uuid string) bool {
+	_, live := agent_runtime.ActiveConnectionID(uuid)
+	return !live
 }

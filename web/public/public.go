@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -662,6 +663,42 @@ func EnsureBundledThemes() error {
 	})
 }
 
+const renderedIndexCacheMaxEntries = 64
+
+type renderedIndexCacheKey struct {
+	mode        string
+	source      string
+	language    string
+	sitename    string
+	description string
+	customHead  string
+	customBody  string
+}
+
+var (
+	renderedIndexMu    sync.RWMutex
+	renderedIndexCache = make(map[renderedIndexCacheKey][]byte, renderedIndexCacheMaxEntries)
+)
+
+func indexTemplateSourceIdentity(privateApplication bool, themeID, targetFile string) (string, bool) {
+	if privateApplication {
+		return "embedded:systemUI", true
+	}
+	if IsLocalThemeUsable(themeID) {
+		localPath := filepath.Join(DataDir, ThemesDir, themeID, filepath.FromSlash(targetFile))
+		info, err := os.Stat(localPath)
+		if err != nil || info.IsDir() {
+			return "", false
+		}
+		absPath, err := filepath.Abs(localPath)
+		if err != nil {
+			absPath = localPath
+		}
+		return fmt.Sprintf("local:%s:%d:%d", absPath, info.ModTime().UnixNano(), info.Size()), true
+	}
+	return "embedded:bundledThemes/Lite-theme", true
+}
+
 // Static 注册静态资源和 SPA 路由处理
 func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	getConfig := func() map[string]any {
@@ -694,22 +731,65 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 	// 核心逻辑：渲染 Index.html
 	serveIndex := func(c *gin.Context) {
 		reqPath := c.Request.URL.Path
+		privateApplication := isPrivateApplicationPath(reqPath)
 		// index.html contains live site metadata and must never be served stale.
-		if isPrivateApplicationPath(reqPath) {
+		if privateApplication {
 			applyPrivilegedPageHeaders(c)
 		} else {
 			setNoStoreHeaders(c)
 		}
 		cfg := getConfig()
 
-		privateApplication := isPrivateApplicationPath(reqPath)
+		themeID, _ := cfg[config.ThemeKey].(string)
+		sitename, _ := cfg[config.SitenameKey].(string)
+		description, _ := cfg[config.DescriptionKey].(string)
+		customHead, _ := cfg[config.CustomHeadKey].(string)
+		customBody, _ := cfg[config.CustomBodyKey].(string)
+
+		mode := "public"
+		if privateApplication {
+			if isAdminApplicationPath(reqPath) {
+				mode = "admin"
+			} else {
+				mode = "private"
+			}
+		}
+
+		normalizedLang := ""
+		if rawLang, err := c.Cookie(LanguageCookieName); err == nil {
+			normalizedLang = normalizeHTMLLanguage(rawLang)
+		}
+
 		targetFile := path.Join(DistDir, IndexFile)
+		sourceKey, sourceOK := indexTemplateSourceIdentity(privateApplication, themeID, targetFile)
+		var cacheKey renderedIndexCacheKey
+		if sourceOK {
+			cacheKey = renderedIndexCacheKey{
+				mode:        mode,
+				source:      sourceKey,
+				language:    normalizedLang,
+				sitename:    sitename,
+				description: description,
+			}
+			if !privateApplication {
+				cacheKey.customHead = customHead
+				cacheKey.customBody = customBody
+			}
+			renderedIndexMu.RLock()
+			cachedBytes, hit := renderedIndexCache[cacheKey]
+			renderedIndexMu.RUnlock()
+			if hit {
+				c.Data(http.StatusOK, "text/html; charset=utf-8", cachedBytes)
+				return
+			}
+		}
+
 		var content []byte
 		var exists bool
 		if privateApplication {
 			content, _, exists = embeddedFileContent("systemUI", targetFile)
 		} else {
-			content, _, exists = getPublicFileContent(cfg[config.ThemeKey].(string), targetFile)
+			content, _, exists = getPublicFileContent(themeID, targetFile)
 		}
 
 		if !exists {
@@ -718,41 +798,44 @@ func Static(r *gin.RouterGroup, noRoute func(handlers ...gin.HandlerFunc)) {
 		}
 
 		htmlStr := string(content)
-		if language, err := c.Cookie(LanguageCookieName); err == nil {
-			htmlStr = replaceHTMLLanguage(htmlStr, language)
+		if normalizedLang != "" {
+			htmlStr = replaceHTMLLanguage(htmlStr, normalizedLang)
 		}
 		if privateApplication {
 			// React owns route-specific titles after the system UI starts. Keeping
 			// the public-theme title observer out of private applications prevents
 			// it from fighting the admin title on every DOM mutation.
-			title := cfg[config.SitenameKey].(string)
-			if isAdminApplicationPath(reqPath) {
+			title := sitename
+			if mode == "admin" {
 				title = adminApplicationTitle
 			}
 			htmlStr = renderSystemApplicationIdentity(htmlStr, title)
 		} else {
-			htmlStr = renderApplicationIdentity(htmlStr, cfg[config.SitenameKey].(string))
+			htmlStr = renderApplicationIdentity(htmlStr, sitename)
 		}
 
+		var finalBytes []byte
 		// Custom Head/Body content belongs to the public site only. Keeping the
 		// private applications on the built-in document prevents public CSS and
 		// scripts from changing the admin or terminal interfaces.
 		if privateApplication {
-			c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(htmlStr))
-			return
+			finalBytes = []byte(htmlStr)
+		} else {
+			htmlStr = injectCustomHTML(htmlStr, customHead, customBody)
+			rendered := injectSiteDescription(htmlStr, description)
+			finalBytes = []byte(injectThemeChangeReload(rendered))
 		}
 
-		htmlStr = injectCustomHTML(
-			htmlStr,
-			cfg[config.CustomHeadKey].(string),
-			cfg[config.CustomBodyKey].(string),
-		)
+		if sourceOK {
+			renderedIndexMu.Lock()
+			if len(renderedIndexCache) >= renderedIndexCacheMaxEntries {
+				clear(renderedIndexCache)
+			}
+			renderedIndexCache[cacheKey] = finalBytes
+			renderedIndexMu.Unlock()
+		}
 
-		rendered := injectSiteDescription(
-			htmlStr,
-			cfg[config.DescriptionKey].(string),
-		)
-		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(injectThemeChangeReload(rendered)))
+		c.Data(http.StatusOK, "text/html; charset=utf-8", finalBytes)
 	}
 
 	// ================= 路由定义 =================

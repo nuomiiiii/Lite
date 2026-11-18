@@ -976,8 +976,9 @@ func doInitialize() error {
 	}
 
 	logConfig := &gorm.Config{
-		Logger:  logger.NewGormLogger(),
-		NowFunc: func() time.Time { return time.Now().UTC() },
+		Logger:                 logger.NewGormLogger(),
+		NowFunc:                func() time.Time { return time.Now().UTC() },
+		SkipDefaultTransaction: true,
 	}
 
 	// 根据数据库类型选择不同的连接方式
@@ -1093,6 +1094,7 @@ func doInitialize() error {
 	if err := migrations.MigratePingHealthIncidentNotified(instance); err != nil {
 		return fmt.Errorf("failed to migrate ping health incident delivery flags: %w", err)
 	}
+	config.InvalidateCache()
 	if err := instance.Exec(`
 		CREATE UNIQUE INDEX IF NOT EXISTS ux_mcp_operations_lease_idem
 		ON mcp_operations(lease_id, idempotency_key)
@@ -1123,6 +1125,7 @@ func doInitialize() error {
 	if err := migrations.MigrateLegacyCustomTrafficCycleKeys(instance, time.Now().UTC()); err != nil {
 		return fmt.Errorf("failed to migrate custom traffic cycle keys: %w", err)
 	}
+	config.InvalidateCache()
 	if err := instance.AutoMigrate(
 		&models.Session{},
 	); err != nil {

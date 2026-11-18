@@ -1,17 +1,77 @@
 package api
 
 import (
+	"crypto/subtle"
 	"database/sql"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/nuomiiiii/lite/database/accounts"
 	"github.com/nuomiiiii/lite/database/clients"
+	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/pkg/config"
 	"github.com/nuomiiiii/lite/pkg/rpc"
 	"gorm.io/gorm"
 )
+
+const cachedSessionStateKey = "cached_session_auth_state"
+
+type CachedSessionAuth struct {
+	SessionToken string
+	UserUUID     string
+	User         *models.User
+}
+
+func SetCachedSessionAuth(c *gin.Context, auth CachedSessionAuth) {
+	if c == nil {
+		return
+	}
+	c.Set(cachedSessionStateKey, auth)
+}
+
+func GetCachedSessionAuth(c *gin.Context, session string) (CachedSessionAuth, bool) {
+	if c == nil || session == "" {
+		return CachedSessionAuth{}, false
+	}
+	raw, ok := c.Get(cachedSessionStateKey)
+	if !ok {
+		return CachedSessionAuth{}, false
+	}
+	state, ok := raw.(CachedSessionAuth)
+	if !ok || state.SessionToken != session {
+		return CachedSessionAuth{}, false
+	}
+	return state, true
+}
+
+// ResolvePrincipalAndCacheSession identifies the principal and caches the validated
+// session + user on gin.Context so downstream buildContextMeta does not re-query User.
+func ResolvePrincipalAndCacheSession(c *gin.Context) *rpc.Principal {
+	if isApiKeyValid(c.GetHeader("Authorization")) {
+		return rpc.NewAPIKeyPrincipal()
+	}
+	if session, err := c.Cookie("session_token"); err == nil && session != "" {
+		if uuid, err := accounts.GetSession(session); err == nil && uuid != "" {
+			if user, uerr := accounts.GetUserByUUID(uuid); uerr == nil {
+				SetCachedSessionAuth(c, CachedSessionAuth{
+					SessionToken: session,
+					UserUUID:     uuid,
+					User:         &user,
+				})
+				return rpc.NewUserPrincipal(uuid)
+			}
+			return rpc.NewAnonymousPrincipal()
+		}
+	}
+	if token := extractClientToken(c); token != "" {
+		if uuid, err := checkTokenAndGetUUID(token); err == nil && uuid != "" {
+			return rpc.NewAgentPrincipal(uuid)
+		}
+	}
+	return rpc.NewAnonymousPrincipal()
+}
 
 const (
 	RoleAdmin  = "admin"
@@ -25,7 +85,7 @@ const (
 // api_key/session/client_uuid)以兼容现有 handler 与中间件。
 func IdentityMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		p := IdentifyPrincipal(c)
+		p := ResolvePrincipalAndCacheSession(c)
 		SetPrincipal(c, p)
 
 		// 写入兼容字段。
@@ -156,7 +216,7 @@ func PrivateSiteMiddleware() gin.HandlerFunc {
 
 func hasTempAccess(c *gin.Context) bool {
 	tempKey, err := c.Cookie("temp_key")
-	if err != nil {
+	if err != nil || tempKey == "" {
 		return false
 	}
 	expireAt, err := config.GetAs[int64]("tempory_share_token_expire_at", 0)
@@ -164,10 +224,10 @@ func hasTempAccess(c *gin.Context) bool {
 		return false
 	}
 	allowKey, err := config.GetAs[string]("tempory_share_token", "")
-	if err != nil {
+	if err != nil || allowKey == "" {
 		return false
 	}
-	if allowKey == "" || tempKey != allowKey {
+	if subtle.ConstantTimeCompare([]byte(tempKey), []byte(allowKey)) != 1 {
 		return false
 	}
 	return expireAt >= time.Now().Unix()
@@ -199,6 +259,9 @@ func checkTokenAndGetUUID(token string) (string, error) {
 }
 
 func isApiKeyValid(apiKey string) bool {
+	if !strings.HasPrefix(apiKey, "Bearer ") {
+		return false
+	}
 	apiKeyConfig, err := config.GetAs[string](config.ApiKeyKey, "")
 	if err != nil {
 		return false
@@ -207,7 +270,8 @@ func isApiKeyValid(apiKey string) bool {
 	if apiKeyConfig == "" || len(apiKeyConfig) < 12 {
 		return false
 	}
-	return apiKey == "Bearer "+apiKeyConfig
+	token := apiKey[len("Bearer "):]
+	return subtle.ConstantTimeCompare([]byte(token), []byte(apiKeyConfig)) == 1
 }
 
 // IsSiteAPIKey reports whether Authorization is the site-wide API key.

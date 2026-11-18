@@ -2,7 +2,6 @@ package metric
 
 import (
 	"bytes"
-	"compress/flate"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -52,9 +51,10 @@ func decodeSQLiteV4Block(codec, expectedCount int, expectedChecksum uint32, payl
 	case sqliteV4PayloadRaw:
 		raw = payload[1:]
 	case sqliteV4PayloadDeflate:
-		reader := flate.NewReader(bytes.NewReader(payload[1:]))
+		reader := acquireFlateReader(bytes.NewReader(payload[1:]))
 		decompressed, err := io.ReadAll(io.LimitReader(reader, 128<<20))
 		closeErr := reader.Close()
+		releaseFlateReader(reader)
 		if err != nil {
 			return nil, fmt.Errorf("metric: decompress SQLite V4 point block: %w", err)
 		}

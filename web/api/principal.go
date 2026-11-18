@@ -25,7 +25,10 @@ func IdentifyPrincipal(c *gin.Context) *rpc.Principal {
 	// 2. Session(管理员用户)
 	if session, err := c.Cookie("session_token"); err == nil && session != "" {
 		if uuid, err := accounts.GetSession(session); err == nil && uuid != "" {
-			return rpc.NewUserPrincipal(uuid)
+			if _, uerr := accounts.GetUserByUUID(uuid); uerr == nil {
+				return rpc.NewUserPrincipal(uuid)
+			}
+			return rpc.NewAnonymousPrincipal()
 		}
 	}
 

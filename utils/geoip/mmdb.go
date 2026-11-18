@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath" // 新增导入，用于处理文件路径
 	"sync"
+	"time"
 
 	logger "github.com/nuomiiiii/lite/utils/log"
 
@@ -39,6 +40,8 @@ type MaxMindGeoIPService struct {
 	dbFilePath string
 	// mu 用于保护对 maxMindDBReader 的并发访问，确保线程安全。
 	mu sync.RWMutex
+	// updateMu 串行化后台数据库下载，避免下载期间持有 mu 写锁阻塞并发查询。
+	updateMu sync.Mutex
 }
 
 // Name 返回服务的名称。
@@ -133,9 +136,15 @@ func (s *MaxMindGeoIPService) GetGeoInfo(ip net.IP) (*GeoInfo, error) {
 // UpdateDatabase 实现了 GeoIPService 接口的 UpdateDatabase 方法。
 // 它会下载最新的 GeoLite2-Country.mmdb 文件并重新加载数据库。
 func (s *MaxMindGeoIPService) UpdateDatabase() error {
-	s.mu.Lock() // 获取写锁，确保更新过程的互斥性
+	s.updateMu.Lock()
+	defer s.updateMu.Unlock()
 
-	resp, err := http.Get(GeoIpUrl) // GeoIpUrl 是预定义的 MaxMind 数据库下载地址
+	if err := os.MkdirAll(filepath.Dir(s.dbFilePath), os.ModePerm); err != nil {
+		return fmt.Errorf("failed to create data directory for MaxMind database update: %w", err)
+	}
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Get(GeoIpUrl)
 	if err != nil {
 		return fmt.Errorf("failed to initiate MaxMind database download: %w", err)
 	}
@@ -145,24 +154,60 @@ func (s *MaxMindGeoIPService) UpdateDatabase() error {
 		return fmt.Errorf("failed to download MaxMind database: HTTP status %s", resp.Status)
 	}
 
-	// 确保数据目录存在（NewMaxMindGeoIPService 已处理，但这里再次确保以防直接调用）
-	if err := os.MkdirAll(filepath.Dir(s.dbFilePath), os.ModePerm); err != nil {
-		return fmt.Errorf("failed to create data directory for MaxMind database update: %w", err)
-	}
-
-	out, err := os.Create(s.dbFilePath) // 创建或覆盖本地数据库文件
+	tmpPath := s.dbFilePath + ".tmp"
+	_ = os.Remove(tmpPath)
+	out, err := os.Create(tmpPath)
 	if err != nil {
-		return fmt.Errorf("failed to create MaxMind database file at %s: %w", s.dbFilePath, err)
+		return fmt.Errorf("failed to create temporary MaxMind database file at %s: %w", tmpPath, err)
 	}
-	defer out.Close()
+	cleanupTmp := true
+	defer func() {
+		if cleanupTmp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
 
-	_, err = io.Copy(out, resp.Body) // 将下载内容写入文件
-	if err != nil {
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		_ = out.Close()
 		return fmt.Errorf("failed to write MaxMind database file: %w", err)
 	}
-	s.mu.Unlock() // initialize 方法需要在解锁后调用，以避免死锁
-	// 重新加载数据库以使用新下载的文件
-	return s.initialize()
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		return fmt.Errorf("failed to sync MaxMind database file: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary MaxMind database file: %w", err)
+	}
+
+	// Validate the downloaded MMDB before swapping out the active reader.
+	testReader, err := maxminddb.Open(tmpPath)
+	if err != nil {
+		return fmt.Errorf("downloaded MaxMind database failed validation: %w", err)
+	}
+	_ = testReader.Close()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.maxMindDBReader != nil {
+		_ = s.maxMindDBReader.Close()
+		s.maxMindDBReader = nil
+	}
+	if err := os.Rename(tmpPath, s.dbFilePath); err != nil {
+		// Reopen the previous database if it still exists so lookups keep working.
+		if prevReader, openErr := maxminddb.Open(s.dbFilePath); openErr == nil {
+			s.maxMindDBReader = prevReader
+		}
+		return fmt.Errorf("failed to replace MaxMind database at %s: %w", s.dbFilePath, err)
+	}
+	cleanupTmp = false
+
+	reader, err := maxminddb.Open(s.dbFilePath)
+	if err != nil {
+		return fmt.Errorf("error opening MaxMind database at %s: %w", s.dbFilePath, err)
+	}
+	s.maxMindDBReader = reader
+	return nil
 }
 
 // Close 实现了 GeoIPService 接口的 Close 方法。

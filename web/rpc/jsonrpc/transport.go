@@ -2,6 +2,7 @@ package jsonrpc
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -149,7 +150,7 @@ func buildContextMeta(c *gin.Context) *rpc.ContextMeta {
 	// 优先读取中间件已识别的 principal；未识别时兜底自行识别(如 /api/rpc2 请求)。
 	p := api.GetPrincipal(c)
 	if p == nil {
-		p = api.IdentifyPrincipal(c)
+		p = api.ResolvePrincipalAndCacheSession(c)
 	}
 
 	meta := &rpc.ContextMeta{
@@ -165,8 +166,15 @@ func buildContextMeta(c *gin.Context) *rpc.ContextMeta {
 		meta.UserUUID = p.UserUUID
 		if session, err := c.Cookie("session_token"); err == nil && session != "" {
 			meta.SessionToken = session
-			if user, err := accounts.GetUserBySession(session); err == nil {
+			if cached, ok := api.GetCachedSessionAuth(c, session); ok && cached.UserUUID == p.UserUUID {
+				meta.User = cached.User
+			} else if user, err := accounts.GetUserBySession(session); err == nil {
 				meta.User = &user
+				api.SetCachedSessionAuth(c, api.CachedSessionAuth{
+					SessionToken: session,
+					UserUUID:     user.UUID,
+					User:         &user,
+				})
 			}
 		}
 	case rpc.PrincipalAgent:
@@ -192,7 +200,10 @@ func hasTempShareAccess(c *gin.Context) bool {
 		return false
 	}
 	allowKey, err := config.GetAs[string]("tempory_share_token", "")
-	if err != nil || allowKey == "" || tempKey != allowKey {
+	if err != nil || allowKey == "" {
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(tempKey), []byte(allowKey)) != 1 {
 		return false
 	}
 	return expireAt >= time.Now().Unix()

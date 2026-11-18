@@ -2,10 +2,22 @@ package connection
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+var connIDSeq atomic.Int64
+
+func init() {
+	connIDSeq.Store(time.Now().UnixNano())
+}
+
+// NextID returns a process-unique monotonically increasing connection session ID.
+func NextID() int64 {
+	return connIDSeq.Add(1)
+}
 
 type SafeConn struct {
 	conn *websocket.Conn
@@ -17,7 +29,7 @@ func NewSafeConn(conn *websocket.Conn) *SafeConn {
 	return &SafeConn{
 		conn: conn,
 		mu:   sync.Mutex{},
-		ID:   time.Now().UnixNano(),
+		ID:   NextID(),
 	}
 }
 

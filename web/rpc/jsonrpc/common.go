@@ -24,10 +24,14 @@ import (
 	agent_runtime "github.com/nuomiiiii/lite/web/agent"
 
 	cache "github.com/patrickmn/go-cache"
+	"golang.org/x/sync/singleflight"
 )
 
 // pingstats:<uuid>
-var pingStatsCache = cache.New(1*time.Minute, 2*time.Minute)
+var (
+	pingStatsCache  = cache.New(1*time.Minute, 2*time.Minute)
+	pingStatsFlight singleflight.Group
+)
 
 type pingStat struct {
 	Name   string  `json:"name"`
@@ -66,6 +70,21 @@ func getPingStatsForNode(uuid string, pingTasks []models.PingTask) map[string]pi
 		pingStatsCache.Set(key, empty, cache.DefaultExpiration)
 		return empty
 	}
+	val, _, _ := pingStatsFlight.Do(key, func() (any, error) {
+		if v, ok := pingStatsCache.Get(key); ok {
+			if m, ok2 := v.(map[string]pingStat); ok2 {
+				return m, nil
+			}
+		}
+		return loadLatestPingStats(uuid, assigned, key), nil
+	})
+	if m, ok := val.(map[string]pingStat); ok {
+		return m
+	}
+	return map[string]pingStat{}
+}
+
+func loadLatestPingStats(uuid string, assigned []models.PingTask, key string) map[string]pingStat {
 	end := time.Now().UTC()
 	start := end.Add(-1 * time.Hour)
 	recs, err := tasks.GetPingRecords(uuid, -1, start, end)

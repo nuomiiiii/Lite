@@ -26,8 +26,19 @@ var (
 
 func Generate2FA(c *gin.Context) {
 	session, _ := c.Cookie("session_token")
-	if session == "" {
+	uuid, _ := c.Get("uuid")
+	userUUID, _ := uuid.(string)
+	if session == "" || userUUID == "" {
 		api.RespondError(c, 401, "2FA setup requires an administrator session")
+		return
+	}
+	user, err := accounts.GetUserByUUID(userUUID)
+	if err != nil {
+		api.RespondError(c, 500, "Failed to verify account")
+		return
+	}
+	if user.TwoFactor != "" {
+		api.RespondError(c, 409, "2FA is already enabled; disable it first")
 		return
 	}
 	secret, img, err := accounts.Generate2Fa()
@@ -46,6 +57,18 @@ func Enable2FA(c *gin.Context) {
 	uuid, _ := c.Get("uuid")
 	userUUID, _ := uuid.(string)
 	session, _ := c.Cookie("session_token")
+	if userUUID != "" {
+		user, err := accounts.GetUserByUUID(userUUID)
+		if err != nil {
+			api.RespondError(c, 500, "Failed to verify account")
+			return
+		}
+		if user.TwoFactor != "" {
+			_ = takePendingTwoFactor(session)
+			api.RespondError(c, 409, "2FA is already enabled; disable it first")
+			return
+		}
+	}
 	code := readTwoFactorCode(c)
 	secret := takePendingTwoFactor(session)
 	if secret == "" || userUUID == "" || code == "" {
@@ -53,6 +76,10 @@ func Enable2FA(c *gin.Context) {
 		return
 	}
 	if err := accounts.Enable2Fa(userUUID, secret, code); err != nil {
+		if errors.Is(err, accounts.ErrTwoFactorAlreadyEnabled) {
+			api.RespondError(c, 409, "2FA is already enabled; disable it first")
+			return
+		}
 		if errors.Is(err, accounts.ErrTwoFactorInvalid) {
 			rememberPendingTwoFactor(session, secret)
 			api.RespondError(c, 400, "Invalid 2FA code")
@@ -61,17 +88,21 @@ func Enable2FA(c *gin.Context) {
 		api.RespondError(c, 500, "Failed to enable 2FA")
 		return
 	}
+	_ = accounts.DeleteOtherSessions(userUUID, session)
 	api.RespondSuccess(c, "2FA enabled successfully")
 }
 
 func Disable2FA(c *gin.Context) {
 	uuid, _ := c.Get("uuid")
 	userUUID, _ := uuid.(string)
+	session, _ := c.Cookie("session_token")
 	err := accounts.Disable2Fa(userUUID)
 	if err != nil {
 		api.RespondError(c, 500, "Failed to disable 2FA")
 		return
 	}
+	_ = takePendingTwoFactor(session)
+	_ = accounts.DeleteOtherSessions(userUUID, session)
 	remotectl.RevokeUser(userUUID)
 	api.RespondSuccess(c, "")
 }
@@ -80,7 +111,7 @@ func readTwoFactorCode(c *gin.Context) string {
 	if c.Request.Body == nil {
 		return ""
 	}
-	bodyBytes, err := io.ReadAll(c.Request.Body)
+	bodyBytes, err := io.ReadAll(io.LimitReader(c.Request.Body, 4096))
 	if err != nil || len(bodyBytes) == 0 {
 		return ""
 	}
@@ -105,8 +136,14 @@ func rememberPendingTwoFactor(session, secret string) {
 	if session == "" || secret == "" {
 		return
 	}
+	now := time.Now()
 	pendingTwoFactorMu.Lock()
-	pendingTwoFactors[session] = pendingTwoFactor{secret: secret, expiresAt: time.Now().Add(30 * time.Minute)}
+	for k, v := range pendingTwoFactors {
+		if now.After(v.expiresAt) {
+			delete(pendingTwoFactors, k)
+		}
+	}
+	pendingTwoFactors[session] = pendingTwoFactor{secret: secret, expiresAt: now.Add(30 * time.Minute)}
 	pendingTwoFactorMu.Unlock()
 }
 

@@ -2,7 +2,6 @@ package metric
 
 import (
 	"bytes"
-	"compress/flate"
 	"errors"
 	"fmt"
 	"io"
@@ -63,9 +62,10 @@ func decodeStoredTDigest(blob []byte) ([]byte, error) {
 				return raw, nil
 			}
 		}
-		reader := flate.NewReader(bytes.NewReader(blob[storedDigestHeaderSize:]))
+		reader := acquireFlateReader(bytes.NewReader(blob[storedDigestHeaderSize:]))
 		decompressed, err := io.ReadAll(io.LimitReader(reader, (64<<20)+1))
 		closeErr := reader.Close()
+		releaseFlateReader(reader)
 		if err != nil || closeErr != nil {
 			return nil, errors.New("metric: invalid compressed t-digest blob")
 		}

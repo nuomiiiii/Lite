@@ -448,7 +448,7 @@ func TestEnsureReturnRouteTemplateAllowsMultipleApplyToNewSameCarrier(t *testing
 		t.Fatal(err)
 	}
 	other := sampleMobileTemplate()
-	other.Name = "XX移动 CMIN2"
+	other.Name = "华南移动 CMIN2"
 	other.Target = "221.130.33.52"
 	other.ApplyToNew = true
 	if err := ensureReturnRouteTemplateConstraints(db, &other); err != nil {

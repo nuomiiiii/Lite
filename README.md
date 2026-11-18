@@ -9,7 +9,7 @@ Lite 是一款轻量、自托管的服务器监控与运维管理工具。服务
 
 本项目基于 [komari-monitor/komari](https://github.com/komari-monitor/komari) 持续开发，重点改善低配置主控上的数据库占用、历史查询和维护负载，同时提供流量管理、成本中心、备份迁移、接入安全与适配电脑和手机的管理界面。
 
-**当前正式版：Lite [`2.3.10`](https://github.com/nuomiiiii/Lite/releases/tag/2.3.10) · 配套 Agent [`2.3.10.1`](https://github.com/nuomiiiii/Lite-agent/releases/tag/2.3.10.1) · 默认主题 [`1.3.0`](https://github.com/nuomiiiii/Lite-theme/releases/tag/v1.3.0)**
+**当前正式版：Lite [`2.4.0`](https://github.com/nuomiiiii/Lite/releases/tag/2.4.0) · 配套 Agent [`2.4.0.0`](https://github.com/nuomiiiii/Lite-agent/releases/tag/2.4.0.0) · 默认主题 [`1.3.1`](https://github.com/nuomiiiii/Lite-theme/releases/tag/v1.3.1)**
 
 [使用手册](https://nuomiiiii.github.io/Lite-document/) · [快速开始](#快速开始) · [功能概览](#功能概览) · [升级说明](#从旧版本升级) · [Agent](#agent-与远程管理) · [MCP 代理](#mcp-代理与-ai-授权) · [完整更新日志](https://github.com/nuomiiiii/lite/releases)
 
@@ -25,7 +25,7 @@ Lite 是一款轻量、自托管的服务器监控与运维管理工具。服务
   </picture>
 </a>
 
-## 2.3.10 稳定版能力摘要
+## 2.4.0 稳定版能力摘要
 
 - **告警中心**：汇总当前离线、负载、延迟监测和回程线路告警，可在此设置静默（24 小时 / 3 天 / 7 天 / 永久 / 解除）。静默只暂停告警通知，恢复通知仍会发送。
 - **主题更新**：已安装且能找到来源的主题可以一键更新或自动更新。通用设置可填 GitHub 代理，主题下载、更新和节点部署指令都能用。
@@ -41,7 +41,7 @@ Lite 是一款轻量、自托管的服务器监控与运维管理工具。服务
 - **日志**：过长的 IPv6 会自动换行，不再盖住后面的类型和内容。
 - **手机端远程终端**：复制、粘贴、Tab 旁有「Ctrl+C」，用来打断正在执行的命令。
 - **回程线路**：可保存探测配置模板，应用到已有服务器，也可在新服务器加入时自动创建。公开大屏可展示当前回程线路名和疑似被墙。
-- **内置主题**：Lite-Theme `1.3.0`。首页可按服务器设置探测任务，可显示回程线路名称，没有探测任务的卡片可隐藏探测窗口。手机端概览默认关闭。
+- **内置主题**：Lite-Theme `1.3.1`。首页探测按任务分行展示（稳定轨 / 近 1 小时 / 延迟）；回程线路按类型着色，疑似被墙在标题旁标记；流量「N 天后重置」按节点的重置时刻和时区计算。没有探测任务的卡片可隐藏探测窗口。手机端概览默认关闭。
 
 ## 功能概览
 
@@ -91,7 +91,7 @@ docker run -d \
   ghcr.io/nuomiiiii/lite:latest
 ```
 
-固定使用当前正式版时，将镜像标签改为 `ghcr.io/nuomiiiii/lite:2.3.10`。
+固定使用当前正式版时，将镜像标签改为 `ghcr.io/nuomiiiii/lite:2.4.0`。
 
 更新 Docker 部署前请先备份 `data` 目录，然后拉取新镜像并使用原来的端口和数据挂载重新创建容器：
 
@@ -121,7 +121,7 @@ chmod +x Lite-linux-amd64
 
 ## Agent 与远程管理
 
-Lite `2.3.10` 推荐配套 [Lite-agent `2.3.10.1`](https://github.com/nuomiiiii/Lite-agent/releases/tag/2.3.10.1)。先在后台添加节点，再打开该节点的“节点配置 → 部署指令”，复制完整命令到目标服务器执行。自动发现注册已下线，新安装和 Docker 重建均使用具体节点的部署指令。
+Lite `2.4.0` 推荐配套 [Lite-agent `2.4.0.0`](https://github.com/nuomiiiii/Lite-agent/releases/tag/2.4.0.0)。先在后台添加节点，再打开该节点的“节点配置 → 部署指令”，复制完整命令到目标服务器执行。自动发现注册已下线，新安装和 Docker 重建均使用具体节点的部署指令。
 
 远程终端、文件管理和远程执行需要同时开启 Lite“系统设置 → 通用 → 允许远程管理”与 Agent 本地 `--enable-remote-control`，新安装默认关闭。进入远程功能时，已启用通行密钥的账号可用通行密钥验证；已启用两步验证但未使用通行密钥时输入当前验证码；未启用时重新输入管理员密码。浏览器远程终端单次最长 6 小时，空闲 30 分钟会结束。
 

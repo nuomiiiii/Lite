@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -116,9 +117,28 @@ func abortIfMCPDisabled(c *gin.Context) bool {
 	return true
 }
 
+func isTrustedForwardedProxy(remoteAddr string) bool {
+	host := strings.TrimSpace(remoteAddr)
+	if host == "" {
+		return false
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
+}
+
 func requestIsHTTPS(c *gin.Context) bool {
 	if c.Request.TLS != nil {
 		return true
+	}
+	if !isTrustedForwardedProxy(c.Request.RemoteAddr) {
+		return false
 	}
 	proto := strings.ToLower(strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")))
 	return proto == "https"
@@ -332,21 +352,8 @@ func handleAuthorize(c *gin.Context) {
 	}
 	c.Header("Cache-Control", "no-store")
 	query := c.Request.URL.Query()
-	if query.Get("response_type") != "code" {
-		oauthAuthorizeError(c, query.Get("redirect_uri"), query.Get("state"), "unsupported_response_type")
-		return
-	}
 	clientID := strings.TrimSpace(query.Get("client_id"))
 	redirectURI := strings.TrimSpace(query.Get("redirect_uri"))
-	challenge := strings.TrimSpace(query.Get("code_challenge"))
-	method := strings.TrimSpace(query.Get("code_challenge_method"))
-	if method == "" {
-		method = pkceS256
-	}
-	if !strings.EqualFold(method, pkceS256) || challenge == "" {
-		oauthAuthorizeError(c, redirectURI, query.Get("state"), "invalid_request")
-		return
-	}
 	client, err := loadClient(clientID)
 	if err != nil {
 		c.String(http.StatusBadRequest, "unknown client")
@@ -354,6 +361,19 @@ func handleAuthorize(c *gin.Context) {
 	}
 	if !exactRedirectMatch(splitJSONList(client.RedirectURIs), redirectURI) {
 		c.String(http.StatusBadRequest, "invalid redirect_uri")
+		return
+	}
+	if query.Get("response_type") != "code" {
+		oauthAuthorizeError(c, redirectURI, query.Get("state"), "unsupported_response_type")
+		return
+	}
+	challenge := strings.TrimSpace(query.Get("code_challenge"))
+	method := strings.TrimSpace(query.Get("code_challenge_method"))
+	if method == "" {
+		method = pkceS256
+	}
+	if !strings.EqualFold(method, pkceS256) || challenge == "" {
+		oauthAuthorizeError(c, redirectURI, query.Get("state"), "invalid_request")
 		return
 	}
 	resource := strings.TrimSpace(query.Get("resource"))
@@ -541,6 +561,9 @@ func handleToken(c *gin.Context) {
 }
 
 func tokenForm(c *gin.Context) url.Values {
+	if c.Request.Body != nil {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
+	}
 	_ = c.Request.ParseForm()
 	if len(c.Request.PostForm) > 0 {
 		return c.Request.PostForm

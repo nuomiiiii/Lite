@@ -68,24 +68,39 @@ func (ctrl *CorsController) Middleware() gin.HandlerFunc {
 
 		origin := c.GetHeader("Origin")
 		allowOrigin := ""
-		if origin != "" && (IsAPIKeyRequest(c.Request) ||
-			OriginMatchesRequest(origin, c.Request) ||
-			OriginInAllowlist(origin, corsAllowedOrigins)) {
-			allowOrigin = origin
-		}
-
-		authorizationPreflight := origin != "" && allowOrigin == "" && IsAuthorizationPreflight(c.Request)
-		if authorizationPreflight {
-			allowOrigin = origin
+		allowCredentials := false
+		if origin != "" {
+			if OriginMatchesRequest(origin, c.Request) {
+				allowOrigin = origin
+				allowCredentials = true
+			} else {
+				explicitAllow, wildcardAllow := matchOriginAllowlist(origin, corsAllowedOrigins)
+				switch {
+				case explicitAllow:
+					allowOrigin = origin
+					allowCredentials = true
+				case IsAPIKeyRequest(c.Request):
+					allowOrigin = origin
+					allowCredentials = false
+				case wildcardAllow:
+					allowOrigin = "*"
+					allowCredentials = false
+				case IsAuthorizationPreflight(c.Request):
+					allowOrigin = origin
+					allowCredentials = false
+				}
+			}
 		}
 
 		if allowOrigin != "" {
 			c.Header("Access-Control-Allow-Origin", allowOrigin)
-			c.Header("Vary", "Origin")
+			if allowOrigin != "*" {
+				c.Header("Vary", "Origin")
+			}
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
 			c.Header("Access-Control-Allow-Headers", "Origin, Content-Length, Content-Type, Authorization, Accept, X-CSRF-Token, X-Requested-With, Set-Cookie, X-2FA-Code, X-Two-Factor-Code")
 			c.Header("Access-Control-Expose-Headers", "Content-Length, Authorization, Set-Cookie")
-			if !authorizationPreflight {
+			if allowCredentials {
 				c.Header("Access-Control-Allow-Credentials", "true")
 			}
 			c.Header("Access-Control-Max-Age", "43200") // 12 hours

@@ -37,6 +37,9 @@ func adminGetSelfUpdateStatus(_ context.Context, _ *rpc.JsonRpcRequest) (any, *r
 }
 
 func adminStartSelfUpdate(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	if err := denyAPIKey(ctx); err != nil {
+		return nil, err
+	}
 	var params struct {
 		Version     string `json:"version"`
 		VersionHash string `json:"version_hash"`

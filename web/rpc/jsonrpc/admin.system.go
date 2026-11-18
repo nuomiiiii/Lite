@@ -227,6 +227,9 @@ func adminCloudflaredStatus(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc
 }
 
 func adminStartCloudflared(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	if err := denyAPIKey(ctx); err != nil {
+		return nil, err
+	}
 	var params struct {
 		Token string `json:"token"`
 	}
@@ -246,6 +249,9 @@ func adminStartCloudflared(ctx context.Context, req *rpc.JsonRpcRequest) (any, *
 }
 
 func adminStopCloudflared(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	if err := denyAPIKey(ctx); err != nil {
+		return nil, err
+	}
 	var params struct {
 		CurrentPassword string `json:"current_password"`
 		ConfirmText     string `json:"confirm_text"`
@@ -281,6 +287,9 @@ func adminStopCloudflared(ctx context.Context, req *rpc.JsonRpcRequest) (any, *r
 }
 
 func adminRemoveCloudflaredToken(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	if err := denyAPIKey(ctx); err != nil {
+		return nil, err
+	}
 	if err := cloudflared.RemoveToken(); err != nil {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Failed to remove Cloudflare Tunnel token: "+err.Error(), nil)
 	}

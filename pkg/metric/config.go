@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 // Config describes database, pooling, migration, retention, and rollup settings.
@@ -480,6 +482,11 @@ func (c Config) Validate() error {
 	if c.DB == nil && strings.TrimSpace(c.DSN) == "" {
 		return fmt.Errorf("%w: dsn is required when db is not supplied", ErrInvalidArgument)
 	}
+	if c.Driver == DriverMySQL && c.DB == nil {
+		if _, err := sanitizeMySQLDSN(c.DSN); err != nil {
+			return err
+		}
+	}
 	if c.TablePrefix == "" {
 		return fmt.Errorf("%w: table prefix cannot be empty", ErrInvalidArgument)
 	}
@@ -542,4 +549,40 @@ func setSQLiteDSNParam(dsn, key, value string) string {
 	}
 	query.Set(key, value)
 	return base + "?" + query.Encode()
+}
+
+// sanitizeMySQLDSN parses a MySQL DSN, rejects any attempt to enable
+// AllowAllFiles / allowAllFiles (LOCAL INFILE arbitrary file read), and forces
+// AllowAllFiles=false and AllowOldPasswords=false via FormatDSN().
+func sanitizeMySQLDSN(dsn string) (string, error) {
+	if _, rawQuery, hasQuery := strings.Cut(dsn, "?"); hasQuery {
+		for _, pair := range strings.Split(rawQuery, "&") {
+			if pair == "" {
+				continue
+			}
+			rawKey, _, _ := strings.Cut(pair, "=")
+			key, err := url.QueryUnescape(rawKey)
+			if err != nil {
+				key = rawKey
+			}
+			if strings.EqualFold(strings.TrimSpace(key), "allowAllFiles") {
+				return "", fmt.Errorf("%w: mysql allowAllFiles parameter is not permitted", ErrInvalidArgument)
+			}
+		}
+	}
+	parsed, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		return "", fmt.Errorf("%w: invalid mysql dsn: %v", ErrInvalidArgument, err)
+	}
+	if parsed.AllowAllFiles {
+		return "", fmt.Errorf("%w: mysql AllowAllFiles is not permitted", ErrInvalidArgument)
+	}
+	for key := range parsed.Params {
+		if strings.EqualFold(strings.TrimSpace(key), "allowAllFiles") {
+			return "", fmt.Errorf("%w: mysql allowAllFiles parameter is not permitted", ErrInvalidArgument)
+		}
+	}
+	parsed.AllowAllFiles = false
+	parsed.AllowOldPasswords = false
+	return parsed.FormatDSN(), nil
 }

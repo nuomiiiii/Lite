@@ -29,6 +29,7 @@ func (s *Store) Compact(ctx context.Context, now time.Time) (int, error) {
 	if err := s.ensureOpen(); err != nil {
 		return 0, err
 	}
+	s.invalidateDefinitionsCache()
 	defs, err := s.ListMetrics(ctx)
 	if err != nil {
 		return 0, err
@@ -88,6 +89,7 @@ func (s *Store) CompactMetric(ctx context.Context, metricName string, now time.T
 	if s.sqlitePingMerged && metricName == sqliteVirtualPingLossMetric {
 		metricName = sqliteMergedPingLatencyMetric
 	}
+	s.invalidateDefinitionsCache()
 	policy := s.cfg.RollupPolicy
 	def, err := s.GetMetric(ctx, metricName)
 	if errors.Is(err, ErrNotFound) {
@@ -759,9 +761,38 @@ func (s *Store) buildFinestTierBefore(ctx context.Context, q querier, metricName
 	return s.buildFinestTierRange(ctx, q, metricName, interval, comp, time.Time{}, before)
 }
 
+func (s *Store) metricRequiresQuantiles(ctx context.Context, q querier, metricName string) bool {
+	if defs, _, err := s.loadDefinitionsCachedOn(ctx, q); err == nil {
+		if def, ok := defs[metricName]; ok && len(def.Metadata) > 0 {
+			switch strings.ToLower(strings.TrimSpace(def.Metadata["quantiles"])) {
+			case "false", "0", "no":
+				return false
+			case "true", "1", "yes":
+				return true
+			}
+		}
+	}
+	_, skip := builtinNonQuantileMetrics[metricName]
+	return !skip
+}
+
+// metricAllowsDigestlessRollups reports whether a metric may legitimately have
+// rollup buckets stored without a TDigest sketch (either because quantiles are
+// disabled for it, or because it is in builtinNonQuantileMetrics and retains
+// older digestless rollup blocks after Metadata["quantiles"]="true" was set).
+// Digestless buckets keep digest=nil (returning 0 on percentile queries) rather
+// than fabricating interpolated percentiles.
+func (s *Store) metricAllowsDigestlessRollups(ctx context.Context, q querier, metricName string) bool {
+	if _, builtin := builtinNonQuantileMetrics[metricName]; builtin {
+		return true
+	}
+	return !s.metricRequiresQuantiles(ctx, q, metricName)
+}
+
 func (s *Store) buildFinestTierRange(ctx context.Context, q querier, metricName string, interval time.Duration, comp float64, start, before time.Time) (map[rollupKey]*rollupBucket, error) {
 	size := interval.Nanoseconds()
 	out := make(map[rollupKey]*rollupBucket)
+	includeDigest := s.metricRequiresQuantiles(ctx, q, metricName)
 	if s.sqliteStorageV4 {
 		startNano := int64(math.MinInt64)
 		if !start.IsZero() {
@@ -793,7 +824,7 @@ func (s *Store) buildFinestTierRange(ctx context.Context, q querier, metricName 
 			key := rollupKey{entityID: point.EntityID, tagsHash: hash, bucket: bucket}
 			stored := out[key]
 			if stored == nil {
-				stored = newRollupBucket(comp)
+				stored = newRollupBucketWithDigest(comp, includeDigest)
 				stored.tagsHash = hash
 				stored.tagsJSON = canonical
 				out[key] = stored
@@ -842,7 +873,7 @@ func (s *Store) buildFinestTierRange(ctx context.Context, q querier, metricName 
 		k := rollupKey{entityID: entityID, tagsHash: hash, bucket: bucket}
 		b := out[k]
 		if b == nil {
-			b = newRollupBucket(comp)
+			b = newRollupBucketWithDigest(comp, includeDigest)
 			b.tagsHash = hash
 			b.tagsJSON = canonical
 			out[k] = b
@@ -863,6 +894,7 @@ func (s *Store) buildFinestTierRange(ctx context.Context, q querier, metricName 
 func (s *Store) buildCoarserTier(ctx context.Context, q querier, metricName string, fineInterval, coarseInterval time.Duration, comp float64) (map[rollupKey]*rollupBucket, error) {
 	coarseSize := coarseInterval.Nanoseconds()
 	out := make(map[rollupKey]*rollupBucket)
+	includeDigest := s.metricRequiresQuantiles(ctx, q, metricName)
 	fineRows, err := s.scanRollupRows(ctx, q, metricName, fineInterval)
 
 	if err != nil {
@@ -873,7 +905,7 @@ func (s *Store) buildCoarserTier(ctx context.Context, q querier, metricName stri
 		k := rollupKey{entityID: fr.entityID, tagsHash: fr.bucketData.tagsHash, bucket: bucket}
 		b := out[k]
 		if b == nil {
-			b = newRollupBucket(comp)
+			b = newRollupBucketWithDigest(comp, includeDigest)
 			b.tagsHash = fr.bucketData.tagsHash
 			b.tagsJSON = fr.bucketData.tagsJSON
 			out[k] = b
@@ -900,7 +932,7 @@ func buildCoarserBucketsFromDelta(delta map[rollupKey]*rollupBucket, coarseInter
 		ck := rollupKey{entityID: k.entityID, tagsHash: k.tagsHash, bucket: bucket}
 		b := out[ck]
 		if b == nil {
-			b = newRollupBucket(comp)
+			b = newRollupBucketWithDigest(comp, src != nil && src.digest != nil)
 			b.tagsHash = src.tagsHash
 			b.tagsJSON = src.tagsJSON
 			out[ck] = b

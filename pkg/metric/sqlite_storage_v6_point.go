@@ -361,17 +361,20 @@ func compressSQLiteV6PointSection(raw []byte) ([]byte, error) {
 	payload := append([]byte{sqliteV4PayloadRaw}, raw...)
 	var compressed bytes.Buffer
 	compressed.WriteByte(sqliteV4PayloadDeflate)
-	writer, err := flate.NewWriter(&compressed, flate.BestSpeed)
+	writer, err := acquireFlateWriter(&compressed, flate.BestSpeed)
 	if err != nil {
 		return nil, err
 	}
 	if _, err := writer.Write(raw); err != nil {
 		_ = writer.Close()
+		releaseFlateWriter(flate.BestSpeed, writer)
 		return nil, err
 	}
 	if err := writer.Close(); err != nil {
+		releaseFlateWriter(flate.BestSpeed, writer)
 		return nil, err
 	}
+	releaseFlateWriter(flate.BestSpeed, writer)
 	if compressed.Len() < len(payload) {
 		return append([]byte(nil), compressed.Bytes()...), nil
 	}

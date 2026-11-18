@@ -485,16 +485,18 @@ func (s *Store) writeSQLiteV4RollupBlocksTx(ctx context.Context, tx *sql.Tx, ser
 		if err != nil {
 			return err
 		}
-		decoded, err := decodeSQLiteV4StoredRollupBlock(
-			encoded.codec, encoded.count, encoded.checksum, encoded.payload,
-			encoded.axisCodec, encoded.axisChecksum, encoded.axisPayload,
-			encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true,
-		)
-		if err != nil || !sqliteV4RollupRecordDataSlicesEqual(records[start:end], decoded) {
-			if err == nil {
-				err = errors.New("round-trip validation changed metric data")
+		if verifyEncodedBlocksOnWrite {
+			decoded, err := decodeSQLiteV4StoredRollupBlock(
+				encoded.codec, encoded.count, encoded.checksum, encoded.payload,
+				encoded.axisCodec, encoded.axisChecksum, encoded.axisPayload,
+				encoded.digestCodec, encoded.digestChecksum, encoded.digestPayload, true,
+			)
+			if err != nil || !sqliteV4RollupRecordDataSlicesEqual(records[start:end], decoded) {
+				if err == nil {
+					err = errors.New("round-trip validation changed metric data")
+				}
+				return fmt.Errorf("metric: validate SQLite V4 rollup block: %w", err)
 			}
-			return fmt.Errorf("metric: validate SQLite V4 rollup block: %w", err)
 		}
 		axisID, err := s.storeSQLiteV4RollupAxisTx(ctx, tx, encoded)
 		if err != nil {

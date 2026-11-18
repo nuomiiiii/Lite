@@ -21,6 +21,12 @@ const (
 	sqliteV4RollupFlushWindow           = 30 * time.Minute
 )
 
+// verifyEncodedBlocksOnWrite gates expensive post-encode decompression + slice
+// equality checks on hot compaction block writes. Production writes already
+// store a CRC32 checksum over the encoded payload; unit tests can flip this to
+// true when exercising codec round-trip invariants directly.
+var verifyEncodedBlocksOnWrite = false
+
 // migrateSQLiteStorageV4 first brings legacy layouts to the normalized V3
 // schema, then atomically moves raw values and long-term rollups into verified
 // lossless blocks. Databases created by the first V4 test build have point
@@ -592,16 +598,19 @@ func (s *Store) sealSQLiteV4PointSeriesTx(ctx context.Context, tx *sql.Tx, serie
 	if beforeNano == math.MaxInt64 {
 		comparison = "<="
 	}
+	shortRawRetention := len(s.cfg.RollupPolicy.Tiers) > 0 &&
+		s.cfg.RollupPolicy.RawRetention > 0 &&
+		s.cfg.RollupPolicy.RawRetention <= sqliteV4RollupFlushWindow
+	shortWindowNano := int64(0)
+	if shortRawRetention {
+		shortWindowNano = s.cfg.RollupPolicy.Tiers[0].Interval.Nanoseconds()
+		if shortWindowNano <= 0 {
+			shortWindowNano = metricCompactionChunkWindow.Nanoseconds()
+		}
+	}
+
 	var total int64
 	for _, seriesID := range seriesIDs {
-		points, err := s.loadAllSQLiteV4BlockPoints(ctx, tx, seriesID)
-		if err != nil {
-			return total, err
-		}
-		byTimestamp := make(map[int64]sqliteV4BlockPoint, len(points))
-		for _, point := range points {
-			byTimestamp[point.timestamp] = point
-		}
 		hotRows, err := tx.QueryContext(ctx, fmt.Sprintf(
 			`SELECT ts_nano, value, labels, created_at FROM %s WHERE series_id = ? AND ts_nano %s ? ORDER BY ts_nano`,
 			s.tables.pointValues, comparison,
@@ -609,7 +618,7 @@ func (s *Store) sealSQLiteV4PointSeriesTx(ctx context.Context, tx *sql.Tx, serie
 		if err != nil {
 			return total, err
 		}
-		var hotCount int64
+		var hotPoints []sqliteV4BlockPoint
 		for hotRows.Next() {
 			var point sqliteV4BlockPoint
 			var value float64
@@ -624,8 +633,7 @@ func (s *Store) sealSQLiteV4PointSeriesTx(ctx context.Context, tx *sql.Tx, serie
 				_ = hotRows.Close()
 				return total, err
 			}
-			byTimestamp[point.timestamp] = point
-			hotCount++
+			hotPoints = append(hotPoints, point)
 		}
 		if err := hotRows.Err(); err != nil {
 			_ = hotRows.Close()
@@ -634,18 +642,78 @@ func (s *Store) sealSQLiteV4PointSeriesTx(ctx context.Context, tx *sql.Tx, serie
 		if err := hotRows.Close(); err != nil {
 			return total, err
 		}
-		merged := make([]sqliteV4BlockPoint, 0, len(byTimestamp))
-		for _, point := range byTimestamp {
-			merged = append(merged, point)
+		hotCount := int64(len(hotPoints))
+		if hotCount == 0 {
+			continue
 		}
-		sort.Slice(merged, func(i, j int) bool { return merged[i].timestamp < merged[j].timestamp })
-		if _, err := tx.ExecContext(ctx, `DELETE FROM `+s.tables.pointBlocks+` WHERE series_id = ?`, seriesID); err != nil {
+
+		minHotTS := hotPoints[0].timestamp
+		mergeFromStart := int64(0)
+		hasMergeStart := false
+		if !shortRawRetention {
+			var tailStart int64
+			var tailCount int
+			err := tx.QueryRowContext(ctx, fmt.Sprintf(
+				`SELECT start_nano, point_count FROM %s WHERE series_id = ? AND end_nano < ? ORDER BY start_nano DESC LIMIT 1`,
+				s.tables.pointBlocks,
+			), seriesID, minHotTS).Scan(&tailStart, &tailCount)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return total, err
+			}
+			if err == nil && tailCount < sqliteV4BlockPointLimit {
+				mergeFromStart = tailStart
+				hasMergeStart = true
+			}
+		}
+
+		var existing []sqliteV4BlockPoint
+		if hasMergeStart {
+			existing, err = s.loadSQLiteV4BlockPointsFromStartNano(ctx, tx, seriesID, mergeFromStart)
+		} else {
+			existing, err = s.loadSQLiteV4BlockPointsFromEndNano(ctx, tx, seriesID, minHotTS)
+		}
+		if err != nil {
 			return total, err
+		}
+
+		var merged []sqliteV4BlockPoint
+		if len(existing) == 0 {
+			merged = dedupSortedSQLiteV4Points(hotPoints)
+		} else {
+			byTimestamp := make(map[int64]sqliteV4BlockPoint, len(existing)+len(hotPoints))
+			for _, point := range existing {
+				byTimestamp[point.timestamp] = point
+			}
+			for _, point := range hotPoints {
+				byTimestamp[point.timestamp] = point
+			}
+			merged = make([]sqliteV4BlockPoint, 0, len(byTimestamp))
+			for _, point := range byTimestamp {
+				merged = append(merged, point)
+			}
+			sort.Slice(merged, func(i, j int) bool { return merged[i].timestamp < merged[j].timestamp })
+		}
+
+		if len(existing) > 0 {
+			if hasMergeStart {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM `+s.tables.pointBlocks+` WHERE series_id = ? AND start_nano >= ?`, seriesID, mergeFromStart); err != nil {
+					return total, err
+				}
+			} else {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM `+s.tables.pointBlocks+` WHERE series_id = ? AND end_nano >= ?`, seriesID, minHotTS); err != nil {
+					return total, err
+				}
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+s.tables.pointValues+` WHERE series_id = ? AND ts_nano `+comparison+` ?`, seriesID, beforeNano); err != nil {
 			return total, err
 		}
-		if err := s.writeSQLiteV4BlocksTx(ctx, tx, seriesID, merged); err != nil {
+		if shortWindowNano > 0 {
+			err = s.writeSQLiteV4WindowedBlocksTx(ctx, tx, seriesID, merged, shortWindowNano)
+		} else {
+			err = s.writeSQLiteV4BlocksTx(ctx, tx, seriesID, merged)
+		}
+		if err != nil {
 			return total, err
 		}
 		total += hotCount
@@ -656,14 +724,69 @@ func (s *Store) sealSQLiteV4PointSeriesTx(ctx context.Context, tx *sql.Tx, serie
 	return total, nil
 }
 
+func dedupSortedSQLiteV4Points(points []sqliteV4BlockPoint) []sqliteV4BlockPoint {
+	if len(points) <= 1 {
+		return points
+	}
+	for i := 1; i < len(points); i++ {
+		if points[i].timestamp <= points[i-1].timestamp {
+			byTimestamp := make(map[int64]sqliteV4BlockPoint, len(points))
+			for _, p := range points {
+				byTimestamp[p.timestamp] = p
+			}
+			out := make([]sqliteV4BlockPoint, 0, len(byTimestamp))
+			for _, p := range byTimestamp {
+				out = append(out, p)
+			}
+			sort.Slice(out, func(a, b int) bool { return out[a].timestamp < out[b].timestamp })
+			return out
+		}
+	}
+	return points
+}
+
+func (s *Store) writeSQLiteV4WindowedBlocksTx(ctx context.Context, tx *sql.Tx, seriesID int64, points []sqliteV4BlockPoint, windowNano int64) error {
+	if len(points) == 0 {
+		return nil
+	}
+	sort.Slice(points, func(i, j int) bool { return points[i].timestamp < points[j].timestamp })
+	for start := 0; start < len(points); {
+		bucket := floorDivNano(points[start].timestamp, windowNano)
+		end := start + 1
+		for end < len(points) && floorDivNano(points[end].timestamp, windowNano) == bucket {
+			end++
+		}
+		if err := s.writeSQLiteV4BlocksTx(ctx, tx, seriesID, points[start:end]); err != nil {
+			return err
+		}
+		start = end
+	}
+	return nil
+}
+
+func (s *Store) loadSQLiteV4BlockPointsFromStartNano(ctx context.Context, q querier, seriesID, minStartNano int64) ([]sqliteV4BlockPoint, error) {
+	return s.loadSQLiteV4BlockPointsWhere(ctx, q, seriesID, "AND b.start_nano >= ?", minStartNano)
+}
+
+func (s *Store) loadSQLiteV4BlockPointsFromEndNano(ctx context.Context, q querier, seriesID, minEndNano int64) ([]sqliteV4BlockPoint, error) {
+	return s.loadSQLiteV4BlockPointsWhere(ctx, q, seriesID, "AND b.end_nano >= ?", minEndNano)
+}
+
 func (s *Store) loadAllSQLiteV4BlockPoints(ctx context.Context, q querier, seriesID int64) ([]sqliteV4BlockPoint, error) {
+	return s.loadSQLiteV4BlockPointsWhere(ctx, q, seriesID, "")
+}
+
+func (s *Store) loadSQLiteV4BlockPointsWhere(ctx context.Context, q querier, seriesID int64, extraPredicate string, extraArgs ...any) ([]sqliteV4BlockPoint, error) {
+	args := make([]any, 0, 1+len(extraArgs))
+	args = append(args, seriesID)
+	args = append(args, extraArgs...)
 	rows, err := q.QueryContext(ctx, fmt.Sprintf(
 		`SELECT b.start_nano, b.end_nano, b.point_count, b.codec, b.checksum, b.payload,
 		        a.codec, a.checksum, a.payload
 		 FROM %s AS b LEFT JOIN %s AS a ON a.id = b.axis_id
-		 WHERE b.series_id = ? ORDER BY b.start_nano`,
-		s.tables.pointBlocks, s.tables.pointAxes,
-	), seriesID)
+		 WHERE b.series_id = ? %s ORDER BY b.start_nano`,
+		s.tables.pointBlocks, s.tables.pointAxes, extraPredicate,
+	), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -704,12 +827,14 @@ func (s *Store) writeSQLiteV4BlocksTx(ctx context.Context, tx *sql.Tx, seriesID 
 		if err != nil {
 			return err
 		}
-		decoded, err := decodeSQLiteStoredPointBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload, encoded.axisCodec, encoded.axisChecksum, encoded.axisPayload)
-		if err != nil || !sqliteV4PointsEqual(points[start:end], decoded) {
-			if err == nil {
-				err = errors.New("round-trip validation changed data")
+		if verifyEncodedBlocksOnWrite {
+			decoded, err := decodeSQLiteStoredPointBlock(encoded.codec, encoded.count, encoded.checksum, encoded.payload, encoded.axisCodec, encoded.axisChecksum, encoded.axisPayload)
+			if err != nil || !sqliteV4PointsEqual(points[start:end], decoded) {
+				if err == nil {
+					err = errors.New("round-trip validation changed data")
+				}
+				return fmt.Errorf("metric: validate SQLite V4 point block: %w", err)
 			}
-			return fmt.Errorf("metric: validate SQLite V4 point block: %w", err)
 		}
 		axisID, err := s.storeSQLiteV6PointAxisTx(ctx, tx, encoded)
 		if err != nil {

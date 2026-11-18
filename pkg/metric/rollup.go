@@ -266,6 +266,32 @@ func newRollupBucketWithDigest(compression float64, includeDigest bool) *rollupB
 	return bucket
 }
 
+// builtinNonQuantileMetrics lists the high-frequency system gauges/counters
+// that never query percentiles (p50/p95/p99), allowing rollup compaction to
+// skip TDigest allocation, sorting, merging, and DEFLATE encoding for them
+// unless explicitly enabled via Definition.Metadata["quantiles"] == "true".
+var builtinNonQuantileMetrics = map[string]struct{}{
+	"cpu.usage":        {},
+	"gpu.usage":        {},
+	"gpu.device.usage": {},
+	"gpu.memory.used":  {},
+	"gpu.memory.total": {},
+	"gpu.temperature":  {},
+	"memory.used":      {},
+	"swap.used":        {},
+	"load.average":     {},
+	"disk.used":        {},
+	"net.in.rate":      {},
+	"net.out.rate":     {},
+	"net.total.up":     {},
+	"net.total.down":   {},
+	"traffic.up":       {},
+	"traffic.down":     {},
+	"process.count":    {},
+	"connections.tcp":  {},
+	"connections.udp":  {},
+}
+
 // rollupDigestOptional reports the one lossless case where a rollup does not
 // need a percentile digest: a merged ping-latency bucket containing only loss
 // sentinels. The decision is based on the stored sample counts, not on an

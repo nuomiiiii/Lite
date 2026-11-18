@@ -65,6 +65,14 @@ type Store struct {
 	// retentionMu serializes a retention change with writes and compaction so a
 	// disabled metric cannot be repopulated by an in-flight operation.
 	retentionMu sync.RWMutex
+	// defsMu guards the in-memory metric_definitions cache so hot WriteBatch and
+	// lookup paths avoid querying SQLite on every batch.
+	defsMu                    sync.RWMutex
+	defsGen                   uint64
+	defsCache                 map[string]Definition
+	defsList                  []Definition
+	defsLoaded                bool
+	testAfterDefinitionsQuery func()
 	// mu protects closed state.
 	//
 	// mu 保护 closed 状态。
@@ -102,6 +110,13 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
+	}
+	if cfg.Driver == DriverMySQL && cfg.DB == nil {
+		sanitized, err := sanitizeMySQLDSN(cfg.DSN)
+		if err != nil {
+			return nil, err
+		}
+		cfg.DSN = sanitized
 	}
 	if cfg.Driver == DriverSQLite {
 		var err error
@@ -549,6 +564,9 @@ func (s *Store) CreateMetric(ctx context.Context, def Definition) error {
 	if err != nil && isUniqueViolation(err) {
 		return fmt.Errorf("%w: metric %q", ErrAlreadyExists, def.Name)
 	}
+	if err == nil {
+		s.invalidateDefinitionsCache()
+	}
 	return err
 }
 
@@ -591,11 +609,109 @@ func (s *Store) UpsertMetric(ctx context.Context, def Definition) error {
 		now,
 		now,
 	)
-	if err != nil || def.RetentionDays != 0 {
+	if err != nil {
 		return err
+	}
+	s.invalidateDefinitionsCache()
+	if def.RetentionDays != 0 {
+		return nil
 	}
 	_, err = s.DeleteSeries(ctx, Query{MetricName: def.Name})
 	return err
+}
+
+func cloneDefinition(def Definition) Definition {
+	if len(def.Metadata) > 0 {
+		cloned := make(map[string]string, len(def.Metadata))
+		for k, v := range def.Metadata {
+			cloned[k] = v
+		}
+		def.Metadata = cloned
+	}
+	return def
+}
+
+func (s *Store) invalidateDefinitionsCache() {
+	s.defsMu.Lock()
+	s.defsGen++
+	s.defsCache = nil
+	s.defsList = nil
+	s.defsLoaded = false
+	s.defsMu.Unlock()
+}
+
+func (s *Store) loadDefinitionsCached(ctx context.Context) (map[string]Definition, []Definition, error) {
+	return s.loadDefinitionsCachedOn(ctx, nil)
+}
+
+func (s *Store) loadDefinitionsCachedOn(ctx context.Context, q querier) (map[string]Definition, []Definition, error) {
+	canCache := q == nil || q == s.db || q == s.readDB
+	if q == nil {
+		q = s.reader()
+	}
+	for attempt := 0; ; attempt++ {
+		s.defsMu.RLock()
+		if s.defsLoaded {
+			byName := s.defsCache
+			list := s.defsList
+			s.defsMu.RUnlock()
+			return byName, list, nil
+		}
+		gen := s.defsGen
+		s.defsMu.RUnlock()
+
+		rows, err := q.QueryContext(ctx, fmt.Sprintf(
+			`SELECT name, type, unit, description, retention_days, metadata, created_at, updated_at FROM %s ORDER BY name ASC`,
+			s.tables.definitions,
+		))
+		if err != nil {
+			return nil, nil, err
+		}
+		var list []Definition
+		for rows.Next() {
+			def, err := scanDefinition(rows)
+			if err != nil {
+				_ = rows.Close()
+				return nil, nil, err
+			}
+			list = append(list, def)
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, nil, err
+		}
+		_ = rows.Close()
+
+		byName := make(map[string]Definition, len(list))
+		for _, def := range list {
+			byName[def.Name] = def
+		}
+		if hook := s.testAfterDefinitionsQuery; hook != nil {
+			hook()
+		}
+
+		if !canCache {
+			return byName, list, nil
+		}
+		s.defsMu.Lock()
+		if s.defsGen == gen && !s.defsLoaded {
+			s.defsCache = byName
+			s.defsList = list
+			s.defsLoaded = true
+			s.defsMu.Unlock()
+			return byName, list, nil
+		}
+		if s.defsLoaded {
+			byName = s.defsCache
+			list = s.defsList
+			s.defsMu.Unlock()
+			return byName, list, nil
+		}
+		s.defsMu.Unlock()
+		if attempt >= 2 {
+			return byName, list, nil
+		}
+	}
 }
 
 // GetMetric loads one metric definition by name.
@@ -608,15 +724,15 @@ func (s *Store) GetMetric(ctx context.Context, name string) (Definition, error) 
 	if strings.TrimSpace(name) == "" {
 		return Definition{}, fmt.Errorf("%w: metric name is required", ErrInvalidArgument)
 	}
-	row := s.reader().QueryRowContext(ctx, fmt.Sprintf(
-		`SELECT name, type, unit, description, retention_days, metadata, created_at, updated_at FROM %s WHERE name = %s`,
-		s.tables.definitions, s.dialect.placeholder(1),
-	), name)
-	def, err := scanDefinition(row)
-	if errors.Is(err, sql.ErrNoRows) {
+	byName, _, err := s.loadDefinitionsCached(ctx)
+	if err != nil {
+		return Definition{}, err
+	}
+	def, ok := byName[name]
+	if !ok {
 		return Definition{}, ErrNotFound
 	}
-	return def, err
+	return cloneDefinition(def), nil
 }
 
 // ListMetrics lists all metric definitions.
@@ -626,24 +742,15 @@ func (s *Store) ListMetrics(ctx context.Context) ([]Definition, error) {
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
 	}
-	rows, err := s.reader().QueryContext(ctx, fmt.Sprintf(
-		`SELECT name, type, unit, description, retention_days, metadata, created_at, updated_at FROM %s ORDER BY name ASC`,
-		s.tables.definitions,
-	))
+	_, list, err := s.loadDefinitionsCached(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var out []Definition
-	for rows.Next() {
-		def, err := scanDefinition(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, def)
+	out := make([]Definition, len(list))
+	for i, def := range list {
+		out[i] = cloneDefinition(def)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // DeleteMetric deletes a metric definition and all of its raw and rollup data.
@@ -687,7 +794,11 @@ func (s *Store) DeleteMetric(ctx context.Context, name string) error {
 	if err := s.pruneUnusedSQLiteSeries(ctx, tx); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateDefinitionsCache()
+	return nil
 }
 
 // UpdateMetricRetention updates one metric's retention policy without deleting
@@ -733,6 +844,7 @@ func (s *Store) UpdateMetricRetention(ctx context.Context, name string, retentio
 	if err := tx.Commit(); err != nil {
 		return Definition{}, err
 	}
+	s.invalidateDefinitionsCache()
 	return s.GetMetric(ctx, name)
 }
 
@@ -803,6 +915,7 @@ func (s *Store) SetMetricRetention(ctx context.Context, name string, retentionDa
 	if err := tx.Commit(); err != nil {
 		return Definition{}, err
 	}
+	s.invalidateDefinitionsCache()
 	return s.GetMetric(ctx, name)
 }
 
@@ -1052,13 +1165,9 @@ func (s *Store) WriteBatch(ctx context.Context, points []Point) error {
 // truth for a metric's retention and lifecycle, so accepting an unknown name
 // would create data that compaction and retention cleanup cannot manage.
 func (s *Store) filterDisabledMetricPoints(ctx context.Context, points []Point) ([]Point, error) {
-	defs, err := s.ListMetrics(ctx)
+	definitions, _, err := s.loadDefinitionsCached(ctx)
 	if err != nil {
 		return nil, err
-	}
-	definitions := make(map[string]Definition, len(defs))
-	for _, def := range defs {
-		definitions[def.Name] = def
 	}
 	filtered := make([]Point, 0, len(points))
 	for _, point := range points {

@@ -8,9 +8,10 @@ if grep -qi komari "$INSTALLER_PATH"; then
     grep -ni komari "$INSTALLER_PATH" >&2
     exit 1
 fi
-if grep -E '#!/bin/bash|\[''\[' "$INSTALLER_PATH" >/dev/null; then
+# [[:class:]] is POSIX, not bash [[.
+if grep -E '#!/bin/bash|[[][[]([^:]|$)' "$INSTALLER_PATH" >/dev/null; then
     echo "FAIL: install-lite.sh still uses bash-only syntax" >&2
-    grep -nE '#!/bin/bash|\[''\[' "$INSTALLER_PATH" >&2
+    grep -nE '#!/bin/bash|[[][[]([^:]|$)' "$INSTALLER_PATH" >&2
     exit 1
 fi
 if ! grep -q '#!/bin/sh' "$INSTALLER_PATH"; then

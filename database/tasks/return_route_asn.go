@@ -16,6 +16,8 @@ import (
 const (
 	returnRouteASNLookupTimeout   = 6 * time.Second
 	returnRouteASNProviderTimeout = 1500 * time.Millisecond
+	asnCacheMaxEntries            = 8192
+	asnCacheSweepEveryWrites      = 256
 )
 
 type asnCacheEntry struct {
@@ -29,6 +31,7 @@ var (
 	asnCache = struct {
 		sync.RWMutex
 		values map[string]asnCacheEntry
+		writes uint64
 	}{values: map[string]asnCacheEntry{}}
 	returnRouteASNHTTPClient = &http.Client{Timeout: 2 * time.Second}
 )
@@ -63,14 +66,15 @@ func lookupASNWithRules(ctx context.Context, value string, rules *compiledReturn
 	if ip == nil || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
 		return 0
 	}
-	if asn := localReturnRouteASN(ip.String(), rules); asn > 0 {
+	if asn := localReturnRouteASNForIP(ip, rules); asn > 0 {
 		return asn
 	}
 	key := ip.String()
+	now := time.Now()
 	asnCache.RLock()
 	cached, ok := asnCache.values[key]
 	asnCache.RUnlock()
-	if ok && cached.expires.After(time.Now()) {
+	if ok && cached.expires.After(now) {
 		return cached.asn
 	}
 	asn := lookupASNWithProviders(ctx, ip, []returnRouteASNProvider{
@@ -82,10 +86,45 @@ func lookupASNWithRules(ctx context.Context, value string, rules *compiledReturn
 	if asn > 0 {
 		cacheTTL = 24 * time.Hour
 	}
-	asnCache.Lock()
-	asnCache.values[key] = asnCacheEntry{asn: asn, expires: time.Now().Add(cacheTTL)}
-	asnCache.Unlock()
+	storeASNCacheEntry(key, asn, time.Now().Add(cacheTTL))
 	return asn
+}
+
+func storeASNCacheEntry(key string, asn int, expires time.Time) {
+	now := time.Now()
+	asnCache.Lock()
+	defer asnCache.Unlock()
+	asnCache.writes++
+	if asnCache.writes%asnCacheSweepEveryWrites == 0 || len(asnCache.values) >= asnCacheMaxEntries {
+		for k, entry := range asnCache.values {
+			if !entry.expires.After(now) {
+				delete(asnCache.values, k)
+			}
+		}
+	}
+	if _, exists := asnCache.values[key]; !exists && len(asnCache.values) >= asnCacheMaxEntries {
+		// Evict oldest-expiring entries down to capacity-1 (plus a small headroom
+		// batch so repeated misses don't scan the map on every single write).
+		toEvict := len(asnCache.values) - asnCacheMaxEntries + 64
+		if toEvict > len(asnCache.values) {
+			toEvict = len(asnCache.values)
+		}
+		for i := 0; i < toEvict; i++ {
+			oldestKey := ""
+			var oldestExp time.Time
+			for k, entry := range asnCache.values {
+				if oldestKey == "" || entry.expires.Before(oldestExp) {
+					oldestKey = k
+					oldestExp = entry.expires
+				}
+			}
+			if oldestKey == "" {
+				break
+			}
+			delete(asnCache.values, oldestKey)
+		}
+	}
+	asnCache.values[key] = asnCacheEntry{asn: asn, expires: expires}
 }
 
 func lookupASNWithProviders(ctx context.Context, ip net.IP, providers []returnRouteASNProvider) int {

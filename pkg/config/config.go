@@ -22,25 +22,153 @@ func (ConfigItem) TableName() string {
 }
 
 var (
-	db    *gorm.DB
+	db          *gorm.DB
+	cacheMu     sync.RWMutex
+	cachedDB    *gorm.DB
+	cacheGen    uint64
+	configCache map[string]string
+	cacheLoaded bool
+
 	SetDb = func(gdb *gorm.DB) {
+		cacheMu.Lock()
 		db = gdb
-		if err := db.AutoMigrate(&ConfigItem{}); err != nil {
+		cachedDB = gdb
+		cacheGen++
+		configCache = make(map[string]string)
+		cacheLoaded = false
+		cacheMu.Unlock()
+		if err := gdb.AutoMigrate(&ConfigItem{}); err != nil {
 			panic("failed to migrate config item table: " + err.Error())
 		}
 	}
 )
 
+// InvalidateCache clears the in-memory configuration cache so subsequent reads
+// reload directly from the database (e.g. after raw SQL/GORM migrations).
+func InvalidateCache() {
+	cacheMu.Lock()
+	cacheGen++
+	configCache = nil
+	cacheLoaded = false
+	cacheMu.Unlock()
+}
+
+// CacheGeneration returns the monotonic generation counter of the config cache.
+func CacheGeneration() uint64 {
+	cacheMu.RLock()
+	gen := cacheGen
+	cacheMu.RUnlock()
+	return gen
+}
+
+func ensureConfigCacheLoaded() (*gorm.DB, error) {
+	cacheMu.RLock()
+	currentDB := db
+	if currentDB == nil {
+		cacheMu.RUnlock()
+		return nil, fmt.Errorf("config database is not initialized")
+	}
+	if cachedDB == currentDB && cacheLoaded {
+		cacheMu.RUnlock()
+		return currentDB, nil
+	}
+	cacheMu.RUnlock()
+
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	currentDB = db
+	if currentDB == nil {
+		return nil, fmt.Errorf("config database is not initialized")
+	}
+	if cachedDB == currentDB && cacheLoaded {
+		return currentDB, nil
+	}
+	var items []ConfigItem
+	if err := currentDB.Find(&items).Error; err != nil {
+		return nil, err
+	}
+	fresh := make(map[string]string, len(items))
+	for _, item := range items {
+		fresh[item.Key] = item.Value
+	}
+	cachedDB = currentDB
+	configCache = fresh
+	cacheLoaded = true
+	return currentDB, nil
+}
+
+func getCachedRaw(key string) (string, bool, error) {
+	if _, err := ensureConfigCacheLoaded(); err != nil {
+		return "", false, err
+	}
+	cacheMu.RLock()
+	val, ok := configCache[key]
+	cacheMu.RUnlock()
+	return val, ok, nil
+}
+
+func getCachedManyRaw(keys []string) (map[string]string, *gorm.DB, uint64, error) {
+	currentDB, err := ensureConfigCacheLoaded()
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	cacheMu.RLock()
+	gen := cacheGen
+	out := make(map[string]string, len(keys))
+	for _, k := range keys {
+		if v, ok := configCache[k]; ok {
+			out[k] = v
+		}
+	}
+	cacheMu.RUnlock()
+	return out, currentDB, gen, nil
+}
+
+func getCachedAllRaw() (map[string]string, error) {
+	if _, err := ensureConfigCacheLoaded(); err != nil {
+		return nil, err
+	}
+	cacheMu.RLock()
+	out := make(map[string]string, len(configCache))
+	for k, v := range configCache {
+		out[k] = v
+	}
+	cacheMu.RUnlock()
+	return out, nil
+}
+
+func putCachedDefaultsIfGen(targetDB *gorm.DB, expectedGen uint64, items []ConfigItem) {
+	cacheMu.Lock()
+	if cachedDB == targetDB && cacheGen == expectedGen && cacheLoaded && configCache != nil {
+		cacheGen++
+		for _, item := range items {
+			if _, exists := configCache[item.Key]; !exists {
+				configCache[item.Key] = item.Value
+			}
+		}
+	}
+	cacheMu.Unlock()
+}
+
+func putCachedWrite(targetDB *gorm.DB, items []ConfigItem) {
+	cacheMu.Lock()
+	cacheGen++
+	if cachedDB == targetDB && cacheLoaded && configCache != nil {
+		for _, item := range items {
+			configCache[item.Key] = item.Value
+		}
+	}
+	cacheMu.Unlock()
+}
+
 // GetAs 获取并转换为指定类型 (泛型)，支持数值类型自动转换
 func GetAs[T any](key string, defaul ...any) (T, error) {
 	var t T
-	var item ConfigItem
-	if db == nil {
-		return t, fmt.Errorf("config database is not initialized")
-	}
-
-	err := db.First(&item, "key = ?", key).Error
+	rawValue, found, err := getCachedRaw(key)
 	if err != nil {
+		return t, err
+	}
+	if !found {
 		if len(defaul) > 0 {
 			// 尝试直接类型断言
 			if v, ok := defaul[0].(T); ok {
@@ -55,14 +183,14 @@ func GetAs[T any](key string, defaul ...any) (T, error) {
 			err = Set(key, t)
 			return t, err
 		}
-		return t, err
+		return t, gorm.ErrRecordNotFound
 	}
 
 	// 先尝试直接反序列化
-	if err = json.Unmarshal([]byte(item.Value), &t); err != nil {
+	if err = json.Unmarshal([]byte(rawValue), &t); err != nil {
 		// 尝试通用解析后转换
 		var generic any
-		if err := json.Unmarshal([]byte(item.Value), &generic); err != nil {
+		if err := json.Unmarshal([]byte(rawValue), &generic); err != nil {
 			return t, err
 		}
 		val := reflect.ValueOf(&t).Elem()
@@ -77,7 +205,6 @@ func GetAs[T any](key string, defaul ...any) (T, error) {
 // 如果 defaultValue 为 nil，则数据库不存在时不写入
 // 如果 defaultValue 不为 nil，则数据库不存在时写入默认值
 func GetMany(keys map[string]any) (map[string]any, error) {
-	var items []ConfigItem
 	result := make(map[string]any)
 	keyList := make([]string, 0, len(keys))
 	for k := range keys {
@@ -86,16 +213,17 @@ func GetMany(keys map[string]any) (map[string]any, error) {
 	if len(keyList) == 0 {
 		return result, nil
 	}
-	if err := db.Where("key IN ?", keyList).Find(&items).Error; err != nil {
+	rawItems, currentDB, gen, err := getCachedManyRaw(keyList)
+	if err != nil {
 		return nil, err
 	}
 
-	foundKeys := make(map[string]bool)
-	for _, item := range items {
+	foundKeys := make(map[string]bool, len(rawItems))
+	for k, rawVal := range rawItems {
 		var parsed any
-		if err := json.Unmarshal([]byte(item.Value), &parsed); err == nil {
-			result[item.Key] = parsed
-			foundKeys[item.Key] = true
+		if err := json.Unmarshal([]byte(rawVal), &parsed); err == nil {
+			result[k] = parsed
+			foundKeys[k] = true
 		}
 	}
 
@@ -119,13 +247,15 @@ func GetMany(keys map[string]any) (map[string]any, error) {
 		}
 	}
 
-	// 批量写入默认值到数据库
+	// 批量写入默认值到数据库（若并发 Set 已写入则不覆盖）
 	if len(toInsert) > 0 {
-		if err := db.Clauses(clause.OnConflict{
+		if err := currentDB.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "key"}},
-			DoUpdates: clause.AssignmentColumns([]string{"value"}),
+			DoNothing: true,
 		}).Create(&toInsert).Error; err != nil {
 			logger.Warn("config", "batch insert default config failed", "error", err)
+		} else {
+			putCachedDefaultsIfGen(currentDB, gen, toInsert)
 		}
 	}
 
@@ -179,15 +309,9 @@ func GetManyAs[T any]() (*T, error) {
 		return &t, nil
 	}
 
-	var items []ConfigItem
-	if err := db.Where("key IN ?", keys).Find(&items).Error; err != nil {
+	foundItems, currentDB, gen, err := getCachedManyRaw(keys)
+	if err != nil {
 		return nil, err
-	}
-
-	// 建立数据库中存在的 key 映射
-	foundItems := make(map[string]string) // key -> value
-	for _, item := range items {
-		foundItems[item.Key] = item.Value
 	}
 
 	// 需要写入数据库的新配置项
@@ -224,13 +348,15 @@ func GetManyAs[T any]() (*T, error) {
 		// 没有 default tag 且数据库中不存在，保持零值，不写入数据库
 	}
 
-	// 批量写入默认值到数据库
+	// 批量写入默认值到数据库（若并发 Set 已写入则不覆盖）
 	if len(toInsert) > 0 {
-		if err := db.Clauses(clause.OnConflict{
+		if err := currentDB.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "key"}},
-			DoUpdates: clause.AssignmentColumns([]string{"value"}),
+			DoNothing: true,
 		}).Create(&toInsert).Error; err != nil {
 			logger.Warn("config", "batch insert default config failed", "error", err)
+		} else {
+			putCachedDefaultsIfGen(currentDB, gen, toInsert)
 		}
 	}
 
@@ -358,16 +484,15 @@ func convertAndSet(val any, fieldVal reflect.Value) error {
 }
 
 func GetAll() (map[string]any, error) {
-	var items []ConfigItem
-	result := make(map[string]any)
-	if err := db.Find(&items).Error; err != nil {
+	rawItems, err := getCachedAllRaw()
+	if err != nil {
 		return nil, err
 	}
-
-	for _, item := range items {
+	result := make(map[string]any, len(rawItems))
+	for k, rawVal := range rawItems {
 		var parsed any
-		if err := json.Unmarshal([]byte(item.Value), &parsed); err == nil {
-			result[item.Key] = parsed
+		if err := json.Unmarshal([]byte(rawVal), &parsed); err == nil {
+			result[k] = parsed
 		}
 	}
 	return result, nil
@@ -375,14 +500,15 @@ func GetAll() (map[string]any, error) {
 
 // Set 设置单个配置
 func Set(key string, value any) error {
+	currentDB, err := ensureConfigCacheLoaded()
+	if err != nil {
+		return err
+	}
 	oldVal := map[string]any{}
-	{
-		var oldItem ConfigItem
-		if err := db.First(&oldItem, "key = ?", key).Error; err == nil {
-			var parsed any
-			if err := json.Unmarshal([]byte(oldItem.Value), &parsed); err == nil {
-				oldVal[key] = parsed
-			}
+	if oldRaw, ok, _ := getCachedRaw(key); ok {
+		var parsed any
+		if err := json.Unmarshal([]byte(oldRaw), &parsed); err == nil {
+			oldVal[key] = parsed
 		}
 	}
 
@@ -396,13 +522,14 @@ func Set(key string, value any) error {
 		Value: string(bytes),
 	}
 
-	err = db.Clauses(clause.OnConflict{
+	err = currentDB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value"}),
 	}).Create(&item).Error
 	if err != nil {
 		return err
 	}
+	putCachedWrite(currentDB, []ConfigItem{item})
 
 	newVal := map[string]any{key: value}
 	publishEvent(oldVal, newVal)
@@ -425,6 +552,11 @@ func SetMany(cst map[string]any) error {
 		return nil
 	}
 
+	currentDB, err := ensureConfigCacheLoaded()
+	if err != nil {
+		return err
+	}
+
 	keys := make([]string, 0, len(items))
 	newVal := make(map[string]any, len(items))
 	for _, it := range items {
@@ -436,25 +568,23 @@ func SetMany(cst map[string]any) error {
 	}
 
 	oldVal := map[string]any{}
-	if len(keys) > 0 {
-		var oldItems []ConfigItem
-		if err := db.Where("key IN ?", keys).Find(&oldItems).Error; err == nil {
-			for _, oi := range oldItems {
-				var parsed any
-				if err := json.Unmarshal([]byte(oi.Value), &parsed); err == nil {
-					oldVal[oi.Key] = parsed
-				}
+	if oldRaw, _, _, rawErr := getCachedManyRaw(keys); rawErr == nil {
+		for k, raw := range oldRaw {
+			var parsed any
+			if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+				oldVal[k] = parsed
 			}
 		}
 	}
 
-	err := db.Clauses(clause.OnConflict{
+	err = currentDB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value"}),
 	}).Create(&items).Error
 	if err != nil {
 		return err
 	}
+	putCachedWrite(currentDB, items)
 
 	publishEvent(oldVal, newVal)
 	return nil

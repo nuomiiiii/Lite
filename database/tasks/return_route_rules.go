@@ -90,8 +90,9 @@ type ReturnRouteRuleView struct {
 }
 
 type returnRoutePrefixRule struct {
-	group   string
-	network *net.IPNet
+	group    string
+	network  *net.IPNet
+	maskBits int
 }
 
 type compiledReturnRouteRules struct {
@@ -99,6 +100,10 @@ type compiledReturnRouteRules struct {
 	asnGroups     map[string]map[int]struct{}
 	prefixGroups  map[string][]*net.IPNet
 	prefixRules   []returnRoutePrefixRule
+	v4Buckets     [256][]returnRoutePrefixRule
+	v4Fallback    []returnRoutePrefixRule
+	v6Buckets     [256][]returnRoutePrefixRule
+	v6Fallback    []returnRoutePrefixRule
 	asnRuleCount  int
 	cidrRuleCount int
 }
@@ -448,6 +453,7 @@ func compileReturnRouteRules(data []byte) (*compiledReturnRouteRules, error) {
 			return nil, fmt.Errorf("confidence.%s 必须大于 0 且不超过 1", key)
 		}
 	}
+	compiled.buildPrefixIndex()
 	return compiled, nil
 }
 
@@ -545,24 +551,74 @@ func (rules *compiledReturnRouteRules) hasASN(group string, asn int) bool {
 	return ok
 }
 
+func (rules *compiledReturnRouteRules) buildPrefixIndex() {
+	if rules == nil {
+		return
+	}
+	rules.v4Buckets = [256][]returnRoutePrefixRule{}
+	rules.v4Fallback = nil
+	rules.v6Buckets = [256][]returnRoutePrefixRule{}
+	rules.v6Fallback = nil
+	for i := range rules.prefixRules {
+		rule := &rules.prefixRules[i]
+		ones, bits := rule.network.Mask.Size()
+		rule.maskBits = ones
+		if ip4 := rule.network.IP.To4(); ip4 != nil && bits == net.IPv4len*8 {
+			if ones >= 8 {
+				rules.v4Buckets[ip4[0]] = append(rules.v4Buckets[ip4[0]], *rule)
+			} else {
+				rules.v4Fallback = append(rules.v4Fallback, *rule)
+			}
+			continue
+		}
+		if ip16 := rule.network.IP.To16(); ip16 != nil {
+			if ones >= 8 {
+				rules.v6Buckets[ip16[0]] = append(rules.v6Buckets[ip16[0]], *rule)
+			} else {
+				rules.v6Fallback = append(rules.v6Fallback, *rule)
+			}
+		}
+	}
+}
+
+func (rules *compiledReturnRouteRules) matchPrefixIP(ip net.IP) string {
+	if rules == nil || ip == nil {
+		return ""
+	}
+	bestGroup := ""
+	bestMask := -1
+	scanSlice := func(slice []returnRoutePrefixRule, target net.IP) {
+		for _, rule := range slice {
+			if rule.maskBits <= bestMask {
+				continue
+			}
+			if rule.network.Contains(target) {
+				bestGroup = rule.group
+				bestMask = rule.maskBits
+			}
+		}
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		scanSlice(rules.v4Buckets[ip4[0]], ip4)
+		scanSlice(rules.v4Fallback, ip4)
+		return bestGroup
+	}
+	if ip16 := ip.To16(); ip16 != nil {
+		scanSlice(rules.v6Buckets[ip16[0]], ip16)
+		scanSlice(rules.v6Fallback, ip16)
+	}
+	return bestGroup
+}
+
 func (rules *compiledReturnRouteRules) hasPrefix(group, value string) bool {
+	if group == "" || rules == nil {
+		return false
+	}
 	ip := net.ParseIP(strings.TrimSpace(value))
 	if ip == nil {
 		return false
 	}
-	bestGroup := ""
-	bestMask := -1
-	for _, rule := range rules.prefixRules {
-		if !rule.network.Contains(ip) {
-			continue
-		}
-		mask, _ := rule.network.Mask.Size()
-		if mask > bestMask {
-			bestGroup = rule.group
-			bestMask = mask
-		}
-	}
-	return bestGroup == group
+	return rules.matchPrefixIP(ip) == group
 }
 
 func (rules *compiledReturnRouteRules) hasSignature(group string, hop returnRouteSignature) bool {
@@ -577,13 +633,19 @@ func (rules *compiledReturnRouteRules) representativeASN(group string) int {
 	return values[0]
 }
 
-func localReturnRouteASN(value string, rules *compiledReturnRouteRules) int {
-	for _, group := range requiredReturnRouteASNGroups {
-		if rules.hasPrefix(group, value) {
-			return rules.representativeASN(group)
-		}
+func localReturnRouteASNForIP(ip net.IP, rules *compiledReturnRouteRules) int {
+	if group := rules.matchPrefixIP(ip); group != "" {
+		return rules.representativeASN(group)
 	}
 	return 0
+}
+
+func localReturnRouteASN(value string, rules *compiledReturnRouteRules) int {
+	ip := net.ParseIP(strings.TrimSpace(value))
+	if ip == nil {
+		return 0
+	}
+	return localReturnRouteASNForIP(ip, rules)
 }
 
 func activateReturnRouteBaseRules(compiled *compiledReturnRouteRules, source string, now time.Time) {
@@ -653,6 +715,7 @@ func mergeReturnRouteRules(base *compiledReturnRouteRules, bgp *compiledReturnRo
 			merged.cidrRuleCount++
 		}
 	}
+	merged.buildPrefixIndex()
 	return merged
 }
 
@@ -715,7 +778,27 @@ func writeReturnRouteRuleFileAtomically(path, pattern string, data []byte) error
 	if err := os.Rename(temporaryPath, path); err != nil {
 		return fmt.Errorf("替换规则文件失败: %w", err)
 	}
+	invalidateReturnRouteFileDigest(path)
 	return nil
+}
+
+type returnRouteWatchedFileDigest struct {
+	initialized bool
+	exists      bool
+	modTimeNano int64
+	size        int64
+	digest      string
+}
+
+var (
+	returnRouteFileDigestMu    sync.Mutex
+	returnRouteFileDigestCache = make(map[string]returnRouteWatchedFileDigest, 4)
+)
+
+func invalidateReturnRouteFileDigest(path string) {
+	returnRouteFileDigestMu.Lock()
+	delete(returnRouteFileDigestCache, path)
+	returnRouteFileDigestMu.Unlock()
 }
 
 func returnRouteRuleFilesDigest() (string, error) {
@@ -731,15 +814,58 @@ func returnRouteRuleFilesDigest() (string, error) {
 }
 
 func returnRouteRuleFileDigest(path string) (string, error) {
+	info, statErr := os.Stat(path)
+	if errors.Is(statErr, os.ErrNotExist) {
+		returnRouteFileDigestMu.Lock()
+		returnRouteFileDigestCache[path] = returnRouteWatchedFileDigest{
+			initialized: true,
+			exists:      false,
+			digest:      "missing",
+		}
+		returnRouteFileDigestMu.Unlock()
+		return "missing", nil
+	}
+	if statErr != nil {
+		return "", statErr
+	}
+
+	modNano := info.ModTime().UnixNano()
+	size := info.Size()
+	returnRouteFileDigestMu.Lock()
+	prev := returnRouteFileDigestCache[path]
+	if prev.initialized && prev.exists && prev.modTimeNano == modNano && prev.size == size {
+		digest := prev.digest
+		returnRouteFileDigestMu.Unlock()
+		return digest, nil
+	}
+	returnRouteFileDigestMu.Unlock()
+
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
+		returnRouteFileDigestMu.Lock()
+		returnRouteFileDigestCache[path] = returnRouteWatchedFileDigest{
+			initialized: true,
+			exists:      false,
+			digest:      "missing",
+		}
+		returnRouteFileDigestMu.Unlock()
 		return "missing", nil
 	}
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(data)
-	return fmt.Sprintf("%x", sum), nil
+	digest := fmt.Sprintf("%x", sum)
+	returnRouteFileDigestMu.Lock()
+	returnRouteFileDigestCache[path] = returnRouteWatchedFileDigest{
+		initialized: true,
+		exists:      true,
+		modTimeNano: modNano,
+		size:        int64(len(data)),
+		digest:      digest,
+	}
+	returnRouteFileDigestMu.Unlock()
+	return digest, nil
 }
 
 func returnRouteBGPSourceURL() string {

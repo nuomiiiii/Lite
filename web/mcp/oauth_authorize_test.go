@@ -2,9 +2,12 @@ package mcp
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/nuomiiiii/lite/database/models"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -199,8 +202,80 @@ func openMCPAuthTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&models.MCPAuthorizationRequest{}); err != nil {
+	if err := db.AutoMigrate(&models.MCPAuthorizationRequest{}, &models.MCPClient{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return db
+}
+
+func TestHandleAuthorizeValidatesClientAndRedirectBeforeOAuthErrorRedirect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := openMCPAuthTestDB(t)
+	oldDB := database
+	database = func() *gorm.DB { return db }
+	t.Cleanup(func() { database = oldDB })
+
+	oldEnabled := isMCPEnabled
+	isMCPEnabled = func() bool { return true }
+	t.Cleanup(func() { isMCPEnabled = oldEnabled })
+
+	if err := db.Create(&models.MCPClient{
+		ClientID:     "cli-valid",
+		ClientName:   "ValidClient",
+		RedirectURIs: `["http://127.0.0.1:49981/cb"]`,
+		CreatedAt:    time.Now().UTC(),
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	for _, urlStr := range []string{
+		"http://127.0.0.1:27777/oauth/authorize?client_id=unknown&redirect_uri=https://evil.example/cb&response_type=token",
+		"http://127.0.0.1:27777/oauth/authorize?client_id=cli-valid&redirect_uri=https://evil.example/cb&response_type=token",
+		"http://127.0.0.1:27777/oauth/authorize?client_id=cli-valid&redirect_uri=https://evil.example/cb&response_type=code",
+	} {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodGet, urlStr, nil)
+		handleAuthorize(c)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s -> status %d (location=%q), want 400 Bad Request", urlStr, rec.Code, rec.Header().Get("Location"))
+		}
+		if loc := rec.Header().Get("Location"); loc != "" {
+			t.Fatalf("%s -> unexpected redirect Location %q", urlStr, loc)
+		}
+	}
+}
+
+func TestRequestIsHTTPSRequiresTrustedForwardedProxy(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	recPub := httptest.NewRecorder()
+	cPub, _ := gin.CreateTestContext(recPub)
+	reqPub := httptest.NewRequest(http.MethodGet, "http://panel.example/.well-known/oauth-authorization-server", nil)
+	reqPub.RemoteAddr = "203.0.113.10:43000"
+	reqPub.Header.Set("X-Forwarded-Proto", "https")
+	cPub.Request = reqPub
+	if requestIsHTTPS(cPub) {
+		t.Fatal("public RemoteAddr must not spoof X-Forwarded-Proto: https")
+	}
+
+	recLoop := httptest.NewRecorder()
+	cLoop, _ := gin.CreateTestContext(recLoop)
+	reqLoop := httptest.NewRequest(http.MethodGet, "http://panel.example/.well-known/oauth-authorization-server", nil)
+	reqLoop.RemoteAddr = "127.0.0.1:43000"
+	reqLoop.Header.Set("X-Forwarded-Proto", "https")
+	cLoop.Request = reqLoop
+	if !requestIsHTTPS(cLoop) {
+		t.Fatal("loopback reverse proxy X-Forwarded-Proto: https should be trusted")
+	}
+
+	recPriv := httptest.NewRecorder()
+	cPriv, _ := gin.CreateTestContext(recPriv)
+	reqPriv := httptest.NewRequest(http.MethodGet, "http://panel.example/.well-known/oauth-authorization-server", nil)
+	reqPriv.RemoteAddr = "172.18.0.3:43000"
+	reqPriv.Header.Set("X-Forwarded-Proto", "https")
+	cPriv.Request = reqPriv
+	if !requestIsHTTPS(cPriv) {
+		t.Fatal("private network reverse proxy X-Forwarded-Proto: https should be trusted")
+	}
 }

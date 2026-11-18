@@ -77,6 +77,7 @@ func PersistTrafficDisplayFields() error {
 }
 
 func applyClientDisplayFieldsAndPersist(db *gorm.DB, clients []models.Client, now time.Time) error {
+	updated := false
 	for index := range clients {
 		if !applyClientDisplayFields(&clients[index], now) {
 			continue
@@ -87,8 +88,15 @@ func applyClientDisplayFieldsAndPersist(db *gorm.DB, clients []models.Client, no
 				"traffic_reset_allowance": clients[index].TrafficResetAllowance,
 				"traffic_reset_cycle":     clients[index].TrafficResetCycle,
 			}).Error; err != nil {
+			if updated {
+				invalidateClientListCache()
+			}
 			return err
 		}
+		updated = true
+	}
+	if updated {
+		invalidateClientListCache()
 	}
 	return nil
 }

@@ -1,10 +1,12 @@
 package accounts
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pquerna/otp"
 	"github.com/pquerna/otp/totp"
 )
@@ -63,5 +65,43 @@ func TestTOTPCounterReplayAndNextWindow(t *testing.T) {
 	}
 	if _, ok := matchingTOTPCounter(key.Secret(), nextCode, counter, nextTime); !ok {
 		t.Fatal("next window TOTP was rejected")
+	}
+}
+
+func TestEnable2FaRejectsOverwriteWhenAlreadyEnabled(t *testing.T) {
+	username := "totp-" + uuid.NewString()[:8]
+	user, err := CreateAccount(username, "correctpassword")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = DeleteAccountByUsername(username) })
+
+	secret1, _, err := Generate2Fa()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code1, err := totp.GenerateCode(secret1, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Enable2Fa(user.UUID, secret1, code1); err != nil {
+		t.Fatalf("first Enable2Fa failed: %v", err)
+	}
+
+	secret2, _, err := Generate2Fa()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code2, err := totp.GenerateCode(secret2, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Enable2Fa(user.UUID, secret2, code2); !errors.Is(err, ErrTwoFactorAlreadyEnabled) {
+		t.Fatalf("second Enable2Fa error = %v, want ErrTwoFactorAlreadyEnabled", err)
+	}
+
+	ok, err := Verify2Fa(user.UUID, code2)
+	if err != nil || ok {
+		t.Fatalf("second secret should not verify: ok=%v err=%v", ok, err)
 	}
 }

@@ -281,18 +281,27 @@ func (w *reportBatchWorker) run() {
 		pending = append(pending, drainReportQueue(w.queue, cap(w.queue))...)
 		return writePendingReports(ctx, &pending)
 	}
+	const maxPingCoalesceBatch = 512
 	flushPings := func(ctx context.Context, first pingBatchItem, hasFirst bool) {
-		items := drainPingQueue(w.pingQueue, cap(w.pingQueue))
+		var batch []pingBatchItem
 		if hasFirst {
-			batch := make([]pingBatchItem, 0, 1+len(items))
-			batch = append(batch, first)
-			items = append(batch, items...)
+			batch = make([]pingBatchItem, 1, min(maxPingCoalesceBatch, 1+len(w.pingQueue)))
+			batch[0] = first
 		}
-		if len(items) == 0 {
+		for len(batch) < maxPingCoalesceBatch {
+			select {
+			case next := <-w.pingQueue:
+				batch = append(batch, next)
+			default:
+				goto drained
+			}
+		}
+	drained:
+		if len(batch) == 0 {
 			return
 		}
-		writable := items[:0]
-		for _, item := range items {
+		writable := batch[:0]
+		for _, item := range batch {
 			assignment := PingAssignment{Client: item.rec.Client, TaskID: item.rec.TaskId}
 			if EntityWritesBlocked(item.rec.Client) || PingTaskWritesBlocked(item.rec.TaskId) || PingAssignmentWritesBlocked(assignment) {
 				item.done <- ErrMetricWriteBlocked

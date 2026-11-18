@@ -38,6 +38,34 @@ type Request struct {
 	ID      any    `json:"id,omitempty"`
 }
 
+type wireRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+	ID      any             `json:"id,omitempty"`
+}
+
+// DecodeRequest unmarshals an incoming JSON-RPC request while keeping Params as
+// raw JSON bytes so handlers can unmarshal directly into their target struct
+// without an intermediate map[string]any round-trip.
+func DecodeRequest(data []byte, dst *Request) error {
+	var wire wireRequest
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	var params any
+	if len(wire.Params) > 0 {
+		params = wire.Params
+	}
+	*dst = Request{
+		JSONRPC: wire.JSONRPC,
+		Method:  wire.Method,
+		Params:  params,
+		ID:      wire.ID,
+	}
+	return nil
+}
+
 type Response struct {
 	JSONRPC string    `json:"jsonrpc"`
 	ID      any       `json:"id,omitempty"`

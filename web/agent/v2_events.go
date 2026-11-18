@@ -223,11 +223,45 @@ func v2EventCoalesceKey(event v2.Event) string {
 		return ""
 	}
 	if event.Method == v2.MethodAgentRoute {
+		switch p := event.Params.(type) {
+		case v2.RouteParams:
+			if p.TaskID == 0 {
+				return ""
+			}
+			return fmt.Sprintf("%s:%d", event.Method, p.TaskID)
+		case *v2.RouteParams:
+			if p == nil || p.TaskID == 0 {
+				return ""
+			}
+			return fmt.Sprintf("%s:%d", event.Method, p.TaskID)
+		case map[string]any:
+			if id, ok := anyToUint(p["task_id"]); ok && id != 0 {
+				return fmt.Sprintf("%s:%d", event.Method, id)
+			}
+			return ""
+		}
 		var params v2.RouteParams
 		if err := bindV2EventParams(event.Params, &params); err != nil || params.TaskID == 0 {
 			return ""
 		}
 		return fmt.Sprintf("%s:%d", event.Method, params.TaskID)
+	}
+	switch p := event.Params.(type) {
+	case v2.PingParams:
+		if p.TaskID == 0 {
+			return ""
+		}
+		return fmt.Sprintf("%s:%d", event.Method, p.TaskID)
+	case *v2.PingParams:
+		if p == nil || p.TaskID == 0 {
+			return ""
+		}
+		return fmt.Sprintf("%s:%d", event.Method, p.TaskID)
+	case map[string]any:
+		if id, ok := anyToUint(p["ping_task_id"]); ok && id != 0 {
+			return fmt.Sprintf("%s:%d", event.Method, id)
+		}
+		return ""
 	}
 	var params v2.PingParams
 	if err := bindV2EventParams(event.Params, &params); err != nil || params.TaskID == 0 {
@@ -236,7 +270,50 @@ func v2EventCoalesceKey(event v2.Event) string {
 	return fmt.Sprintf("%s:%d", event.Method, params.TaskID)
 }
 
+func anyToUint(v any) (uint, bool) {
+	switch n := v.(type) {
+	case uint:
+		return n, true
+	case uint64:
+		return uint(n), true
+	case uint32:
+		return uint(n), true
+	case int:
+		if n < 0 {
+			return 0, false
+		}
+		return uint(n), true
+	case int64:
+		if n < 0 {
+			return 0, false
+		}
+		return uint(n), true
+	case float64:
+		if n < 0 {
+			return 0, false
+		}
+		return uint(n), true
+	default:
+		return 0, false
+	}
+}
+
 func bindV2EventParams(raw any, target any) error {
+	if raw == nil {
+		return json.Unmarshal([]byte("null"), target)
+	}
+	switch v := raw.(type) {
+	case json.RawMessage:
+		if len(v) == 0 {
+			return json.Unmarshal([]byte("null"), target)
+		}
+		return json.Unmarshal(v, target)
+	case []byte:
+		if len(v) == 0 {
+			return json.Unmarshal([]byte("null"), target)
+		}
+		return json.Unmarshal(v, target)
+	}
 	b, err := json.Marshal(raw)
 	if err != nil {
 		return err
@@ -364,6 +441,20 @@ type RemovedV2Event struct {
 }
 
 func ExecTaskID(event v2.Event) string {
+	switch p := event.Params.(type) {
+	case v2.ExecParams:
+		return p.TaskID
+	case *v2.ExecParams:
+		if p == nil {
+			return ""
+		}
+		return p.TaskID
+	case map[string]any:
+		if id, ok := p["task_id"].(string); ok {
+			return id
+		}
+		return ""
+	}
 	var params v2.ExecParams
 	if err := bindV2EventParams(event.Params, &params); err != nil {
 		return ""
@@ -372,6 +463,34 @@ func ExecTaskID(event v2.Event) string {
 }
 
 func MCPTaskID(event v2.Event) string {
+	switch p := event.Params.(type) {
+	case v2.MCPExecParams:
+		if p.TaskID != "" {
+			return p.TaskID
+		}
+		return p.OperationID
+	case *v2.MCPExecParams:
+		if p == nil {
+			return ""
+		}
+		if p.TaskID != "" {
+			return p.TaskID
+		}
+		return p.OperationID
+	case v2.MCPFileParams:
+		if p.TaskID != "" {
+			return p.TaskID
+		}
+		return p.OperationID
+	case *v2.MCPFileParams:
+		if p == nil {
+			return ""
+		}
+		if p.TaskID != "" {
+			return p.TaskID
+		}
+		return p.OperationID
+	}
 	var exec v2.MCPExecParams
 	if err := bindV2EventParams(event.Params, &exec); err == nil {
 		if exec.TaskID != "" {
@@ -392,11 +511,29 @@ func MCPTaskID(event v2.Event) string {
 func MCPEventLeaseID(event v2.Event) string {
 	switch event.Method {
 	case v2.MethodAgentMCPExec:
+		switch p := event.Params.(type) {
+		case v2.MCPExecParams:
+			return p.LeaseID
+		case *v2.MCPExecParams:
+			if p != nil {
+				return p.LeaseID
+			}
+			return ""
+		}
 		var params v2.MCPExecParams
 		if bindV2EventParams(event.Params, &params) == nil {
 			return params.LeaseID
 		}
 	case v2.MethodAgentMCPFile:
+		switch p := event.Params.(type) {
+		case v2.MCPFileParams:
+			return p.LeaseID
+		case *v2.MCPFileParams:
+			if p != nil {
+				return p.LeaseID
+			}
+			return ""
+		}
 		var params v2.MCPFileParams
 		if bindV2EventParams(event.Params, &params) == nil {
 			return params.LeaseID
@@ -545,6 +682,15 @@ func RemoveV2RemoteRequest(uuid, requestID string) {
 }
 
 func v2RemoteRequestID(event v2.Event) string {
+	switch p := event.Params.(type) {
+	case v2.RemoteRequestParams:
+		return p.RequestID
+	case *v2.RemoteRequestParams:
+		if p != nil {
+			return p.RequestID
+		}
+		return ""
+	}
 	var params v2.RemoteRequestParams
 	if err := bindV2EventParams(event.Params, &params); err != nil {
 		return ""

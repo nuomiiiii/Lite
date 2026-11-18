@@ -616,6 +616,8 @@ func (a *App) RunMetricStorageUpgrade(summary metric.SQLiteMigrationSummary) (bo
 
 // StartBackground 启动后台工作：定时任务。
 func (a *App) StartBackground() error {
+	notifier.ClientIsLive = agent_runtime.IsPresent
+	notifier.ResumeOfflineNotifications()
 	stopMetricCleanup := metricstore.StartPendingCleanupWorker(dbcore.GetDBInstance())
 	a.addCleanup("metric-cleanup", func(context.Context) error {
 		stopMetricCleanup()
@@ -846,6 +848,7 @@ func serveHTTP(server *http.Server) error {
 
 // Shutdown 优雅关闭：先停止接收新请求，再反序执行已登记的清理函数。
 func (a *App) Shutdown() error {
+	notifier.SuppressOfflineNotifications()
 	if a.dbReady {
 		auditlog.Event("", "", "info", "audit.server_shutdown", nil)
 	}

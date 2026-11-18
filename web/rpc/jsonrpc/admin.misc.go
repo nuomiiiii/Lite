@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/nuomiiiii/lite/cmd/flags"
 	"github.com/nuomiiiii/lite/database/accounts"
 	"github.com/nuomiiiii/lite/database/auditlog"
 	"github.com/nuomiiiii/lite/database/clients"
@@ -15,6 +19,7 @@ import (
 	"github.com/nuomiiiii/lite/database/records"
 	"github.com/nuomiiiii/lite/database/tasks"
 	"github.com/nuomiiiii/lite/pkg/config"
+	"github.com/nuomiiiii/lite/pkg/metric"
 	"github.com/nuomiiiii/lite/pkg/rpc"
 	"github.com/nuomiiiii/lite/pkg/themehttp"
 	v2 "github.com/nuomiiiii/lite/protocol/v2"
@@ -91,6 +96,9 @@ func adminGetSessions(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.Jso
 }
 
 func adminDeleteSession(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	if err := denyAPIKey(ctx); err != nil {
+		return nil, err
+	}
 	var params struct {
 		Session string `json:"session"`
 	}
@@ -108,6 +116,9 @@ func adminDeleteSession(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc
 }
 
 func adminDeleteAllSessions(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	if err := denyAPIKey(ctx); err != nil {
+		return nil, err
+	}
 	if err := accounts.DeleteAllSessions(); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to delete all sessions: "+err.Error(), nil)
 	}
@@ -117,7 +128,7 @@ func adminDeleteAllSessions(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *r
 	return nil, nil
 }
 
-func adminGetSettings(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+func adminGetSettings(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	if err := messageSender.EnsureRoutes(); err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to prepare notification routes: "+err.Error(), nil)
 	}
@@ -126,6 +137,9 @@ func adminGetSettings(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonR
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to get settings: "+err.Error(), nil)
 	}
 	stripRetiredAdminSettings(cst)
+	if meta := rpc.MetaFromContext(ctx); meta != nil && meta.Principal != nil && (meta.Principal.IsAPIKey || meta.Principal.Type == rpc.PrincipalAPIKey) {
+		cst[config.ApiKeyKey] = ""
+	}
 	return cst, nil
 }
 
@@ -141,6 +155,7 @@ func stripRetiredAdminSettings(cst map[string]any) {
 //
 // 注意：metric_store_enabled 已废弃（metric store 始终启用），不再纳入此集合。
 var metricStoreConfigKeys = map[string]struct{}{
+	"metric_db_type":                  {},
 	metricstore.MetricDBDriverKey:     {},
 	metricstore.MetricDBDSNKey:        {},
 	metricstore.MetricTablePrefixKey:  {},
@@ -260,6 +275,9 @@ func adminEditSettings(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.
 		merged, err := mergedMetricConfig(cfg)
 		if err != nil {
 			return nil, rpc.MakeError(rpc.InternalError, "Failed to resolve metric store config: "+err.Error(), nil)
+		}
+		if err := validateMetricDBDSN(merged.Driver, merged.DSN); err != nil {
+			return nil, rpc.MakeError(rpc.InvalidParams, "Invalid metric_db_dsn: "+err.Error(), nil)
 		}
 		testCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		if err := metricstore.TestConnection(testCtx, merged); err != nil {
@@ -405,6 +423,11 @@ func mergedMetricConfig(cfg map[string]interface{}) (*metricstore.MetricStoreCon
 		return nil, err
 	}
 
+	if v, ok := cfg["metric_db_type"]; ok {
+		if s, ok := v.(string); ok && strings.TrimSpace(s) != "" {
+			merged.Driver = strings.TrimSpace(s)
+		}
+	}
 	if v, ok := cfg[metricstore.MetricDBDriverKey]; ok {
 		if s, ok := v.(string); ok {
 			merged.Driver = s
@@ -537,6 +560,167 @@ func adminClearAllRecords(ctx context.Context, _ *rpc.JsonRpcRequest) (any, *rpc
 	return nil, nil
 }
 
+func evalSymlinksClosest(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	cur := abs
+	var tail []string
+	for {
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			for i := len(tail) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, tail[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return filepath.Clean(abs), nil
+		}
+		tail = append(tail, filepath.Base(cur))
+		cur = parent
+	}
+}
+
+func extractSQLiteFilePath(raw string) string {
+	p := strings.TrimSpace(raw)
+	if strings.HasPrefix(strings.ToLower(p), "file:") {
+		p = p[5:]
+	}
+	if idx := strings.IndexByte(p, '#'); idx >= 0 {
+		p = p[:idx]
+	}
+	if idx := strings.IndexByte(p, '?'); idx >= 0 {
+		q := strings.ToLower(p[idx+1:])
+		if strings.Contains(q, "mode=memory") {
+			return ""
+		}
+		p = p[:idx]
+	}
+	p = strings.TrimSpace(p)
+	if p == "" || p == ":memory:" {
+		return ""
+	}
+	return p
+}
+
+func forbiddenSQLiteTargets(workingDir, realDataDir string) []string {
+	candidates := []string{
+		filepath.Join(realDataDir, "lite.db"),
+		filepath.Join(realDataDir, "lite-instance.key"),
+	}
+	if mainPath := extractSQLiteFilePath(flags.DatabaseFile); mainPath != "" {
+		if !filepath.IsAbs(mainPath) {
+			mainPath = filepath.Join(workingDir, mainPath)
+		}
+		if resolvedMain, err := evalSymlinksClosest(mainPath); err == nil {
+			candidates = append(candidates, resolvedMain)
+		}
+	}
+	out := make([]string, 0, len(candidates)*5)
+	for _, base := range candidates {
+		base = filepath.Clean(base)
+		out = append(out, base)
+		if !strings.EqualFold(filepath.Base(base), "lite-instance.key") {
+			out = append(out, base+"-wal", base+"-shm", base+"-journal", base+".restore")
+		}
+	}
+	return out
+}
+
+func validateMetricDBDSN(driver, dsn string) error {
+	dsn = strings.TrimSpace(dsn)
+	if dsn == "" {
+		return nil
+	}
+	decoded := dsn
+	for i := 0; i < 5; i++ {
+		if strings.Contains(strings.ToLower(decoded), "allowallfiles") {
+			return errors.New("allowAllFiles is not permitted in metric_db_dsn")
+		}
+		next, err := url.QueryUnescape(decoded)
+		if err != nil || next == decoded {
+			break
+		}
+		decoded = next
+	}
+	if strings.Contains(strings.ToLower(decoded), "allowallfiles") {
+		return errors.New("allowAllFiles is not permitted in metric_db_dsn")
+	}
+	resolved := metricstore.ResolveDriverFromConfig(driver, dsn)
+	if resolved != metric.DriverSQLite {
+		return nil
+	}
+	for i := 0; i < len(dsn); i++ {
+		if dsn[i] < 0x20 || dsn[i] == 0x7f {
+			return errors.New("invalid SQLite path")
+		}
+	}
+	if strings.Contains(dsn, "%") {
+		return errors.New("percent-encoding is not permitted in SQLite metric_db_dsn")
+	}
+	dbPath := dsn
+	if strings.HasPrefix(strings.ToLower(dbPath), "file:") {
+		dbPath = dbPath[5:]
+		if strings.HasPrefix(dbPath, "//") {
+			return errors.New("URI authority is not permitted in SQLite metric_db_dsn")
+		}
+	}
+	if idx := strings.IndexByte(dbPath, '#'); idx >= 0 {
+		dbPath = dbPath[:idx]
+	}
+	if idx := strings.IndexByte(dbPath, '?'); idx >= 0 {
+		dbPath = dbPath[:idx]
+	}
+	dbPath = strings.TrimSpace(dbPath)
+	if dbPath == "" || dbPath == ":memory:" {
+		return errors.New("SQLite metric_db_dsn must point to a file inside ./data/")
+	}
+	if strings.Contains(dbPath, "..") {
+		return errors.New("SQLite path cannot contain '..'")
+	}
+	for _, seg := range strings.Split(strings.ReplaceAll(dbPath, "\\", "/"), "/") {
+		if seg == ".." {
+			return errors.New("SQLite path cannot contain '..'")
+		}
+	}
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return errors.New("failed to determine working directory")
+	}
+	dataDir, err := evalSymlinksClosest(filepath.Join(workingDir, "data"))
+	if err != nil {
+		return errors.New("failed to resolve data directory")
+	}
+	target := dbPath
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(workingDir, target)
+	}
+	absTarget, err := evalSymlinksClosest(target)
+	if err != nil {
+		return errors.New("invalid SQLite path")
+	}
+	rel, err := filepath.Rel(dataDir, absTarget)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return errors.New("SQLite metric_db_dsn must reside inside ./data/")
+	}
+	baseLower := strings.ToLower(filepath.Base(absTarget))
+	if baseLower == "lite-instance.key" {
+		return errors.New("SQLite metric_db_dsn cannot target reserved system files")
+	}
+	for _, forbidden := range forbiddenSQLiteTargets(workingDir, dataDir) {
+		if strings.EqualFold(absTarget, forbidden) {
+			return errors.New("SQLite metric_db_dsn cannot target the main database or reserved files")
+		}
+	}
+	return nil
+}
+
 var humanSessionSettingKeys = []string{
 	config.CustomHeadKey,
 	config.CustomBodyKey,
@@ -544,6 +728,16 @@ var humanSessionSettingKeys = []string{
 	config.DisablePasswordLoginKey,
 	config.OAuthEnabledKey,
 	config.OAuthProviderKey,
+	config.ApiKeyKey,
+	config.CorsOriginCheckEnabledKey,
+	config.CorsAllowedOriginsKey,
+	config.WsOriginCheckEnabledKey,
+	config.WsAllowedOriginsKey,
+	config.AllowRemoteManagementKey,
+	config.AllowMCPKey,
+	"metric_db_type",
+	metricstore.MetricDBDriverKey,
+	metricstore.MetricDBDSNKey,
 }
 
 func settingsRequireHumanSession(cfg map[string]interface{}) bool {

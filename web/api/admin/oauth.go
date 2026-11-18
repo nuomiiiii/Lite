@@ -2,9 +2,11 @@ package admin
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nuomiiiii/lite/database/accounts"
+	"github.com/nuomiiiii/lite/utils"
 	"github.com/nuomiiiii/lite/web/api"
 	"github.com/nuomiiiii/lite/web/passkey"
 )
@@ -14,17 +16,26 @@ import (
 // OIDC provider 配置的 get/set 已迁移为 RPC2 方法（见 web/rpc/jsonrpc/admin.provider.go）。
 
 func BindingExternalAccount(c *gin.Context) {
+	if strings.EqualFold(strings.TrimSpace(c.GetHeader("Sec-Fetch-Site")), "cross-site") {
+		api.RespondError(c, http.StatusForbidden, "Cross-site navigation is not allowed")
+		return
+	}
 	session, _ := c.Cookie("session_token")
 	user, err := accounts.GetUserBySession(session)
 	if err != nil {
 		api.RespondError(c, 500, "No user found: "+err.Error())
 		return
 	}
-	c.SetCookie("binding_external_account", user.UUID, 3600, "/", "", false, true)
+	secure := utils.GetScheme(c) == "https"
+	c.SetCookie("binding_external_account", user.UUID, 3600, "/", "", secure, true)
 	c.Redirect(302, "/api/oauth")
 }
 
 func ConfirmPasskeyExternalAccount(c *gin.Context) {
+	if strings.EqualFold(strings.TrimSpace(c.GetHeader("Sec-Fetch-Site")), "cross-site") {
+		api.RespondError(c, http.StatusForbidden, "Cross-site navigation is not allowed")
+		return
+	}
 	session, _ := c.Cookie("session_token")
 	user, err := accounts.GetUserBySession(session)
 	if err != nil {
@@ -35,7 +46,8 @@ func ConfirmPasskeyExternalAccount(c *gin.Context) {
 		api.RespondError(c, 400, "No bound SSO account")
 		return
 	}
-	c.SetCookie("passkey_confirm_account", user.UUID, 3600, "/", "", false, true)
+	secure := utils.GetScheme(c) == "https"
+	c.SetCookie("passkey_confirm_account", user.UUID, 3600, "/", "", secure, true)
 	c.Redirect(302, "/api/oauth")
 }
 

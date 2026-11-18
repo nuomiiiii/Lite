@@ -280,6 +280,9 @@ func (t *TDigest) Quantile(q float64) float64 {
 // magic[2] version[1] compression[8] min[8] max[8] count[8] nCentroids[4]，
 // 后接 nCentroids * (mean[8] weight[8])。
 func (t *TDigest) Encode() []byte {
+	if t == nil {
+		return nil
+	}
 	return compressTDigestBlob(t.encodeRaw())
 }
 
@@ -312,17 +315,20 @@ func compressTDigestBlob(raw []byte) []byte {
 		return raw
 	}
 	var payload bytes.Buffer
-	writer, err := flate.NewWriter(&payload, flate.BestSpeed)
+	writer, err := acquireFlateWriter(&payload, flate.BestSpeed)
 	if err != nil {
 		return raw
 	}
 	if _, err := writer.Write(raw); err != nil {
 		_ = writer.Close()
+		releaseFlateWriter(flate.BestSpeed, writer)
 		return raw
 	}
 	if err := writer.Close(); err != nil {
+		releaseFlateWriter(flate.BestSpeed, writer)
 		return raw
 	}
+	releaseFlateWriter(flate.BestSpeed, writer)
 	if payload.Len()+3 >= len(raw) {
 		return raw
 	}

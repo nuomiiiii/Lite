@@ -16,6 +16,7 @@ func (s *Store) handoffExpiredRollupTiersTx(ctx context.Context, metricName stri
 		return 0, nil
 	}
 	comp := policy.compression()
+	needDigest := s.metricRequiresQuantiles(ctx, tx, metricName)
 	written := 0
 	for index := 0; index+1 < len(policy.Tiers); index++ {
 		fine := policy.Tiers[index]
@@ -25,16 +26,18 @@ func (s *Store) handoffExpiredRollupTiersTx(ctx context.Context, metricName stri
 		if upper == math.MinInt64 {
 			continue
 		}
-		rows, err := s.scanRollupRowsRange(ctx, tx, metricName, fine.Interval, math.MinInt64, upper-1, true)
+		rows, err := s.scanRollupRowsRange(ctx, tx, metricName, fine.Interval, math.MinInt64, upper-1, needDigest)
 		if err != nil {
 			return written, fmt.Errorf("metric: read %s tier before handoff: %w", fine.Interval, err)
 		}
 		if len(rows) == 0 {
 			continue
 		}
-		for _, row := range rows {
-			if row.bucketData.digest == nil && !rollupDigestOptional(metricName, row.bucketData) {
-				return written, fmt.Errorf("metric: cannot losslessly hand off %s bucket %d with a missing digest", fine.Interval, row.bucket)
+		if needDigest && !s.metricAllowsDigestlessRollups(ctx, tx, metricName) {
+			for i := range rows {
+				if rows[i].bucketData.digest == nil && !rollupDigestOptional(metricName, rows[i].bucketData) {
+					return written, fmt.Errorf("metric: cannot losslessly hand off %s bucket %d with a missing digest", fine.Interval, rows[i].bucket)
+				}
 			}
 		}
 		buckets := coarsenStoredRollups(metricName, rows, coarse.Interval, comp)

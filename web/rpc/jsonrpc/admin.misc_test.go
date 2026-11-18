@@ -2,13 +2,26 @@ package jsonrpc
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/nuomiiiii/lite/cmd/flags"
 	"github.com/nuomiiiii/lite/database/metricstore"
 	"github.com/nuomiiiii/lite/pkg/config"
 	"github.com/nuomiiiii/lite/pkg/rpc"
+	"github.com/nuomiiiii/lite/utils/instancekey"
 	"github.com/nuomiiiii/lite/web/passkey"
 )
+
+func TestMain(m *testing.M) {
+	cleanup := instancekey.SetupTempFileForTest()
+	flags.DatabaseType = flags.DatabaseTypeSQLite
+	flags.DatabaseFile = "file:jsonrpc_pkg_test?mode=memory&cache=shared"
+	code := m.Run()
+	cleanup()
+	os.Exit(code)
+}
 
 func TestNormalizeGitHubProxySetting(t *testing.T) {
 	empty, err := normalizeGitHubProxySetting(" ")
@@ -167,6 +180,16 @@ func TestSettingsRequireHumanSessionIncludesLoginKeys(t *testing.T) {
 		config.DisablePasswordLoginKey,
 		config.OAuthEnabledKey,
 		config.OAuthProviderKey,
+		config.ApiKeyKey,
+		config.CorsOriginCheckEnabledKey,
+		config.CorsAllowedOriginsKey,
+		config.WsOriginCheckEnabledKey,
+		config.WsAllowedOriginsKey,
+		config.AllowRemoteManagementKey,
+		config.AllowMCPKey,
+		"metric_db_type",
+		metricstore.MetricDBDriverKey,
+		metricstore.MetricDBDSNKey,
 	} {
 		if !settingsRequireHumanSession(map[string]any{key: true}) {
 			t.Fatalf("%s must require an administrator session", key)
@@ -174,6 +197,91 @@ func TestSettingsRequireHumanSessionIncludesLoginKeys(t *testing.T) {
 	}
 	if settingsRequireHumanSession(map[string]any{config.SitenameKey: "Lite"}) {
 		t.Fatal("unrelated settings must still be writable with an API key")
+	}
+}
+
+func TestValidateMetricDBDSN(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := validateMetricDBDSN("", ""); err != nil {
+		t.Fatalf("empty default DSN should pass: %v", err)
+	}
+	if err := validateMetricDBDSN("sqlite", "./data/metrics.db"); err != nil {
+		t.Fatalf("default SQLite DSN should pass: %v", err)
+	}
+	if err := validateMetricDBDSN("sqlite", "file:./data/sub/metrics.db?cache=shared"); err != nil {
+		t.Fatalf("nested ./data/ SQLite DSN should pass: %v", err)
+	}
+	for _, bad := range []struct {
+		driver string
+		dsn    string
+	}{
+		{"mysql", "user:pass@tcp(127.0.0.1:3306)/db?allowAllFiles=true"},
+		{"mysql", "user:pass@tcp(127.0.0.1:3306)/db?ALLOWALLFILES=1"},
+		{"mysql", "user:pass@tcp(127.0.0.1:3306)/db?allow%2541llFiles=true"},
+		{"sqlite", "./data/../outside.db"},
+		{"sqlite", "../../etc/passwd"},
+		{"sqlite", "./outside.db"},
+		{"sqlite", "./data"},
+		{"sqlite", "file:../outside.db?mode=rwc"},
+		{"sqlite", "file:./data/%2e%2e/evil.db"},
+		{"sqlite", "file:./data/%2e%2e/%2e%2e/outside.db"},
+		{"sqlite", "file://localhost/etc/passwd"},
+		{"sqlite", "./data/lite.db"},
+		{"sqlite", "file:./data/lite.db?cache=shared"},
+		{"sqlite", "./data/lite.db-wal"},
+		{"sqlite", "./data/lite.db-shm"},
+		{"sqlite", "./data/lite.db.restore"},
+		{"sqlite", "./data/lite-instance.key"},
+	} {
+		if err := validateMetricDBDSN(bad.driver, bad.dsn); err == nil {
+			t.Fatalf("expected (%q, %q) to be rejected", bad.driver, bad.dsn)
+		}
+	}
+
+	prevDBFile := flags.DatabaseFile
+	flags.DatabaseFile = "./data/custom-main.db"
+	t.Cleanup(func() { flags.DatabaseFile = prevDBFile })
+	if err := validateMetricDBDSN("sqlite", "./data/custom-main.db"); err == nil {
+		t.Fatal("expected active flags.DatabaseFile target to be rejected")
+	}
+	if err := validateMetricDBDSN("sqlite", "./data/custom-main.db-wal"); err == nil {
+		t.Fatal("expected active flags.DatabaseFile -wal sidecar to be rejected")
+	}
+
+	outsideDir := t.TempDir()
+	if err := os.MkdirAll("data", 0o755); err == nil {
+		linkPath := filepath.Join("data", "sym-escape")
+		if err := os.Symlink(outsideDir, linkPath); err == nil {
+			if err := validateMetricDBDSN("sqlite", "./data/sym-escape/metrics.db"); err == nil {
+				t.Fatal("expected symlink escape out of ./data/ to be rejected")
+			}
+		}
+	}
+}
+
+func TestAdminSensitiveRPCsRejectAPIKey(t *testing.T) {
+	ctx := rpc.NewContextWithMeta(context.Background(), &rpc.ContextMeta{
+		Principal:  rpc.NewAPIKeyPrincipal(),
+		Permission: rpc.RoleAdmin,
+	})
+	cases := []struct {
+		name string
+		call func(context.Context, *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError)
+	}{
+		{"deleteSession", adminDeleteSession},
+		{"deleteAllSessions", adminDeleteAllSessions},
+		{"getOidc", adminGetOidc},
+		{"getMessageSender", adminGetMessageSender},
+		{"startSelfUpdate", adminStartSelfUpdate},
+		{"startCloudflared", adminStartCloudflared},
+		{"stopCloudflared", adminStopCloudflared},
+		{"removeCloudflaredToken", adminRemoveCloudflaredToken},
+	}
+	for _, tc := range cases {
+		_, rpcErr := tc.call(ctx, &rpc.JsonRpcRequest{Version: rpc.RPC_VERSION, ID: 1, Params: map[string]any{}})
+		if rpcErr == nil || rpcErr.Code != rpc.PermissionDenied {
+			t.Fatalf("%s with API key expected PermissionDenied, got %#v", tc.name, rpcErr)
+		}
 	}
 }
 

@@ -68,6 +68,49 @@ func TestOnlineRecoveryMessage(t *testing.T) {
 	}
 }
 
+func TestSkipOfflineSendWhenLiveOrShuttingDown(t *testing.T) {
+	t.Cleanup(func() {
+		suppressOffline.Store(false)
+		ClientIsLive = nil
+	})
+	if skipOfflineSend("n1") {
+		t.Fatal("idle client should still notify")
+	}
+	ClientIsLive = func(id string) bool { return id == "n1" }
+	if !skipOfflineSend("n1") {
+		t.Fatal("live client should not notify")
+	}
+	if skipOfflineSend("n2") {
+		t.Fatal("unrelated client should still notify")
+	}
+	ClientIsLive = nil
+	SuppressOfflineNotifications()
+	if !skipOfflineSend("n2") {
+		t.Fatal("panel shutdown should not notify")
+	}
+	ResumeOfflineNotifications()
+	if skipOfflineSend("n2") {
+		t.Fatal("resuming notifications should clear shutdown suppression")
+	}
+}
+
+func TestRebindOnlineConnectionPreservesLaterDisconnectAlert(t *testing.T) {
+	const id = "rebind-client"
+	t.Cleanup(func() { ForgetClient(id) })
+
+	// WebSocket (2000) connects first, then a late HTTP packet registers (3000).
+	state := getOrInitState(id)
+	recordOnlineConnection(state, 2000)
+	recordOnlineConnection(state, 3000)
+
+	// HTTP (3000) expires while WebSocket (2000) is still live -> rebind back to 2000.
+	RebindOnlineConnection(id, 3000, 2000)
+
+	if !beginOfflineGrace(state, 2000, time.Now().UTC()) {
+		t.Fatal("rebound WebSocket disconnect was rejected as stale")
+	}
+}
+
 func TestReconnectDuringGraceCancelsPreviousOfflineEvent(t *testing.T) {
 	state := &notificationState{isFirstConnection: true}
 	recordOnlineConnection(state, 200)

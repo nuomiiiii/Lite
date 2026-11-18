@@ -193,6 +193,9 @@ func deleteClient(db *gorm.DB, clientUuid string) (bool, error) {
 		}
 		return nil
 	})
+	if err == nil {
+		invalidateClientListCache()
+	}
 	return pingTasksChanged, err
 }
 
@@ -650,15 +653,17 @@ func rotateClientToken(db *gorm.DB, uuid string, gracePeriod time.Duration) (tok
 func GetAllClientBasicInfo() (clients []models.Client, err error) {
 	clientListGate.Lock()
 	defer clientListGate.Unlock()
+	db := dbcore.GetDBInstance()
 	now := time.Now()
-	if cached, ok := basicInfoCache.get(now, clientListCacheTTL); ok {
+	if cached, ok := basicInfoCache.get(db, now, clientListCacheTTL); ok {
 		return cached, nil
 	}
-	clients, err = getClientBasicInfo(dbcore.GetDBInstance())
+	gen := basicInfoCache.generation(db)
+	clients, err = getClientBasicInfo(db)
 	if err != nil {
 		return nil, err
 	}
-	basicInfoCache.set(now, clients)
+	basicInfoCache.set(db, gen, now, clients)
 	return cloneClientList(clients), nil
 }
 

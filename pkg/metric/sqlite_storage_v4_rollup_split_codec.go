@@ -2,7 +2,6 @@ package metric
 
 import (
 	"bytes"
-	"compress/flate"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -733,17 +732,20 @@ func compressSQLiteV4RollupSection(raw []byte, level int) ([]byte, error) {
 	payload := append([]byte{sqliteV4PayloadRaw}, raw...)
 	var compressed bytes.Buffer
 	compressed.WriteByte(sqliteV4PayloadDeflate)
-	writer, err := flate.NewWriter(&compressed, level)
+	writer, err := acquireFlateWriter(&compressed, level)
 	if err != nil {
 		return nil, err
 	}
 	if _, err := writer.Write(raw); err != nil {
 		_ = writer.Close()
+		releaseFlateWriter(level, writer)
 		return nil, err
 	}
 	if err := writer.Close(); err != nil {
+		releaseFlateWriter(level, writer)
 		return nil, err
 	}
+	releaseFlateWriter(level, writer)
 	if compressed.Len() < len(payload) {
 		return append([]byte(nil), compressed.Bytes()...), nil
 	}

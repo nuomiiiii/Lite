@@ -1,6 +1,7 @@
 package security
 
 import (
+	"crypto/subtle"
 	"net"
 	"net/http"
 	"net/url"
@@ -98,34 +99,45 @@ func RequestIsLoopback(r *http.Request) bool {
 }
 
 func OriginInAllowlist(origin, rawAllowlist string) bool {
+	explicit, wildcard := matchOriginAllowlist(origin, rawAllowlist)
+	return explicit || wildcard
+}
+
+func matchOriginAllowlist(origin, rawAllowlist string) (explicit bool, wildcard bool) {
 	normalizedOrigin, originHost, ok := normalizeOrigin(origin)
 	if !ok {
-		return false
+		return false, false
 	}
 	for _, entry := range SplitAllowlist(rawAllowlist) {
 		if entry == "*" {
-			return true
+			wildcard = true
+			continue
 		}
 		if strings.Contains(entry, "://") {
 			normalizedEntry, _, ok := normalizeOrigin(entry)
 			if ok && strings.EqualFold(normalizedEntry, normalizedOrigin) {
-				return true
+				return true, wildcard
 			}
 			continue
 		}
 		if strings.EqualFold(entry, originHost) {
-			return true
+			return true, wildcard
 		}
 	}
-	return false
+	return false, wildcard
 }
 
 func IsAPIKeyRequest(r *http.Request) bool {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return false
+	}
 	apiKeyConfig, err := config.GetAs[string](config.ApiKeyKey, "")
 	if err != nil || apiKeyConfig == "" || len(apiKeyConfig) < 12 {
 		return false
 	}
-	return r.Header.Get("Authorization") == "Bearer "+apiKeyConfig
+	token := auth[len("Bearer "):]
+	return subtle.ConstantTimeCompare([]byte(token), []byte(apiKeyConfig)) == 1
 }
 
 func IsAuthorizationPreflight(r *http.Request) bool {

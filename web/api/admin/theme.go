@@ -184,6 +184,9 @@ func deleteInstalledTheme(db *gorm.DB, short, currentTheme, fallback string) err
 		}
 		return dbErr
 	}
+	if currentTheme == short {
+		_ = config.Set(config.ThemeKey, fallback)
+	}
 	if err := os.RemoveAll(tombstone); err != nil {
 		logger.Errorf("theme", "Theme %s was deleted but its hidden tombstone could not be removed: %v", short, err)
 	}
@@ -192,6 +195,10 @@ func deleteInstalledTheme(db *gorm.DB, short, currentTheme, fallback string) err
 
 // SetTheme 设置主题
 func SetTheme(c *gin.Context) {
+	if strings.EqualFold(strings.TrimSpace(c.GetHeader("Sec-Fetch-Site")), "cross-site") {
+		api.RespondError(c, http.StatusForbidden, "Cross-site request is not allowed")
+		return
+	}
 	themeName := c.Query("theme")
 	if themeName == "" {
 		api.RespondError(c, http.StatusBadRequest, "主题名称不能为空")

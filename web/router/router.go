@@ -122,9 +122,9 @@ func registerAdminRoutes(r *gin.Engine) {
 		account.PATCH("/passkeys/:id", admin.RenamePasskey)
 		account.DELETE("/passkeys/:id", admin.DeletePasskey)
 	}
-	g.GET("/settings/https", admin.GetHTTPSSettings)
-	g.POST("/settings/https", admin.UpdateHTTPSSettings)
-	g.POST("/settings/https/reload", admin.ReloadHTTPSCertificate)
+	g.GET("/settings/https", api.RejectAPIKey(), admin.GetHTTPSSettings)
+	g.POST("/settings/https", api.RejectAPIKey(), admin.UpdateHTTPSSettings)
+	g.POST("/settings/https/reload", api.RejectAPIKey(), admin.ReloadHTTPSCertificate)
 
 	// theme 含文件操作，保留 REST handler。API Key 不能改主题。
 	theme := g.Group("/theme")

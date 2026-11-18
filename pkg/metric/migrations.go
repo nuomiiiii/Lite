@@ -12,6 +12,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
+	defer s.invalidateDefinitionsCache()
 	if s.cfg.Driver == DriverSQLite {
 		return s.migrateSQLiteStorageV4(ctx)
 	}
