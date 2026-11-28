@@ -116,6 +116,7 @@ func TouchSession(plain, userAgent, ip string) (expires time.Time, ttlSeconds in
 	if result.RowsAffected == 0 {
 		return time.Time{}, 0, ErrSessionExpired
 	}
+	invalidateSessionCache(plain)
 	return expires, ttlSeconds, nil
 }
 

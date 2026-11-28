@@ -209,5 +209,7 @@ func MigrateStoredSecrets() error {
 
 func InvalidateAllSessions() error {
 	db := dbcore.GetDBInstance()
-	return db.Where("1 = 1").Delete(&models.Session{}).Error
+	err := db.Where("1 = 1").Delete(&models.Session{}).Error
+	invalidateAllSessionCache()
+	return err
 }

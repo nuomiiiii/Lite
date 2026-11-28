@@ -21,7 +21,7 @@ const (
 )
 
 type clientBasicInfoCache struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	db       *gorm.DB
 	gen      uint64
 	storedAt time.Time
@@ -30,6 +30,14 @@ type clientBasicInfoCache struct {
 }
 
 func (c *clientBasicInfoCache) generation(db *gorm.DB) uint64 {
+	c.mu.RLock()
+	if c.db == db {
+		gen := c.gen
+		c.mu.RUnlock()
+		return gen
+	}
+	c.mu.RUnlock()
+
 	c.mu.Lock()
 	if c.db != db {
 		c.gen++
@@ -43,8 +51,8 @@ func (c *clientBasicInfoCache) generation(db *gorm.DB) uint64 {
 }
 
 func (c *clientBasicInfoCache) get(db *gorm.DB, now time.Time, ttl time.Duration) ([]models.Client, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if !c.valid || c.db != db || now.Sub(c.storedAt) >= ttl {
 		return nil, false
 	}
@@ -60,6 +68,31 @@ func (c *clientBasicInfoCache) set(db *gorm.DB, gen uint64, now time.Time, list 
 	c.storedAt = now
 	c.clients = cloneClientList(list)
 	c.valid = true
+}
+
+func (c *clientBasicInfoCache) patch(db *gorm.DB, uuid string, now time.Time, ttl time.Duration, fn func(*models.Client)) bool {
+	if db == nil || uuid == "" || fn == nil {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.valid || c.db != db || now.Sub(c.storedAt) >= ttl {
+		return false
+	}
+	for i := range c.clients {
+		if c.clients[i].UUID == uuid {
+			fn(&c.clients[i])
+			c.gen++
+			return true
+		}
+	}
+	return false
+}
+
+func (c *clientBasicInfoCache) validForDB(db *gorm.DB) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.valid && c.db == db
 }
 
 func (c *clientBasicInfoCache) invalidate() {
@@ -165,6 +198,13 @@ func invalidateClientListCache() {
 	clientCacheSeq.Add(1)
 	basicInfoCache.invalidate()
 	tokenUUIDCache.invalidate()
+}
+
+func patchCachedClient(db *gorm.DB, uuid string, fn func(*models.Client)) {
+	clientCacheSeq.Add(1)
+	if !basicInfoCache.patch(db, uuid, time.Now(), clientListCacheTTL, fn) {
+		basicInfoCache.invalidate()
+	}
 }
 
 // CacheGeneration returns a monotonic counter bumped on every client mutation.

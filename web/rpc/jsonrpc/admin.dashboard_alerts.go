@@ -127,7 +127,7 @@ func buildDashboardAlerts(clientList []models.Client, now time.Time, loc *time.L
 
 func buildDashboardResourceAlerts(clientByID map[string]models.Client, reports map[string]*v2.Report) dashboardAlertSummary {
 	var rules []models.LoadNotification
-	if err := dbcore.GetDBInstance().Find(&rules).Error; err != nil {
+	if err := dbcore.GetReadDBInstance().Find(&rules).Error; err != nil {
 		return dashboardAlertSummary{Error: err.Error()}
 	}
 	result := dashboardAlertSummary{}
@@ -296,14 +296,17 @@ func buildDashboardTrafficAlerts(clientList []models.Client, reports map[string]
 	if !enabled || threshold <= 0 {
 		return dashboardAlertSummary{}
 	}
-	calibrated, calibrationErr := trafficledger.CurrentCalibratedCycleUsages(
+	calibrated, unavailable, calibrationErr := trafficledger.CurrentCalibratedCycleState(
 		context.Background(), dbcore.GetDBInstance(), now,
 	)
-	result := dashboardAlertSummary{}
 	if calibrationErr != nil {
-		result.Error = calibrationErr.Error()
+		return dashboardAlertSummary{Error: calibrationErr.Error()}
 	}
+	result := dashboardAlertSummary{}
 	for _, client := range clientList {
+		if _, skip := unavailable[client.UUID]; skip {
+			continue
+		}
 		report := reports[client.UUID]
 		if report == nil {
 			continue

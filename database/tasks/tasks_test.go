@@ -327,6 +327,41 @@ func TestCancelUndeliveredTaskResultDoesNotOverwriteFinished(t *testing.T) {
 	}
 }
 
+func TestGetTaskResultsByTaskIdAndClientsFiltersAndEmptyIsNotError(t *testing.T) {
+	flags.DatabaseType = flags.DatabaseTypeSQLite
+	flags.DatabaseFile = "file:task_client_filter?mode=memory&cache=shared"
+	_ = dbcore.GetDBInstance()
+
+	taskID := "task-filter-clients"
+	if err := CreateTask(taskID, []string{"node-a", "node-b", "node-c"}, "true"); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	filtered, err := GetTaskResultsByTaskIdAndClients(taskID, []string{"node-b"})
+	if err != nil {
+		t.Fatalf("GetTaskResultsByTaskIdAndClients: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].Client != "node-b" {
+		t.Fatalf("filtered results = %#v, want node-b only", filtered)
+	}
+
+	empty, err := GetTaskResultsByTaskIdAndClients(taskID, []string{"missing-node"})
+	if err != nil {
+		t.Fatalf("empty filter should not error: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty filter results = %#v, want []", empty)
+	}
+
+	all, err := GetTaskResultsByTaskIdAndClients(taskID, nil)
+	if err != nil {
+		t.Fatalf("nil filter should fall back to full list: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("nil filter results = %d, want 3", len(all))
+	}
+}
+
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

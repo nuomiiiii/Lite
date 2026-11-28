@@ -101,12 +101,15 @@ func CheckTraffic() {
 	}
 
 	now := time.Now().UTC()
-	calibrated, err := trafficledger.CurrentCalibratedCycleUsages(context.Background(), dbcore.GetDBInstance(), now)
+	calibrated, unavailable, err := trafficledger.CurrentCalibratedCycleState(context.Background(), dbcore.GetDBInstance(), now)
 	if err != nil {
 		logger.Error("notifier", "failed to read calibrated traffic usage", "error", err)
-		calibrated = map[string]trafficledger.Usage{}
+		return
 	}
 	for _, c := range allClients {
+		if _, skip := unavailable[c.UUID]; skip {
+			continue
+		}
 		r, ok := reports[c.UUID]
 		if !ok || r == nil {
 			continue

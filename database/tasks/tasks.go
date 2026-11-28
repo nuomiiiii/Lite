@@ -91,7 +91,18 @@ func GetAllTasks() ([]models.Task, error) {
 
 func GetTaskResultsByTaskId(taskId string) ([]models.TaskResult, error) {
 	var results []models.TaskResult
-	if err := dbcore.GetDBInstance().Where("task_id = ?", taskId).Find(&results).Error; err != nil {
+	if err := dbcore.GetReadDBInstance().Where("task_id = ?", taskId).Find(&results).Error; err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+func GetTaskResultsByTaskIdAndClients(taskId string, clientIDs []string) ([]models.TaskResult, error) {
+	if len(clientIDs) == 0 {
+		return GetTaskResultsByTaskId(taskId)
+	}
+	var results []models.TaskResult
+	if err := dbcore.GetReadDBInstance().Where("task_id = ? AND client IN ?", taskId, clientIDs).Find(&results).Error; err != nil {
 		return nil, err
 	}
 	return results, nil

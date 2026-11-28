@@ -54,6 +54,9 @@ func ReclaimSpace(ctx context.Context) error {
 	maintenanceMu.Lock()
 	defer maintenanceMu.Unlock()
 
+	resumeReadPool := pauseSQLiteReadPool()
+	defer resumeReadPool()
+
 	db, err := GetDBInstance().DB()
 	if err != nil {
 		return fmt.Errorf("get main database connection: %w", err)

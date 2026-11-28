@@ -701,9 +701,12 @@ func restoreStagedBackup(dataDir string) (*stagedRestore, error) {
 }
 
 var (
-	instance       *gorm.DB
-	once           sync.Once
-	initErr        error
+	instance      *gorm.DB
+	readInstance  *gorm.DB
+	readPoolMu    sync.RWMutex
+	readLogConfig *gorm.Config
+	once          sync.Once
+	initErr       error
 	pendingRestore *stagedRestore
 )
 
@@ -882,6 +885,25 @@ func buildSQLiteDSN(databaseFile string) string {
 	return "file:" + filepath.ToSlash(databaseFile) + separator + params
 }
 
+func buildSQLiteReadDSN(databaseFile string) (string, bool) {
+	if databaseFile == "" {
+		databaseFile = "./data/lite.db"
+	}
+	if databaseFile == ":memory:" || strings.Contains(databaseFile, "mode=memory") {
+		return "", false
+	}
+
+	params := "mode=ro&_busy_timeout=5000&_query_only=1"
+	separator := "?"
+	if strings.Contains(databaseFile, "?") {
+		separator = "&"
+	}
+	if strings.HasPrefix(databaseFile, "file:") {
+		return databaseFile + separator + params, true
+	}
+	return "file:" + filepath.ToSlash(databaseFile) + separator + params, true
+}
+
 // Initialize 显式初始化数据库连接与表结构，仅执行一次。
 // 与 GetDBInstance 不同，Initialize 返回错误而非直接退出进程，
 // 便于启动生命周期统一处理错误、以及在测试/CLI 命令中做隔离。
@@ -902,15 +924,103 @@ func GetDBInstance() *gorm.DB {
 	return instance
 }
 
+// GetReadDBInstance returns a read-only SQLite connection pool (WAL concurrent
+// readers) for file-backed SQLite databases, falling back to the primary
+// instance for in-memory test databases or when the read pool is unavailable.
+func GetReadDBInstance() *gorm.DB {
+	if err := Initialize(); err != nil {
+		logger.Fatalf("dbcore", "Failed to initialize database: %v", err)
+	}
+	readPoolMu.RLock()
+	ro := readInstance
+	readPoolMu.RUnlock()
+	if ro != nil {
+		return ro
+	}
+	return instance
+}
+
+func openSQLiteReadPool(logConfig *gorm.Config) {
+	if !flags.IsSQLite() {
+		return
+	}
+	readDSN, ok := buildSQLiteReadDSN(flags.DatabaseFile)
+	if !ok {
+		return
+	}
+	if logConfig == nil {
+		logConfig = &gorm.Config{
+			Logger:                 logger.NewGormLogger(),
+			NowFunc:                func() time.Time { return time.Now().UTC() },
+			SkipDefaultTransaction: true,
+		}
+	}
+	roDB, roErr := gorm.Open(sqlite.Open(readDSN), logConfig)
+	if roErr != nil {
+		logger.Errorf("dbcore", "Failed to open SQLite read-only pool (falling back to primary): %v", roErr)
+		return
+	}
+	if sqlRO, dbErr := roDB.DB(); dbErr == nil {
+		sqlRO.SetMaxOpenConns(6)
+		sqlRO.SetMaxIdleConns(4)
+		sqlRO.SetConnMaxLifetime(0)
+	}
+	roDB.Exec("PRAGMA query_only = ON;")
+	roDB.Exec("PRAGMA busy_timeout = 5000;")
+	roDB.Exec("PRAGMA temp_store = MEMORY;")
+
+	readPoolMu.Lock()
+	old := readInstance
+	readInstance = roDB
+	readPoolMu.Unlock()
+	if old != nil {
+		if sqlOld, err := old.DB(); err == nil {
+			_ = sqlOld.Close()
+		}
+	}
+}
+
+// pauseSQLiteReadPool temporarily closes the read-only SQLite pool so exclusive
+// maintenance operations (WAL TRUNCATE / VACUUM) cannot hit SQLITE_BUSY against
+// concurrent or idle read connections.
+func pauseSQLiteReadPool() func() {
+	readPoolMu.Lock()
+	old := readInstance
+	readInstance = nil
+	cfg := readLogConfig
+	readPoolMu.Unlock()
+	if old != nil {
+		if sqlOld, err := old.DB(); err == nil {
+			_ = sqlOld.Close()
+		}
+	}
+	return func() {
+		if old != nil {
+			openSQLiteReadPool(cfg)
+		}
+	}
+}
+
 // Close 关闭底层数据库连接，供关闭流程调用。
 func Close() error {
 	var closeErr error
+	readPoolMu.Lock()
+	ro := readInstance
+	readInstance = nil
+	readPoolMu.Unlock()
+	if ro != nil {
+		if sqlDB, err := ro.DB(); err != nil {
+			closeErr = errors.Join(closeErr, err)
+		} else {
+			closeErr = errors.Join(closeErr, sqlDB.Close())
+		}
+	}
 	if instance != nil {
 		sqlDB, err := instance.DB()
 		if err != nil {
-			closeErr = err
+			closeErr = errors.Join(closeErr, err)
 		} else {
-			closeErr = sqlDB.Close()
+			closeErr = errors.Join(closeErr, sqlDB.Close())
 		}
 	}
 	rollbackErr := RollbackPendingRestore()
@@ -959,6 +1069,12 @@ func doInitialize() error {
 	defer func() {
 		if initialized || pendingRestore == nil {
 			return
+		}
+		if readInstance != nil {
+			if sqlDB, closeErr := readInstance.DB(); closeErr == nil {
+				_ = sqlDB.Close()
+			}
+			readInstance = nil
 		}
 		if instance != nil {
 			if sqlDB, closeErr := instance.DB(); closeErr == nil {
@@ -1146,6 +1262,9 @@ func doInitialize() error {
 	if err := cleanupOrphanedClientData(instance); err != nil {
 		return fmt.Errorf("failed to clean orphaned client data: %w", err)
 	}
+
+	readLogConfig = logConfig
+	openSQLiteReadPool(logConfig)
 
 	initialized = true
 	return nil

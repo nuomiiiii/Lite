@@ -282,17 +282,44 @@ func gpuUsageFromReport(rep *v2.Report) float32 {
 
 func getNodesLatestStatus(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
 	var params struct {
-		UUID    string   `json:"uuid"`
-		UUIDs   []string `json:"uuids"`
-		Compact bool     `json:"compact"`
+		UUID       string   `json:"uuid"`
+		UUIDs      []string `json:"uuids"`
+		Compact    bool     `json:"compact"`
+		OnlineOnly bool     `json:"online_only"`
 	}
 	req.BindParams(&params)
+
+	onlineUUIDs := agent_runtime.GetAllOnlineUUIDs()
+	if params.OnlineOnly {
+		if !isLoginFromCtx(ctx) {
+			cinfo, err := clients.GetAllClientBasicInfo()
+			if err != nil {
+				return nil, rpc.MakeError(rpc.InternalError, "Failed to get client info", err.Error())
+			}
+			hidden := make(map[string]bool, len(cinfo))
+			for _, c := range cinfo {
+				if c.Hidden {
+					hidden[c.UUID] = true
+				}
+			}
+			filtered := make([]string, 0, len(onlineUUIDs))
+			for _, id := range onlineUUIDs {
+				if !hidden[id] {
+					filtered = append(filtered, id)
+				}
+			}
+			onlineUUIDs = filtered
+		}
+		if onlineUUIDs == nil {
+			onlineUUIDs = []string{}
+		}
+		return map[string]any{"online": onlineUUIDs}, nil
+	}
 
 	latest := agent_runtime.GetLatestReport() // map[string]*v2.Report (copy)
 	// The compact admin view also shows billing-cycle usage. This helper is
 	// cached for 15 seconds, so the 5-second status poll does not rescan SQLite.
 	calibrated, _ := trafficledger.CurrentCalibratedCycleUsages(ctx, dbcore.GetDBInstance(), time.Now().UTC())
-	onlineUUIDs := agent_runtime.GetAllOnlineUUIDs()
 	onlineSet := make(map[string]bool, len(onlineUUIDs))
 	for _, uuid := range onlineUUIDs {
 		onlineSet[uuid] = true

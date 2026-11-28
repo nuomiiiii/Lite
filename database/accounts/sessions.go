@@ -67,10 +67,18 @@ func CreateSession(uuid string, expires int, userAgent, ip, login_method string)
 }
 
 func lookupSession(plain string) (models.Session, error) {
-	db := dbcore.GetDBInstance()
+	writeDB := dbcore.GetDBInstance()
+	now := time.Now().UTC()
+	cacheKey := SessionLookupKey(plain)
+	if cached, ok := authCache.getSession(writeDB, cacheKey, now); ok {
+		return cached, nil
+	}
+	gen := authCache.generation(writeDB)
+	db := dbcore.GetReadDBInstance()
 	var sessionRecord models.Session
 	if hashed, err := hashSessionToken(plain); err == nil {
 		if err := db.Where("session = ?", hashed).First(&sessionRecord).Error; err == nil {
+			authCache.setSession(writeDB, gen, cacheKey, sessionRecord, now)
 			return sessionRecord, nil
 		}
 	}
@@ -82,6 +90,7 @@ func lookupSession(plain string) (models.Session, error) {
 	if err := db.Where("session = ?", plain).First(&sessionRecord).Error; err != nil {
 		return models.Session{}, err
 	}
+	authCache.setSession(writeDB, gen, cacheKey, sessionRecord, now)
 	return sessionRecord, nil
 }
 
@@ -91,7 +100,7 @@ func SessionStillValid(userUUID, loginSession string) bool {
 	}
 	key := SessionLookupKey(loginSession)
 	var record models.Session
-	err := dbcore.GetDBInstance().
+	err := dbcore.GetReadDBInstance().
 		Model(&models.Session{}).
 		Joins("INNER JOIN users ON users.uuid = sessions.uuid").
 		Where("sessions.session = ? AND sessions.uuid = ?", key, userUUID).
@@ -131,6 +140,7 @@ func DeleteSession(session string) (err error) {
 		query = db.Where("session = ? OR session = ?", hashed, session)
 	}
 	result := query.Delete(&models.Session{})
+	invalidateSessionCache(session)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -144,6 +154,7 @@ func DeleteAllSessions() error {
 func RemoveExpiredSessions() error {
 	db := dbcore.GetDBInstance()
 	result := db.Where("expires < ?", time.Now().UTC()).Delete(&models.Session{})
+	invalidateAllSessionCache()
 	if result.Error != nil {
 		return result.Error
 	}

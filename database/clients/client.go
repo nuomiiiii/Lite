@@ -26,6 +26,7 @@ import (
 	"github.com/nuomiiiii/lite/utils"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 	"gorm.io/gorm"
 )
 
@@ -225,8 +226,23 @@ func deleteLegacyClientRows(tx *gorm.DB, clientUUID string) error {
 }
 
 func SaveClientInfo(update map[string]interface{}) error {
-	err := saveClientInfoWithAutoOrder(dbcore.GetDBInstance(), update, autoOrderNewClientsEnabled())
+	db := dbcore.GetDBInstance()
+	autoOrder := autoOrderNewClientsEnabled()
+	err := saveClientInfoWithAutoOrder(db, update, autoOrder)
 	if err == nil {
+		clientUUID, _ := update["uuid"].(string)
+		if !autoOrder && clientUUID != "" && basicInfoCache.validForDB(db) {
+			var refreshed models.Client
+			if readErr := db.Where("uuid = ?", clientUUID).First(&refreshed).Error; readErr == nil {
+				applyClientDisplayFields(&refreshed, time.Now().UTC())
+				patchCachedClient(db, clientUUID, func(dst *models.Client) {
+					prevStatus := dst.DeploymentStatus
+					*dst = refreshed
+					dst.DeploymentStatus = prevStatus
+				})
+				return nil
+			}
+		}
 		invalidateClientListCache()
 	}
 	return err
@@ -651,23 +667,32 @@ func rotateClientToken(db *gorm.DB, uuid string, gracePeriod time.Duration) (tok
 }
 
 func GetAllClientBasicInfo() (clients []models.Client, err error) {
-	clientListGate.Lock()
-	defer clientListGate.Unlock()
-	db := dbcore.GetDBInstance()
+	writeDB := dbcore.GetDBInstance()
 	now := time.Now()
-	if cached, ok := basicInfoCache.get(db, now, clientListCacheTTL); ok {
+	if cached, ok := basicInfoCache.get(writeDB, now, clientListCacheTTL); ok {
 		return cached, nil
 	}
-	gen := basicInfoCache.generation(db)
-	clients, err = getClientBasicInfo(db)
+	key := fmt.Sprintf("%p", writeDB)
+	val, err, _ := clientListFlight.Do(key, func() (any, error) {
+		now := time.Now()
+		if cached, ok := basicInfoCache.get(writeDB, now, clientListCacheTTL); ok {
+			return cached, nil
+		}
+		gen := basicInfoCache.generation(writeDB)
+		list, loadErr := getClientBasicInfo(dbcore.GetReadDBInstance())
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		basicInfoCache.set(writeDB, gen, now, list)
+		return list, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	basicInfoCache.set(db, gen, now, clients)
-	return cloneClientList(clients), nil
+	return cloneClientList(val.([]models.Client)), nil
 }
 
-var clientListGate sync.Mutex
+var clientListFlight singleflight.Group
 
 func GetClientBasicInfoByUUIDs(uuids []string) (clients []models.Client, err error) {
 	if len(uuids) == 0 {
@@ -1043,6 +1068,9 @@ func saveClientTransaction(db *gorm.DB, updates map[string]interface{}, source s
 	updated.TrafficResetDay = resetDay
 	updated.TrafficResetTime = resetTime
 	updated.TrafficResetTimezone = resetTimezone
+	if err := trafficledger.RemapCalibrationOnScheduleChange(context.Background(), db, existing, updated, now); err != nil {
+		return ClientDispatch{}, err
+	}
 	dispatch, err := syncDeploymentResetClock(db, clientUUID, existing, updated)
 	if err != nil {
 		return ClientDispatch{}, err
@@ -1293,12 +1321,16 @@ func SetMCPCapability(uuid string, full bool, version int) {
 	mcpCapabilitySeen[uuid] = next
 	mcpCapabilityMu.Unlock()
 
-	if err := dbcore.GetDBInstance().Model(&models.Client{}).Where("uuid = ?", uuid).Updates(map[string]any{
+	db := dbcore.GetDBInstance()
+	if err := db.Model(&models.Client{}).Where("uuid = ?", uuid).Updates(map[string]any{
 		"mcp_full":         full,
 		"mcp_full_version": version,
 	}).Error; err != nil {
 		logger.Errorf("mcp", "failed to record MCP capability for %s: %v", uuid, err)
 		return
 	}
-	invalidateClientListCache()
+	patchCachedClient(db, uuid, func(c *models.Client) {
+		c.MCPFull = full
+		c.MCPFullVersion = version
+	})
 }

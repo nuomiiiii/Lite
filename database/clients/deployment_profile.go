@@ -387,9 +387,12 @@ func saveDeploymentProfileForDispatch(db *gorm.DB, clientUUID string, profile De
 }
 
 func MarkDeploymentConfigSent(clientUUID string, revision uint64) (bool, error) {
-	sent, err := markDeploymentConfigSent(dbcore.GetDBInstance(), clientUUID, revision)
+	db := dbcore.GetDBInstance()
+	sent, err := markDeploymentConfigSent(db, clientUUID, revision)
 	if err == nil && sent {
-		invalidateClientListCache()
+		patchCachedClient(db, clientUUID, func(c *models.Client) {
+			c.DeploymentStatus = DeploymentDeliverySent
+		})
 	}
 	return sent, err
 }
@@ -410,9 +413,12 @@ func markDeploymentConfigSent(db *gorm.DB, clientUUID string, revision uint64) (
 }
 
 func CompleteDeploymentConfig(clientUUID string, result v2.ConfigResultParams) (bool, error) {
-	done, err := completeDeploymentConfig(dbcore.GetDBInstance(), clientUUID, result)
+	db := dbcore.GetDBInstance()
+	done, err := completeDeploymentConfig(db, clientUUID, result)
 	if err == nil && done {
-		invalidateClientListCache()
+		patchCachedClient(db, clientUUID, func(c *models.Client) {
+			c.DeploymentStatus = result.Status
+		})
 	}
 	return done, err
 }

@@ -206,12 +206,28 @@ func adminGetClient(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonR
 	return clientWithoutToken(result), nil
 }
 
-func adminListClients(_ context.Context, _ *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+func adminListClients(_ context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {
+	var params struct {
+		View string `json:"view"`
+	}
+	if req != nil {
+		req.BindParams(&params)
+	}
 	cls, err := listAdminClients()
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, err.Error(), nil)
 	}
-	return clientsWithoutTokens(cls), nil
+	sanitized := clientsWithoutTokens(cls)
+	if strings.EqualFold(strings.TrimSpace(params.View), "summary") {
+		for i := range sanitized {
+			sanitized[i].PublicRemark = ""
+			sanitized[i].CpuName = ""
+			sanitized[i].GpuName = ""
+			sanitized[i].KernelVersion = ""
+			sanitized[i].Virtualization = ""
+		}
+	}
+	return sanitized, nil
 }
 
 func adminGetClientToken(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcError) {

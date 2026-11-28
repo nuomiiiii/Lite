@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/nuomiiiii/lite/database/accounts"
@@ -358,32 +359,57 @@ func adminExec(ctx context.Context, req *rpc.JsonRpcRequest) (any, *rpc.JsonRpcE
 
 	payload := v2.ExecParams{TaskID: taskId, Command: command}
 	var actuallySent, actuallyQueued, deliveryFailed []string
+	targets := make([]string, 0, len(classified.live)+len(classified.queued))
+	targets = append(targets, classified.live...)
+	targets = append(targets, classified.queued...)
+
+	type dispatchOutcome struct {
+		uuid     string
+		queued   bool
+		notified bool
+	}
+	outcomes := make([]dispatchOutcome, len(targets))
 	delivered := agent_runtime.GuardRemoteDelivery(remote.RemoteManagementEnabled, func() {
-		for _, uuid := range classified.live {
-			queued, notified := agent_runtime.DispatchV2ExecEvent(uuid, payload)
-			if !queued {
-				deliveryFailed = append(deliveryFailed, uuid)
-				continue
-			}
-			if notified {
-				actuallySent = append(actuallySent, uuid)
-				continue
-			}
-			actuallyQueued = append(actuallyQueued, uuid)
+		const maxDispatchWorkers = 64
+		workers := len(targets)
+		if workers > maxDispatchWorkers {
+			workers = maxDispatchWorkers
 		}
-		for _, uuid := range classified.queued {
-			queued, notified := agent_runtime.DispatchV2ExecEvent(uuid, payload)
-			if !queued {
-				deliveryFailed = append(deliveryFailed, uuid)
-				continue
+		if workers <= 1 {
+			for i, uuid := range targets {
+				queued, notified := agent_runtime.DispatchV2ExecEvent(uuid, payload)
+				outcomes[i] = dispatchOutcome{uuid: uuid, queued: queued, notified: notified}
 			}
-			if notified {
-				actuallySent = append(actuallySent, uuid)
-				continue
-			}
-			actuallyQueued = append(actuallyQueued, uuid)
+			return
 		}
+		sem := make(chan struct{}, workers)
+		var wg sync.WaitGroup
+		for i, uuid := range targets {
+			i, uuid := i, uuid
+			wg.Add(1)
+			sem <- struct{}{}
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				queued, notified := agent_runtime.DispatchV2ExecEvent(uuid, payload)
+				outcomes[i] = dispatchOutcome{uuid: uuid, queued: queued, notified: notified}
+			}()
+		}
+		wg.Wait()
 	})
+	if delivered {
+		for _, out := range outcomes {
+			if !out.queued {
+				deliveryFailed = append(deliveryFailed, out.uuid)
+				continue
+			}
+			if out.notified {
+				actuallySent = append(actuallySent, out.uuid)
+				continue
+			}
+			actuallyQueued = append(actuallyQueued, out.uuid)
+		}
+	}
 	if !delivered {
 		if err := cancelExecTaskClients(taskId, taskClients); err != nil {
 			return nil, rpc.MakeError(rpc.InternalError, "远程管理已关闭，但未能写入已取消任务结果: "+err.Error(), nil)

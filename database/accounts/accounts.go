@@ -56,6 +56,7 @@ func AddUserSecurityListener(fn func(string)) {
 }
 
 func notifyUserSecurityChanged(uuid string) {
+	invalidateAllAuthCache()
 	bumpUserSecurityEpoch(uuid)
 	userSecurityMu.Lock()
 	listeners := append([]func(string){}, userSecurityListeners...)
@@ -126,6 +127,7 @@ func maybeUpgradeLegacyPassword(uuid, passwd, encoded string) {
 		return
 	}
 	_ = dbcore.GetDBInstance().Model(&models.User{}).Where("uuid = ?", uuid).Update("passwd", hashed).Error
+	InvalidateUserCache(uuid)
 }
 
 func VerifyPasswordForUUID(uuid, passwd string) error {
@@ -182,6 +184,7 @@ func CreateAccountWithDB(db *gorm.DB, username, passwd string) (user models.User
 
 func DeleteAccountByUsernameWithDB(db *gorm.DB, username string) (err error) {
 	err = db.Where("username = ?", username).Delete(&models.User{}).Error
+	invalidateAllAuthCache()
 	if err != nil {
 		return err
 	}
@@ -189,11 +192,18 @@ func DeleteAccountByUsernameWithDB(db *gorm.DB, username string) (err error) {
 }
 
 func GetUserByUUID(uuid string) (user models.User, err error) {
-	db := dbcore.GetDBInstance()
+	writeDB := dbcore.GetDBInstance()
+	now := time.Now().UTC()
+	if cached, ok := authCache.getUser(writeDB, uuid, now); ok {
+		return cached, nil
+	}
+	gen := authCache.generation(writeDB)
+	db := dbcore.GetReadDBInstance()
 	err = db.Where("uuid = ?", uuid).First(&user).Error
 	if err != nil {
 		return models.User{}, err
 	}
+	authCache.setUser(writeDB, gen, uuid, user, now)
 	return user, nil
 }
 
@@ -217,6 +227,7 @@ func BindingExternalAccount(uuid string, sso_id string) error {
 	if err != nil {
 		return err
 	}
+	InvalidateUserCache(uuid)
 	return nil
 }
 
@@ -226,6 +237,7 @@ func UnbindExternalAccount(uuid string) error {
 	if err != nil {
 		return err
 	}
+	InvalidateUserCache(uuid)
 	return nil
 }
 
@@ -256,6 +268,7 @@ func UpdateUser(uuid string, name, password, sso_type *string) error {
 	if err != nil {
 		return err
 	}
+	InvalidateUserCache(uuid)
 	if password != nil {
 		DeleteAllSessions()
 		notifyUserSecurityChanged(uuid)
@@ -301,5 +314,6 @@ func UpdateUserPreferencesWithDB(db *gorm.DB, uuid string, language, color *stri
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("user not found: %s", uuid)
 	}
+	InvalidateUserCache(uuid)
 	return nil
 }

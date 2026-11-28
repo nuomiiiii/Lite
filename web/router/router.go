@@ -174,7 +174,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		task.GET("/all", jsonRpc.Bind("admin:getTasks"))
 		task.POST("/exec", jsonRpc.Bind("admin:exec"))
 		task.GET("/:task_id", jsonRpc.Bind("admin:getTaskById", jsonRpc.WithPath("task_id")))
-		task.GET("/:task_id/result", jsonRpc.Bind("admin:getTaskResultsByTaskId", jsonRpc.WithPath("task_id")))
+		task.GET("/:task_id/result", jsonRpc.Bind("admin:getTaskResultsByTaskId", jsonRpc.WithPath("task_id"), jsonRpc.WithQuery("clients")))
 		task.GET("/:task_id/result/:uuid", jsonRpc.Bind("admin:getSpecificTaskResult", jsonRpc.WithPath("task_id", "uuid")))
 		task.GET("/client/:uuid", jsonRpc.Bind("admin:getTasksByClientId", jsonRpc.WithPath("uuid")))
 	}
@@ -222,7 +222,7 @@ func registerAdminRoutes(r *gin.Engine) {
 		clientGroup.POST("/remote/revoke", remote.RevokeGrant)
 		clientGroup.GET("/remote", remote.ConnectBrowser)
 		clientGroup.POST("/add", jsonRpc.Bind("admin:addClient", jsonRpc.WithFlat()))
-		clientGroup.GET("/list", jsonRpc.Bind("admin:listClients", jsonRpc.WithRaw()))
+		clientGroup.GET("/list", jsonRpc.Bind("admin:listClients", jsonRpc.WithQuery("view"), jsonRpc.WithRaw()))
 		clientGroup.GET("/:uuid", jsonRpc.Bind("admin:getClient", jsonRpc.WithPath("uuid"), jsonRpc.WithRaw()))
 		clientGroup.POST("/:uuid/edit", jsonRpc.Bind("admin:editClient", jsonRpc.WithPath("uuid")))
 		clientGroup.POST("/:uuid/billing/traffic-reset", jsonRpc.Bind("admin:createBillingTrafficReset", jsonRpc.WithPath("uuid")))

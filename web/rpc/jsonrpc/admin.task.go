@@ -2,6 +2,7 @@ package jsonrpc
 
 import (
 	"context"
+	"strings"
 
 	"github.com/nuomiiiii/lite/database/models"
 	"github.com/nuomiiiii/lite/database/tasks"
@@ -136,17 +137,34 @@ func adminGetTaskResultsByTaskId(ctx context.Context, req *rpc.JsonRpcRequest) (
 		return nil, err
 	}
 	var params struct {
-		TaskID string `json:"task_id"`
+		TaskID  string `json:"task_id"`
+		Clients string `json:"clients"`
 	}
 	req.BindParams(&params)
 	if params.TaskID == "" {
 		return nil, rpc.MakeError(rpc.InvalidParams, "Task ID is required", nil)
 	}
-	results, err := tasks.GetTaskResultsByTaskId(params.TaskID)
+	var filterClients []string
+	if raw := strings.TrimSpace(params.Clients); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			if id := strings.TrimSpace(part); id != "" {
+				filterClients = append(filterClients, id)
+			}
+		}
+	}
+	var (
+		results []models.TaskResult
+		err     error
+	)
+	if len(filterClients) > 0 {
+		results, err = tasks.GetTaskResultsByTaskIdAndClients(params.TaskID, filterClients)
+	} else {
+		results, err = tasks.GetTaskResultsByTaskId(params.TaskID)
+	}
 	if err != nil {
 		return nil, rpc.MakeError(rpc.InternalError, "Failed to retrieve task results: "+err.Error(), nil)
 	}
-	if len(results) == 0 {
+	if len(results) == 0 && len(filterClients) == 0 {
 		return nil, rpc.MakeError(rpc.NotFound, "No results found for this task", nil)
 	}
 	return results, nil
